@@ -149,6 +149,9 @@ func (s *stripeService) createCheckoutSession(customerID, returnURL string, amou
 		"line_items[0][price_data][currency]":     {"usd"},
 		"line_items[0][price_data][unit_amount]":  {fmt.Sprintf("%d", amountUSDCents)},
 		"line_items[0][quantity]":                 {"1"},
+		"automatic_tax[enabled]":                 {"true"},
+		"customer_update[address]":               {"auto"},
+		"invoice_creation[enabled]":              {"true"},
 	}
 	if productID := strings.TrimSpace(getEnv("STRIPE_CREDITS_PRODUCT_ID", "")); productID != "" {
 		vals.Set("line_items[0][price_data][product]", productID)
@@ -176,6 +179,8 @@ func (s *stripeService) createSubscriptionCheckoutSession(customerID, returnURL,
 		"redirect_on_completion":  {"if_required"},
 		"line_items[0][price]":    {priceID},
 		"line_items[0][quantity]": {"1"},
+		"automatic_tax[enabled]":  {"true"},
+		"customer_update[address]": {"auto"},
 	}
 	for k, v := range metadata {
 		vals.Set(fmt.Sprintf("metadata[%s]", k), v)
