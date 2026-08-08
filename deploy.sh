@@ -25,10 +25,12 @@ if [ -f .env ]; then
 fi
 if [ -f /nvme0n1-disk/code/app-site/.env ]; then
   # Prefer shared R2 creds when not already set.
+  set +u
   set -a
   # shellcheck disable=SC1091
   source /nvme0n1-disk/code/app-site/.env
   set +a
+  set -u
 fi
 
 R2_ACCOUNT_ID="${MANIFOLDGEN_R2_ACCOUNT_ID:-${R2_ACCOUNT_ID:-f76d25b8b86cfa5638f43016510d8f77}}"
