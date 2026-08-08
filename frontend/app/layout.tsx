@@ -40,6 +40,18 @@ export const metadata: Metadata = {
     siteName: 'ManifoldGen',
     title: 'ManifoldGen — AI Video Studio',
     description: 'Full-bleed AI video generation. Sign up, prompt, render.',
+    images: [
+      {
+        url: 'https://manifoldgenstatic.manifoldgen.com/static/brand/logo.webp',
+        width: 1024,
+        height: 1024,
+        alt: 'ManifoldGen',
+      },
+    ],
+  },
+  icons: {
+    icon: [{ url: '/brand/logo-mark.webp', type: 'image/webp' }],
+    apple: [{ url: '/brand/logo-mark.webp' }],
   },
 };
 

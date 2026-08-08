@@ -324,6 +324,9 @@ export default function HomePage() {
     }
   }
 
+  const [logoOk, setLogoOk] = useState(true);
+  const logoSrc = '/brand/logo.webp';
+
   const resultUrl = job?.result_url;
   const heroImage = gallery[heroIndex]?.image_url || gallery[heroIndex]?.thumb_url;
   const displayVideos = videoHits.length > 0 ? videoHits : featuredVideos;
@@ -360,7 +363,19 @@ export default function HomePage() {
 
         <header className="relative z-20 flex items-center justify-between px-4 py-4 md:px-8">
           <div className="flex items-center gap-3">
-            <Clapperboard className="text-[var(--color-accent-2)]" size={22} />
+            {logoOk ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={logoSrc}
+                alt=""
+                width={36}
+                height={36}
+                className="h-9 w-9 object-contain drop-shadow"
+                onError={() => setLogoOk(false)}
+              />
+            ) : (
+              <Clapperboard className="text-[var(--color-accent-2)]" size={22} />
+            )}
             <div className="font-display text-xl font-700 tracking-tight md:text-2xl">ManifoldGen</div>
           </div>
           <div className="flex items-center gap-2">
@@ -660,7 +675,11 @@ export default function HomePage() {
                 <X size={18} />
               </button>
               <div className="absolute bottom-4 left-5 right-5">
-                <div className="font-display text-3xl font-800 tracking-tight">ManifoldGen</div>
+                <div className="flex items-center gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/brand/logo.webp" alt="" className="h-10 w-10 object-contain" />
+                  <div className="font-display text-3xl font-800 tracking-tight">ManifoldGen</div>
+                </div>
                 <p className="mt-1 text-sm text-white/70">
                   {authWelcome
                     ? 'Studio ready. Top up credits anytime and start rendering.'

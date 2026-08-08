@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -451,6 +452,11 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 		log.Printf("zimage persist write failed: %v", err)
 		return result, nil
 	}
+	if recompressed, err := recompressWebPQ85(fullPath); err == nil && len(recompressed) > 0 {
+		imageBytes = recompressed
+	} else if err != nil {
+		log.Printf("zimage webp q85 recompress skipped: %v", err)
+	}
 
 	width := intFromPayload(payload, "width", req.Width)
 	if width <= 0 {
@@ -502,6 +508,30 @@ func intFromPayload(payload map[string]interface{}, key string, fallback int) in
 	default:
 		return fallback
 	}
+}
+
+// recompressWebPQ85 rewrites path via cwebp -q 85 when available.
+func recompressWebPQ85(path string) ([]byte, error) {
+	cwebp, err := exec.LookPath("cwebp")
+	if err != nil {
+		return nil, err
+	}
+	tmp := path + ".q85.tmp"
+	cmd := exec.Command(cwebp, "-q", "85", "-m", "6", path, "-o", tmp)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(tmp)
+		return nil, fmt.Errorf("%v: %s", err, truncateString(string(out), 200))
+	}
+	data, err := os.ReadFile(tmp)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return nil, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return nil, err
+	}
+	return data, nil
 }
 
 // settleLoraTrainingJob polls the inference server for a training job and

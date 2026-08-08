@@ -7,12 +7,15 @@ Type=simple
 WorkingDirectory=/opt/manifoldgen-site
 EnvironmentFile=/opt/manifoldgen-site/.env
 Environment=GOBED_MODEL_PATH=/nvme0n1-disk/code/gobed/model
+Environment=DIST_DIR=frontend/out
 ExecStart=/opt/manifoldgen-site/server/manifoldgen-server
 Restart=on-failure
 RestartSec=3
 User=www-data
 Group=www-data
 LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
