@@ -38,3 +38,13 @@ Override with `H3_VIDEO_PRICE_USD_PER_GPU_HOUR`.
 
 See `deploy/manifoldgen.service` and `deploy/nginx-manifoldgen.conf`.
 Set `DIST_DIR` to `frontend/out` after `NEXT_OUTPUT=export bun run build`.
+
+## Visualbench
+
+Desktop + mobile screenshots live in `visualbench/`.
+
+```bash
+cd frontend && bun run dev -- --port 3219
+# other terminal
+VISUALBENCH_BASE_URL=http://127.0.0.1:3219 node visualbench/capture.cjs
+```
