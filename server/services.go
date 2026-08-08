@@ -75,7 +75,7 @@ func initServices() {
 	// ManifoldGen inference server serves zimage, chronos2, tts, stt, caption, gemma4
 	inferenceURL := getEnv("INFERENCE_BACKEND_URL", "http://localhost:8100")
 	textGeneratorURL := getEnv("TG_BACKEND_URL", "http://localhost:9080")
-	nativeGatewayURL := getEnv("OMNISERVE_NATIVE_URL", textGeneratorURL)
+	nativeGatewayURL := getEnv("OMNISERVE_NATIVE_URL", "http://127.0.0.1:8791")
 
 	serviceBackends["zimage"] = getEnv("ZIMAGE_BACKEND_URL", nativeGatewayURL)
 	serviceBackends["chronos2"] = getEnv("CHRONOS_BACKEND_URL", nativeGatewayURL)
@@ -421,6 +421,14 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 	}
 	imageB64, _ := payload["image_base64"].(string)
 	if imageB64 == "" {
+		// OpenAI-compatible omniserve response: data[0].b64_json
+		if data, ok := payload["data"].([]interface{}); ok && len(data) > 0 {
+			if row, ok := data[0].(map[string]interface{}); ok {
+				imageB64, _ = row["b64_json"].(string)
+			}
+		}
+	}
+	if imageB64 == "" {
 		return result, nil
 	}
 	imageBytes, err := base64.StdEncoding.DecodeString(imageB64)
@@ -582,6 +590,10 @@ func proxyToBackend(req ServiceUsageRequest, backendURL string) ([]byte, error) 
 
 	switch req.Service {
 	case "zimage":
+		// Prefer OpenAI-compatible omniserve-native gateway when configured.
+		if isOmniserveNativeURL(backendURL) {
+			return proxyOmniserveZImage(req, backendURL)
+		}
 		// Fast path: use diffusionz C engine for direct GPU inference
 		if diffusionzAvailable {
 			width := req.Width
@@ -775,6 +787,70 @@ func proxyToBackend(req ServiceUsageRequest, backendURL string) ([]byte, error) 
 	}
 
 	return respBody, nil
+}
+
+func isOmniserveNativeURL(backendURL string) bool {
+	u := strings.ToLower(backendURL)
+	return strings.Contains(u, "8791") || strings.Contains(u, "omniserve")
+}
+
+func proxyOmniserveZImage(req ServiceUsageRequest, backendURL string) ([]byte, error) {
+	width := req.Width
+	if width <= 0 {
+		width = 1024
+	}
+	height := req.Height
+	if height <= 0 {
+		height = 1024
+	}
+	payload := map[string]interface{}{
+		"prompt": req.Prompt,
+		"size":   fmt.Sprintf("%dx%d", width, height),
+		"n":      1,
+	}
+	if req.Seed > 0 {
+		payload["seed"] = req.Seed
+	}
+	jsonBody, _ := json.Marshal(payload)
+	endpoint := strings.TrimRight(backendURL, "/") + "/v1/images/generations"
+	httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := backendClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("omniserve returned %d: %s", resp.StatusCode, truncateString(string(respBody), 400))
+	}
+
+	// Normalize to CuteDSL-style image_base64 so persistGeneratedZImage works.
+	var openai struct {
+		Data []struct {
+			B64JSON string `json:"b64_json"`
+		} `json:"data"`
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(respBody, &openai); err != nil || len(openai.Data) == 0 || openai.Data[0].B64JSON == "" {
+		return respBody, nil
+	}
+	normalized, _ := json.Marshal(map[string]interface{}{
+		"image_base64": openai.Data[0].B64JSON,
+		"width":        width,
+		"height":       height,
+		"format":       "webp",
+		"engine":       "omniserve-native",
+		"model":        openai.Model,
+		"prompt":       req.Prompt,
+	})
+	return normalized, nil
 }
 
 func getTTSText(req ServiceUsageRequest) string {

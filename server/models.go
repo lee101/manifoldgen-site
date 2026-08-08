@@ -70,6 +70,7 @@ type VideoJob struct {
 	ProviderJobID string          `json:"-"`
 	Service       string          `json:"service"`
 	Status        string          `json:"status"`
+	Prompt        string          `json:"prompt,omitempty"`
 	Result        json.RawMessage `json:"result,omitempty"`
 	Error         string          `json:"error,omitempty"`
 	ProviderCost  float64         `json:"provider_cost_usd,omitempty"`

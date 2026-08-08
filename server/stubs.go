@@ -3,32 +3,14 @@ package main
 import (
 	"fmt"
 	"strconv"
-	"sync"
 
 	"github.com/valyala/fasthttp"
 )
 
-// Stubs for manifoldgen-only surfaces (crypto, gallery SEO, gobed prompt search)
-// that manifoldgen does not ship. Keep the video/auth/stripe core compiling.
+// Stubs for manifoldgen-only surfaces (crypto, gallery SEO) that the video
+// studio does not ship. Gobed search lives in search.go.
 
-type promptSearchEngine struct {
-	mu sync.Mutex
-}
-
-func (p *promptSearchEngine) loadAndIndex() {}
-func (p *promptSearchEngine) IsReady() bool { return false }
-func (p *promptSearchEngine) Search(query string, topK int) ([]map[string]any, error) {
-	return nil, nil
-}
-func (p *promptSearchEngine) Stats() map[string]any {
-	return map[string]any{"ready": false, "indexed": 0}
-}
-func (p *promptSearchEngine) IndexIncremental(imageID, prompt string) {}
-
-var promptSearch = &promptSearchEngine{}
-
-func initCrypto()       {}
-func initPromptSearch() {}
+func initCrypto() {}
 
 func getCUTEPriceUSD() float64 {
 	// Manifoldgen bills in USD credits; keep a stable 1:1 conversion for
@@ -87,9 +69,6 @@ func handleSwapQuote(ctx *fasthttp.RequestCtx)       { jsonError(ctx, 501, "toke
 func handleSwapTransaction(ctx *fasthttp.RequestCtx) { jsonError(ctx, 501, "token swap disabled") }
 func handleSwapSendTransaction(ctx *fasthttp.RequestCtx) {
 	jsonError(ctx, 501, "token swap disabled")
-}
-func handleSemanticImageSearch(ctx *fasthttp.RequestCtx) {
-	jsonError(ctx, 501, "image search disabled")
 }
 func handlePromptAPI(ctx *fasthttp.RequestCtx, _ string) {
 	jsonError(ctx, 501, "prompt library disabled")

@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack --port 3006",
-    "build": "next build",
+    "build": "NEXT_OUTPUT=export next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "build:standalone": "next build"
   },
   "dependencies": {
     "lucide-react": "^0.553.0",

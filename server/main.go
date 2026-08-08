@@ -348,12 +348,17 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	case path == "/api/search/stats" && method == "GET":
 		handleSearchStats(ctx)
 
-	// Trigger a full search index rebuild (picks up images added directly to DB)
+	// Trigger a full search index rebuild (picks up images/videos added directly to DB)
 	case path == "/api/search/reindex" && method == "POST":
-		go promptSearch.loadAndIndex()
+		if promptSearch != nil {
+			go promptSearch.loadAndIndex()
+		}
+		if videoSearch != nil {
+			go videoSearch.loadAndIndex()
+		}
 		jsonResponse(ctx, 202, map[string]string{"status": "reindexing"})
 
-	// Semantic IMAGE search (gobed) — returns hydrated GeneratedImage rows
+	// Semantic IMAGE search (gobed) — returns prompt matches for gallery
 	case path == "/api/images/semantic" && method == "GET":
 		handleSemanticImageSearch(ctx)
 
@@ -1148,7 +1153,7 @@ func handleImageCount(ctx *fasthttp.RequestCtx) {
 	jsonResponse(ctx, 200, map[string]int{"count": count})
 }
 
-// handleSemanticSearch handles GET /api/search?q=query&top_k=20
+// handleSemanticSearch handles GET /api/search?q=query&top_k=20 (videos by prompt)
 func handleSemanticSearch(ctx *fasthttp.RequestCtx) {
 	query := string(ctx.QueryArgs().Peek("q"))
 	if query == "" {
@@ -1161,12 +1166,12 @@ func handleSemanticSearch(ctx *fasthttp.RequestCtx) {
 		topK = 20
 	}
 
-	if promptSearch == nil || !promptSearch.IsReady() {
-		jsonError(ctx, 503, "search engine not ready (still indexing)")
+	if videoSearch == nil || !videoSearch.IsReady() {
+		jsonError(ctx, 503, "video search engine not ready (still indexing)")
 		return
 	}
 
-	results, err := promptSearch.Search(query, topK)
+	results, err := videoSearch.Search(query, topK)
 	if err != nil {
 		jsonError(ctx, 500, "search failed")
 		return
@@ -1176,16 +1181,73 @@ func handleSemanticSearch(ctx *fasthttp.RequestCtx) {
 		"query":   query,
 		"results": results,
 		"count":   len(results),
+		"kind":    "videos",
 	})
 }
 
 // handleSearchStats handles GET /api/search/stats
 func handleSearchStats(ctx *fasthttp.RequestCtx) {
-	if promptSearch == nil {
-		jsonResponse(ctx, 200, map[string]interface{}{"ready": false})
+	out := map[string]interface{}{}
+	if videoSearch != nil {
+		out["videos"] = videoSearch.Stats()
+	}
+	if promptSearch != nil {
+		out["images"] = promptSearch.Stats()
+	}
+	jsonResponse(ctx, 200, out)
+}
+
+// handleSemanticImageSearch handles GET /api/images/semantic?q=…&top_k=…
+func handleSemanticImageSearch(ctx *fasthttp.RequestCtx) {
+	query := string(ctx.QueryArgs().Peek("q"))
+	if query == "" {
+		jsonError(ctx, 400, "q parameter required")
 		return
 	}
-	jsonResponse(ctx, 200, promptSearch.Stats())
+	topK, _ := strconv.Atoi(string(ctx.QueryArgs().Peek("top_k")))
+	if topK < 1 || topK > 200 {
+		topK = 24
+	}
+	if promptSearch == nil || !promptSearch.IsReady() {
+		jsonError(ctx, 503, "image search engine not ready")
+		return
+	}
+	results, err := promptSearch.Search(query, topK)
+	if err != nil {
+		jsonError(ctx, 500, "search failed")
+		return
+	}
+	ids := make([]string, 0, len(results))
+	sim := map[string]float32{}
+	for _, r := range results {
+		ids = append(ids, r.ImageID)
+		sim[r.ImageID] = r.Similarity
+	}
+	images, err := dbConn.GetImagesByIDs(ids, true)
+	if err != nil {
+		jsonError(ctx, 500, "hydrate failed")
+		return
+	}
+	rows := make([]map[string]interface{}, 0, len(images))
+	for _, img := range images {
+		rows = append(rows, map[string]interface{}{
+			"id":         img.ID,
+			"prompt":     img.Prompt,
+			"width":      img.Width,
+			"height":     img.Height,
+			"thumb_url":  "/images/" + img.ThumbPath,
+			"image_url":  "/images/" + img.FilePath,
+			"similarity": sim[img.ID],
+			"model":      img.Model,
+		})
+	}
+	setPublicGalleryCache(ctx)
+	jsonResponse(ctx, 200, map[string]interface{}{
+		"query":   query,
+		"results": rows,
+		"count":   len(rows),
+		"kind":    "images",
+	})
 }
 
 // serveImage serves generated images from /sdb-disk/manifoldgen-images

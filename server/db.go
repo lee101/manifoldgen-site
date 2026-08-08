@@ -127,8 +127,10 @@ func (db *DB) migrate() error {
 	ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS charged_usd DOUBLE PRECISION DEFAULT 0;
 	ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS credits_used DOUBLE PRECISION DEFAULT 0;
 	ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS settled BOOLEAN DEFAULT FALSE;
+	ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS prompt TEXT NOT NULL DEFAULT '';
 	CREATE INDEX IF NOT EXISTS idx_video_jobs_user ON video_jobs(user_id, created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_video_jobs_status ON video_jobs(status) WHERE status IN ('queued', 'processing');
+	CREATE INDEX IF NOT EXISTS idx_video_jobs_prompt ON video_jobs(prompt) WHERE prompt <> '';
 
 	CREATE TABLE IF NOT EXISTS crypto_checkout_intents (
 		id TEXT PRIMARY KEY,
@@ -479,7 +481,7 @@ func (db *DB) RotateAPIKey(userID, oldKey string) (*User, error) {
 func scanVideoJob(row interface{ Scan(...interface{}) error }, job *VideoJob) error {
 	var result []byte
 	if err := row.Scan(&job.ID, &job.UserID, &job.ProviderJobID, &job.Service, &job.Status, &result,
-		&job.Error, &job.ProviderCost, &job.ChargedUSD, &job.CreditsUsed, &job.Settled, &job.CreatedAt, &job.UpdatedAt); err != nil {
+		&job.Error, &job.ProviderCost, &job.ChargedUSD, &job.CreditsUsed, &job.Settled, &job.CreatedAt, &job.UpdatedAt, &job.Prompt); err != nil {
 		return err
 	}
 	if len(result) > 0 && string(result) != "null" {
@@ -488,22 +490,22 @@ func scanVideoJob(row interface{ Scan(...interface{}) error }, job *VideoJob) er
 	return nil
 }
 
-const videoJobSelectColumns = `id, user_id, provider_job_id, COALESCE(service, 'video_generate'), status, result_json, COALESCE(error, ''), COALESCE(provider_cost_usd, 0), COALESCE(charged_usd, 0), COALESCE(credits_used, 0), COALESCE(settled, FALSE), created_at, updated_at`
+const videoJobSelectColumns = `id, user_id, provider_job_id, COALESCE(service, 'video_generate'), status, result_json, COALESCE(error, ''), COALESCE(provider_cost_usd, 0), COALESCE(charged_usd, 0), COALESCE(credits_used, 0), COALESCE(settled, FALSE), created_at, updated_at, COALESCE(prompt, '')`
 
 // CreateVideoJob persists the provider handle before it is returned to a paid caller.
-func (db *DB) CreateVideoJob(userID, providerJobID string) (*VideoJob, error) {
-	return db.CreateVideoJobForService(userID, providerJobID, "video_generate")
+func (db *DB) CreateVideoJob(userID, providerJobID, prompt string) (*VideoJob, error) {
+	return db.CreateVideoJobForService(userID, providerJobID, "video_generate", prompt)
 }
 
-func (db *DB) CreateVideoJobForService(userID, providerJobID, service string) (*VideoJob, error) {
+func (db *DB) CreateVideoJobForService(userID, providerJobID, service, prompt string) (*VideoJob, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	jobID := "video_" + newUUID()
 	var job VideoJob
 	err := scanVideoJob(db.conn.QueryRow(
-		`INSERT INTO video_jobs (id, user_id, provider_job_id, service, status)
-		 VALUES ($1, $2, $3, $4, 'queued') RETURNING `+videoJobSelectColumns,
-		jobID, userID, providerJobID, service,
+		`INSERT INTO video_jobs (id, user_id, provider_job_id, service, status, prompt)
+		 VALUES ($1, $2, $3, $4, 'queued', $5) RETURNING `+videoJobSelectColumns,
+		jobID, userID, providerJobID, service, strings.TrimSpace(prompt),
 	), &job)
 	if err != nil {
 		return nil, fmt.Errorf("create video job: %w", err)
@@ -602,6 +604,52 @@ func (db *DB) UpdateVideoJob(jobID, status string, result []byte, jobErr string)
 		jobID, status, resultJSON, jobErr,
 	)
 	return err
+}
+
+// StreamCompletedVideoPrompts feeds completed video jobs that have a prompt into gobed.
+func (db *DB) StreamCompletedVideoPrompts(cb func(jobID, prompt, videoURL, service string) error) error {
+	rows, err := db.conn.Query(`
+		SELECT id, COALESCE(prompt, ''), COALESCE(service, ''), COALESCE(result_json::text, '')
+		FROM video_jobs
+		WHERE status = 'completed' AND COALESCE(prompt, '') <> ''
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, prompt, service, resultText string
+		if err := rows.Scan(&id, &prompt, &service, &resultText); err != nil {
+			return err
+		}
+		videoURL := extractVideoURLFromResultJSON(resultText)
+		if err := cb(id, prompt, videoURL, service); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func extractVideoURLFromResultJSON(raw string) string {
+	if raw == "" || raw == "null" {
+		return ""
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+	if u, ok := payload["video_url"].(string); ok && u != "" {
+		return u
+	}
+	if nested, ok := payload["result"].(map[string]interface{}); ok {
+		if u, ok := nested["video_url"].(string); ok {
+			return u
+		}
+	}
+	if output, ok := payload["output"].(string); ok {
+		return output
+	}
+	return ""
 }
 
 // GetUserByID returns a user by ID.

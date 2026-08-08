@@ -289,7 +289,7 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		jsonError(ctx, http.StatusBadGateway, "app.nz did not return a prediction")
 		return
 	}
-	job, err := dbConn.CreateVideoJobForService(user.ID, envelope.Prediction.ID, "h3_video")
+	job, err := dbConn.CreateVideoJobForService(user.ID, envelope.Prediction.ID, "h3_video", req.Prompt)
 	if err != nil {
 		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 video job")
 		return
@@ -313,7 +313,7 @@ func prepareGeneratedVideoResult(req ServiceUsageRequest, user *User, result []b
 	if err := json.Unmarshal(result, &queued); err != nil || queued.ID == "" || queued.VideoURL != "" || !isPendingVideoStatus(queued.Status) {
 		return result, nil
 	}
-	job, err := dbConn.CreateVideoJob(user.ID, queued.ID)
+	job, err := dbConn.CreateVideoJob(user.ID, queued.ID, req.Prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -333,6 +333,13 @@ func launchVideoJob(jobID string) {
 		defer activeVideoJobs.Delete(jobID)
 		processVideoJob(jobID)
 	}()
+}
+
+func indexCompletedVideo(job *VideoJob, result []byte) {
+	if videoSearch == nil || job == nil || strings.TrimSpace(job.Prompt) == "" {
+		return
+	}
+	videoSearch.IndexIncremental(job.ID, job.Prompt, extractVideoURLFromResultJSON(string(result)), job.Service)
 }
 
 func processVideoJob(jobID string) {
@@ -383,6 +390,8 @@ func processVideoJob(jobID string) {
 		optimized := optimizeGeneratedVideo(ServiceUsageRequest{Service: "video_generate"}, user, polled)
 		if err := dbConn.UpdateVideoJob(jobID, "completed", optimized, ""); err != nil {
 			log.Printf("persist completed video job %s: %v", jobID, err)
+		} else {
+			indexCompletedVideo(job, optimized)
 		}
 		return
 	}
@@ -458,6 +467,7 @@ func processH3VideoJob(job *VideoJob) {
 				_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "settlement unavailable; retry status")
 				return
 			}
+			indexCompletedVideo(job, result)
 			maybeTriggerAutoTopup(job.UserID)
 			return
 		case "failed", "cancelled", "canceled":

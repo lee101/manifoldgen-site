@@ -8,6 +8,7 @@ import {
   Loader2,
   LogIn,
   LogOut,
+  Search,
   Settings2,
   Sparkles,
   X,
@@ -32,6 +33,23 @@ interface VideoJob {
   result_url?: string;
   error?: string;
   cost_usd?: number;
+}
+
+interface GalleryImage {
+  id: string;
+  prompt: string;
+  thumb_url?: string;
+  image_url?: string;
+  file_path?: string;
+  thumb_path?: string;
+  similarity?: number;
+}
+
+interface VideoHit {
+  job_id: string;
+  prompt: string;
+  video_url?: string;
+  similarity?: number;
 }
 
 const ASPECTS: Aspect[] = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'];
@@ -59,7 +77,7 @@ export default function HomePage() {
     'Slow aerial drift over a neon harbor at night, wet asphalt reflections, cinematic anamorphic bokeh',
   );
   const [aspect, setAspect] = useState<Aspect>('16:9');
-  const [size, setSize] = useState<Size>('balanced');
+  const [size, setSize] = useState<Size>('native');
   const [duration, setDuration] = useState(5);
   const [steps, setSteps] = useState(20);
   const [format, setFormat] = useState<Format>('webm-av1');
@@ -68,6 +86,10 @@ export default function HomePage() {
   const [error, setError] = useState('');
   const [job, setJob] = useState<VideoJob | null>(null);
   const [h3Rate, setH3Rate] = useState(2.688);
+  const [gallery, setGallery] = useState<GalleryImage[]>([]);
+  const [searchQ, setSearchQ] = useState('');
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [videoHits, setVideoHits] = useState<VideoHit[]>([]);
 
   const creditsLabel = useMemo(() => {
     if (!user) return 'Sign in';
@@ -89,6 +111,27 @@ export default function HomePage() {
     localStorage.setItem('mg_api_key', data.api_key || key);
   }, []);
 
+  const loadGallery = useCallback(async (q = '') => {
+    const url = q.trim()
+      ? `${API}/images/semantic?q=${encodeURIComponent(q.trim())}&top_k=24`
+      : `${API}/images?skip_total=true&varied=true&per_page=24&allow_nsfw=true`;
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    const rows: GalleryImage[] = (data.results || data.images || []).map(
+      (img: GalleryImage & { file_path?: string; thumb_path?: string }) => ({
+        ...img,
+        thumb_url:
+          img.thumb_url ||
+          (img.thumb_path ? `/images/${img.thumb_path}` : undefined) ||
+          (img.file_path ? `/images/${img.file_path}` : undefined),
+        image_url:
+          img.image_url || (img.file_path ? `/images/${img.file_path}` : undefined),
+      }),
+    );
+    setGallery(rows);
+  }, []);
+
   useEffect(() => {
     const key = localStorage.getItem('mg_api_key');
     if (key) {
@@ -104,7 +147,30 @@ export default function HomePage() {
         if (row?.price_usd) setH3Rate(row.price_usd);
       })
       .catch(() => undefined);
-  }, [restoreSession]);
+    loadGallery().catch(() => undefined);
+  }, [restoreSession, loadGallery]);
+
+  async function runSearch(e?: React.FormEvent) {
+    e?.preventDefault();
+    const q = searchQ.trim();
+    if (!q) {
+      setVideoHits([]);
+      await loadGallery();
+      return;
+    }
+    setSearchBusy(true);
+    try {
+      const [vids, _] = await Promise.all([
+        fetch(`${API}/search?q=${encodeURIComponent(q)}&top_k=12`).then(async (r) =>
+          r.ok ? r.json() : { results: [] },
+        ),
+        loadGallery(q),
+      ]);
+      setVideoHits(vids.results || []);
+    } finally {
+      setSearchBusy(false);
+    }
+  }
 
   async function signIn(e: React.FormEvent) {
     e.preventDefault();
@@ -331,6 +397,105 @@ export default function HomePage() {
             Job {job.id.slice(0, 8)} · {job.status}
             {job.cost_usd != null ? ` · $${job.cost_usd.toFixed(4)}` : ''}
           </p>
+        )}
+
+        <form onSubmit={runSearch} className="mt-6 flex gap-2">
+          <div className="glass flex flex-1 items-center gap-2 rounded-full px-4 py-2">
+            <Search size={16} className="text-[var(--color-mute)]" />
+            <input
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              placeholder="Semantic search videos + gallery by prompt…"
+              className="w-full bg-transparent text-sm outline-none placeholder:text-white/35"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={searchBusy}
+            className="glass rounded-full px-4 py-2 text-sm disabled:opacity-50"
+          >
+            {searchBusy ? <Loader2 className="animate-spin" size={16} /> : 'Search'}
+          </button>
+        </form>
+
+        {videoHits.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <h2 className="font-display text-sm font-700 tracking-wide text-white/70">
+              Videos
+            </h2>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {videoHits.map((hit) => (
+                <button
+                  key={hit.job_id}
+                  type="button"
+                  onClick={() => {
+                    setPrompt(hit.prompt);
+                    if (hit.video_url) {
+                      setJob({
+                        id: hit.job_id,
+                        status: 'completed',
+                        result_url: hit.video_url,
+                      });
+                    }
+                  }}
+                  className="glass rounded-2xl p-3 text-left text-sm hover:bg-white/5"
+                >
+                  <div className="line-clamp-2 text-white/85">{hit.prompt}</div>
+                  {hit.similarity != null && (
+                    <div className="mt-1 text-xs text-[var(--color-mute)]">
+                      {(hit.similarity * 100).toFixed(0)}% match
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="relative z-10 mx-auto w-full max-w-6xl px-4 pb-16 md:px-6">
+        <div className="mb-4 flex items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-2xl font-700 tracking-tight">Shared gallery</h2>
+            <p className="text-sm text-[var(--color-mute)]">
+              Z-Image via omniserve-native · click to remix as a video prompt
+            </p>
+          </div>
+        </div>
+        {gallery.length === 0 ? (
+          <p className="text-sm text-[var(--color-mute)]">Gallery warming up…</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+            {gallery.map((img) => {
+              const src = img.thumb_url || img.image_url;
+              return (
+                <button
+                  key={img.id}
+                  type="button"
+                  onClick={() => setPrompt(img.prompt)}
+                  className="group relative aspect-square overflow-hidden rounded-2xl bg-white/5"
+                  title={img.prompt}
+                >
+                  {src ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={src}
+                      alt={img.prompt}
+                      className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center p-3 text-xs text-white/50">
+                      {img.prompt.slice(0, 80)}
+                    </div>
+                  )}
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-left text-[11px] leading-snug text-white/85 opacity-0 transition group-hover:opacity-100">
+                    {img.prompt.slice(0, 110)}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         )}
       </section>
 
