@@ -545,7 +545,7 @@ export default function AccountPage() {
             </button>
             <h2 className="mt-6 text-lg font-semibold">Checkout</h2>
             <p className="mt-1 text-sm text-[var(--color-mute)]">
-              Stripe embedded checkout. Subscriptions unlock unlimited image gens.
+              Monthly includes unlimited images + $25 H3 video credits; annual is 12× ($300).
             </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <button
@@ -555,7 +555,7 @@ export default function AccountPage() {
                 onClick={() => buyCredits('monthly')}
                 className="rounded-full border border-white/15 px-4 py-2 text-sm"
               >
-                Monthly plan
+                Monthly · $25 video + ∞ images
               </button>
               <button
                 type="button"
@@ -564,7 +564,7 @@ export default function AccountPage() {
                 onClick={() => buyCredits('annual')}
                 className="rounded-full border border-white/15 px-4 py-2 text-sm"
               >
-                Annual plan
+                Annual · $300 video + ∞ images
               </button>
             </div>
 

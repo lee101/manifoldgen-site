@@ -338,7 +338,7 @@ export default function HomePage() {
   }
 
   const [logoOk, setLogoOk] = useState(true);
-  const logoSrc = '/brand/logo-mark.webp';
+  const logoSrc = '/images/logo-nobg.webp';
 
   const resultUrl = job?.result_url;
   const heroImage = gallery[heroIndex]?.image_url || gallery[heroIndex]?.thumb_url;
@@ -381,9 +381,9 @@ export default function HomePage() {
               <img
                 src={logoSrc}
                 alt=""
-                width={36}
+                width={54}
                 height={36}
-                className="h-9 w-9 object-contain drop-shadow"
+                className="h-9 w-auto object-contain drop-shadow"
                 onError={() => setLogoOk(false)}
               />
             ) : (
@@ -698,7 +698,7 @@ export default function HomePage() {
               <div className="absolute bottom-4 left-5 right-5">
                 <div className="flex items-center gap-3">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/brand/logo-mark.webp" alt="" className="h-10 w-10 object-contain" />
+                  <img src="/images/logo-nobg.webp" alt="" className="h-10 w-auto object-contain" />
                   <div className="font-display text-3xl font-800 tracking-tight">ManifoldGen</div>
                 </div>
                 <p className="mt-1 text-sm text-white/70">

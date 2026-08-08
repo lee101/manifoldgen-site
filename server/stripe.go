@@ -617,10 +617,12 @@ func grantSubscriptionAPICredits(session stripeCheckoutSession, userID, plan str
 }
 
 func subscriptionCreditGrantUSD(plan string) float64 {
+	// Base (monthly) Creator plan: $25 rollover credits for H3 video + other
+	// metered services. Images stay unlimited via unlimited_api. Annual is 12×.
 	if plan == "annual" {
-		return 120
+		return 300
 	}
-	return 10
+	return 25
 }
 
 func creditSubscriptionAllowance(userID, customerID, grantID, paymentIntentID string, usdAmount float64) {

@@ -8,6 +8,18 @@ import (
 	"testing"
 )
 
+func TestSubscriptionCreditGrant(t *testing.T) {
+	if got := subscriptionCreditGrantUSD("monthly"); got != 25 {
+		t.Fatalf("monthly grant = %v, want 25", got)
+	}
+	if got := subscriptionCreditGrantUSD("annual"); got != 300 {
+		t.Fatalf("annual grant = %v, want 300", got)
+	}
+	if got := subscriptionCreditGrantUSD(""); got != 25 {
+		t.Fatalf("default grant = %v, want 25", got)
+	}
+}
+
 func TestCreditPriceIsOneCent(t *testing.T) {
 	os.Unsetenv("CREDIT_PRICE_USD")
 	if got := getCUTEPriceUSD(); got != 0.01 {
