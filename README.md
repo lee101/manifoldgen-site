@@ -34,9 +34,33 @@ H3 settles from app.nz `costMicros` with `h3DownstreamMarkupPercent = 20`
 
 Override with `H3_VIDEO_PRICE_USD_PER_GPU_HOUR`.
 
+## Email drip + SES
+
+Onboarding drip lives in `emails/` (same pattern as Netwrck). From address defaults
+to `lee.penkman@netwrck.com` via shared AWS SES SMTP env:
+
+```bash
+AWS_REGION=us-east-1
+AWS_SMTP_USERNAME=...
+AWS_SMTP_PASSWORD=...
+SES_FROM_EMAIL=lee.penkman@netwrck.com
+SES_FROM_NAME=ManifoldGen
+```
+
+Password reset: `POST /api/auth/forgot-password` → email link → `/account?reset_token=...`
+→ `POST /api/auth/reset-password`. Set `EMAIL_DEBUG_RESET_TOKEN=true` in DEV to return
+the token in the API response for local testing.
+
+## Gallery seed
+
+```bash
+python scripts/backfill_seed.py --images 24 --videos 0
+```
+
 ## Deploy
 
 See `deploy/manifoldgen.service` and `deploy/nginx-manifoldgen.conf`.
+`./deploy.sh` installs the server binary, syncs `frontend/out`, and rsyncs `emails/`.
 Set `DIST_DIR` to `frontend/out` after `NEXT_OUTPUT=export bun run build`.
 
 ## Visualbench

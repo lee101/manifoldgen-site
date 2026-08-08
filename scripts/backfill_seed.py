@@ -54,6 +54,17 @@ PROMPTS = [
     "Paper lantern night market, rain-slick hair, open coat, cinematic depth, Wong Kar-wai palette",
     "Biolab orchid hybrid portrait, translucent petals fused with skin, clinical beauty, glossy catalog",
     "Holographic kimono runway, rain of code, sensual stride, Tokyo after-hours, speculative couture",
+    "Copper desert observatory at twilight, silk cape in wind, radio telescopes, Magnum color negative",
+    "Foggy Scottish castle corridor, candle sconces, velvet gown, spectral portrait, medium format film",
+    "Chrome android ballerina mid-arabesque, museum atrium, hard speculars, fashion still life",
+    "Rainforest canopy walkway, bioluminescent vines, explorer silhouette, volumetric god rays",
+    "Art deco penthouse terrace, champagne mist, city grid below, Contax night flash",
+    "Frozen fjord kayak wake, aurora ribbons, reflective dry suit, National Geographic stillness",
+    "Calligraphy ink explosion forming a crane, washi texture, erotic brush economy, gallery white",
+    "Subway car empty at 3am, neon ads strobing, trench coat, Wong Kar-wai push-in still",
+    "Marble quarry noon, dust haze, sculptor at rest, linen shirt, large-format landscape",
+    "Zero-g greenhouse dome, floating citrus, astronaut gardener, soft HDR editorial",
+    "Black sand beach ritual, gold leaf mask, tide pools, mythic fashion campaign",
 ]
 
 VIDEO_PROMPTS = [

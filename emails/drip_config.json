@@ -1,0 +1,67 @@
+{
+  "campaign": "manifoldgen_new_user_onboarding",
+  "description": "8-email drip: H3 video, prompt craft, gallery, credits, API, LoRA, power-user tips",
+  "from_email": "lee.penkman@netwrck.com",
+  "from_name": "ManifoldGen",
+  "base_url": "https://manifoldgen.com",
+  "cdn_url": "https://manifoldgenstatic.manifoldgen.com",
+  "logo_url": "https://manifoldgenstatic.manifoldgen.com/static/brand/logo-mark.webp",
+  "emails": [
+    {
+      "id": 1,
+      "delay_days": 0,
+      "subject": "Welcome to ManifoldGen \u2014 your cinematic AI studio",
+      "template": "01-welcome.html",
+      "description": "Welcome + studio overview"
+    },
+    {
+      "id": 2,
+      "delay_days": 1,
+      "subject": "Ship your first H3 video (aspect, size, audio)",
+      "template": "02-h3-video.html",
+      "description": "H3 controls"
+    },
+    {
+      "id": 3,
+      "delay_days": 3,
+      "subject": "Prompt craft: light, lens, motion, mood",
+      "template": "03-prompt-craft.html",
+      "description": "Prompt skeleton"
+    },
+    {
+      "id": 4,
+      "delay_days": 5,
+      "subject": "Semantic gallery \u2014 find the look, then remix",
+      "template": "04-gallery-search.html",
+      "description": "GobED search"
+    },
+    {
+      "id": 5,
+      "delay_days": 8,
+      "subject": "Credits & plans: $0.01 units, images, H3 metering",
+      "template": "05-images-credits.html",
+      "description": "Pricing"
+    },
+    {
+      "id": 6,
+      "delay_days": 12,
+      "subject": "Your ManifoldGen API key \u2014 automate stills & video",
+      "template": "06-api-access.html",
+      "description": "API"
+    },
+    {
+      "id": 7,
+      "delay_days": 18,
+      "subject": "Train a LoRA on your look",
+      "template": "07-lora-training.html",
+      "description": "LoRA"
+    },
+    {
+      "id": 8,
+      "delay_days": 25,
+      "subject": "Power-user loop: search \u2192 remix \u2192 Native \u2192 API",
+      "template": "08-power-user.html",
+      "description": "Workflow"
+    }
+  ]
+}

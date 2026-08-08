@@ -56,7 +56,7 @@ function loadStripeJS() {
   return stripeJsPromise;
 }
 
-type AuthMode = 'signup' | 'signin';
+type AuthMode = 'signup' | 'signin' | 'forgot' | 'reset';
 
 export default function AccountPage() {
   const [apiKey, setApiKey] = useState('');
@@ -64,6 +64,7 @@ export default function AccountPage() {
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
   const [authMode, setAuthMode] = useState<AuthMode>('signup');
+  const [resetToken, setResetToken] = useState('');
   const [creditsUsd, setCreditsUsd] = useState(0);
   const [credits, setCredits] = useState(0);
   const [creditPrice, setCreditPrice] = useState(0.01);
@@ -87,6 +88,16 @@ export default function AccountPage() {
     setCreditsUsd(next.credits_usd ?? next.credits * price);
     setCredits(next.credits);
     return next;
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('reset_token') || '';
+    if (token) {
+      setResetToken(token);
+      setAuthMode('reset');
+      setMessage('Choose a new password for your account.');
+    }
   }, []);
 
   useEffect(() => {
@@ -147,6 +158,55 @@ export default function AccountPage() {
     setError('');
     setMessage('');
     try {
+      if (authMode === 'forgot') {
+        if (!email.includes('@')) throw new Error('valid email required');
+        const res = await fetch(`${API}/auth/forgot-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Reset request failed');
+        setMessage('If that email exists, a reset link is on the way.');
+        if (data.reset_token) {
+          setResetToken(data.reset_token);
+          setAuthMode('reset');
+          setMessage('Dev reset token ready — set a new password.');
+        }
+        return;
+      }
+
+      if (authMode === 'reset') {
+        if (password !== password2) throw new Error('Passwords do not match');
+        if (password.length < 8) throw new Error('Password must be at least 8 characters');
+        if (!resetToken) throw new Error('Reset token missing');
+        const res = await fetch(`${API}/auth/reset-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: resetToken, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Reset failed');
+        const next = userFromAuthResponse(data);
+        if (!next) throw new Error('No API key returned');
+        saveUser(next);
+        setApiKey(next.api_key);
+        setEmail(next.email || email);
+        const price = next.credit_price_usd || 0.01;
+        setCreditPrice(price);
+        setCreditsUsd(next.credits_usd ?? 0);
+        setCredits(next.credits);
+        setPassword('');
+        setPassword2('');
+        setResetToken('');
+        setAuthMode('signin');
+        setMessage('Password updated. You are signed in.');
+        const url = new URL(window.location.href);
+        url.searchParams.delete('reset_token');
+        window.history.replaceState({}, '', url.pathname);
+        return;
+      }
+
       if (authMode === 'signup' && password !== password2) {
         throw new Error('Passwords do not match');
       }
@@ -252,61 +312,74 @@ export default function AccountPage() {
 
         {!apiKey ? (
           <form onSubmit={submitAuth} className="glass mt-6 rounded-3xl p-5" data-testid="account-auth-form">
-            <div className="mb-4 flex rounded-full bg-white/5 p-1 text-sm">
-              <button
-                type="button"
-                data-testid="account-auth-signup-tab"
-                onClick={() => {
-                  setAuthMode('signup');
-                  setError('');
-                }}
-                className={`flex-1 rounded-full py-2 font-medium transition ${
-                  authMode === 'signup' ? 'bg-white/15 text-white' : 'text-white/50'
-                }`}
-              >
-                Sign up
-              </button>
-              <button
-                type="button"
-                data-testid="account-auth-signin-tab"
-                onClick={() => {
-                  setAuthMode('signin');
-                  setError('');
-                }}
-                className={`flex-1 rounded-full py-2 font-medium transition ${
-                  authMode === 'signin' ? 'bg-white/15 text-white' : 'text-white/50'
-                }`}
-              >
-                Sign in
-              </button>
-            </div>
-            <label className="mb-3 block text-sm text-white/70">
-              Email
-              <input
-                required
-                data-testid="account-email"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1.5 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-[var(--color-accent)]"
-                placeholder="you@studio.com"
-              />
-            </label>
-            <label className="mb-3 block text-sm text-white/70">
-              Password
-              <input
-                required
-                data-testid="account-password"
-                type="password"
-                autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1.5 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-[var(--color-accent)]"
-                placeholder="At least 8 characters"
-              />
-            </label>
-            {authMode === 'signup' && (
+            {authMode !== 'forgot' && authMode !== 'reset' && (
+              <div className="mb-4 flex rounded-full bg-white/5 p-1 text-sm">
+                <button
+                  type="button"
+                  data-testid="account-auth-signup-tab"
+                  onClick={() => {
+                    setAuthMode('signup');
+                    setError('');
+                    setMessage('');
+                  }}
+                  className={`flex-1 rounded-full py-2 font-medium transition ${
+                    authMode === 'signup' ? 'bg-white/15 text-white' : 'text-white/50'
+                  }`}
+                >
+                  Sign up
+                </button>
+                <button
+                  type="button"
+                  data-testid="account-auth-signin-tab"
+                  onClick={() => {
+                    setAuthMode('signin');
+                    setError('');
+                    setMessage('');
+                  }}
+                  className={`flex-1 rounded-full py-2 font-medium transition ${
+                    authMode === 'signin' ? 'bg-white/15 text-white' : 'text-white/50'
+                  }`}
+                >
+                  Sign in
+                </button>
+              </div>
+            )}
+            {(authMode === 'forgot' || authMode === 'reset') && (
+              <div className="mb-4 text-sm font-medium text-white/80" data-testid="account-auth-mode-label">
+                {authMode === 'forgot' ? 'Forgot password' : 'Set a new password'}
+              </div>
+            )}
+            {authMode !== 'reset' && (
+              <label className="mb-3 block text-sm text-white/70">
+                Email
+                <input
+                  required
+                  data-testid="account-email"
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="mt-1.5 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-[var(--color-accent)]"
+                  placeholder="you@studio.com"
+                />
+              </label>
+            )}
+            {authMode !== 'forgot' && (
+              <label className="mb-3 block text-sm text-white/70">
+                {authMode === 'reset' ? 'New password' : 'Password'}
+                <input
+                  required
+                  data-testid="account-password"
+                  type="password"
+                  autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="mt-1.5 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-[var(--color-accent)]"
+                  placeholder="At least 8 characters"
+                />
+              </label>
+            )}
+            {(authMode === 'signup' || authMode === 'reset') && (
               <label className="mb-3 block text-sm text-white/70">
                 Confirm password
                 <input
@@ -320,7 +393,16 @@ export default function AccountPage() {
                 />
               </label>
             )}
-            {error && <p className="mb-3 text-sm text-red-300">{error}</p>}
+            {error && (
+              <p className="mb-3 text-sm text-red-300" data-testid="account-auth-error">
+                {error}
+              </p>
+            )}
+            {message && !apiKey && (
+              <p className="mb-3 text-sm text-emerald-300" data-testid="account-auth-message">
+                {message}
+              </p>
+            )}
             <button
               type="submit"
               disabled={busy}
@@ -334,8 +416,45 @@ export default function AccountPage() {
               ) : (
                 <KeyRound size={16} />
               )}
-              {authMode === 'signup' ? 'Create account' : 'Sign in'}
+              {authMode === 'signup'
+                ? 'Create account'
+                : authMode === 'forgot'
+                  ? 'Email reset link'
+                  : authMode === 'reset'
+                    ? 'Update password'
+                    : 'Sign in'}
             </button>
+            {authMode === 'signin' && (
+              <button
+                type="button"
+                data-testid="account-forgot-password"
+                className="mt-3 w-full text-center text-sm text-[var(--color-accent-2)]"
+                onClick={() => {
+                  setAuthMode('forgot');
+                  setError('');
+                  setMessage('');
+                  setPassword('');
+                }}
+              >
+                Forgot password?
+              </button>
+            )}
+            {(authMode === 'forgot' || authMode === 'reset') && (
+              <button
+                type="button"
+                data-testid="account-back-to-signin"
+                className="mt-3 w-full text-center text-sm text-white/60"
+                onClick={() => {
+                  setAuthMode('signin');
+                  setError('');
+                  setMessage('');
+                  setPassword('');
+                  setPassword2('');
+                }}
+              >
+                Back to sign in
+              </button>
+            )}
           </form>
         ) : (
           <div className="glass mt-6 rounded-3xl p-5">

@@ -148,9 +148,13 @@ cd ..
 
 if [ -d "$DEPLOY_ROOT" ]; then
   echo "  Installing to $DEPLOY_ROOT ..."
-  mkdir -p "$DEPLOY_ROOT/frontend/out" "$DEPLOY_ROOT/server"
+  mkdir -p "$DEPLOY_ROOT/frontend/out" "$DEPLOY_ROOT/server" "$DEPLOY_ROOT/emails"
   rsync -a --delete "$OUT_DIR/" "$DEPLOY_ROOT/frontend/out/"
+  rsync -a --delete "$ROOT/emails/" "$DEPLOY_ROOT/emails/"
   find "$DEPLOY_ROOT/frontend/out" \( -name '*.fasthttp.gz' -o -name '*.fasthttp.br' \) -delete || true
+  if [ -f "$ROOT/.env" ]; then
+    install -m 600 "$ROOT/.env" "$DEPLOY_ROOT/.env"
+  fi
   if [ -w "$DEPLOY_ROOT/server" ]; then
     # Replace binary only when service is stopped (Text file busy otherwise).
     systemctl stop manifoldgen.service 2>/dev/null || true

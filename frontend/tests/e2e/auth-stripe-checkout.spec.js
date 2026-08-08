@@ -96,6 +96,46 @@ async function installAccountAPIMocks(page) {
     });
   });
 
+  await page.route('**/api/auth/forgot-password', async (route) => {
+    const req = route.request().postDataJSON() || {};
+    if (!req.email || !String(req.email).includes('@')) {
+      await route.fulfill({ status: 400, json: { error: 'valid email required' } });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      json: { success: true, reset_token: 'test_reset_token_account_flow' },
+    });
+  });
+
+  await page.route('**/api/auth/reset-password', async (route) => {
+    const req = route.request().postDataJSON() || {};
+    if (!req.token || !req.password || String(req.password).length < 8) {
+      await route.fulfill({ status: 400, json: { error: 'invalid or expired reset token' } });
+      return;
+    }
+    password = req.password;
+    if (!user) {
+      user = {
+        id: 'user_account_flow',
+        wallet_address: 'email:accountflow000000000000000000000000000000',
+        email: FIXED_EMAIL,
+        api_key: 'mg_account_flow_test_key',
+        credits: 0,
+      };
+    }
+    await route.fulfill({
+      status: 200,
+      json: {
+        success: true,
+        user,
+        api_key: user.api_key,
+        cute_price_usd: 0.01,
+        credits_usd: 0,
+      },
+    });
+  });
+
   // Old path must not be used by the app (404 in prod without alias).
   await page.route('**/api/session', async (route) => {
     await route.fulfill({ status: 404, json: { error: 'use /api/auth/session' } });
@@ -226,6 +266,32 @@ test('account page soft-refreshes credits after reload without signing out', asy
   await page.reload();
   await sessionReq;
   await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
+});
+
+test('account forgot + reset password flow signs user in', async ({ page }) => {
+  await installAccountAPIMocks(page);
+
+  await page.goto('/account');
+  await page.getByTestId('account-auth-signin-tab').click();
+  await page.getByTestId('account-forgot-password').click();
+  await expect(page.getByTestId('account-auth-mode-label')).toHaveText('Forgot password');
+  await page.getByTestId('account-email').fill(FIXED_EMAIL);
+  await page.getByTestId('account-auth-submit').click();
+  await expect(page.getByTestId('account-auth-mode-label')).toHaveText('Set a new password');
+  await page.getByTestId('account-password').fill('new-manifold-456');
+  await page.getByTestId('account-password-confirm').fill('new-manifold-456');
+  await page.getByTestId('account-auth-submit').click();
+  await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
+});
+
+test('account reset_token query opens reset form', async ({ page }) => {
+  await installAccountAPIMocks(page);
+  await page.goto('/account?reset_token=from_email_link_token');
+  await expect(page.getByTestId('account-auth-mode-label')).toHaveText('Set a new password');
+  await page.getByTestId('account-password').fill('reset-from-link-99');
+  await page.getByTestId('account-password-confirm').fill('reset-from-link-99');
+  await page.getByTestId('account-auth-submit').click();
+  await expect(page.getByTestId('account-signed-in-email')).toBeVisible();
 });
 
 test('account topup presets default to $50 and show API copy', async ({ page }) => {

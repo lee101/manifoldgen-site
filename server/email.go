@@ -117,7 +117,7 @@ func sendEmail(toEmail, subject, htmlBody string) error {
 	smtpHost := fmt.Sprintf("email-smtp.%s.amazonaws.com", region)
 	smtpAddr := smtpHost + ":587"
 
-	fromEmail := getEnv("SES_FROM_EMAIL", "lee@manifoldgen.com")
+	fromEmail := getEnv("SES_FROM_EMAIL", "lee.penkman@netwrck.com")
 	fromName := getEnv("SES_FROM_NAME", "ManifoldGen")
 	from := fmt.Sprintf("%s <%s>", fromName, fromEmail)
 
@@ -174,7 +174,9 @@ func sendEmail(toEmail, subject, htmlBody string) error {
 }
 
 func sendPasswordResetEmail(toEmail, resetURL string) error {
-	html := fmt.Sprintf(`<!doctype html>
+	htmlBody, err := loadEmailTemplate("password-reset.html")
+	if err != nil {
+		htmlBody = fmt.Sprintf(`<!doctype html>
 <html>
 <body style="font-family: Arial, sans-serif; color: #0f172a; line-height: 1.5;">
   <h1 style="font-size: 22px;">Reset your ManifoldGen password</h1>
@@ -183,7 +185,14 @@ func sendPasswordResetEmail(toEmail, resetURL string) error {
   <p style="font-size:12px;color:#64748b;">If you did not request this, you can ignore this email.</p>
 </body>
 </html>`, resetURL)
-	return sendEmail(toEmail, "Reset your ManifoldGen password", html)
+	} else {
+		htmlBody = strings.NewReplacer(
+			"{{.Email}}", toEmail,
+			"{{.ResetURL}}", resetURL,
+			"{{.UnsubscribeURL}}", unsubscribeURL(toEmail),
+		).Replace(htmlBody)
+	}
+	return sendEmail(toEmail, "Reset your ManifoldGen password", htmlBody)
 }
 
 // loadEmailTemplate reads an HTML template from the emails/ directory
