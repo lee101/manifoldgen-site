@@ -3,6 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, CreditCard, KeyRound, Loader2, LogOut, UserPlus } from 'lucide-react';
+import {
+  clearUser,
+  loadStoredUser,
+  refreshUser,
+  saveUser,
+  userFromAuthResponse,
+} from '../../lib/auth';
 
 const API = '/api';
 
@@ -71,27 +78,27 @@ export default function AccountPage() {
   const embeddedCheckoutRef = useRef<StripeEmbeddedCheckout | null>(null);
 
   const refreshSession = useCallback(async (key: string) => {
-    const res = await fetch(`${API}/session`, { headers: { Authorization: `Bearer ${key}` } });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Session expired');
-    localStorage.setItem('mg_api_key', data.api_key || key);
-    setApiKey(data.api_key || key);
-    setEmail(data.user?.email || data.email || '');
-    const price = data.cute_price_usd || data.credit_price_usd || 0.01;
+    const next = await refreshUser(key);
+    if (!next) return null;
+    setApiKey(next.api_key);
+    setEmail(next.email || '');
+    const price = next.credit_price_usd || 0.01;
     setCreditPrice(price);
-    const usd = data.credits_usd ?? (data.user?.credits ?? 0) * price;
-    setCreditsUsd(usd);
-    setCredits(data.user?.credits ?? (price > 0 ? usd / price : 0));
-    return data;
+    setCreditsUsd(next.credits_usd ?? next.credits * price);
+    setCredits(next.credits);
+    return next;
   }, []);
 
   useEffect(() => {
-    const key = localStorage.getItem('mg_api_key') || '';
-    if (!key) return;
-    refreshSession(key).catch(() => {
-      localStorage.removeItem('mg_api_key');
-      setApiKey('');
-    });
+    const stored = loadStoredUser();
+    if (!stored) return;
+    setApiKey(stored.api_key);
+    setEmail(stored.email || '');
+    const price = stored.credit_price_usd || 0.01;
+    setCreditPrice(price);
+    setCreditsUsd(stored.credits_usd ?? stored.credits * price);
+    setCredits(stored.credits);
+    void refreshSession(stored.api_key);
   }, [refreshSession]);
 
   useEffect(() => {
@@ -153,12 +160,15 @@ export default function AccountPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Auth failed');
-      localStorage.setItem('mg_api_key', data.api_key);
-      setApiKey(data.api_key);
-      const price = data.cute_price_usd || 0.01;
+      const next = userFromAuthResponse(data);
+      if (!next) throw new Error('No API key returned');
+      saveUser(next);
+      setApiKey(next.api_key);
+      setEmail(next.email || email);
+      const price = next.credit_price_usd || 0.01;
       setCreditPrice(price);
-      setCreditsUsd(data.credits_usd ?? 0);
-      setCredits(data.user?.credits ?? 0);
+      setCreditsUsd(next.credits_usd ?? 0);
+      setCredits(next.credits);
       setMessage(data.created ? 'Account created.' : 'Signed in.');
       setPassword('');
       setPassword2('');
@@ -170,10 +180,11 @@ export default function AccountPage() {
   }
 
   function signOut() {
-    localStorage.removeItem('mg_api_key');
+    clearUser();
     setApiKey('');
     setEmail('');
     setCreditsUsd(0);
+    setCredits(0);
     setClientSecret('');
     setPublishableKey('');
     setCheckoutMeta('');

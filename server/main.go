@@ -307,7 +307,7 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleEmailLogin(ctx)
 
 	// Validate a stored API key (lets clients drop stale sessions)
-	case path == "/api/auth/session" && method == "GET":
+	case (path == "/api/auth/session" || path == "/api/session") && method == "GET":
 		handleSession(ctx)
 
 	case path == "/api/auth/forgot-password" && method == "POST":

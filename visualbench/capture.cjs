@@ -32,7 +32,7 @@ async function installMocks(page) {
     });
   });
 
-  await page.route('**/api/session', async (route) => {
+  await page.route('**/api/auth/session', async (route) => {
     await route.fulfill({
       status: 200,
       json: {

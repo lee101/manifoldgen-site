@@ -79,7 +79,7 @@ async function installAccountAPIMocks(page) {
     });
   });
 
-  await page.route('**/api/session', async (route) => {
+  await page.route('**/api/auth/session', async (route) => {
     if (!user) {
       await route.fulfill({ status: 401, json: { error: 'invalid API key' } });
       return;
@@ -94,6 +94,11 @@ async function installAccountAPIMocks(page) {
         credits_usd: 0,
       },
     });
+  });
+
+  // Old path must not be used by the app (404 in prod without alias).
+  await page.route('**/api/session', async (route) => {
+    await route.fulfill({ status: 404, json: { error: 'use /api/auth/session' } });
   });
 
   await page.route('**/api/stripe-checkout', async (route) => {
@@ -168,6 +173,12 @@ test('homepage signup then account monthly embedded checkout', async ({ page }) 
   await page.getByTestId('home-auth-password-confirm').fill(FIXED_PASSWORD);
   await page.getByTestId('home-auth-submit').click();
   await expect(page.getByRole('button', { name: /Enter studio/i })).toBeVisible();
+  const stored = await page.evaluate(() => {
+    const raw = localStorage.getItem('mg_user');
+    return raw ? JSON.parse(raw) : null;
+  });
+  expect(stored?.api_key).toBeTruthy();
+  expect(stored?.email).toBe(FIXED_EMAIL);
   await page.getByRole('button', { name: /Enter studio/i }).click();
 
   await page.goto('/account');
@@ -176,6 +187,45 @@ test('homepage signup then account monthly embedded checkout', async ({ page }) 
   await expect(page.getByTestId('embedded-checkout-container')).toBeVisible();
   await expect(page.getByText('Plan: monthly')).toBeVisible();
   await expect(page.getByTestId('mock-stripe-checkout')).toBeVisible();
+});
+
+test('account stays signed in from localStorage even if session refresh fails', async ({ page }) => {
+  await installAccountAPIMocks(page);
+
+  await page.goto('/account');
+  await page.getByTestId('account-email').fill(FIXED_EMAIL);
+  await page.getByTestId('account-password').fill(FIXED_PASSWORD);
+  await page.getByTestId('account-password-confirm').fill(FIXED_PASSWORD);
+  await page.getByTestId('account-auth-submit').click();
+  await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
+
+  await page.unroute('**/api/auth/session');
+  await page.route('**/api/auth/session', async (route) => {
+    await route.fulfill({ status: 404, json: { error: 'not found' } });
+  });
+
+  await page.reload();
+  await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
+  const key = await page.evaluate(() => localStorage.getItem('mg_api_key'));
+  expect(key).toBeTruthy();
+});
+
+test('account page soft-refreshes credits after reload without signing out', async ({ page }) => {
+  await installAccountAPIMocks(page);
+
+  await page.goto('/account');
+  await page.getByTestId('account-email').fill(FIXED_EMAIL);
+  await page.getByTestId('account-password').fill(FIXED_PASSWORD);
+  await page.getByTestId('account-password-confirm').fill(FIXED_PASSWORD);
+  await page.getByTestId('account-auth-submit').click();
+  await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
+
+  const sessionReq = page.waitForRequest(
+    (req) => req.method() === 'GET' && new URL(req.url()).pathname === '/api/auth/session',
+  );
+  await page.reload();
+  await sessionReq;
+  await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
 });
 
 test('account topup presets default to $50 and show API copy', async ({ page }) => {

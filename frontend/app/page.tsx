@@ -14,6 +14,14 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
+import {
+  clearUser,
+  loadStoredUser,
+  refreshUser,
+  saveUser,
+  userFromAuthResponse,
+  type StoredUser,
+} from '../lib/auth';
 
 const API = '/api';
 
@@ -22,12 +30,7 @@ type Size = 'preview' | 'balanced' | 'native';
 type Format = 'webm-av1' | 'mp4-h264';
 type AuthMode = 'signup' | 'signin';
 
-interface SessionUser {
-  email?: string;
-  api_key: string;
-  credits: number;
-  credits_usd?: number;
-}
+type SessionUser = StoredUser;
 
 interface VideoJob {
   id: string;
@@ -125,19 +128,17 @@ export default function HomePage() {
     return Math.max(1, Math.ceil(usd / creditPrice));
   }, [h3Rate, duration, creditPrice]);
 
-  const restoreSession = useCallback(async (key: string) => {
-    const res = await fetch(`${API}/session`, { headers: authHeaders(key) });
-    if (!res.ok) throw new Error('Session expired');
-    const data = await res.json();
-    setUser({
-      email: data.user?.email || data.email,
-      api_key: data.api_key || key,
-      credits: data.user?.credits ?? data.credits ?? 0,
-      credits_usd: data.credits_usd,
-    });
-    setApiKey(data.api_key || key);
-    localStorage.setItem('mg_api_key', data.api_key || key);
+  const applyUser = useCallback((next: StoredUser) => {
+    saveUser(next);
+    setUser(next);
+    setApiKey(next.api_key);
+    if (next.email) setEmail(next.email);
   }, []);
+
+  const softRefresh = useCallback(async (key: string) => {
+    const next = await refreshUser(key);
+    if (next) applyUser(next);
+  }, [applyUser]);
 
   const loadGallery = useCallback(async (q = '') => {
     const url = q.trim()
@@ -166,10 +167,10 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const key = localStorage.getItem('mg_api_key');
-    if (key) {
-      setApiKey(key);
-      restoreSession(key).catch(() => localStorage.removeItem('mg_api_key'));
+    const stored = loadStoredUser();
+    if (stored) {
+      applyUser(stored);
+      void softRefresh(stored.api_key);
     }
     fetch(`${API}/pricing`)
       .then((r) => r.json())
@@ -183,7 +184,7 @@ export default function HomePage() {
       .catch(() => undefined);
     loadGallery().catch(() => undefined);
     loadFeaturedVideos().catch(() => undefined);
-  }, [restoreSession, loadGallery, loadFeaturedVideos]);
+  }, [applyUser, softRefresh, loadGallery, loadFeaturedVideos]);
 
   useEffect(() => {
     if (job?.result_url || gallery.length === 0) return;
@@ -242,7 +243,9 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Auth failed');
-      await restoreSession(data.api_key);
+      const next = userFromAuthResponse(data);
+      if (!next) throw new Error('No API key returned');
+      applyUser(next);
       if (data.created || authMode === 'signup') {
         setAuthWelcome(true);
       } else {
@@ -282,7 +285,7 @@ export default function HomePage() {
       const jobId = data.result?.job_id || data.job_id || data.id;
       if (!jobId) throw new Error('No job id returned');
       await pollJob(jobId);
-      await restoreSession(apiKey);
+      await softRefresh(apiKey);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Generation failed');
     } finally {
@@ -321,7 +324,7 @@ export default function HomePage() {
   }
 
   function signOut() {
-    localStorage.removeItem('mg_api_key');
+    clearUser();
     setUser(null);
     setApiKey('');
   }
