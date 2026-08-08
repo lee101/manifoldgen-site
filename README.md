@@ -21,8 +21,8 @@ focused on H3 video (app.nz cogs) with optional omniserve-native LTX.
 cp .env.example .env
 # create postgres role/db manifoldgen
 make install
-make server      # :8096
-make frontend    # :3006, proxies /api → :8096
+make server      # :8116
+make frontend    # :3006, proxies /api → :8116
 ```
 
 ## Pricing
