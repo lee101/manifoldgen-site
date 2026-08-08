@@ -50,8 +50,11 @@ export const metadata: Metadata = {
     ],
   },
   icons: {
-    icon: [{ url: '/brand/logo-mark.webp', type: 'image/webp' }],
-    apple: [{ url: '/brand/logo-mark.webp' }],
+    icon: [
+      { url: '/images/favicon.webp', type: 'image/webp', sizes: '64x64' },
+      { url: '/brand/logo-mark.webp', type: 'image/webp', sizes: '512x512' },
+    ],
+    apple: [{ url: '/images/apple-touch-icon.webp', sizes: '180x180' }],
   },
 };
 
