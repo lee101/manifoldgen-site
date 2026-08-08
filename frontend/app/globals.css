@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Syne", sans-serif;
+  --font-body: "DM Sans", sans-serif;
+  --color-ink: #07070a;
+  --color-panel: #101018;
+  --color-line: #232334;
+  --color-mute: #8b8ba3;
+  --color-accent: #7c6cff;
+  --color-accent-2: #37d6c5;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-ink);
+  color: #f4f4f8;
+  font-family: var(--font-body);
+  text-size-adjust: 100%;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-accent) 45%, transparent);
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.glass {
+  background: color-mix(in oklab, #12121c 72%, transparent);
+  border: 1px solid color-mix(in oklab, white 10%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.prompt-glow:focus-within {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-accent) 55%, transparent),
+    0 0 40px color-mix(in oklab, var(--color-accent) 22%, transparent);
+}
+
+@keyframes drift {
+  0% { transform: scale(1.05) translate3d(0, 0, 0); }
+  50% { transform: scale(1.12) translate3d(-1.5%, 1%, 0); }
+  100% { transform: scale(1.05) translate3d(0, 0, 0); }
+}
+
+.hero-motion {
+  animation: drift 28s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-motion {
+    animation: none;
+  }
+}

@@ -1,0 +1,16 @@
+[Unit]
+Description=ManifoldGen video studio
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/manifoldgen-site
+EnvironmentFile=/opt/manifoldgen-site/.env
+ExecStart=/opt/manifoldgen-site/server/manifoldgen-server
+Restart=on-failure
+RestartSec=3
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

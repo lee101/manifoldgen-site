@@ -1,0 +1,6 @@
+node_modules/
+.next/
+frontend/out/
+server/manifoldgen-server
+.env
+*.sum.bak
