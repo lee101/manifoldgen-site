@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/valyala/fasthttp"
 )
@@ -13,13 +15,17 @@ import (
 func initCrypto() {}
 
 func getCUTEPriceUSD() float64 {
-	// Manifoldgen bills in USD credits; keep a stable 1:1 conversion for
-	// legacy ManifoldGen fields still referenced by shared handlers.
-	return 1.0
+	// Netwrck-style credit unit: 1 credit = $0.01 USD.
+	// Image gen at $0.04 → 4 credits; $50 top-up → 5000 credits.
+	if v := parseFloat(strings.TrimSpace(os.Getenv("CREDIT_PRICE_USD"))); v > 0 {
+		return v
+	}
+	return 0.01
 }
 
-func getCUTEPriceATH() float64 { return 1.0 }
+func getCUTEPriceATH() float64 { return getCUTEPriceUSD() }
 func getSOLPriceUSD() float64  { return 0 }
+
 
 func parseFloat(s string) float64 {
 	v, _ := strconv.ParseFloat(s, 64)
@@ -63,7 +69,12 @@ func handleGetCheckoutStatus(ctx *fasthttp.RequestCtx, _ string) {
 	jsonError(ctx, 501, "crypto checkout disabled on manifoldgen")
 }
 func handleGetCUTEPrice(ctx *fasthttp.RequestCtx) {
-	jsonResponse(ctx, 200, map[string]any{"cute_price_usd": 1.0, "sol_price_usd": 0})
+	jsonResponse(ctx, 200, map[string]any{
+		"cute_price_usd":    getCUTEPriceUSD(),
+		"credit_price_usd":  getCUTEPriceUSD(),
+		"credits_per_dollar": 1.0 / getCUTEPriceUSD(),
+		"sol_price_usd":     0,
+	})
 }
 func handleSwapQuote(ctx *fasthttp.RequestCtx)       { jsonError(ctx, 501, "token swap disabled") }
 func handleSwapTransaction(ctx *fasthttp.RequestCtx) { jsonError(ctx, 501, "token swap disabled") }

@@ -153,7 +153,7 @@ test('account signup, logout, login, and embedded Stripe checkout', async ({ pag
   const checkout = page.getByTestId('embedded-checkout-container');
   await expect(checkout).toBeVisible();
   await expect(checkout.getByText('Secure Stripe checkout')).toBeVisible();
-  await expect(checkout.getByText('Credits: $25')).toBeVisible();
+  await expect(checkout.getByText('Credits: $50')).toBeVisible();
   await expect(page.getByTestId('mock-stripe-checkout')).toBeVisible();
   await expect(page.locator('iframe[title="Mock Stripe Checkout Frame"]')).toHaveCount(1);
 });
@@ -176,6 +176,20 @@ test('homepage signup then account monthly embedded checkout', async ({ page }) 
   await expect(page.getByTestId('embedded-checkout-container')).toBeVisible();
   await expect(page.getByText('Plan: monthly')).toBeVisible();
   await expect(page.getByTestId('mock-stripe-checkout')).toBeVisible();
+});
+
+test('account topup presets default to $50 and show API copy', async ({ page }) => {
+  await installAccountAPIMocks(page);
+  await page.goto('/account');
+  await page.getByTestId('account-email').fill(FIXED_EMAIL);
+  await page.getByTestId('account-password').fill(FIXED_PASSWORD);
+  await page.getByTestId('account-password-confirm').fill(FIXED_PASSWORD);
+  await page.getByTestId('account-auth-submit').click();
+  await expect(page.getByTestId('account-topup-credits-preview')).toContainText('5,000');
+  await page.getByTestId('account-topup-100').click();
+  await expect(page.getByTestId('account-topup-credits-preview')).toContainText('10,000');
+  await expect(page.getByTestId('account-api-snippet')).toContainText('service":"zimage"');
+  await expect(page.getByTestId('account-api-key')).toBeVisible();
 });
 
 test.describe('live API', () => {

@@ -9,9 +9,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -169,14 +171,31 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 		return 0
 	}
 	if req.Service == "zimage" && getZImageSteps(req) >= 20 {
-		return zimageHighStepPriceUSD
+		usdPrice = zimageHighStepPriceUSD
 	}
 	if req.Service == "video_generate" {
 		if price, exists := videoModelPricesUSD[normalizeVideoModel(req.Model)]; exists {
-			return price
+			usdPrice = price
 		}
 	}
+	if req.Service == "zimage" || req.Service == "flux_image" {
+		usdPrice *= float64(getImageCount(req))
+	}
 	return usdPrice
+}
+
+func getImageCount(req ServiceUsageRequest) int {
+	n := req.N
+	if n <= 0 {
+		n = req.NumImages
+	}
+	if n <= 0 {
+		return 1
+	}
+	if n > 8 {
+		return 8
+	}
+	return n
 }
 
 func getRequestServicePriceCUTE(req ServiceUsageRequest) float64 {
@@ -235,10 +254,17 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 	}
 
 	jsonResponse(ctx, 200, map[string]interface{}{
-		"pricing":        pricing,
-		"cute_price_usd": cutePrice,
-		"cute_price_ath": getCUTEPriceATH(),
-		"sol_price_usd":  getSOLPriceUSD(),
+		"pricing":           pricing,
+		"cute_price_usd":    cutePrice,
+		"credit_price_usd":  cutePrice,
+		"credits_per_dollar": 1.0 / cutePrice,
+		"cute_price_ath":    getCUTEPriceATH(),
+		"sol_price_usd":     getSOLPriceUSD(),
+		"image_price_usd":   servicePricesUSD["zimage"],
+		"image_credits":     servicePricesUSD["zimage"] / cutePrice,
+		"topup_presets_usd": []int{25, 50, 100, 200},
+		"topup_default_usd": 50,
+		"topup_min_usd":     5,
 	})
 }
 
@@ -318,7 +344,8 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		newBalance, err = dbConn.DeductUserCredits(user.ID, cuteCost)
 		if err != nil {
 			if strings.Contains(err.Error(), "insufficient") {
-				jsonError(ctx, 402, fmt.Sprintf("insufficient credits: need %.2f $MANIFOLD, have %.2f", cuteCost, user.Credits))
+				needUSD := cuteCost * getCUTEPriceUSD()
+				jsonError(ctx, 402, fmt.Sprintf("insufficient credits: need %.0f credits ($%.2f), have %.0f", cuteCost, needUSD, user.Credits))
 				return
 			}
 			jsonError(ctx, 500, "failed to deduct credits")
@@ -620,72 +647,7 @@ func proxyToBackend(req ServiceUsageRequest, backendURL string) ([]byte, error) 
 
 	switch req.Service {
 	case "zimage":
-		// Prefer OpenAI-compatible omniserve-native gateway when configured.
-		if isOmniserveNativeURL(backendURL) {
-			return proxyOmniserveZImage(req, backendURL)
-		}
-		// Fast path: use diffusionz C engine for direct GPU inference
-		if diffusionzAvailable {
-			width := req.Width
-			if width <= 0 {
-				width = 1024
-			}
-			height := req.Height
-			if height <= 0 {
-				height = 1024
-			}
-			steps := req.NumSteps
-			if steps <= 0 {
-				steps = zimageDefaultSteps
-			}
-			guidance := req.Guidance
-			if guidance <= 0 {
-				guidance = 3.5
-			}
-			seed := req.Seed // 0 means random in the C engine
-
-			imgBytes, err := generateImageC(req.Prompt, width, height, steps, seed, guidance)
-			if err != nil {
-				log.Printf("diffusionz generateImageC failed, falling back to HTTP proxy: %v", err)
-			} else {
-				// Return a JSON response matching the HTTP backend format
-				result, _ := json.Marshal(map[string]interface{}{
-					"image_bytes_len": len(imgBytes),
-					"width":           width,
-					"height":          height,
-					"format":          "webp",
-					"engine":          "diffusionz",
-				})
-				return result, nil
-			}
-		}
-
-		// Fallback: HTTP proxy to backend
-		endpoint = fmt.Sprintf("%s/generate_image", backendURL)
-		payload := map[string]interface{}{
-			"prompt": req.Prompt,
-		}
-		if req.Width > 0 {
-			payload["width"] = req.Width
-		}
-		if req.Height > 0 {
-			payload["height"] = req.Height
-		}
-		payload["num_inference_steps"] = getZImageSteps(req)
-		if req.Guidance > 0 {
-			payload["guidance_scale"] = req.Guidance
-		}
-		if req.Seed > 0 {
-			payload["seed"] = req.Seed
-		}
-		if req.LoRAID != "" {
-			payload["lora_id"] = req.LoRAID
-		}
-		if req.AutoLoRA != nil {
-			payload["auto_lora"] = *req.AutoLoRA
-		}
-		jsonBody, _ := json.Marshal(payload)
-		body = strings.NewReader(string(jsonBody))
+		return proxyZImageWithFallbacks(req, backendURL)
 
 	case "chronos2":
 		endpoint = fmt.Sprintf("%s/forecast", backendURL)
@@ -824,6 +786,87 @@ func isOmniserveNativeURL(backendURL string) bool {
 	return strings.Contains(u, "8791") || strings.Contains(u, "omniserve")
 }
 
+func proxyZImageWithFallbacks(req ServiceUsageRequest, primaryURL string) ([]byte, error) {
+	backends := zimageBackendOrder(req, primaryURL)
+	var errs []string
+	for _, b := range backends {
+		result, err := proxyZImageBackend(req, b.name, b.url)
+		if err == nil {
+			return result, nil
+		}
+		log.Printf("zimage backend %s failed: %v", b.name, err)
+		errs = append(errs, fmt.Sprintf("%s: %v", b.name, err))
+	}
+	if len(errs) == 0 {
+		return nil, fmt.Errorf("no image backends configured")
+	}
+	return nil, fmt.Errorf("all image backends failed: %s", strings.Join(errs, " | "))
+}
+
+type namedBackend struct {
+	name string
+	url  string
+}
+
+func zimageBackendOrder(req ServiceUsageRequest, primaryURL string) []namedBackend {
+	prefer := strings.ToLower(strings.TrimSpace(req.ImageBackend))
+	omni := strings.TrimSpace(getEnv("OMNISERVE_NATIVE_URL", "http://127.0.0.1:8791"))
+	images3 := strings.TrimSpace(getEnv("IMAGES3_URL", "https://images3.netwrck.com"))
+	r1 := strings.TrimSpace(getEnv("RA1_URL", getEnv("R1_URL", "https://ra.netwrck.com")))
+	legacy := strings.TrimSpace(primaryURL)
+
+	ordered := []namedBackend{
+		{name: "omniserve", url: omni},
+		{name: "images3", url: images3},
+		{name: "r1", url: r1},
+	}
+	if legacy != "" && !isOmniserveNativeURL(legacy) && !strings.Contains(strings.ToLower(legacy), "images3") && !strings.Contains(strings.ToLower(legacy), "ra.netwrck") {
+		ordered = append(ordered, namedBackend{name: "legacy", url: legacy})
+	}
+
+	if prefer == "" || prefer == "auto" {
+		return filterNonEmptyBackends(ordered)
+	}
+	var preferred []namedBackend
+	var rest []namedBackend
+	for _, b := range ordered {
+		if b.name == prefer {
+			preferred = append(preferred, b)
+		} else {
+			rest = append(rest, b)
+		}
+	}
+	return filterNonEmptyBackends(append(preferred, rest...))
+}
+
+func filterNonEmptyBackends(in []namedBackend) []namedBackend {
+	out := make([]namedBackend, 0, len(in))
+	seen := map[string]bool{}
+	for _, b := range in {
+		u := strings.TrimRight(strings.TrimSpace(b.url), "/")
+		if u == "" || seen[u] {
+			continue
+		}
+		seen[u] = true
+		b.url = u
+		out = append(out, b)
+	}
+	return out
+}
+
+func proxyZImageBackend(req ServiceUsageRequest, name, backendURL string) ([]byte, error) {
+	switch name {
+	case "omniserve":
+		return proxyOmniserveZImage(req, backendURL)
+	case "images3":
+		return proxyImages3ZImage(req, backendURL)
+	case "r1":
+		return proxyR1ZImage(req, backendURL)
+	default:
+		return proxyLegacyZImageHTTP(req, backendURL)
+	}
+}
+
 func proxyOmniserveZImage(req ServiceUsageRequest, backendURL string) ([]byte, error) {
 	width := req.Width
 	if width <= 0 {
@@ -833,10 +876,11 @@ func proxyOmniserveZImage(req ServiceUsageRequest, backendURL string) ([]byte, e
 	if height <= 0 {
 		height = 1024
 	}
+	n := getImageCount(req)
 	payload := map[string]interface{}{
 		"prompt": req.Prompt,
 		"size":   fmt.Sprintf("%dx%d", width, height),
-		"n":      1,
+		"n":      n,
 	}
 	if req.Seed > 0 {
 		payload["seed"] = req.Seed
@@ -861,18 +905,35 @@ func proxyOmniserveZImage(req ServiceUsageRequest, backendURL string) ([]byte, e
 		return nil, fmt.Errorf("omniserve returned %d: %s", resp.StatusCode, truncateString(string(respBody), 400))
 	}
 
-	// Normalize to CuteDSL-style image_base64 so persistGeneratedZImage works.
 	var openai struct {
 		Data []struct {
 			B64JSON string `json:"b64_json"`
+			URL     string `json:"url"`
 		} `json:"data"`
 		Model string `json:"model"`
 	}
-	if err := json.Unmarshal(respBody, &openai); err != nil || len(openai.Data) == 0 || openai.Data[0].B64JSON == "" {
+	if err := json.Unmarshal(respBody, &openai); err != nil || len(openai.Data) == 0 {
 		return respBody, nil
 	}
+	images := make([]map[string]interface{}, 0, len(openai.Data))
+	firstB64 := ""
+	for _, row := range openai.Data {
+		item := map[string]interface{}{}
+		if row.B64JSON != "" {
+			item["image_base64"] = row.B64JSON
+			if firstB64 == "" {
+				firstB64 = row.B64JSON
+			}
+		}
+		if row.URL != "" {
+			item["image_url"] = row.URL
+		}
+		images = append(images, item)
+	}
 	normalized, _ := json.Marshal(map[string]interface{}{
-		"image_base64": openai.Data[0].B64JSON,
+		"image_base64": firstB64,
+		"images":       images,
+		"n":            len(images),
 		"width":        width,
 		"height":       height,
 		"format":       "webp",
@@ -881,6 +942,261 @@ func proxyOmniserveZImage(req ServiceUsageRequest, backendURL string) ([]byte, e
 		"prompt":       req.Prompt,
 	})
 	return normalized, nil
+}
+
+func proxyImages3ZImage(req ServiceUsageRequest, backendURL string) ([]byte, error) {
+	width := req.Width
+	if width <= 0 {
+		width = 1024
+	}
+	height := req.Height
+	if height <= 0 {
+		height = 1024
+	}
+	n := getImageCount(req)
+	images := make([]map[string]interface{}, 0, n)
+	var firstB64 string
+	var firstURL string
+	for i := 0; i < n; i++ {
+		q := url.Values{}
+		q.Set("prompt", req.Prompt)
+		q.Set("width", strconv.Itoa(width))
+		q.Set("height", strconv.Itoa(height))
+		endpoint := strings.TrimRight(backendURL, "/") + "/create_and_upload_image?" + q.Encode()
+		httpReq, err := http.NewRequest("GET", endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Accept", "application/json")
+		resp, err := backendClient.Do(httpReq)
+		if err != nil {
+			return nil, err
+		}
+		respBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("images3 returned %d: %s", resp.StatusCode, truncateString(string(respBody), 400))
+		}
+		var payload map[string]interface{}
+		if err := json.Unmarshal(respBody, &payload); err != nil {
+			return nil, err
+		}
+		imageURL, _ := payload["path"].(string)
+		if imageURL == "" {
+			imageURL, _ = payload["image_url"].(string)
+		}
+		if imageURL == "" {
+			imageURL, _ = payload["url"].(string)
+		}
+		b64, _ := payload["image_base64"].(string)
+		if b64 == "" {
+			b64, _ = payload["b64_json"].(string)
+		}
+		if imageURL == "" && b64 == "" {
+			return nil, fmt.Errorf("images3 response missing image")
+		}
+		item := map[string]interface{}{}
+		if b64 != "" {
+			item["image_base64"] = b64
+			if firstB64 == "" {
+				firstB64 = b64
+			}
+		}
+		if imageURL != "" {
+			item["image_url"] = imageURL
+			if firstURL == "" {
+				firstURL = imageURL
+			}
+		}
+		images = append(images, item)
+	}
+	out := map[string]interface{}{
+		"images": images,
+		"n":      len(images),
+		"width":  width,
+		"height": height,
+		"engine": "images3",
+		"prompt": req.Prompt,
+	}
+	if firstB64 != "" {
+		out["image_base64"] = firstB64
+	}
+	if firstURL != "" {
+		out["image_url"] = firstURL
+	}
+	return json.Marshal(out)
+}
+
+func proxyR1ZImage(req ServiceUsageRequest, backendURL string) ([]byte, error) {
+	width := req.Width
+	if width <= 0 {
+		width = 1024
+	}
+	height := req.Height
+	if height <= 0 {
+		height = 1024
+	}
+	n := getImageCount(req)
+	payload := map[string]interface{}{
+		"prompt": req.Prompt,
+		"width":  width,
+		"height": height,
+		"n":      n,
+	}
+	if req.Seed > 0 {
+		payload["seed"] = req.Seed
+	}
+	jsonBody, _ := json.Marshal(payload)
+	base := strings.TrimRight(backendURL, "/")
+	endpoints := []string{base + "/ra", base + "/api/ra1", base}
+	var lastErr error
+	for _, endpoint := range endpoints {
+		httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(jsonBody)))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+		if key := strings.TrimSpace(os.Getenv("RA1_API_KEY")); key != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+key)
+		}
+		resp, err := backendClient.Do(httpReq)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		respBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			lastErr = fmt.Errorf("r1 returned %d: %s", resp.StatusCode, truncateString(string(respBody), 400))
+			continue
+		}
+		var payload map[string]interface{}
+		if err := json.Unmarshal(respBody, &payload); err != nil {
+			lastErr = err
+			continue
+		}
+		imageURL, _ := payload["image_url"].(string)
+		if imageURL == "" {
+			imageURL, _ = payload["url"].(string)
+		}
+		if imageURL == "" {
+			if data, ok := payload["data"].([]interface{}); ok && len(data) > 0 {
+				if row, ok := data[0].(map[string]interface{}); ok {
+					imageURL, _ = row["url"].(string)
+				}
+			}
+		}
+		b64, _ := payload["image_base64"].(string)
+		if imageURL == "" && b64 == "" {
+			lastErr = fmt.Errorf("r1 response missing image")
+			continue
+		}
+		out := map[string]interface{}{
+			"engine": "r1",
+			"prompt": req.Prompt,
+			"width":  width,
+			"height": height,
+			"n":      n,
+		}
+		if b64 != "" {
+			out["image_base64"] = b64
+		}
+		if imageURL != "" {
+			out["image_url"] = imageURL
+		}
+		out["images"] = []map[string]interface{}{{"image_url": imageURL, "image_base64": b64}}
+		return json.Marshal(out)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("r1 unavailable")
+	}
+	return nil, lastErr
+}
+
+func proxyLegacyZImageHTTP(req ServiceUsageRequest, backendURL string) ([]byte, error) {
+	if diffusionzAvailable {
+		width := req.Width
+		if width <= 0 {
+			width = 1024
+		}
+		height := req.Height
+		if height <= 0 {
+			height = 1024
+		}
+		steps := req.NumSteps
+		if steps <= 0 {
+			steps = zimageDefaultSteps
+		}
+		guidance := req.Guidance
+		if guidance <= 0 {
+			guidance = 3.5
+		}
+		imgBytes, err := generateImageC(req.Prompt, width, height, steps, req.Seed, guidance)
+		if err == nil {
+			result, _ := json.Marshal(map[string]interface{}{
+				"image_bytes_len": len(imgBytes),
+				"width":           width,
+				"height":          height,
+				"format":          "webp",
+				"engine":          "diffusionz",
+			})
+			return result, nil
+		}
+		log.Printf("diffusionz generateImageC failed, falling back to HTTP proxy: %v", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/generate_image", strings.TrimRight(backendURL, "/"))
+	payload := map[string]interface{}{
+		"prompt":               req.Prompt,
+		"num_inference_steps":  getZImageSteps(req),
+		"num_images":           getImageCount(req),
+	}
+	if req.Width > 0 {
+		payload["width"] = req.Width
+	}
+	if req.Height > 0 {
+		payload["height"] = req.Height
+	}
+	if req.Guidance > 0 {
+		payload["guidance_scale"] = req.Guidance
+	}
+	if req.Seed > 0 {
+		payload["seed"] = req.Seed
+	}
+	if req.LoRAID != "" {
+		payload["lora_id"] = req.LoRAID
+	}
+	if req.AutoLoRA != nil {
+		payload["auto_lora"] = *req.AutoLoRA
+	}
+	jsonBody, _ := json.Marshal(payload)
+	httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := backendClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("legacy zimage returned %d: %s", resp.StatusCode, truncateString(string(respBody), 400))
+	}
+	return respBody, nil
 }
 
 func getTTSText(req ServiceUsageRequest) string {

@@ -154,6 +154,11 @@ type ServiceUsageRequest struct {
 	Seed     int     `json:"seed,omitempty"`
 	LoRAID   string  `json:"lora_id,omitempty"`
 	AutoLoRA *bool   `json:"auto_lora,omitempty"`
+	// Multi-image batch (zimage / flux). Each image costs the per-image rate.
+	N         int `json:"n,omitempty"`
+	NumImages int `json:"num_images,omitempty"`
+	// Preferred image backend: omniserve | images3 | r1 | auto
+	ImageBackend string `json:"image_backend,omitempty"`
 	// chronos2 fields
 	Values           []float64 `json:"values,omitempty"`
 	PredictionLength int       `json:"prediction_length,omitempty"`

@@ -455,8 +455,8 @@ func handleStripeCheckout(ctx *fasthttp.RequestCtx) {
 	if amountUSD == 0 {
 		amountUSD = req.Amount
 	}
-	if amountUSD < 1 || amountUSD > 500 {
-		jsonError(ctx, 400, "amount must be between $1 and $500")
+	if amountUSD < 5 || amountUSD > 500 {
+		jsonError(ctx, 400, "amount must be between $5 and $500")
 		return
 	}
 

@@ -103,6 +103,8 @@ export default function HomePage() {
   const [authError, setAuthError] = useState('');
   const [job, setJob] = useState<VideoJob | null>(null);
   const [h3Rate, setH3Rate] = useState(2.688);
+  const [creditPrice, setCreditPrice] = useState(0.01);
+  const [imageCredits, setImageCredits] = useState(4);
   const [gallery, setGallery] = useState<GalleryImage[]>([]);
   const [featuredVideos, setFeaturedVideos] = useState<VideoHit[]>([]);
   const [searchQ, setSearchQ] = useState('');
@@ -112,9 +114,16 @@ export default function HomePage() {
 
   const creditsLabel = useMemo(() => {
     if (!user) return 'Sign in';
-    const usd = user.credits_usd ?? user.credits;
-    return `$${usd.toFixed(2)}`;
-  }, [user]);
+    const usd = user.credits_usd ?? user.credits * creditPrice;
+    const creds = creditPrice > 0 ? Math.round(usd / creditPrice) : Math.round(user.credits);
+    return `${creds.toLocaleString()} cr · $${usd.toFixed(2)}`;
+  }, [user, creditPrice]);
+
+  const estVideoCredits = useMemo(() => {
+    // Rough UI estimate: ~duration seconds of GPU at published hourly rate.
+    const usd = (h3Rate * duration) / 3600;
+    return Math.max(1, Math.ceil(usd / creditPrice));
+  }, [h3Rate, duration, creditPrice]);
 
   const restoreSession = useCallback(async (key: string) => {
     const res = await fetch(`${API}/session`, { headers: authHeaders(key) });
@@ -165,9 +174,10 @@ export default function HomePage() {
     fetch(`${API}/pricing`)
       .then((r) => r.json())
       .then((data) => {
-        const row = (data.services || data || []).find?.(
-          (s: { service: string; price_usd: number }) => s.service === 'h3_video',
-        );
+        if (data.credit_price_usd) setCreditPrice(data.credit_price_usd);
+        if (data.image_credits) setImageCredits(data.image_credits);
+        const rows = data.pricing || data.services || [];
+        const row = rows.find?.((s: { service: string; price_usd: number }) => s.service === 'h3_video');
         if (row?.price_usd) setH3Rate(row.price_usd);
       })
       .catch(() => undefined);
@@ -466,8 +476,11 @@ export default function HomePage() {
                     </option>
                   ))}
                 </select>
-                <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] sm:inline">
-                  {duration}s · ${h3Rate.toFixed(3)}/GPU-hr
+                <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] sm:inline" data-testid="home-video-cost">
+                  {duration}s · ~{estVideoCredits} credits · ${h3Rate.toFixed(3)}/GPU-hr
+                </span>
+                <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] md:inline" data-testid="home-image-cost">
+                  Image {imageCredits} credits ($0.04)
                 </span>
                 <div className="ml-auto flex items-center gap-2">
                   <button
@@ -486,9 +499,11 @@ export default function HomePage() {
               <p className="mt-3 rounded-2xl bg-red-500/15 px-4 py-3 text-sm text-red-200">{error}</p>
             )}
             {job && (
-              <p className="mt-2 text-xs text-white/55">
+              <p className="mt-2 text-xs text-white/55" data-testid="home-job-cost">
                 {job.status}
-                {job.cost_usd != null ? ` · $${job.cost_usd.toFixed(4)}` : ''}
+                {job.cost_usd != null
+                  ? ` · $${job.cost_usd.toFixed(4)} · ~${Math.ceil(job.cost_usd / creditPrice)} credits`
+                  : ''}
               </p>
             )}
           </div>
@@ -650,6 +665,7 @@ export default function HomePage() {
             </label>
             <p className="mt-4 text-xs text-[var(--color-mute)]">
               H3 settles per GPU-second from app.nz + 20% (≈ ${h3Rate.toFixed(3)} / GPU-hour).
+              Credits are $0.01 each — images cost {imageCredits} credits ($0.04). Copy API examples on Account.
             </p>
           </div>
         </div>

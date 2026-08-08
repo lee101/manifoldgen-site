@@ -58,7 +58,9 @@ export default function AccountPage() {
   const [password2, setPassword2] = useState('');
   const [authMode, setAuthMode] = useState<AuthMode>('signup');
   const [creditsUsd, setCreditsUsd] = useState(0);
-  const [amount, setAmount] = useState('25');
+  const [credits, setCredits] = useState(0);
+  const [creditPrice, setCreditPrice] = useState(0.01);
+  const [amount, setAmount] = useState('50');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -75,7 +77,11 @@ export default function AccountPage() {
     localStorage.setItem('mg_api_key', data.api_key || key);
     setApiKey(data.api_key || key);
     setEmail(data.user?.email || data.email || '');
-    setCreditsUsd(data.credits_usd ?? data.user?.credits ?? 0);
+    const price = data.cute_price_usd || data.credit_price_usd || 0.01;
+    setCreditPrice(price);
+    const usd = data.credits_usd ?? (data.user?.credits ?? 0) * price;
+    setCreditsUsd(usd);
+    setCredits(data.user?.credits ?? (price > 0 ? usd / price : 0));
     return data;
   }, []);
 
@@ -149,7 +155,10 @@ export default function AccountPage() {
       if (!res.ok) throw new Error(data.error || 'Auth failed');
       localStorage.setItem('mg_api_key', data.api_key);
       setApiKey(data.api_key);
+      const price = data.cute_price_usd || 0.01;
+      setCreditPrice(price);
       setCreditsUsd(data.credits_usd ?? 0);
+      setCredits(data.user?.credits ?? 0);
       setMessage(data.created ? 'Account created.' : 'Signed in.');
       setPassword('');
       setPassword2('');
@@ -329,6 +338,9 @@ export default function AccountPage() {
                 <div className="mt-1 text-3xl font-semibold" data-testid="account-balance">
                   ${creditsUsd.toFixed(2)}
                 </div>
+                <div className="mt-1 text-sm text-white/55" data-testid="account-credits">
+                  {Math.round(credits).toLocaleString()} credits · ${creditPrice.toFixed(2)}/credit
+                </div>
               </div>
               <button
                 type="button"
@@ -341,21 +353,56 @@ export default function AccountPage() {
               </button>
             </div>
 
-            <h2 className="mt-6 text-lg font-semibold">Checkout</h2>
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
-              {['10', '25', '100'].map((v) => (
+            <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className="text-xs text-[var(--color-mute)]">API key</div>
+              <div className="mt-1 break-all font-mono text-xs" data-testid="account-api-key">
+                {apiKey}
+              </div>
+              <button
+                type="button"
+                data-testid="account-copy-api-key"
+                className="mt-2 text-xs text-[var(--color-accent-2)]"
+                onClick={() => navigator.clipboard.writeText(apiKey)}
+              >
+                Copy API key
+              </button>
+            </div>
+
+            <h2 className="mt-6 text-lg font-semibold">Top up credits</h2>
+            <p className="mt-1 text-sm text-[var(--color-mute)]">
+              1 credit = ${creditPrice.toFixed(2)}. Images are 4 credits ($0.04). Min top-up $5.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {['25', '50', '100', '200'].map((v) => (
                 <button
                   key={v}
                   type="button"
+                  data-testid={`account-topup-${v}`}
                   onClick={() => setAmount(v)}
                   className={`rounded-xl border px-3 py-2 text-sm ${
-                    amount === v ? 'border-[var(--color-accent)]' : 'border-white/10'
+                    amount === v ? 'border-[var(--color-accent)] bg-white/10' : 'border-white/10'
                   }`}
                 >
                   ${v}
                 </button>
               ))}
             </div>
+            <label className="mt-3 block text-sm text-white/70">
+              Custom amount (USD)
+              <input
+                data-testid="account-topup-custom"
+                type="number"
+                min={5}
+                max={500}
+                step={1}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="mt-1.5 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-[var(--color-accent)]"
+              />
+            </label>
+            <p className="mt-2 text-xs text-white/45" data-testid="account-topup-credits-preview">
+              ≈ {Math.round((Number(amount) || 0) / creditPrice).toLocaleString()} credits
+            </p>
             <button
               type="button"
               disabled={busy}
@@ -364,8 +411,12 @@ export default function AccountPage() {
               className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2.5 font-semibold disabled:opacity-50"
             >
               {busy ? <Loader2 className="animate-spin" size={16} /> : <CreditCard size={16} />}
-              Buy credits
+              Buy ${Number(amount) || 0} credits
             </button>
+            <h2 className="mt-6 text-lg font-semibold">Checkout</h2>
+            <p className="mt-1 text-sm text-[var(--color-mute)]">
+              Stripe embedded checkout. Subscriptions unlock unlimited image gens.
+            </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
@@ -386,6 +437,33 @@ export default function AccountPage() {
                 Annual plan
               </button>
             </div>
+
+            <h2 className="mt-6 text-lg font-semibold">API</h2>
+            <pre
+              className="mt-2 overflow-x-auto rounded-2xl border border-white/10 bg-black/40 p-3 text-[11px] leading-relaxed text-white/80"
+              data-testid="account-api-snippet"
+            >{`# Image gen — $0.04 (4 credits), n images at once
+curl -X POST https://manifoldgen.com/api/service \\
+  -H "Authorization: Bearer ${apiKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"service":"zimage","prompt":"teal ribbon logo","n":2,"width":1024,"height":1024}'
+
+# H3 video — metered credits (app.nz GPU $ + 20%)
+curl -X POST https://manifoldgen.com/api/service \\
+  -H "Authorization: Bearer ${apiKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"service":"h3_video","prompt":"cinematic neon alley","aspect_ratio":"16:9","size":"balanced","duration":5}'`}</pre>
+            <button
+              type="button"
+              data-testid="account-copy-api-snippet"
+              className="mt-2 text-xs text-[var(--color-accent-2)]"
+              onClick={() => {
+                const el = document.querySelector('[data-testid="account-api-snippet"]');
+                if (el?.textContent) void navigator.clipboard.writeText(el.textContent);
+              }}
+            >
+              Copy API examples
+            </button>
             {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
             {message && (
               <p className="mt-3 text-sm text-[var(--color-accent-2)]" data-testid="account-checkout-message">
