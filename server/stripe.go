@@ -150,7 +150,7 @@ func (s *stripeService) createCheckoutSession(customerID, returnURL string, amou
 		"line_items[0][price_data][unit_amount]":  {fmt.Sprintf("%d", amountUSDCents)},
 		"line_items[0][quantity]":                 {"1"},
 	}
-	if productID := strings.TrimSpace(getEnv("STRIPE_CREDITS_PRODUCT_ID", "prod_UYXp470kYWktY7")); productID != "" {
+	if productID := strings.TrimSpace(getEnv("STRIPE_CREDITS_PRODUCT_ID", "")); productID != "" {
 		vals.Set("line_items[0][price_data][product]", productID)
 	} else {
 		vals.Set("line_items[0][price_data][product_data][name]", "ManifoldGen credits")
@@ -356,14 +356,27 @@ func handleStripeCheckout(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	req.WalletAddress = strings.TrimSpace(req.WalletAddress)
-	if req.WalletAddress == "" {
-		jsonError(ctx, 400, "wallet_address required")
-		return
-	}
 
-	user, err := dbConn.GetUserByWallet(req.WalletAddress)
-	if err != nil {
-		jsonError(ctx, 404, "wallet not registered")
+	var user *User
+	var err error
+	apiKey := strings.TrimSpace(strings.TrimPrefix(string(ctx.Request.Header.Peek("Authorization")), "Bearer "))
+	if apiKey != "" {
+		user, err = dbConn.GetUserByAPIKey(apiKey)
+		if err != nil {
+			jsonError(ctx, 401, "invalid API key")
+			return
+		}
+		if req.WalletAddress == "" {
+			req.WalletAddress = user.WalletAddress
+		}
+	} else if req.WalletAddress != "" {
+		user, err = dbConn.GetUserByWallet(req.WalletAddress)
+		if err != nil {
+			jsonError(ctx, 404, "wallet not registered")
+			return
+		}
+	} else {
+		jsonError(ctx, 400, "authorization required: use Authorization Bearer API key or wallet_address")
 		return
 	}
 	if !looksLikeEmail(user.Email) {

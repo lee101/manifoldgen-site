@@ -121,9 +121,9 @@ export default function HomePage() {
     if (!res.ok) throw new Error('Session expired');
     const data = await res.json();
     setUser({
-      email: data.email,
+      email: data.user?.email || data.email,
       api_key: data.api_key || key,
-      credits: data.credits ?? 0,
+      credits: data.user?.credits ?? data.credits ?? 0,
       credits_usd: data.credits_usd,
     });
     setApiKey(data.api_key || key);
@@ -409,6 +409,7 @@ export default function HomePage() {
               <>
                 <button
                   type="button"
+                  data-testid="home-sign-in"
                   onClick={() => openAuth('signin')}
                   className="glass hidden items-center gap-2 rounded-full px-4 py-2 text-sm font-medium sm:inline-flex"
                 >
@@ -417,6 +418,7 @@ export default function HomePage() {
                 </button>
                 <button
                   type="button"
+                  data-testid="home-sign-up"
                   onClick={() => openAuth('signup')}
                   className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-white"
                 >
@@ -753,6 +755,7 @@ export default function HomePage() {
                     <input
                       required
                       autoFocus
+                      data-testid="home-auth-email"
                       type="email"
                       autoComplete="email"
                       value={email}
@@ -765,6 +768,7 @@ export default function HomePage() {
                     Password
                     <input
                       required
+                      data-testid="home-auth-password"
                       type="password"
                       autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
                       value={password}
@@ -778,6 +782,7 @@ export default function HomePage() {
                       Confirm password
                       <input
                         required
+                        data-testid="home-auth-password-confirm"
                         type="password"
                         autoComplete="new-password"
                         value={password2}
@@ -802,6 +807,7 @@ export default function HomePage() {
                   <button
                     type="submit"
                     disabled={busy}
+                    data-testid="home-auth-submit"
                     className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-3.5 font-semibold disabled:opacity-50"
                   >
                     {busy ? (

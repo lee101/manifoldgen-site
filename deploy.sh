@@ -152,11 +152,42 @@ if [ -d "$DEPLOY_ROOT" ]; then
   rsync -a --delete "$OUT_DIR/" "$DEPLOY_ROOT/frontend/out/"
   find "$DEPLOY_ROOT/frontend/out" \( -name '*.fasthttp.gz' -o -name '*.fasthttp.br' \) -delete || true
   if [ -w "$DEPLOY_ROOT/server" ]; then
+    # Replace binary only when service is stopped (Text file busy otherwise).
+    systemctl stop manifoldgen.service 2>/dev/null || true
+    pkill -9 -f '/opt/manifoldgen-site/server/manifoldgen-server' 2>/dev/null || true
+    pkill -9 -f '/nvme0n1-disk/code/manifoldgen-site/server/manifoldgen-server' 2>/dev/null || true
+    sleep 1
     install -m 755 server/manifoldgen-server "$DEPLOY_ROOT/server/manifoldgen-server"
     echo "  ✓ Server binary installed"
   else
     echo "  ⚠ Skipping server binary install (not writable); try: sudo ./deploy.sh"
   fi
+
+  # systemd + nginx (idempotent; requires root)
+  if [ "$(id -u)" -eq 0 ]; then
+    install -m 644 "$ROOT/deploy/manifoldgen.service" /etc/systemd/system/manifoldgen.service
+    systemctl daemon-reload
+    systemctl enable manifoldgen.service >/dev/null
+
+    install -m 644 "$ROOT/deploy/nginx-manifoldgen.conf" /etc/nginx/sites-available/manifoldgen.com
+    ln -sfn /etc/nginx/sites-available/manifoldgen.com /etc/nginx/sites-enabled/manifoldgen.com
+    mkdir -p /etc/nginx/ssl
+    if [ ! -f /etc/nginx/ssl/manifoldgen.com.crt ] || [ ! -f /etc/nginx/ssl/manifoldgen.com.key ]; then
+      openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
+        -keyout /etc/nginx/ssl/manifoldgen.com.key \
+        -out /etc/nginx/ssl/manifoldgen.com.crt \
+        -subj "/CN=manifoldgen.com" \
+        -addext "subjectAltName=DNS:manifoldgen.com,DNS:www.manifoldgen.com" >/dev/null 2>&1
+      chmod 600 /etc/nginx/ssl/manifoldgen.com.key
+      echo "  ✓ Issued self-signed origin TLS cert (Cloudflare Flexible/Full)"
+    fi
+    nginx -t
+    systemctl reload nginx
+    echo "  ✓ nginx manifoldgen.com → 127.0.0.1:8116 (:80/:443)"
+  else
+    echo "  ⚠ Run as root to refresh systemd/nginx units"
+  fi
+
   if command -v systemctl >/dev/null 2>&1; then
     # Ensure only the systemd unit owns :PORT (stale nohup binaries cause bind failures).
     systemctl stop manifoldgen.service 2>/dev/null || true
