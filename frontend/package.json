@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack --port 3006",
+    "dev:https": "../scripts/dev-https.sh",
     "build": "NEXT_OUTPUT=export next build",
     "start": "next start",
     "lint": "eslint .",
