@@ -192,6 +192,9 @@ func normalizeH3VideoRequest(req *ServiceUsageRequest) error {
 	if req.Loop && req.FirstFrame == "" {
 		return fmt.Errorf("loop requires first_frame or image_url")
 	}
+	if req.Loop && strings.TrimSpace(req.LastFrame) != "" {
+		return fmt.Errorf("loop cannot be combined with last_frame; the first frame is reused automatically")
+	}
 	if req.AspectRatio == "" {
 		req.AspectRatio = "16:9"
 	}

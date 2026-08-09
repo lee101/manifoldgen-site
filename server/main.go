@@ -1005,7 +1005,7 @@ func serveStatic(ctx *fasthttp.RequestCtx, path string) {
 		}
 
 		// Cache static assets
-		if strings.HasPrefix(path, "/_next/") || strings.HasPrefix(path, "/assets/") {
+		if strings.HasPrefix(path, "/_next/") || strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/brand/") {
 			ctx.Response.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 

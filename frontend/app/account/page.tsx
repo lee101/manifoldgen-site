@@ -10,6 +10,7 @@ import {
   saveUser,
   userFromAuthResponse,
 } from '../../lib/auth';
+import { parseJSONResponse } from '../../lib/http';
 
 const API = '/api';
 
@@ -57,12 +58,16 @@ function loadStripeJS() {
 }
 
 type AuthMode = 'signup' | 'signin' | 'forgot' | 'reset';
+type AuthResponse = Parameters<typeof userFromAuthResponse>[0] & {
+  created?: boolean;
+  error?: string;
+  reset_token?: string;
+};
 
 export default function AccountPage() {
   const [apiKey, setApiKey] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [password2, setPassword2] = useState('');
   const [authMode, setAuthMode] = useState<AuthMode>('signup');
   const [resetToken, setResetToken] = useState('');
   const [creditsUsd, setCreditsUsd] = useState(0);
@@ -165,8 +170,7 @@ export default function AccountPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Reset request failed');
+        const data = await parseJSONResponse<AuthResponse>(res, 'Reset request failed');
         setMessage('If that email exists, a reset link is on the way.');
         if (data.reset_token) {
           setResetToken(data.reset_token);
@@ -177,7 +181,6 @@ export default function AccountPage() {
       }
 
       if (authMode === 'reset') {
-        if (password !== password2) throw new Error('Passwords do not match');
         if (password.length < 8) throw new Error('Password must be at least 8 characters');
         if (!resetToken) throw new Error('Reset token missing');
         const res = await fetch(`${API}/auth/reset-password`, {
@@ -185,8 +188,7 @@ export default function AccountPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: resetToken, password }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Reset failed');
+        const data = await parseJSONResponse<AuthResponse>(res, 'Reset failed');
         const next = userFromAuthResponse(data);
         if (!next) throw new Error('No API key returned');
         saveUser(next);
@@ -197,7 +199,6 @@ export default function AccountPage() {
         setCreditsUsd(next.credits_usd ?? 0);
         setCredits(next.credits);
         setPassword('');
-        setPassword2('');
         setResetToken('');
         setAuthMode('signin');
         setMessage('Password updated. You are signed in.');
@@ -207,9 +208,6 @@ export default function AccountPage() {
         return;
       }
 
-      if (authMode === 'signup' && password !== password2) {
-        throw new Error('Passwords do not match');
-      }
       if (password.length < 8) {
         throw new Error('Password must be at least 8 characters');
       }
@@ -218,8 +216,7 @@ export default function AccountPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Auth failed');
+      const data = await parseJSONResponse<AuthResponse>(res, 'Auth failed');
       const next = userFromAuthResponse(data);
       if (!next) throw new Error('No API key returned');
       saveUser(next);
@@ -231,7 +228,6 @@ export default function AccountPage() {
       setCredits(next.credits);
       setMessage(data.created ? 'Account created.' : 'Signed in.');
       setPassword('');
-      setPassword2('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Auth failed');
     } finally {
@@ -379,20 +375,6 @@ export default function AccountPage() {
                 />
               </label>
             )}
-            {(authMode === 'signup' || authMode === 'reset') && (
-              <label className="mb-3 block text-sm text-white/70">
-                Confirm password
-                <input
-                  required
-                  data-testid="account-password-confirm"
-                  type="password"
-                  autoComplete="new-password"
-                  value={password2}
-                  onChange={(e) => setPassword2(e.target.value)}
-                  className="mt-1.5 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-[var(--color-accent)]"
-                />
-              </label>
-            )}
             {error && (
               <p className="mb-3 text-sm text-red-300" data-testid="account-auth-error">
                 {error}
@@ -449,7 +431,6 @@ export default function AccountPage() {
                   setError('');
                   setMessage('');
                   setPassword('');
-                  setPassword2('');
                 }}
               >
                 Back to sign in

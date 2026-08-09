@@ -434,6 +434,8 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 	if savedImage != nil {
 		response["saved_image"] = savedImage
+		publicBase := strings.TrimRight(getEnv("PUBLIC_BASE_URL", "https://manifoldgen.com"), "/")
+		response["saved_image_url"] = publicBase + "/images/" + strings.TrimLeft(savedImage.FilePath, "/")
 	}
 	jsonResponse(ctx, 200, response)
 }

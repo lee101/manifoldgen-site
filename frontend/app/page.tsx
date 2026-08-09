@@ -8,6 +8,7 @@ import {
   Loader2,
   LogIn,
   LogOut,
+  Repeat2,
   Search,
   Settings2,
   Sparkles,
@@ -22,13 +23,23 @@ import {
   userFromAuthResponse,
   type StoredUser,
 } from '../lib/auth';
+import { parseJSONResponse } from '../lib/http';
+import {
+  h3Dimensions,
+  loopAnchorURL,
+  type H3Aspect,
+  type H3Size,
+} from '../lib/h3-loop';
 
 const API = '/api';
 
-type Aspect = '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9';
-type Size = 'preview' | 'balanced' | 'native';
+type Aspect = H3Aspect;
+type Size = H3Size;
 type Format = 'webm-av1' | 'mp4-h264';
 type AuthMode = 'signup' | 'signin';
+type AuthResponse = Parameters<typeof userFromAuthResponse>[0] & {
+  created?: boolean;
+};
 
 type SessionUser = StoredUser;
 
@@ -37,6 +48,18 @@ interface VideoJob {
   status: string;
   result_url?: string;
   error?: string;
+  cost_usd?: number;
+}
+
+interface VideoJobState {
+  job_id?: string;
+  id?: string;
+  status?: string;
+  result_url?: string;
+  video_url?: string;
+  result?: { video_url?: string };
+  error?: string;
+  charged_usd?: number;
   cost_usd?: number;
 }
 
@@ -86,7 +109,6 @@ export default function HomePage() {
   const [apiKey, setApiKey] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [password2, setPassword2] = useState('');
   const [user, setUser] = useState<SessionUser | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>('signup');
@@ -101,6 +123,8 @@ export default function HomePage() {
   const [steps, setSteps] = useState(20);
   const [format, setFormat] = useState<Format>('webm-av1');
   const [includeAudio, setIncludeAudio] = useState(true);
+  const [loopMode, setLoopMode] = useState(false);
+  const [generationStage, setGenerationStage] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [authError, setAuthError] = useState('');
@@ -113,7 +137,6 @@ export default function HomePage() {
   const [searchQ, setSearchQ] = useState('');
   const [searchBusy, setSearchBusy] = useState(false);
   const [videoHits, setVideoHits] = useState<VideoHit[]>([]);
-  const [heroIndex, setHeroIndex] = useState(0);
 
   const creditsLabel = useMemo(() => {
     if (!user) return 'Sign in';
@@ -182,17 +205,19 @@ export default function HomePage() {
         if (row?.price_usd) setH3Rate(row.price_usd);
       })
       .catch(() => undefined);
-    loadGallery().catch(() => undefined);
-    loadFeaturedVideos().catch(() => undefined);
+    // The studio is usable without these feeds. Start them after the initial
+    // viewport is responsive rather than competing with the hero for bandwidth.
+    const deferredLoad = () => {
+      loadGallery().catch(() => undefined);
+      loadFeaturedVideos().catch(() => undefined);
+    };
+    const idleId = window.requestIdleCallback?.(deferredLoad, { timeout: 1800 });
+    const timeoutId = idleId === undefined ? window.setTimeout(deferredLoad, 700) : undefined;
+    return () => {
+      if (idleId !== undefined) window.cancelIdleCallback?.(idleId);
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
   }, [applyUser, softRefresh, loadGallery, loadFeaturedVideos]);
-
-  useEffect(() => {
-    if (job?.result_url || gallery.length === 0) return;
-    const id = window.setInterval(() => {
-      setHeroIndex((i) => (i + 1) % gallery.length);
-    }, 8000);
-    return () => window.clearInterval(id);
-  }, [job?.result_url, gallery.length]);
 
   async function runSearch(e?: React.FormEvent) {
     e?.preventDefault();
@@ -226,10 +251,6 @@ export default function HomePage() {
   async function submitAuth(e: React.FormEvent) {
     e.preventDefault();
     setAuthError('');
-    if (authMode === 'signup' && password !== password2) {
-      setAuthError('Passwords do not match');
-      return;
-    }
     if (password.length < 8) {
       setAuthError('Use at least 8 characters');
       return;
@@ -241,8 +262,7 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Auth failed');
+      const data = await parseJSONResponse<AuthResponse>(res, 'Auth failed');
       const next = userFromAuthResponse(data);
       if (!next) throw new Error('No API key returned');
       applyUser(next);
@@ -265,7 +285,29 @@ export default function HomePage() {
     }
     setError('');
     setBusy(true);
+    setGenerationStage(loopMode ? 'Creating loop keyframe…' : 'Starting H3 render…');
     try {
+      let firstFrame = '';
+      if (loopMode) {
+        const [width, height] = h3Dimensions(aspect, size);
+        const imageRes = await fetch(`${API}/service`, {
+          method: 'POST',
+          headers: authHeaders(apiKey),
+          body: JSON.stringify({
+            service: 'zimage',
+            prompt,
+            width,
+            height,
+            n: 1,
+          }),
+        });
+        const imageData = await parseJSONResponse<Parameters<typeof loopAnchorURL>[0]>(
+          imageRes,
+          'Loop keyframe generation failed',
+        );
+        firstFrame = loopAnchorURL(imageData, window.location.origin);
+        setGenerationStage('Animating back to the same keyframe…');
+      }
       const res = await fetch(`${API}/service`, {
         method: 'POST',
         headers: authHeaders(apiKey),
@@ -278,18 +320,25 @@ export default function HomePage() {
           num_steps: steps,
           output_format: format,
           include_audio: includeAudio,
+          loop: loopMode,
+          ...(firstFrame ? { first_frame: firstFrame } : {}),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Generation failed');
+      const data = await parseJSONResponse<Record<string, unknown> & {
+        result?: { job_id?: string };
+        job_id?: string;
+        id?: string;
+      }>(res, 'Generation failed');
       const jobId = data.result?.job_id || data.job_id || data.id;
       if (!jobId) throw new Error('No job id returned');
+      setGenerationStage('Rendering H3 video…');
       await pollJob(jobId);
       await softRefresh(apiKey);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Generation failed');
     } finally {
       setBusy(false);
+      setGenerationStage('');
     }
   }
 
@@ -298,23 +347,25 @@ export default function HomePage() {
       const res = await fetch(`${API}/video-jobs/${jobId}`, {
         headers: authHeaders(apiKey),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Job poll failed');
+      const data = await parseJSONResponse<VideoJobState & { job?: VideoJobState }>(
+        res,
+        'Job poll failed',
+      );
+      const state: VideoJobState = data.job || data;
       const url =
-        data.result_url ||
-        data.video_url ||
-        data.result?.video_url ||
-        (typeof data.result === 'object' ? data.result?.video_url : undefined);
+        state.result_url ||
+        state.video_url ||
+        state.result?.video_url;
       setJob({
-        id: data.job_id || data.id || jobId,
-        status: data.status,
+        id: state.job_id || state.id || jobId,
+        status: state.status || 'processing',
         result_url: url,
-        error: data.error,
-        cost_usd: data.charged_usd ?? data.cost_usd,
+        error: state.error,
+        cost_usd: state.charged_usd ?? state.cost_usd,
       });
-      if (['completed', 'succeeded', 'failed', 'payment_required', 'error'].includes(data.status)) {
-        if (data.status === 'failed' || data.status === 'error') {
-          throw new Error(data.error || 'Video failed');
+      if (['completed', 'succeeded', 'failed', 'payment_required', 'error'].includes(state.status || '')) {
+        if (state.status === 'failed' || state.status === 'error') {
+          throw new Error(state.error || 'Video failed');
         }
         return;
       }
@@ -341,7 +392,8 @@ export default function HomePage() {
   const logoSrc = '/brand/logo-nobg.webp';
 
   const resultUrl = job?.result_url;
-  const heroImage = gallery[heroIndex]?.image_url || gallery[heroIndex]?.thumb_url;
+  // A local, cacheable poster protects LCP from slow API/gallery responses.
+  const heroImage = '/brand/manifoldgen-og.webp';
   const displayVideos = videoHits.length > 0 ? videoHits : featuredVideos;
 
   return (
@@ -445,8 +497,14 @@ export default function HomePage() {
 
         <div className="absolute inset-x-0 bottom-0 z-20 px-3 pb-4 pt-24 md:px-6 md:pb-6">
           <div className="mx-auto w-full max-w-4xl">
-            <p className="mb-3 hidden max-w-xl text-sm text-white/65 md:block md:text-base">
-              Full-bleed cinematic video. Prompt, render, remix the gallery.
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-accent-2)] md:text-sm">
+              AI video generator
+            </p>
+            <h1 className="mb-2 max-w-2xl font-display text-3xl font-700 tracking-tight text-white md:text-5xl">
+              Make cinematic video from a prompt.
+            </h1>
+            <p className="mb-3 max-w-xl text-sm text-white/65 md:text-base">
+              Describe the shot, then set the format, duration, quality, and audio.
             </p>
             <div className="glass prompt-glow rounded-3xl p-3 md:p-4">
               <textarea
@@ -479,8 +537,24 @@ export default function HomePage() {
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  data-testid="home-loop-toggle"
+                  aria-pressed={loopMode}
+                  disabled={busy}
+                  onClick={() => setLoopMode((enabled) => !enabled)}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
+                    loopMode
+                      ? 'bg-[var(--color-accent)] text-white'
+                      : 'bg-white/5 text-[var(--color-mute)] hover:text-white'
+                  }`}
+                  title="Generate a matching still and use it as H3's first and last keyframe"
+                >
+                  <Repeat2 size={14} />
+                  Loop
+                </button>
                 <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] sm:inline" data-testid="home-video-cost">
-                  {duration}s · ~{estVideoCredits} credits · ${h3Rate.toFixed(3)}/GPU-hr
+                  {duration}s · ~{estVideoCredits + (loopMode ? imageCredits : 0)} credits · ${h3Rate.toFixed(3)}/GPU-hr
                 </span>
                 <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] md:inline" data-testid="home-image-cost">
                   Image {imageCredits} credits ($0.04)
@@ -500,6 +574,11 @@ export default function HomePage() {
             </div>
             {error && (
               <p className="mt-3 rounded-2xl bg-red-500/15 px-4 py-3 text-sm text-red-200">{error}</p>
+            )}
+            {busy && generationStage && (
+              <p className="mt-2 text-xs text-white/65" data-testid="home-generation-stage">
+                {generationStage}
+              </p>
             )}
             {job && (
               <p className="mt-2 text-xs text-white/55" data-testid="home-job-cost">
@@ -666,6 +745,22 @@ export default function HomePage() {
               />
               Include audio when available
             </label>
+            <label className="mt-3 flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                data-testid="settings-loop-toggle"
+                checked={loopMode}
+                disabled={busy}
+                onChange={(e) => setLoopMode(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Seamless loop
+                <span className="mt-0.5 block text-xs text-[var(--color-mute)]">
+                  Generates one {h3Dimensions(aspect, size).join('×')} still, then uses that exact image as H3&apos;s first and last keyframe.
+                </span>
+              </span>
+            </label>
             <p className="mt-4 text-xs text-[var(--color-mute)]">
               H3 settles per GPU-second from app.nz + 20% (≈ ${h3Rate.toFixed(3)} / GPU-hour).
               Credits are $0.01 each — images cost {imageCredits} credits ($0.04). Copy API examples on Account.
@@ -796,32 +891,12 @@ export default function HomePage() {
                       placeholder="At least 8 characters"
                     />
                   </label>
-                  {authMode === 'signup' && (
-                    <label className="mb-3 block text-sm text-white/70">
-                      Confirm password
-                      <input
-                        required
-                        data-testid="home-auth-password-confirm"
-                        type="password"
-                        autoComplete="new-password"
-                        value={password2}
-                        onChange={(e) => setPassword2(e.target.value)}
-                        className="mt-1.5 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-[var(--color-accent)]"
-                      />
-                    </label>
-                  )}
-
                   {authError && (
                     <p className="mb-3 rounded-2xl bg-red-500/15 px-3 py-2 text-sm text-red-200">
                       {authError}
                     </p>
                   )}
 
-                  {authMode === 'signup' && (
-                    <p className="mb-4 text-xs leading-relaxed text-white/45">
-                      Creates an API key and Stripe-ready wallet. H3 bills at app.nz GPU rates + 20%.
-                    </p>
-                  )}
 
                   <button
                     type="submit"
