@@ -6,3 +6,5 @@ frontend/playwright-report/
 server/manifoldgen-server
 .env
 *.sum.bak
+visualbench/
+visualbench/

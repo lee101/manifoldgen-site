@@ -31,7 +31,6 @@ export const metadata: Metadata = {
     'text to video',
     'H3 video',
     'manifoldgen',
-    'app.nz',
     'omniserve',
   ],
   openGraph: {

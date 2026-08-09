@@ -22,9 +22,24 @@ import (
 
 const maxGeneratedVideoBytes = 256 << 20
 
-const h3DownstreamMarkupPercent = int64(20)
+const h3DownstreamMarkupPercent = int64(50)
+const h3MinimumChargeMicros = int64(100_000) // $0.10; video should never cost less than an image.
+const h3NativeFiveSecondBaseline = 15 * time.Minute
 
 var appNZVideoClient = &http.Client{Timeout: 30 * time.Second}
+var localH3CogClient = &http.Client{Timeout: 60 * time.Second}
+
+func h3LocalCogURL() string {
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("H3_LOCAL_COG_URL")), "/")
+}
+
+func isRunPodWorkersQuotaErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "workers quota") || strings.Contains(msg, "max workers across all endpoints")
+}
 
 type appNZH3Prediction struct {
 	ID         string      `json:"id"`
@@ -169,7 +184,7 @@ func callAppNZH3(method, path string, payload interface{}) (*appNZH3Envelope, in
 	}
 	var envelope appNZH3Envelope
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("app.nz returned an invalid response")
+		return nil, resp.StatusCode, fmt.Errorf("video service returned an invalid response")
 	}
 	if resp.StatusCode >= 300 {
 		message := strings.TrimSpace(envelope.Error)
@@ -189,6 +204,9 @@ func normalizeH3VideoRequest(req *ServiceUsageRequest) error {
 	if req.FirstFrame == "" {
 		req.FirstFrame = strings.TrimSpace(req.ImageURL)
 	}
+	if req.AudioURL != "" && req.FirstFrame == "" {
+		return fmt.Errorf("audio_url requires first_frame or image_url")
+	}
 	if req.Loop && req.FirstFrame == "" {
 		return fmt.Errorf("loop requires first_frame or image_url")
 	}
@@ -201,20 +219,37 @@ func normalizeH3VideoRequest(req *ServiceUsageRequest) error {
 	if req.Size == "" {
 		req.Size = "balanced"
 	}
-	if !videoStringIn(req.Size, "preview", "balanced", "native") {
+	if !videoStringIn(req.Size, "preview", "balanced", "native", "audio") {
 		return fmt.Errorf("unsupported size")
 	}
 	if req.Duration == 0 {
 		req.Duration = 5
 	}
-	if req.Duration < 4 || req.Duration > 15 {
-		return fmt.Errorf("duration must be between 4 and 15 seconds")
+	maxDuration := 15
+	if req.Size == "audio" {
+		maxDuration = 45
+	} else {
+		// Picture >15s auto-chains ~5s segments with 1s overlap on the H3 worker.
+		maxDuration = 60
+	}
+	if req.Duration < 4 || req.Duration > maxDuration {
+		return fmt.Errorf("duration must be between 4 and %d seconds for size=%s", maxDuration, req.Size)
+	}
+	if req.Size == "audio" && (req.FirstFrame != "" || req.LastFrame != "" || req.Loop) {
+		return fmt.Errorf("size=audio is text-to-audio/video only; omit first_frame, last_frame, and loop")
 	}
 	if req.NumSteps == 0 {
 		req.NumSteps = 20
 	}
 	if req.NumSteps < 8 || req.NumSteps > 30 {
 		return fmt.Errorf("num_steps must be between 8 and 30")
+	}
+	if req.Quant == "" {
+		// Keep the experimental w4a8 path opt-in until its visual quality is consistent.
+		req.Quant = "int8_convrot"
+	}
+	if !videoStringIn(req.Quant, "int8_convrot", "w4a8") {
+		return fmt.Errorf("unsupported quant")
 	}
 	if req.OutputFormat == "" {
 		req.OutputFormat = "webm-av1"
@@ -245,12 +280,16 @@ func appNZH3Input(req ServiceUsageRequest) map[string]interface{} {
 		"prompt": req.Prompt, "aspect_ratio": req.AspectRatio, "size": req.Size,
 		"duration": req.Duration, "steps": req.NumSteps, "loop": req.Loop,
 		"output_codec": req.OutputFormat, "encode_quality": req.EncodeQuality,
+		"quant": req.Quant,
 	}
 	if req.FirstFrame != "" {
 		input["first_frame"] = req.FirstFrame
 	}
 	if req.LastFrame != "" {
 		input["last_frame"] = req.LastFrame
+	}
+	if req.AudioURL != "" {
+		input["audio"] = req.AudioURL
 	}
 	if req.Seed != 0 {
 		input["seed"] = req.Seed
@@ -272,21 +311,30 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
+	if local := h3LocalCogURL(); local != "" {
+		handleLocalH3VideoService(ctx, req, user, local)
+		return
+	}
+	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
 	envelope, upstreamStatus, err := callAppNZH3(http.MethodPost, "/api/cogs/run", map[string]interface{}{
 		"template": "minimax-h3", "name": "minimax-h3-shared", "input": appNZH3Input(req),
 	})
 	if err != nil {
+		if isRunPodWorkersQuotaErr(err) && h3LocalCogURL() == "" {
+			jsonError(ctx, http.StatusServiceUnavailable, "video capacity is temporarily unavailable")
+			return
+		}
 		status := http.StatusBadGateway
 		if upstreamStatus == 0 {
 			status = http.StatusServiceUnavailable
 		} else if upstreamStatus >= 400 && upstreamStatus < 500 {
 			status = upstreamStatus
 		}
-		jsonError(ctx, status, "app.nz H3: "+err.Error())
+		jsonError(ctx, status, "video service: "+err.Error())
 		return
 	}
 	if envelope.Prediction.ID == "" {
-		jsonError(ctx, http.StatusBadGateway, "app.nz did not return a prediction")
+		jsonError(ctx, http.StatusBadGateway, "video service did not return a job")
 		return
 	}
 	job, err := dbConn.CreateVideoJobForService(user.ID, envelope.Prediction.ID, "h3_video", req.Prompt)
@@ -297,14 +345,37 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"result":       map[string]interface{}{"job_id": job.ID, "status": job.Status, "status_url": "/api/video-jobs/" + job.ID},
-		"credits_used": 0, "settlement": "completed app.nz prediction cost plus 20%",
-		"price_usd_per_gpu_hour": servicePricesUSD["h3_video"],
+		"credits_used": 0, "settlement": "final price based on generation",
+		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
+		"estimated_generation_seconds": estimatedSeconds,
 	})
 }
 
-// prepareGeneratedVideoResult turns an OpenPaths 202 into a durable local job
-// before the paid request returns. Provider-synchronous responses retain the
-// existing response shape and optimization behavior.
+func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, cogURL string) {
+	_ = cogURL
+	input := appNZH3Input(req)
+	payload, _ := json.Marshal(input)
+	job, err := dbConn.CreateVideoJobForService(user.ID, "local:sync", "h3_video", req.Prompt)
+	if err != nil {
+		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 video job")
+		return
+	}
+	if err := dbConn.UpdateVideoJob(job.ID, "queued", payload, ""); err != nil {
+		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 input")
+		return
+	}
+	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
+	launchVideoJob(job.ID)
+	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
+		"result": map[string]interface{}{
+			"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID, "backend": "local-cog",
+		},
+		"credits_used": 0, "settlement": "final price based on generation",
+		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
+		"estimated_generation_seconds": estimatedSeconds,
+	})
+}
+
 func prepareGeneratedVideoResult(req ServiceUsageRequest, user *User, result []byte) ([]byte, error) {
 	if req.Service != "video_generate" || user == nil {
 		return result, nil
@@ -349,6 +420,10 @@ func processVideoJob(jobID string) {
 	}
 	if job.Service == "h3_video" {
 		processH3VideoJob(job)
+		return
+	}
+	if job.Service == "studio_extend" {
+		processStudioExtendJob(job)
 		return
 	}
 	user, err := dbConn.GetUserByID(job.UserID)
@@ -402,7 +477,42 @@ func h3DownstreamMicros(providerMicros int64) int64 {
 	if providerMicros <= 0 {
 		return 0
 	}
-	return (providerMicros*(100+h3DownstreamMarkupPercent) + 99) / 100
+	charged := (providerMicros*(100+h3DownstreamMarkupPercent) + 99) / 100
+	if charged < h3MinimumChargeMicros {
+		return h3MinimumChargeMicros
+	}
+	return charged
+}
+
+// h3Estimate turns the worker's measured native baseline into a customer-facing
+// estimate. Final settlement still uses the provider's actual metered cost.
+func h3Estimate(req ServiceUsageRequest) (float64, float64, float64) {
+	duration := req.Duration
+	if duration <= 0 {
+		duration = 5
+	}
+	steps := req.NumSteps
+	if steps <= 0 {
+		steps = 20
+	}
+	sizeFactor := 0.7
+	switch req.Size {
+	case "preview":
+		sizeFactor = 0.45
+	case "native":
+		sizeFactor = 1
+	case "audio":
+		sizeFactor = 0.5
+	}
+	predictSeconds := h3NativeFiveSecondBaseline.Seconds() * (float64(duration) / 5) * (float64(steps) / 20) * sizeFactor
+	providerMicros := int64(math.Ceil(servicePricesUSD["h3_video"] * predictSeconds / 3600 * 1_000_000))
+	chargedUSD := math.Ceil(float64(h3DownstreamMicros(providerMicros))/10_000) / 100
+	creditPrice := getCUTEPriceUSD()
+	estimatedCredits := 0.0
+	if creditPrice > 0 {
+		estimatedCredits = math.Ceil(chargedUSD / creditPrice)
+	}
+	return chargedUSD, estimatedCredits, predictSeconds
 }
 
 func h3Result(pred appNZH3Prediction) map[string]interface{} {
@@ -415,17 +525,25 @@ func h3Result(pred appNZH3Prediction) map[string]interface{} {
 	default:
 		result = map[string]interface{}{"output": output}
 	}
+	// Cog / serverless often expose the media as `url` (including data: URLs).
+	if _, ok := result["video_url"].(string); !ok {
+		if u, ok := result["url"].(string); ok && u != "" {
+			result["video_url"] = u
+		}
+	}
 	providerUSD := float64(pred.CostMicros) / 1_000_000
 	chargedUSD := float64(h3DownstreamMicros(pred.CostMicros)) / 1_000_000
-	result["provider"] = "app.nz"
-	result["provider_prediction_id"] = pred.ID
+	result["provider"] = "manifoldgen"
 	result["provider_cost_usd"] = providerUSD
-	result["markup_percent"] = h3DownstreamMarkupPercent
 	result["charged_usd"] = chargedUSD
 	return result
 }
 
 func processH3VideoJob(job *VideoJob) {
+	if strings.HasPrefix(job.ProviderJobID, "local:") {
+		processLocalH3VideoJob(job)
+		return
+	}
 	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
 	deadline := time.Now().Add(45 * time.Minute)
 	consecutiveErrors := 0
@@ -434,7 +552,7 @@ func processH3VideoJob(job *VideoJob) {
 		if err != nil {
 			consecutiveErrors++
 			if consecutiveErrors >= 10 {
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "app.nz status unavailable: "+err.Error())
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "video status unavailable: "+err.Error())
 				return
 			}
 			time.Sleep(2 * time.Second)
@@ -444,7 +562,7 @@ func processH3VideoJob(job *VideoJob) {
 		switch strings.ToLower(strings.TrimSpace(envelope.Prediction.Status)) {
 		case "succeeded", "completed":
 			if envelope.Prediction.CostMicros <= 0 {
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "app.nz returned no billable prediction cost")
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "video service returned no billable cost")
 				return
 			}
 			resultMap := h3Result(envelope.Prediction)
@@ -458,6 +576,10 @@ func processH3VideoJob(job *VideoJob) {
 			resultMap["cute_price_usd"] = cutePrice
 			resultMap["credits_used"] = chargedUSD / cutePrice
 			result, _ := json.Marshal(resultMap)
+			if user, userErr := dbConn.GetUserByID(job.UserID); userErr == nil {
+				// Remux onto manifoldgenstatic so the gallery CDN owns durable URLs.
+				result = optimizeGeneratedVideo(ServiceUsageRequest{Service: "h3_video"}, user, result)
+			}
 			_, _, settleErr := dbConn.SettleH3VideoJob(job.ID, result, providerUSD, chargedUSD, cutePrice)
 			if settleErr == ErrVideoPaymentRequired {
 				_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, fmt.Sprintf("top up to release completed video; $%.6f (%.6f MANIFOLD) required", chargedUSD, chargedUSD/cutePrice))
@@ -473,14 +595,143 @@ func processH3VideoJob(job *VideoJob) {
 		case "failed", "cancelled", "canceled":
 			message := strings.TrimSpace(envelope.Prediction.Error)
 			if message == "" {
-				message = "app.nz H3 prediction failed"
+				message = "video generation failed"
 			}
 			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, message)
 			return
 		}
 		time.Sleep(2 * time.Second)
 	}
-	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "app.nz H3 prediction did not finish within 45 minutes")
+	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "video generation did not finish within 45 minutes")
+}
+
+func processLocalH3VideoJob(job *VideoJob) {
+	cogURL := h3LocalCogURL()
+	if cogURL == "" {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "H3_LOCAL_COG_URL is not configured")
+		return
+	}
+	// Prefer sync POST: this coglet build has no GET /predictions/{id} poll route.
+	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
+	input := map[string]interface{}{}
+	if len(job.Result) > 0 {
+		_ = json.Unmarshal(job.Result, &input)
+	}
+	if _, ok := input["prompt"]; !ok {
+		input = map[string]interface{}{
+			"prompt": job.Prompt, "aspect_ratio": "16:9", "size": "balanced",
+			"duration": 5, "steps": 20, "structured_prompt": true, "include_audio": true,
+			"output_codec": "webm-av1", "encode_quality": 22, "quant": "int8_convrot",
+		}
+	}
+	body, _ := json.Marshal(map[string]interface{}{"input": input})
+	req, err := http.NewRequest(http.MethodPost, cogURL+"/predictions", bytes.NewReader(body))
+	if err != nil {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// Long-running sync predict (~15 min on 5090 stack-balanced).
+	client := &http.Client{Timeout: 50 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "local H3 sync predict: "+err.Error())
+		return
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, strings.TrimSpace(string(data)))
+		return
+	}
+	var poll struct {
+		Status      string                 `json:"status"`
+		Error       string                 `json:"error"`
+		Output      interface{}            `json:"output"`
+		Metrics     map[string]interface{} `json:"metrics"`
+		PredictTime float64                `json:"predict_time"`
+		ID          string                 `json:"id"`
+	}
+	if err := json.Unmarshal(data, &poll); err != nil {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "invalid local H3 response")
+		return
+	}
+	st := strings.ToLower(strings.TrimSpace(poll.Status))
+	if st == "starting" || st == "processing" {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "local cog returned async prediction but has no poll route; ensure Prefer respond-async is not set")
+		return
+	}
+	if st == "failed" || st == "canceled" || st == "cancelled" {
+		msg := strings.TrimSpace(poll.Error)
+		if msg == "" {
+			msg = "local H3 prediction failed"
+		}
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, msg)
+		return
+	}
+	videoURL := extractLocalH3OutputURL(poll.Output)
+	if videoURL == "" {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "local H3 returned no video url")
+		return
+	}
+	predictSeconds := poll.PredictTime
+	if predictSeconds <= 0 {
+		if metrics := poll.Metrics; metrics != nil {
+			if v, ok := metrics["predict_time"].(float64); ok {
+				predictSeconds = v
+			}
+		}
+	}
+	if predictSeconds <= 0 {
+		predictSeconds = 300
+	}
+	providerUSD := servicePricesUSD["h3_video"] * predictSeconds / 3600
+	providerMicros := int64(providerUSD * 1_000_000)
+	if providerMicros < 1 {
+		providerMicros = 1
+	}
+	chargedUSD := float64(h3DownstreamMicros(providerMicros)) / 1_000_000
+	resultMap := map[string]interface{}{
+		"video_url": videoURL, "provider": "manifoldgen",
+		"provider_cost_usd": providerUSD, "charged_usd": chargedUSD,
+		"predict_seconds": predictSeconds,
+	}
+	cutePrice := getCUTEPriceUSD()
+	if cutePrice <= 0 || math.IsNaN(cutePrice) || math.IsInf(cutePrice, 0) {
+		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "CUTE price unavailable; retry status after pricing recovers")
+		return
+	}
+	resultMap["cute_price_usd"] = cutePrice
+	resultMap["credits_used"] = chargedUSD / cutePrice
+	result, _ := json.Marshal(resultMap)
+	if user, userErr := dbConn.GetUserByID(job.UserID); userErr == nil {
+		result = optimizeGeneratedVideo(ServiceUsageRequest{Service: "h3_video"}, user, result)
+	}
+	_, _, settleErr := dbConn.SettleH3VideoJob(job.ID, result, providerUSD, chargedUSD, cutePrice)
+	if settleErr == ErrVideoPaymentRequired {
+		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, fmt.Sprintf("top up to release completed video; $%.6f required", chargedUSD))
+		return
+	}
+	if settleErr != nil {
+		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "settlement unavailable; retry status")
+		return
+	}
+	indexCompletedVideo(job, result)
+	maybeTriggerAutoTopup(job.UserID)
+}
+
+func extractLocalH3OutputURL(output interface{}) string {
+	switch v := output.(type) {
+	case string:
+		return v
+	case map[string]interface{}:
+		for _, key := range []string{"video_url", "url"} {
+			if u, ok := v[key].(string); ok && u != "" {
+				return u
+			}
+		}
+	}
+	return ""
 }
 
 // handleVideoJobStatus lets a caller recover a paid result after the original
@@ -603,7 +854,12 @@ func callOpenPathsVideo(method, endpoint string, body []byte) ([]byte, int, erro
 // publishes it to the configured ManifoldGen R2 origin. A provider result is still
 // returned if optimization fails, so a completed generation is never discarded.
 func optimizeGeneratedVideo(req ServiceUsageRequest, user *User, result []byte) []byte {
-	if req.Service != "video_generate" || user == nil {
+	if user == nil {
+		return result
+	}
+	switch req.Service {
+	case "video_generate", "h3_video", "ltx_video":
+	default:
 		return result
 	}
 	var payload map[string]interface{}
@@ -614,6 +870,12 @@ func optimizeGeneratedVideo(req ServiceUsageRequest, user *User, result []byte) 
 	if source == "" {
 		if nested, ok := payload["result"].(map[string]interface{}); ok {
 			source, _ = nested["video_url"].(string)
+		}
+	}
+	if source == "" {
+		if u, ok := payload["url"].(string); ok {
+			source = u
+			payload["video_url"] = u
 		}
 	}
 	if source == "" {

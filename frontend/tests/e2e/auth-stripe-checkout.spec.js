@@ -197,7 +197,7 @@ test('account signup, logout, login, and embedded Stripe checkout', async ({ pag
   await page.getByTestId('account-buy-credits').click();
   const checkout = page.getByTestId('embedded-checkout-container');
   await expect(checkout).toBeVisible();
-  await expect(checkout.getByText('Secure Stripe checkout')).toBeVisible();
+  await expect(checkout.getByText('Checkout', { exact: true })).toBeVisible();
   await expect(checkout.getByText('Credits: $50')).toBeVisible();
   await expect(page.getByTestId('mock-stripe-checkout')).toBeVisible();
   await expect(page.locator('iframe[title="Mock Stripe Checkout Frame"]')).toHaveCount(1);
@@ -212,14 +212,16 @@ test('homepage signup then account monthly embedded checkout', async ({ page }) 
   await page.getByTestId('home-auth-password').fill(FIXED_PASSWORD);
   await page.getByTestId('home-auth-password-confirm').fill(FIXED_PASSWORD);
   await page.getByTestId('home-auth-submit').click();
-  await expect(page.getByRole('button', { name: /Enter studio/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Subscribe monthly/i })).toBeVisible();
   const stored = await page.evaluate(() => {
     const raw = localStorage.getItem('mg_user');
     return raw ? JSON.parse(raw) : null;
   });
   expect(stored?.api_key).toBeTruthy();
   expect(stored?.email).toBe(FIXED_EMAIL);
-  await page.getByRole('button', { name: /Enter studio/i }).click();
+  await page.getByRole('button', { name: /Subscribe monthly/i }).click();
+  await expect(page.getByText('Checkout', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('mock-stripe-checkout')).toBeVisible();
 
   await page.goto('/account');
   await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);

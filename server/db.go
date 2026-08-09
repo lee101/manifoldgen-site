@@ -552,7 +552,7 @@ func (db *DB) SettleH3VideoJob(jobID string, result []byte, providerCostUSD, cha
 	if _, err := tx.Exec(`INSERT INTO billing_events (id, user_id, event_type, amount, cute_amount, usd_amount, description, credits_after, created_at)
 		VALUES ($1, $2, 'h3_video', $3, $4, $5, $6, $7, NOW()) ON CONFLICT (id) DO NOTHING`,
 		"h3_"+jobID, userID, -creditsUsed, creditsUsed, chargedUSD,
-		fmt.Sprintf("H3 video via app.nz: $%.6f provider + 20%%", providerCostUSD), balance); err != nil {
+		fmt.Sprintf("ManifoldGen video generation ($%.2f)", chargedUSD), balance); err != nil {
 		return 0, creditsUsed, err
 	}
 	if _, err := tx.Exec(`UPDATE video_jobs SET status = 'completed', result_json = $2::jsonb, error = '', provider_cost_usd = $3, charged_usd = $4, credits_used = $5, settled = TRUE, updated_at = NOW() WHERE id = $1`,
@@ -638,18 +638,75 @@ func extractVideoURLFromResultJSON(raw string) string {
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return ""
 	}
-	if u, ok := payload["video_url"].(string); ok && u != "" {
-		return u
+	for _, key := range []string{"video_url", "url"} {
+		if u, ok := payload[key].(string); ok && u != "" {
+			return u
+		}
 	}
 	if nested, ok := payload["result"].(map[string]interface{}); ok {
-		if u, ok := nested["video_url"].(string); ok {
-			return u
+		for _, key := range []string{"video_url", "url"} {
+			if u, ok := nested[key].(string); ok && u != "" {
+				return u
+			}
 		}
 	}
 	if output, ok := payload["output"].(string); ok {
 		return output
 	}
 	return ""
+}
+
+// FeaturedVideo is a completed gallery clip for the landing page.
+type FeaturedVideo struct {
+	JobID    string `json:"job_id"`
+	Prompt   string `json:"prompt"`
+	VideoURL string `json:"video_url"`
+	Service  string `json:"service"`
+}
+
+// ListFeaturedVideos returns recent, full-quality completed clips with a playable URL.
+// Experimental w4a8 output stays out of the homepage showcase until explicitly curated.
+func (db *DB) ListFeaturedVideos(limit int) ([]FeaturedVideo, error) {
+	if limit <= 0 || limit > 48 {
+		limit = 12
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	rows, err := db.conn.Query(`
+		SELECT id, COALESCE(prompt, ''), COALESCE(service, ''), COALESCE(result_json::text, '')
+		FROM video_jobs
+		WHERE status = 'completed'
+			AND COALESCE(prompt, '') <> ''
+			AND (
+				COALESCE(result_json->>'quant', '') <> 'w4a8'
+				OR id = 'video_h3_neon_monsoon_geisha'
+			)
+			AND COALESCE(result_json->>'meta', '') NOT ILIKE '%w4a8%'
+			AND prompt NOT ILIKE '%Ferry cutting through morning harbor fog%'
+		ORDER BY
+			CASE WHEN service = 'h3_video' THEN 0 ELSE 1 END,
+			created_at DESC
+		LIMIT $1`, limit*3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]FeaturedVideo, 0, limit)
+	for rows.Next() {
+		var id, prompt, service, resultText string
+		if err := rows.Scan(&id, &prompt, &service, &resultText); err != nil {
+			return nil, err
+		}
+		videoURL := extractVideoURLFromResultJSON(resultText)
+		if videoURL == "" {
+			continue
+		}
+		out = append(out, FeaturedVideo{JobID: id, Prompt: prompt, VideoURL: videoURL, Service: service})
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
 }
 
 // GetUserByID returns a user by ID.
