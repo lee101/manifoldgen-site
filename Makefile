@@ -27,4 +27,4 @@ build: build-frontend build-server
 visualbench:
 	@echo "Start frontend on :3219 then run capture, or set VISUALBENCH_BASE_URL"
 	cd frontend && bunx playwright install chromium || true
-	VISUALBENCH_BASE_URL=$${VISUALBENCH_BASE_URL:-http://127.0.0.1:3219} node visualbench/capture.cjs
+	VISUALBENCH_BASE_URL=$${VISUALBENCH_BASE_URL:-http://127.0.0.1:3219} node visualbench/capture-studio.cjs

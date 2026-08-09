@@ -18,6 +18,7 @@ import {
   UserPlus,
   Volume2,
   VolumeX,
+  WandSparkles,
   X,
 } from 'lucide-react';
 import {
@@ -37,6 +38,7 @@ import {
 } from '../lib/h3-loop';
 
 const API = '/api';
+const GALLERY_CDN = 'https://manifoldgenstatic.manifoldgen.com/gallery';
 
 type Aspect = H3Aspect;
 type Size = H3Size;
@@ -151,12 +153,28 @@ function authHeaders(apiKey: string): HeadersInit {
 function normalizeImages(rows: GalleryImage[]): GalleryImage[] {
   return rows.map((img) => ({
     ...img,
-    thumb_url:
-      img.thumb_url ||
-      (img.thumb_path ? `/images/${img.thumb_path}` : undefined) ||
-      (img.file_path ? `/images/${img.file_path}` : undefined),
-    image_url: img.image_url || (img.file_path ? `/images/${img.file_path}` : undefined),
+    thumb_url: galleryImageURL(img.thumb_url || img.thumb_path || img.file_path),
+    image_url: galleryImageURL(img.image_url || img.file_path),
   }));
+}
+
+// Gallery images are published to the dedicated static bucket. Keep the gallery
+// independent of whichever API host is serving local development or production.
+function galleryImageURL(value?: string) {
+  const path = (value || '').trim();
+  if (!path) return undefined;
+  if (path.startsWith(`${GALLERY_CDN}/`)) return path;
+  if (/^https?:\/\//i.test(path)) {
+    try {
+      const parsed = new URL(path);
+      if (parsed.pathname.startsWith('/gallery/')) return `${GALLERY_CDN}${parsed.pathname.slice('/gallery'.length)}${parsed.search}`;
+      if (!parsed.pathname.startsWith('/images/')) return path;
+      return `${GALLERY_CDN}/${parsed.pathname.slice('/images/'.length)}${parsed.search}`;
+    } catch {
+      return path;
+    }
+  }
+  return `${GALLERY_CDN}/${path.replace(/^\/?(?:images\/)?(?:gallery\/)?/, '')}`;
 }
 
 export default function HomePage() {
@@ -183,6 +201,8 @@ export default function HomePage() {
   const [format, setFormat] = useState<Format>('webm-av1');
   const [includeAudio, setIncludeAudio] = useState(true);
   const [loopMode, setLoopMode] = useState(false);
+  const [upscaleMode, setUpscaleMode] = useState(false);
+  const [upscaleScale, setUpscaleScale] = useState<2 | 4>(2);
   const [generationStage, setGenerationStage] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -191,7 +211,9 @@ export default function HomePage() {
   const [h3BaseEstimateUSD, setH3BaseEstimateUSD] = useState(1.01);
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [imageCredits, setImageCredits] = useState(4);
+  const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
   const [gallery, setGallery] = useState<GalleryImage[]>([]);
+  const [backgroundRemovingID, setBackgroundRemovingID] = useState('');
   const [featuredVideos, setFeaturedVideos] = useState<VideoHit[]>([]);
   const [searchQ, setSearchQ] = useState('');
   const [searchBusy, setSearchBusy] = useState(false);
@@ -218,6 +240,13 @@ export default function HomePage() {
     () => Math.max(Math.ceil(0.1 / creditPrice), Math.ceil(estVideoUSD / creditPrice)),
     [creditPrice, estVideoUSD],
   );
+  const estUpscaleUSD = useMemo(() => {
+    if (!upscaleMode) return 0;
+    const [width, height] = h3Dimensions(aspect, size);
+    const outputMP = width * height * upscaleScale * upscaleScale / 1_000_000;
+    return Math.ceil((upscaleRates.base + outputMP * duration * upscaleRates.outputMPSecond) * 100 - 1e-8) / 100;
+  }, [aspect, duration, size, upscaleMode, upscaleRates, upscaleScale]);
+  const estUpscaleCredits = Math.ceil(estUpscaleUSD / creditPrice);
 
   const applyUser = useCallback((next: StoredUser) => {
     saveUser(next);
@@ -268,6 +297,9 @@ export default function HomePage() {
       .then((data) => {
         if (data.credit_price_usd) setCreditPrice(data.credit_price_usd);
         if (data.image_credits) setImageCredits(data.image_credits);
+        if (data.studio?.upscale_base_usd && data.studio?.upscale_output_mp_second_usd) {
+          setUpscaleRates({ base: data.studio.upscale_base_usd, outputMPSecond: data.studio.upscale_output_mp_second_usd });
+        }
         if (data.h3_video_estimate?.estimated_cost_usd) {
           setH3BaseEstimateUSD(data.h3_video_estimate.estimated_cost_usd);
         }
@@ -486,7 +518,21 @@ export default function HomePage() {
       const jobId = data.result?.job_id || data.job_id || data.id;
       if (!jobId) throw new Error('No job id returned');
       setGenerationStage('Rendering H3 video…');
-      await pollJob(jobId);
+      const generated = await pollJob(jobId);
+      if (upscaleMode) {
+        const videoURL = generated.result_url || generated.video_url || generated.result?.video_url;
+        if (!videoURL) throw new Error('H3 completed without a video to upscale');
+        const [width, height] = h3Dimensions(aspect, size);
+        setGenerationStage(`Starting Real-ESRGAN ${upscaleScale}× upscale…`);
+        const upscaleResponse = await fetch(`${API}/studio/upscale-video`, {
+          method: 'POST', headers: authHeaders(apiKey),
+          body: JSON.stringify({ video_url: videoURL, width, height, duration, scale: upscaleScale }),
+        });
+        const upscale = await parseJSONResponse<{ job_id?: string }>(upscaleResponse, 'Could not start post-upscale');
+        if (!upscale.job_id) throw new Error('Post-upscale returned no job');
+        setGenerationStage(`Upscaling every frame ${upscaleScale}×…`);
+        await pollJob(upscale.job_id);
+      }
       await softRefresh(apiKey);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Generation failed');
@@ -505,6 +551,42 @@ export default function HomePage() {
       ...current.filter((asset) => asset.kind !== 'image'),
     ]);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function openGalleryImageInStudio(img: GalleryImage, source = img.image_url || img.thumb_url) {
+    if (!source) return;
+    const query = new URLSearchParams({ image_url: source, name: img.prompt.slice(0, 80) || 'Gallery image' });
+    window.location.assign(`/studio?${query}`);
+  }
+
+  async function removeGalleryBackground(img: GalleryImage) {
+    const source = img.image_url || img.thumb_url;
+    if (!source) return;
+    if (!apiKey) {
+      openAuth('signup');
+      return;
+    }
+    setBackgroundRemovingID(img.id);
+    setError('');
+    try {
+      const response = await fetch(`${API}/studio/remove-background`, {
+        method: 'POST',
+        headers: authHeaders(apiKey),
+        body: JSON.stringify({ image_url: source }),
+      });
+      const data = await parseJSONResponse<{ image_url?: string; credits_remain?: number }>(response, 'Background removal failed');
+      if (!data.image_url) throw new Error('Background removal returned no image');
+      if (user && typeof data.credits_remain === 'number') {
+        const next = { ...user, credits: data.credits_remain };
+        setUser(next);
+        saveUser(next);
+      }
+      openGalleryImageInStudio(img, data.image_url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Background removal failed');
+    } finally {
+      setBackgroundRemovingID('');
+    }
   }
 
   async function uploadAssets(files: FileList | File[]) {
@@ -557,8 +639,8 @@ export default function HomePage() {
     }
   }
 
-  async function pollJob(jobId: string) {
-    for (let i = 0; i < 180; i++) {
+  async function pollJob(jobId: string): Promise<VideoJobState> {
+    for (let i = 0; i < 1200; i++) {
       const res = await fetch(`${API}/video-jobs/${jobId}`, {
         headers: authHeaders(apiKey),
       });
@@ -579,10 +661,10 @@ export default function HomePage() {
         cost_usd: state.charged_usd ?? state.cost_usd,
       });
       if (['completed', 'succeeded', 'failed', 'payment_required', 'error'].includes(state.status || '')) {
-        if (state.status === 'failed' || state.status === 'error') {
+        if (state.status === 'failed' || state.status === 'error' || state.status === 'payment_required') {
           throw new Error(state.error || 'Video failed');
         }
-        return;
+        return state;
       }
       await new Promise((r) => setTimeout(r, 2000));
     }
@@ -835,8 +917,24 @@ export default function HomePage() {
                   <Repeat2 size={14} />
                   Loop
                 </button>
+                <button
+                  type="button"
+                  data-testid="home-upscale-toggle"
+                  aria-pressed={upscaleMode}
+                  disabled={busy}
+                  onClick={() => setUpscaleMode((enabled) => !enabled)}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
+                    upscaleMode
+                      ? 'bg-[var(--color-accent)] text-white'
+                      : 'bg-white/5 text-[var(--color-mute)] hover:text-white'
+                  }`}
+                  title="Post-upscale the finished video with Real-ESRGAN"
+                >
+                  <Maximize2 size={14} />
+                  {upscaleMode ? `${upscaleScale}× upscale` : 'Upscale'}
+                </button>
                 <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] sm:inline" data-testid="home-video-cost">
-                  {duration}s · ~{estVideoCredits + (loopMode ? imageCredits : 0)} credits · est. ${estVideoUSD.toFixed(2)}
+                  {duration}s · ~{estVideoCredits + (loopMode ? imageCredits : 0) + estUpscaleCredits} credits · est. ${(estVideoUSD + estUpscaleUSD).toFixed(2)}
                 </span>
                 <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] md:inline" data-testid="home-image-cost">
                   Image {imageCredits} credits ($0.04)
@@ -911,12 +1009,8 @@ export default function HomePage() {
             </div>
             <div className="reel-scroll flex snap-x snap-mandatory gap-0 overflow-x-auto pb-1">
               {displayVideos.map((hit, idx) => (
-                <button
-                  key={hit.job_id}
-                  type="button"
-                  onClick={() => playVideo(hit)}
-                  className="group relative aspect-video h-[46vw] shrink-0 snap-start overflow-hidden sm:h-[30vw] md:h-[24vw] lg:h-[20vw]"
-                >
+                <div key={hit.job_id} className="group relative aspect-video h-[46vw] shrink-0 snap-start overflow-hidden sm:h-[30vw] md:h-[24vw] lg:h-[20vw]">
+                  <button type="button" aria-label="Play showcase video" onClick={() => playVideo(hit)} className="absolute inset-0 h-full w-full text-left">
                   {hit.video_url ? (
                     <video
                       src={hit.video_url}
@@ -942,7 +1036,14 @@ export default function HomePage() {
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3 text-left md:p-4">
                     <div className="line-clamp-2 text-sm leading-snug text-white/95 md:text-base">{hit.prompt}</div>
                   </div>
-                </button>
+                  </button>
+                  {hit.video_url && <button
+                    type="button"
+                    data-testid={`gallery-restyle-${hit.job_id}`}
+                    onClick={() => { window.location.href = `/studio?video_url=${encodeURIComponent(hit.video_url!)}&name=${encodeURIComponent(hit.prompt || 'Gallery video')}&restyle=1`; }}
+                    className="absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded-full border border-white/20 bg-black/65 px-3 py-1.5 text-xs font-medium text-white opacity-100 shadow-lg backdrop-blur-md transition hover:border-violet-300/60 hover:bg-violet-600/80 md:opacity-0 md:group-hover:opacity-100"
+                  ><WandSparkles size={13} /> Transform</button>}
+                </div>
               ))}
             </div>
           </div>
@@ -986,7 +1087,13 @@ export default function HomePage() {
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3 pb-14 text-left text-xs leading-snug text-white/90 opacity-90 transition group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 md:text-sm">
                     {img.prompt.slice(0, 140)}
                   </div>
-                  {src ? <button type="button" onClick={() => { useGalleryImage(img); void generate({ prompt: img.prompt, image: src }); }} className="absolute inset-x-3 bottom-3 z-10 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white opacity-100 shadow-lg transition sm:opacity-0 sm:group-hover:opacity-100"><Sparkles size={14} />Generate video</button> : null}
+                  {src ? (
+                    <div className="absolute inset-x-3 bottom-3 z-10 grid grid-cols-2 gap-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
+                      <button type="button" onClick={() => { useGalleryImage(img); void generate({ prompt: img.prompt, image: src }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
+                      <button type="button" onClick={() => openGalleryImageInStudio(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Studio</button>
+                      <button type="button" disabled={backgroundRemovingID === img.id} onClick={() => void removeGalleryBackground(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black disabled:opacity-60">{backgroundRemovingID === img.id ? <Loader2 className="animate-spin" size={13} /> : <WandSparkles size={13} />}Remove BG</button>
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
@@ -1062,6 +1169,26 @@ export default function HomePage() {
                 Seamless loop
                 <span className="mt-0.5 block text-xs text-[var(--color-mute)]">
                 make a looping video / cinemagraph
+                </span>
+              </span>
+            </label>
+            <label className="mt-3 flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                data-testid="settings-upscale-toggle"
+                checked={upscaleMode}
+                disabled={busy}
+                onChange={(e) => setUpscaleMode(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Real-ESRGAN post-upscale
+                <span className="mt-1 flex items-center gap-2 text-xs text-[var(--color-mute)]">
+                  Restore every frame after H3 renders
+                  <select value={upscaleScale} disabled={!upscaleMode || busy} onChange={(e) => setUpscaleScale(Number(e.target.value) as 2 | 4)} className="dark-select rounded-md px-2 py-1">
+                    <option value={2}>2×</option>
+                    <option value={4}>4×</option>
+                  </select>
                 </span>
               </span>
             </label>

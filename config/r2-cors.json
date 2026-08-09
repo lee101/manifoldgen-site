@@ -1,0 +1,18 @@
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": [
+        "https://manifoldgen.com",
+        "https://www.manifoldgen.com",
+        "https://manifoldgen.cc",
+        "https://www.manifoldgen.cc",
+        "http://localhost:3000",
+        "http://localhost:8080"
+      ],
+      "AllowedMethods": ["GET", "HEAD", "PUT"],
+      "AllowedHeaders": ["*"],
+      "ExposeHeaders": ["ETag"],
+      "MaxAgeSeconds": 86400
+    }
+  ]
+}

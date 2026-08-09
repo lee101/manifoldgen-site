@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Syne, DM_Sans } from 'next/font/google';
 import './globals.css';
+import PaymentProvider from '../components/payment-provider';
 
 const syne = Syne({
   subsets: ['latin'],
@@ -97,11 +98,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en" className={`${syne.variable} ${dmSans.variable} dark`}>
-      <head>
-        <link rel="preload" as="image" href={socialImage} type="image/webp" />
-      </head>
       <body className="min-h-screen antialiased">
-        {children}
+        <PaymentProvider>{children}</PaymentProvider>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}

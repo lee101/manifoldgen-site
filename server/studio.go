@@ -8,10 +8,15 @@ import (
 	"io"
 	"log"
 	"math"
+	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/valyala/fasthttp"
@@ -21,10 +26,153 @@ const (
 	studioBackgroundCredits  = 1.0
 	studioExtendInputPerSec  = 0.012
 	studioExtendOutputPerSec = 0.084
+	studioUpscaleBaseUSD     = 0.10
+	studioUpscaleOutputMPUSD = 0.012
 	studioAudioSearchLimit   = 24
+	studioMusicCredits       = 80.0
 )
 
 var studioHTTPClient = &http.Client{Timeout: 4 * time.Minute}
+
+const studioUpscaleMaxOutputBytes = 256 << 20
+
+type studioUpscaleUpload struct {
+	filename string
+	expires  time.Time
+}
+
+var studioUpscaleUploads sync.Map
+var studioUpscaleWorkerMu sync.Mutex
+
+func initStudioUpscaleUploadServer() {
+	address := strings.TrimSpace(getEnv("STUDIO_UPSCALE_UPLOAD_ADDR", "127.0.0.1:18191"))
+	if address == "" {
+		return
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/upload/", handleStudioUpscaleOutputTransfer)
+	server := &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 50 * time.Minute, WriteTimeout: 10 * time.Minute}
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("studio upscale output receiver failed: %v", err)
+		}
+	}()
+	log.Printf("Studio upscale output receiver listening on %s", address)
+}
+
+func registerStudioUpscaleUploadToken(token string) (string, string, func(), error) {
+	token = strings.TrimSpace(token)
+	if token == "" || strings.ContainsAny(token, "/\\") {
+		return "", "", nil, fmt.Errorf("invalid upscale upload token")
+	}
+	directory := getEnv("STUDIO_UPSCALE_OUTPUT_DIR", filepath.Join(os.TempDir(), "manifoldgen-upscale-outputs"))
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return "", "", nil, err
+	}
+	filename := filepath.Join(directory, token+".mp4")
+	studioUpscaleUploads.Store(token, &studioUpscaleUpload{filename: filename, expires: time.Now().Add(50 * time.Minute)})
+	base := strings.TrimRight(getEnv("STUDIO_UPSCALE_UPLOAD_URL", "http://127.0.0.1:18191"), "/")
+	cleanup := func() {
+		studioUpscaleUploads.Delete(token)
+		_ = os.Remove(filename)
+		_ = os.Remove(filename + ".partial")
+	}
+	return token, base + "/upload/" + token, cleanup, nil
+}
+
+func registerStudioUpscaleUpload() (string, string, func(), error) {
+	return registerStudioUpscaleUploadToken(strings.ReplaceAll(newUUID(), "-", ""))
+}
+
+func studioUpscaleUploadForRequest(requestPath string) (*studioUpscaleUpload, bool) {
+	relative := strings.Trim(strings.TrimPrefix(requestPath, "/upload/"), "/")
+	token := strings.SplitN(relative, "/", 2)[0]
+	if token == "" {
+		return nil, false
+	}
+	value, ok := studioUpscaleUploads.Load(token)
+	if !ok {
+		return nil, false
+	}
+	upload, ok := value.(*studioUpscaleUpload)
+	if !ok || time.Now().After(upload.expires) {
+		studioUpscaleUploads.Delete(token)
+		return nil, false
+	}
+	return upload, true
+}
+
+func handleStudioUpscaleOutputTransfer(w http.ResponseWriter, r *http.Request) {
+	upload, ok := studioUpscaleUploadForRequest(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		r.Body = http.MaxBytesReader(w, r.Body, studioUpscaleMaxOutputBytes+1)
+		partial := upload.filename + ".partial"
+		out, err := os.OpenFile(partial, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		if err != nil {
+			http.Error(w, "output unavailable", http.StatusInternalServerError)
+			return
+		}
+		var written int64
+		found := false
+		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if strings.HasPrefix(mediaType, "multipart/") {
+			reader, multipartErr := r.MultipartReader()
+			if multipartErr != nil {
+				err = multipartErr
+			} else {
+				for {
+					part, partErr := reader.NextPart()
+					if partErr == io.EOF {
+						break
+					}
+					if partErr != nil {
+						err = partErr
+						break
+					}
+					if part.FormName() == "file" || part.FileName() != "" {
+						found = true
+						written, err = io.Copy(out, io.LimitReader(part, studioUpscaleMaxOutputBytes+1))
+					}
+					_ = part.Close()
+					if err != nil || found {
+						break
+					}
+				}
+			}
+		} else {
+			found = true
+			written, err = io.Copy(out, io.LimitReader(r.Body, studioUpscaleMaxOutputBytes+1))
+		}
+		closeErr := out.Close()
+		if err != nil || closeErr != nil || !found || written < 1 || written > studioUpscaleMaxOutputBytes {
+			_ = os.Remove(partial)
+			http.Error(w, "invalid output file", http.StatusBadRequest)
+			return
+		}
+		if err := os.Rename(partial, upload.filename); err != nil {
+			_ = os.Remove(partial)
+			http.Error(w, "could not save output", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodGet:
+		if _, err := os.Stat(upload.filename); err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFile(w, r, upload.filename)
+	default:
+		w.Header().Set("Allow", "PUT, GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
 
 type studioAudioAsset struct {
 	ID          int64    `json:"id"`
@@ -134,8 +282,42 @@ func studioPublicMediaURL(raw string) error {
 	return nil
 }
 
+func studioMP4URL(raw string) error {
+	if err := studioPublicMediaURL(raw); err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(strings.TrimSpace(raw))
+	if !strings.EqualFold(path.Ext(parsed.Path), ".mp4") {
+		return fmt.Errorf("Grok extension requires an MP4 source")
+	}
+	return nil
+}
+
 func studioExtensionPriceUSD(inputSeconds float64, outputSeconds int) float64 {
 	return math.Ceil((inputSeconds*studioExtendInputPerSec+float64(outputSeconds)*studioExtendOutputPerSec)*100-1e-9) / 100
+}
+
+func studioUpscalePriceUSD(width, height int, duration float64, scale int) float64 {
+	outputMegapixels := float64(width*height*scale*scale) / 1_000_000
+	return math.Ceil((studioUpscaleBaseUSD+outputMegapixels*duration*studioUpscaleOutputMPUSD)*100-1e-9) / 100
+}
+
+func studioRemoteVideoURL(raw string) error {
+	if err := studioPublicMediaURL(raw); err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(strings.TrimSpace(raw))
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("video URL must use https")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".local") {
+		return fmt.Errorf("video URL must be public")
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalUnicast()) {
+		return fmt.Errorf("video URL must be public")
+	}
+	return nil
 }
 
 func studioNativeRequest(imageURL string) (string, error) {
@@ -241,6 +423,70 @@ func studioMediaURL(body []byte) string {
 	return visit(payload)
 }
 
+func studioFalMusic(prompt string, duration int) (string, error) {
+	if falAPIKey == "" {
+		return "", fmt.Errorf("music generation is not configured")
+	}
+	body, _ := json.Marshal(map[string]interface{}{"prompt": prompt, "duration": duration})
+	req, err := http.NewRequest(http.MethodPost, "https://fal.run/cassetteai/music-generator", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Key "+falAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := studioHTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	result, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("music generator returned %d", resp.StatusCode)
+	}
+	if url := studioMediaURL(result); url != "" {
+		return url, nil
+	}
+	return "", fmt.Errorf("music generator returned no audio")
+}
+
+func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
+	user, err := studioUser(ctx)
+	if err != nil {
+		jsonError(ctx, http.StatusUnauthorized, err.Error())
+		return
+	}
+	var input struct {
+		Prompt   string `json:"prompt"`
+		Duration int    `json:"duration"`
+	}
+	if json.Unmarshal(ctx.PostBody(), &input) != nil || strings.TrimSpace(input.Prompt) == "" {
+		jsonError(ctx, http.StatusBadRequest, "a music prompt is required")
+		return
+	}
+	if input.Duration < 5 || input.Duration > 180 {
+		jsonError(ctx, http.StatusBadRequest, "music duration must be 5–180 seconds")
+		return
+	}
+	balance, err := dbConn.DeductUserCredits(user.ID, studioMusicCredits)
+	if err != nil {
+		jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: music generation costs 80 credits")
+		return
+	}
+	audioURL, err := studioFalMusic(strings.TrimSpace(input.Prompt), input.Duration)
+	if err != nil {
+		_, _ = dbConn.AddUserCredits(user.ID, studioMusicCredits)
+		jsonError(ctx, http.StatusBadGateway, "music generation is temporarily unavailable")
+		return
+	}
+	price := getCUTEPriceUSD()
+	_ = dbConn.CreateBillingEvent(&BillingEvent{UserID: user.ID, EventType: "music_generation", Amount: -studioMusicCredits, CuteAmount: studioMusicCredits, USDAmount: studioMusicCredits * price, Description: "Fal music generation", CreditsAfter: balance})
+	maybeTriggerAutoTopup(user.ID)
+	jsonResponse(ctx, http.StatusOK, map[string]interface{}{"audio_url": audioURL, "credits_used": studioMusicCredits, "credits_remain": balance, "backend": "fal-cassetteai"})
+}
+
 func handleStudioRemoveBackground(ctx *fasthttp.RequestCtx) {
 	user, err := studioUser(ctx)
 	if err != nil {
@@ -316,6 +562,20 @@ func studioXAIRequest(method, path string, payload []byte) ([]byte, int, error) 
 	return data, resp.StatusCode, nil
 }
 
+func studioXAIUserError(body []byte, status int) string {
+	if status == http.StatusForbidden {
+		var providerError struct {
+			Code  string `json:"code"`
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &providerError) == nil && providerError.Code == "permission-denied" &&
+			(strings.Contains(strings.ToLower(providerError.Error), "credits") || strings.Contains(strings.ToLower(providerError.Error), "spending limit")) {
+			return "Grok video extension is unavailable because the provider spending limit has been reached"
+		}
+	}
+	return "video extension is temporarily unavailable"
+}
+
 func handleStudioExtendVideo(ctx *fasthttp.RequestCtx) {
 	user, err := studioUser(ctx)
 	if err != nil {
@@ -333,8 +593,8 @@ func handleStudioExtendVideo(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	input.Prompt = strings.TrimSpace(input.Prompt)
-	if studioPublicMediaURL(input.VideoURL) != nil || input.Prompt == "" || len(input.Prompt) > 4000 {
-		jsonError(ctx, http.StatusBadRequest, "video URL and continuation prompt are required")
+	if studioMP4URL(input.VideoURL) != nil || input.Prompt == "" || len(input.Prompt) > 4000 {
+		jsonError(ctx, http.StatusBadRequest, "a public MP4 URL and continuation prompt are required")
 		return
 	}
 	if input.Duration < 2 || input.Duration > 10 || input.SourceDuration < 2 || input.SourceDuration > 15.1 {
@@ -358,10 +618,11 @@ func handleStudioExtendVideo(ctx *fasthttp.RequestCtx) {
 		"model": "grok-imagine-video", "prompt": input.Prompt, "duration": input.Duration,
 		"video": map[string]string{"url": input.VideoURL},
 	})
-	response, _, callErr := studioXAIRequest(http.MethodPost, "/v1/videos/extensions", requestBody)
+	response, providerStatus, callErr := studioXAIRequest(http.MethodPost, "/v1/videos/extensions", requestBody)
 	if callErr != nil {
 		_, _ = dbConn.AddUserCredits(user.ID, credits)
-		jsonError(ctx, http.StatusBadGateway, "video extension is temporarily unavailable")
+		log.Printf("studio Grok extension submit failed: status=%d error=%v response=%s", providerStatus, callErr, tailOutput(response))
+		jsonError(ctx, http.StatusBadGateway, studioXAIUserError(response, providerStatus))
 		return
 	}
 	var provider struct {
@@ -461,4 +722,224 @@ func processStudioExtendJob(job *VideoJob) {
 		time.Sleep(3 * time.Second)
 	}
 	studioRefundExtension(job, "video extension timed out")
+}
+
+type studioUpscaleInput struct {
+	VideoURL string  `json:"video_url"`
+	Width    int     `json:"width"`
+	Height   int     `json:"height"`
+	Duration float64 `json:"duration"`
+	Scale    int     `json:"scale"`
+}
+
+func validateStudioUpscaleInput(input studioUpscaleInput) error {
+	if err := studioRemoteVideoURL(input.VideoURL); err != nil {
+		return err
+	}
+	if input.Scale != 2 && input.Scale != 4 {
+		return fmt.Errorf("scale must be 2 or 4")
+	}
+	if input.Width < 16 || input.Height < 16 || input.Width > 4096 || input.Height > 4096 {
+		return fmt.Errorf("source dimensions must be between 16 and 4096 pixels")
+	}
+	if input.Width*input.Scale > 8192 || input.Height*input.Scale > 8192 {
+		return fmt.Errorf("upscaled video would exceed 8192 pixels on one side")
+	}
+	if input.Duration < 0.1 || input.Duration > 60.1 {
+		return fmt.Errorf("video duration must be between 0.1 and 60 seconds")
+	}
+	return nil
+}
+
+func handleStudioUpscaleVideo(ctx *fasthttp.RequestCtx) {
+	user, err := studioUser(ctx)
+	if err != nil {
+		jsonError(ctx, http.StatusUnauthorized, err.Error())
+		return
+	}
+	var input studioUpscaleInput
+	if json.Unmarshal(ctx.PostBody(), &input) != nil {
+		jsonError(ctx, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	input.VideoURL = strings.TrimSpace(input.VideoURL)
+	if err := validateStudioUpscaleInput(input); err != nil {
+		jsonError(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+	priceUSD := studioUpscalePriceUSD(input.Width, input.Height, input.Duration, input.Scale)
+	creditPrice := getCUTEPriceUSD()
+	if creditPrice <= 0 {
+		jsonError(ctx, http.StatusServiceUnavailable, "credit pricing unavailable")
+		return
+	}
+	credits := math.Ceil(priceUSD / creditPrice)
+	balance, err := dbConn.DeductUserCredits(user.ID, credits)
+	if err != nil {
+		jsonError(ctx, http.StatusPaymentRequired, fmt.Sprintf("insufficient credits: need %.0f credits", credits))
+		return
+	}
+	job, err := dbConn.CreateVideoJobForService(user.ID, "local:sync", "studio_upscale", fmt.Sprintf("Real-ESRGAN %dx upscale", input.Scale))
+	if err != nil {
+		_, _ = dbConn.AddUserCredits(user.ID, credits)
+		jsonError(ctx, http.StatusInternalServerError, "could not save upscale job")
+		return
+	}
+	initial, _ := json.Marshal(map[string]interface{}{
+		"video_url": input.VideoURL, "width": input.Width, "height": input.Height,
+		"duration": input.Duration, "scale": input.Scale, "credits_used": credits, "charged_usd": priceUSD,
+	})
+	if err := dbConn.UpdateVideoJob(job.ID, "queued", initial, ""); err != nil {
+		_, _ = dbConn.AddUserCredits(user.ID, credits)
+		jsonError(ctx, http.StatusInternalServerError, "could not queue upscale job")
+		return
+	}
+	_ = dbConn.CreateBillingEvent(&BillingEvent{
+		UserID: user.ID, EventType: "video_upscale", Amount: -credits, CuteAmount: credits,
+		USDAmount: priceUSD, Description: fmt.Sprintf("Studio Real-ESRGAN %dx video upscale", input.Scale), CreditsAfter: balance,
+	})
+	launchVideoJob(job.ID)
+	maybeTriggerAutoTopup(user.ID)
+	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
+		"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID,
+		"credits_used": credits, "credits_remain": balance, "price_usd": priceUSD,
+	})
+}
+
+func studioUpscaleEndpoint() string {
+	return strings.TrimRight(strings.TrimSpace(getEnv("STUDIO_UPSCALE_URL", "http://127.0.0.1:18090")), "/")
+}
+
+func studioUpscaleOutputURL(output interface{}, endpoint string) string {
+	result := extractLocalH3OutputURL(output)
+	parsed, err := url.Parse(result)
+	base, baseErr := url.Parse(endpoint)
+	if err == nil && baseErr == nil && parsed.Hostname() != "" && (parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1") && (parsed.Port() == "" || parsed.Port() == "5000") {
+		parsed.Scheme = base.Scheme
+		parsed.Host = base.Host
+		return parsed.String()
+	}
+	return result
+}
+
+func studioUpscaleCredits(job *VideoJob) float64 {
+	var initial struct {
+		CreditsUsed float64 `json:"credits_used"`
+	}
+	_ = json.Unmarshal(job.Result, &initial)
+	return initial.CreditsUsed
+}
+
+func studioRefundUpscale(job *VideoJob, reason string) {
+	credits := studioUpscaleCredits(job)
+	if credits > 0 {
+		balance, err := dbConn.AddUserCredits(job.UserID, credits)
+		if err == nil {
+			_ = dbConn.CreateBillingEvent(&BillingEvent{
+				UserID: job.UserID, EventType: "refund", Amount: credits, CuteAmount: credits,
+				USDAmount: credits * getCUTEPriceUSD(), Description: "Refund: video upscale failed", CreditsAfter: balance,
+			})
+		}
+	}
+	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, reason)
+}
+
+func processStudioUpscaleJob(job *VideoJob) {
+	studioUpscaleWorkerMu.Lock()
+	defer studioUpscaleWorkerMu.Unlock()
+	endpoint := studioUpscaleEndpoint()
+	if endpoint == "" {
+		studioRefundUpscale(job, "video upscaler is not configured")
+		return
+	}
+	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
+	var stored struct {
+		VideoURL string  `json:"video_url"`
+		Width    int     `json:"width"`
+		Height   int     `json:"height"`
+		Duration float64 `json:"duration"`
+		Scale    int     `json:"scale"`
+	}
+	if json.Unmarshal(job.Result, &stored) != nil {
+		studioRefundUpscale(job, "upscale input is unavailable")
+		return
+	}
+	input := studioUpscaleInput{VideoURL: stored.VideoURL, Width: stored.Width, Height: stored.Height, Duration: stored.Duration, Scale: stored.Scale}
+	if err := validateStudioUpscaleInput(input); err != nil {
+		studioRefundUpscale(job, "invalid upscale input: "+err.Error())
+		return
+	}
+	_, _, cleanupOutput, registerErr := registerStudioUpscaleUploadToken(getEnv("STUDIO_UPSCALE_UPLOAD_TOKEN", "worker"))
+	if registerErr != nil {
+		studioRefundUpscale(job, "could not prepare upscale output")
+		return
+	}
+	defer cleanupOutput()
+	payload, _ := json.Marshal(map[string]interface{}{"input": map[string]interface{}{
+		"video": input.VideoURL, "scale": input.Scale, "model": "general", "face_enhance": false, "preserve_audio": true,
+	}})
+	req, err := http.NewRequest(http.MethodPost, endpoint+"/predictions", bytes.NewReader(payload))
+	if err != nil {
+		studioRefundUpscale(job, "could not prepare upscale")
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if secret := strings.TrimSpace(os.Getenv("STUDIO_UPSCALE_SECRET")); secret != "" {
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
+	client := &http.Client{Timeout: 45 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		studioRefundUpscale(job, "video upscale service unavailable")
+		return
+	}
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	resp.Body.Close()
+	if readErr != nil || resp.StatusCode >= 300 {
+		studioRefundUpscale(job, "video upscale failed")
+		return
+	}
+	var prediction struct {
+		Status      string      `json:"status"`
+		Output      interface{} `json:"output"`
+		Error       string      `json:"error"`
+		PredictTime float64     `json:"predict_time"`
+		Metrics     struct {
+			PredictTime float64 `json:"predict_time"`
+		} `json:"metrics"`
+	}
+	if json.Unmarshal(data, &prediction) != nil {
+		studioRefundUpscale(job, "video upscaler returned an invalid response")
+		return
+	}
+	if status := strings.ToLower(strings.TrimSpace(prediction.Status)); status == "failed" || status == "canceled" || status == "cancelled" {
+		studioRefundUpscale(job, "video upscale failed: "+strings.TrimSpace(prediction.Error))
+		return
+	}
+	outputURL := studioUpscaleOutputURL(prediction.Output, endpoint)
+	if outputURL == "" {
+		studioRefundUpscale(job, "video upscaler returned no video")
+		return
+	}
+	predictTime := prediction.PredictTime
+	if predictTime == 0 {
+		predictTime = prediction.Metrics.PredictTime
+	}
+	resultMap := map[string]interface{}{
+		"video_url": outputURL, "source_video_url": input.VideoURL, "scale": input.Scale,
+		"source_width": input.Width, "source_height": input.Height, "duration": input.Duration,
+		"width": input.Width * input.Scale, "height": input.Height * input.Scale,
+		"credits_used": studioUpscaleCredits(job), "predict_seconds": predictTime,
+	}
+	result, _ := json.Marshal(resultMap)
+	if user, userErr := dbConn.GetUserByID(job.UserID); userErr == nil {
+		result = optimizeGeneratedVideo(ServiceUsageRequest{Service: "studio_upscale"}, user, result)
+	}
+	var durable map[string]interface{}
+	_ = json.Unmarshal(result, &durable)
+	if warning, _ := durable["optimization_warning"].(string); warning != "" {
+		studioRefundUpscale(job, "could not publish upscaled video")
+		return
+	}
+	_ = dbConn.UpdateVideoJob(job.ID, "completed", result, "")
 }

@@ -425,8 +425,16 @@ func processVideoJob(jobID string) {
 		processH3VideoJob(job)
 		return
 	}
+	if job.Service == "video_restyle" {
+		processVideoRestyleJob(job)
+		return
+	}
 	if job.Service == "studio_extend" {
 		processStudioExtendJob(job)
+		return
+	}
+	if job.Service == "studio_upscale" {
+		processStudioUpscaleJob(job)
 		return
 	}
 	user, err := dbConn.GetUserByID(job.UserID)
@@ -861,7 +869,7 @@ func optimizeGeneratedVideo(req ServiceUsageRequest, user *User, result []byte) 
 		return result
 	}
 	switch req.Service {
-	case "video_generate", "h3_video", "ltx_video":
+	case "video_generate", "h3_video", "video_restyle", "ltx_video", "studio_upscale":
 	default:
 		return result
 	}

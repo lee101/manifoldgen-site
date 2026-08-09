@@ -4,6 +4,7 @@ const port = process.env.PLAYWRIGHT_PORT || '3218';
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || `http://127.0.0.1:${port}`;
 const skipWebServer = process.env.PLAYWRIGHT_SKIP_WEBSERVER === '1';
 const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+const gpuRun = process.env.PLAYWRIGHT_GPU === '1';
 
 module.exports = defineConfig({
   testDir: './tests/e2e',
@@ -16,7 +17,13 @@ module.exports = defineConfig({
   use: {
     baseURL,
     trace: 'retain-on-failure',
-    ...(chromiumExecutable ? { launchOptions: { executablePath: chromiumExecutable } } : {}),
+    headless: !gpuRun,
+    launchOptions: {
+      ...(chromiumExecutable ? { executablePath: chromiumExecutable } : {}),
+      // Exercise the same GPU/WebCodecs path used by the studio instead of
+      // silently benchmarking Chromium's SwiftShader software renderer.
+      args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=gl', '--enable-features=VaapiVideoDecoder,VaapiVideoEncoder'],
+    },
   },
   projects: [
     {

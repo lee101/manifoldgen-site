@@ -136,6 +136,17 @@ func (db *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_video_jobs_status ON video_jobs(status) WHERE status IN ('queued', 'processing');
 	CREATE INDEX IF NOT EXISTS idx_video_jobs_prompt ON video_jobs(prompt) WHERE prompt <> '';
 
+	CREATE TABLE IF NOT EXISTS studio_projects (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		name TEXT NOT NULL DEFAULT 'Untitled project',
+		document_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+		revision BIGINT NOT NULL DEFAULT 1,
+		created_at TIMESTAMPTZ DEFAULT NOW(),
+		updated_at TIMESTAMPTZ DEFAULT NOW()
+	);
+	CREATE INDEX IF NOT EXISTS idx_studio_projects_user_updated ON studio_projects(user_id, updated_at DESC);
+
 	CREATE TABLE IF NOT EXISTS crypto_checkout_intents (
 		id TEXT PRIMARY KEY,
 		user_id TEXT NOT NULL REFERENCES users(id),
@@ -452,6 +463,98 @@ func (db *DB) GetUserByAPIKey(apiKey string) (*User, error) {
 	return &user, nil
 }
 
+const studioProjectSelectColumns = `id, user_id, name, document_json, revision, created_at, updated_at`
+
+func scanStudioProject(row interface{ Scan(...interface{}) error }, project *StudioProject) error {
+	var document []byte
+	if err := row.Scan(&project.ID, &project.UserID, &project.Name, &document, &project.Revision, &project.CreatedAt, &project.UpdatedAt); err != nil {
+		return err
+	}
+	project.Document = json.RawMessage(document)
+	return nil
+}
+
+// UpsertStudioProject stores the latest local-first editor snapshot and bumps
+// its revision. Ownership is immutable even if a caller guesses another ID.
+func (db *DB) UpsertStudioProject(userID, projectID, name string, document json.RawMessage) (*StudioProject, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	var project StudioProject
+	err := scanStudioProject(db.conn.QueryRow(
+		`INSERT INTO studio_projects (id, user_id, name, document_json)
+		 VALUES ($1, $2, $3, $4::jsonb)
+		 ON CONFLICT (id) DO UPDATE SET
+		   name = EXCLUDED.name,
+		   document_json = EXCLUDED.document_json,
+		   revision = studio_projects.revision + 1,
+		   updated_at = NOW()
+		 WHERE studio_projects.user_id = EXCLUDED.user_id
+		 RETURNING `+studioProjectSelectColumns,
+		projectID, userID, name, string(document),
+	), &project)
+	if err != nil {
+		return nil, err
+	}
+	return &project, nil
+}
+
+func (db *DB) GetStudioProject(userID, projectID string) (*StudioProject, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	var project StudioProject
+	if err := scanStudioProject(db.conn.QueryRow(
+		"SELECT "+studioProjectSelectColumns+" FROM studio_projects WHERE id = $1 AND user_id = $2",
+		projectID, userID,
+	), &project); err != nil {
+		return nil, err
+	}
+	return &project, nil
+}
+
+func (db *DB) ListStudioProjects(userID string, limit int) ([]StudioProject, error) {
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	rows, err := db.conn.Query(
+		`SELECT id, user_id, name, NULL::jsonb, revision, created_at, updated_at
+		 FROM studio_projects WHERE user_id = $1 ORDER BY updated_at DESC LIMIT $2`,
+		userID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	projects := make([]StudioProject, 0)
+	for rows.Next() {
+		var project StudioProject
+		var document []byte
+		if err := rows.Scan(&project.ID, &project.UserID, &project.Name, &document, &project.Revision, &project.CreatedAt, &project.UpdatedAt); err != nil {
+			return nil, err
+		}
+		projects = append(projects, project)
+	}
+	return projects, rows.Err()
+}
+
+func (db *DB) DeleteStudioProject(userID, projectID string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	result, err := db.conn.Exec("DELETE FROM studio_projects WHERE id = $1 AND user_id = $2", projectID, userID)
+	if err != nil {
+		return err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if deleted != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // RotateAPIKey generates a new API key if oldKey is still authoritative.
 // Matching both user ID and the presented key makes concurrent rotations a
 // compare-and-swap: only one request can invalidate a given key.
@@ -520,8 +623,14 @@ func (db *DB) CreateVideoJobForService(userID, providerJobID, service, prompt st
 var ErrVideoPaymentRequired = errors.New("insufficient credits for completed video")
 
 func (db *DB) SettleH3VideoJob(jobID string, result []byte, providerCostUSD, chargedUSD, cutePrice float64) (float64, float64, error) {
+	return db.SettleGeneratedVideoJob(jobID, result, providerCostUSD, chargedUSD, cutePrice)
+}
+
+// SettleGeneratedVideoJob charges an async video exactly once and records the
+// job's own service name in the credit ledger.
+func (db *DB) SettleGeneratedVideoJob(jobID string, result []byte, providerCostUSD, chargedUSD, cutePrice float64) (float64, float64, error) {
 	if chargedUSD <= 0 || cutePrice <= 0 {
-		return 0, 0, fmt.Errorf("invalid H3 settlement price")
+		return 0, 0, fmt.Errorf("invalid video settlement price")
 	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -530,9 +639,9 @@ func (db *DB) SettleH3VideoJob(jobID string, result []byte, providerCostUSD, cha
 		return 0, 0, err
 	}
 	defer tx.Rollback()
-	var userID, status string
+	var userID, status, service string
 	var settled bool
-	if err := tx.QueryRow(`SELECT user_id, status, COALESCE(settled, FALSE) FROM video_jobs WHERE id = $1 FOR UPDATE`, jobID).Scan(&userID, &status, &settled); err != nil {
+	if err := tx.QueryRow(`SELECT user_id, status, COALESCE(service, 'video_generate'), COALESCE(settled, FALSE) FROM video_jobs WHERE id = $1 FOR UPDATE`, jobID).Scan(&userID, &status, &service, &settled); err != nil {
 		return 0, 0, err
 	}
 	if settled || status == "completed" {
@@ -554,9 +663,9 @@ func (db *DB) SettleH3VideoJob(jobID string, result []byte, providerCostUSD, cha
 		return 0, creditsUsed, err
 	}
 	if _, err := tx.Exec(`INSERT INTO billing_events (id, user_id, event_type, amount, cute_amount, usd_amount, description, credits_after, created_at)
-		VALUES ($1, $2, 'h3_video', $3, $4, $5, $6, $7, NOW()) ON CONFLICT (id) DO NOTHING`,
-		"h3_"+jobID, userID, -creditsUsed, creditsUsed, chargedUSD,
-		fmt.Sprintf("ManifoldGen video generation ($%.2f)", chargedUSD), balance); err != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) ON CONFLICT (id) DO NOTHING`,
+		"video_settle_"+jobID, userID, service, -creditsUsed, creditsUsed, chargedUSD,
+		fmt.Sprintf("ManifoldGen %s generation ($%.2f)", strings.ReplaceAll(service, "_", " "), chargedUSD), balance); err != nil {
 		return 0, creditsUsed, err
 	}
 	if _, err := tx.Exec(`UPDATE video_jobs SET status = 'completed', result_json = $2::jsonb, error = '', provider_cost_usd = $3, charged_usd = $4, credits_used = $5, settled = TRUE, updated_at = NOW() WHERE id = $1`,
@@ -606,6 +715,23 @@ func (db *DB) UpdateVideoJob(jobID, status string, result []byte, jobErr string)
 	_, err := db.conn.Exec(
 		`UPDATE video_jobs SET status = $2, result_json = COALESCE($3::jsonb, result_json), error = $4, updated_at = NOW() WHERE id = $1`,
 		jobID, status, resultJSON, jobErr,
+	)
+	return err
+}
+
+// UpdateVideoJobProvider atomically changes the durable provider handle while
+// retaining the original request. Video restyles use this when a private worker
+// cannot finish and the same user-visible job is moved to the standby queue.
+func (db *DB) UpdateVideoJobProvider(jobID, providerJobID, status string, result []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	var resultJSON interface{}
+	if len(result) > 0 {
+		resultJSON = string(result)
+	}
+	_, err := db.conn.Exec(
+		`UPDATE video_jobs SET provider_job_id = $2, status = $3, result_json = COALESCE($4::jsonb, result_json), error = '', updated_at = NOW() WHERE id = $1`,
+		jobID, providerJobID, status, resultJSON,
 	)
 	return err
 }

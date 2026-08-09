@@ -81,6 +81,18 @@ type VideoJob struct {
 	UpdatedAt     time.Time       `json:"updated_at"`
 }
 
+// StudioProject stores the portable editor document for one account. Media
+// bytes live in R2; the JSON document only contains edit state and asset URLs.
+type StudioProject struct {
+	ID        string          `json:"id"`
+	UserID    string          `json:"-"`
+	Name      string          `json:"name"`
+	Document  json.RawMessage `json:"document,omitempty"`
+	Revision  int64           `json:"revision"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
 // CryptoCheckoutIntent represents a pending deposit of $CUTE
 type CryptoCheckoutIntent struct {
 	ID              string               `json:"id"`
@@ -136,16 +148,25 @@ type ServiceUsageRequest struct {
 	Input    string `json:"input,omitempty"`
 	AudioURL string `json:"audio_url,omitempty"`
 	// video generation fields
-	Duration      int    `json:"duration,omitempty"`
-	AspectRatio   string `json:"aspect_ratio,omitempty"`
-	OutputFormat  string `json:"output_format,omitempty"`
-	FirstFrame    string `json:"first_frame,omitempty"`
-	LastFrame     string `json:"last_frame,omitempty"`
-	Size          string `json:"size,omitempty"`
-	Loop          bool   `json:"loop,omitempty"`
-	IncludeAudio  *bool  `json:"include_audio,omitempty"`
-	Structured    *bool  `json:"structured_prompt,omitempty"`
-	EncodeQuality int    `json:"encode_quality,omitempty"`
+	VideoURL           string   `json:"video_url,omitempty"`
+	NegativePrompt     string   `json:"negative_prompt,omitempty"`
+	Resolution         string   `json:"resolution,omitempty"`
+	Strength           float64  `json:"strength,omitempty"`
+	NumFrames          int      `json:"num_frames,omitempty"`
+	FramesPerSecond    int      `json:"frames_per_second,omitempty"`
+	ReferenceImageURLs []string `json:"reference_image_urls,omitempty"`
+	ReferenceVideoURLs []string `json:"reference_video_urls,omitempty"`
+	ReferenceAudioURLs []string `json:"reference_audio_urls,omitempty"`
+	Duration           int      `json:"duration,omitempty"`
+	AspectRatio        string   `json:"aspect_ratio,omitempty"`
+	OutputFormat       string   `json:"output_format,omitempty"`
+	FirstFrame         string   `json:"first_frame,omitempty"`
+	LastFrame          string   `json:"last_frame,omitempty"`
+	Size               string   `json:"size,omitempty"`
+	Loop               bool     `json:"loop,omitempty"`
+	IncludeAudio       *bool    `json:"include_audio,omitempty"`
+	Structured         *bool    `json:"structured_prompt,omitempty"`
+	EncodeQuality      int      `json:"encode_quality,omitempty"`
 	// H3 weight profile: int8_convrot (stable default) or w4a8 (experimental opt-in).
 	Quant string `json:"quant,omitempty"`
 	// zimage fields

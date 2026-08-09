@@ -66,6 +66,7 @@ func main() {
 	initStripe()
 	initServices()
 	initUploads()
+	initStudioUpscaleUploadServer()
 	initEmail()
 	initPromptSearch() // Background: loads gobed model + indexes 1.7M prompts
 
@@ -123,8 +124,13 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	// Serve generated images from /sdb-disk/manifoldgen-images
+	// Public frontend assets and generated gallery images intentionally share
+	// /images. Prefer a matching build asset (favicon, touch icon, logos), then
+	// fall back to the generated-image store.
 	if strings.HasPrefix(path, "/images/") {
+		if serveStaticFile(ctx, path) {
+			return
+		}
 		serveImage(ctx, path)
 		return
 	}
@@ -295,10 +301,20 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleServiceRequest(ctx)
 	case path == "/api/studio/remove-background" && method == "POST":
 		handleStudioRemoveBackground(ctx)
+	case path == "/api/studio/generate-music" && method == "POST":
+		handleStudioGenerateMusic(ctx)
 	case path == "/api/studio/extend-video" && method == "POST":
 		handleStudioExtendVideo(ctx)
+	case path == "/api/studio/upscale-video" && method == "POST":
+		handleStudioUpscaleVideo(ctx)
 	case path == "/api/studio/audio-search" && method == "GET":
 		handleStudioAudioSearch(ctx)
+	case path == "/api/studio/projects" && method == "GET":
+		handleListStudioProjects(ctx)
+	case strings.HasPrefix(path, "/api/studio/projects/"):
+		handleStudioProject(ctx, strings.TrimPrefix(path, "/api/studio/projects/"), method)
+	case path == "/api/studio/assets/presign" && method == "POST":
+		handleStudioAssetPresign(ctx)
 	case strings.HasPrefix(path, "/api/video-jobs/") && method == "GET":
 		handleVideoJobStatus(ctx, strings.TrimPrefix(path, "/api/video-jobs/"))
 
@@ -1072,15 +1088,11 @@ var mimeTypes = map[string]string{
 	".txt":   "text/plain",
 }
 
-func serveStatic(ctx *fasthttp.RequestCtx, path string) {
-	// Try to serve from frontend build output
-	distDir := getEnv("DIST_DIR", "../frontend/out")
-
-	// Clean path
-	if path == "/" {
-		path = "/index.html"
+func serveStaticFile(ctx *fasthttp.RequestCtx, path string) bool {
+	if strings.Contains(path, "..") {
+		return false
 	}
-
+	distDir := getEnv("DIST_DIR", "../frontend/out")
 	filePath := filepath.Join(distDir, path)
 
 	// If path has no extension, also try .html (Next.js static export)
@@ -1091,23 +1103,34 @@ func serveStatic(ctx *fasthttp.RequestCtx, path string) {
 		}
 	}
 
-	// Check if file exists
-	if _, err := os.Stat(filePath); err == nil {
+	if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
 		ext := filepath.Ext(filePath)
 		if ct, ok := mimeTypes[ext]; ok {
 			ctx.Response.Header.Set("Content-Type", ct)
 		}
 
 		// Cache static assets
-		if strings.HasPrefix(path, "/_next/") || strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/brand/") {
+		if strings.HasPrefix(path, "/_next/") || strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/brand/") || strings.HasPrefix(path, "/images/") {
 			ctx.Response.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 
 		fasthttp.ServeFile(ctx, filePath)
+		return true
+	}
+	return false
+}
+
+func serveStatic(ctx *fasthttp.RequestCtx, path string) {
+	// Try to serve from frontend build output.
+	if path == "/" {
+		path = "/index.html"
+	}
+	if serveStaticFile(ctx, path) {
 		return
 	}
 
 	// SPA fallback - serve index.html for all non-file paths
+	distDir := getEnv("DIST_DIR", "../frontend/out")
 	indexPath := filepath.Join(distDir, "index.html")
 	if _, err := os.Stat(indexPath); err == nil {
 		ctx.Response.Header.Set("Content-Type", "text/html; charset=utf-8")

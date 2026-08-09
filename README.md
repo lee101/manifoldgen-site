@@ -104,6 +104,17 @@ Gallery CDN: `https://manifoldgenstatic.manifoldgen.com/gallery/videos/…`
 When RunPod `workersMax` quota is hit, set `H3_LOCAL_COG_URL=http://127.0.0.1:18089`
 after `gen_gallery_local.py` has started the cog.
 
+## Video restyle
+
+`video_restyle` supports Wan 2.2 video-to-video controls and ordered H3-style
+image/video/audio references. Requests prefer the private app.nz/RunPod template
+from `VIDEO_RESTYLE_APPNZ_MODEL_ID` (or `VIDEO_RESTYLE_APPNZ_TEMPLATE`); failed submissions or worker executions move
+to the standby queue without changing the public job ID. Standby costs are settled
+with a 20% multiplier. Configure the private endpoint from
+`config/runpod-video-restyle.json`: zero minimum workers, 30-second idle scale-down,
+FlashBoot, and shared cached weights keep idle spend at zero without mixing the Wan
+weights into the warm 32 GB H3 process.
+
 ## Deploy
 
 See `deploy/manifoldgen.service` and `deploy/nginx-manifoldgen.conf`.
@@ -117,5 +128,5 @@ Desktop + mobile screenshots live in `visualbench/`.
 ```bash
 cd frontend && bun run dev -- --port 3219
 # other terminal
-VISUALBENCH_BASE_URL=http://127.0.0.1:3219 node visualbench/capture.cjs
+VISUALBENCH_BASE_URL=http://127.0.0.1:3219 node visualbench/capture-studio.cjs
 ```

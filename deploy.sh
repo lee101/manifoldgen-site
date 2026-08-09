@@ -46,6 +46,7 @@ STATIC_PATH="${MANIFOLDGEN_STATIC_PATH:-static}"
 STATIC_BASE_URL="${MANIFOLDGEN_STATIC_BASE_URL:-https://manifoldgenstatic.manifoldgen.com/${STATIC_PATH}}"
 STATIC_PUBLIC_URL="${MANIFOLDGEN_STATIC_PUBLIC_URL:-https://manifoldgenstatic.manifoldgen.com}"
 APP_URL="${MANIFOLDGEN_APP_URL:-https://manifoldgen.com}"
+GALLERY_IMAGES_DIR="${MANIFOLDGEN_IMAGES_DIR:-${IMAGES_DIR:-/nvme0n1-disk/manifoldgen-images}}"
 DEPLOY_ROOT="${MANIFOLDGEN_DEPLOY_ROOT:-/opt/manifoldgen-site}"
 SKIP_LOCAL_INSTALL="${MANIFOLDGEN_SKIP_LOCAL_INSTALL:-0}"
 CF_ZONE_ID="${CLOUDFLARE_ZONE_MANIFOLDGEN:-e76d8743fa762b019b526fea3b461105}"
@@ -318,6 +319,14 @@ fi
 echo ""
 echo "[3/4] Syncing to s3://$R2_BUCKET/ ..."
 
+# Browser uploads use presigned PUT URLs against the R2 S3 endpoint. R2 still
+# evaluates the bucket CORS policy before it evaluates the signature, so keep
+# the policy deployed alongside the frontend that relies on it.
+"${AWS[@]}" s3api put-bucket-cors \
+  --bucket "$R2_BUCKET" \
+  --cors-configuration "file://$ROOT/config/r2-cors.json"
+echo "  ✓ Browser upload CORS configured"
+
 if [ -d "$OUT_DIR/_next" ]; then
   "${AWS[@]}" s3 sync "$OUT_DIR/_next" "s3://$R2_BUCKET/$(s3_key "$STATIC_PATH/_next")" "${SYNC_OPTS[@]}" \
     --exclude '*.map' \
@@ -333,6 +342,13 @@ fi
 if [ -d "$OUT_DIR/brand" ]; then
   sync_asset_tree "$OUT_DIR/brand" "$STATIC_PATH/brand" \
     "public, max-age=3600" brand
+fi
+
+# The API records gallery files as originals/<file>. Publish that tree below
+# gallery/ so local development and production load the same remote URLs.
+if [ -d "$GALLERY_IMAGES_DIR/originals" ]; then
+  sync_asset_tree "$GALLERY_IMAGES_DIR/originals" "gallery/originals" \
+    "public, max-age=31536000, immutable" gallery-originals
 fi
 
 "${AWS[@]}" s3 sync "$OUT_DIR" "s3://$R2_BUCKET/$(s3_key "")" \

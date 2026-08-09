@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
@@ -32,6 +33,7 @@ var servicePricesUSD = map[string]float64{
 	"ltx_video":      0.30,  // per ~6s 1080p video via fal.ai
 	"video_generate": 0.15,  // OpenPaths auto-video base price; model overrides below
 	"h3_video":       2.688, // per GPU-hour reference rate; exact execution is settled asynchronously
+	"video_restyle":  0.48,  // estimated five-second 720p ceiling; async settlement uses the selected backend
 	"flux_image":     0.04,  // per image via fal.ai or netwrck
 	"nsfw_detect":    0.001, // per image classification
 }
@@ -117,6 +119,7 @@ func initServices() {
 		"ltx_video":      "LTX_VIDEO_PRICE_USD",
 		"video_generate": "VIDEO_GENERATE_PRICE_USD",
 		"h3_video":       "H3_VIDEO_PRICE_USD_PER_GPU_HOUR",
+		"video_restyle":  "VIDEO_RESTYLE_ESTIMATE_USD",
 		"flux_image":     "FLUX_IMAGE_PRICE_USD",
 		"nsfw_detect":    "NSFW_DETECT_PRICE_USD",
 	}
@@ -241,6 +244,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"ltx_video":      "per ~6s video",
 		"video_generate": "per generated video (model dependent)",
 		"h3_video":       "per video; final price follows measured generation time",
+		"video_restyle":  "estimated default clip; final price follows length and quality",
 		"flux_image":     "per image",
 	}
 
@@ -280,9 +284,11 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"topup_default_usd": 50,
 		"topup_min_usd":     5,
 		"studio": map[string]interface{}{
-			"background_removal_credits": studioBackgroundCredits,
-			"extend_input_second_usd":    studioExtendInputPerSec,
-			"extend_output_second_usd":   studioExtendOutputPerSec,
+			"background_removal_credits":   studioBackgroundCredits,
+			"extend_input_second_usd":      studioExtendInputPerSec,
+			"extend_output_second_usd":     studioExtendOutputPerSec,
+			"upscale_base_usd":             studioUpscaleBaseUSD,
+			"upscale_output_mp_second_usd": studioUpscaleOutputMPUSD,
 		},
 	})
 }
@@ -334,6 +340,10 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		handleH3VideoService(ctx, req, user)
 		return
 	}
+	if req.Service == "video_restyle" {
+		handleVideoRestyleService(ctx, req, user)
+		return
+	}
 
 	// Calculate cost in $CUTE
 	cuteCost := getRequestServicePriceCUTE(req)
@@ -364,7 +374,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		if err != nil {
 			if strings.Contains(err.Error(), "insufficient") {
 				needUSD := cuteCost * getCUTEPriceUSD()
-				jsonError(ctx, 402, fmt.Sprintf("insufficient credits: need %.0f credits ($%.2f), have %.0f", cuteCost, needUSD, user.Credits))
+				jsonError(ctx, 402, fmt.Sprintf("insufficient credits: need %.2f credits ($%.4f), have %.2f", cuteCost, needUSD, user.Credits))
 				return
 			}
 			jsonError(ctx, 500, "failed to deduct credits")
@@ -453,8 +463,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 	if savedImage != nil {
 		response["saved_image"] = savedImage
-		publicBase := strings.TrimRight(getEnv("PUBLIC_BASE_URL", "https://manifoldgen.com"), "/")
-		response["saved_image_url"] = publicBase + "/images/" + strings.TrimLeft(savedImage.FilePath, "/")
+		response["saved_image_url"] = fmt.Sprintf("https://%s/%s/%s", r2PublicHost, strings.TrimSuffix(r2PathPrefix, "/"), strings.TrimLeft(savedImage.FilePath, "/"))
 	}
 	jsonResponse(ctx, 200, response)
 }
@@ -505,6 +514,11 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 	} else if err != nil {
 		log.Printf("zimage webp q85 recompress skipped: %v", err)
 	}
+	if err := uploadGalleryImageToR2(relPath, imageBytes); err != nil {
+		// Do not discard a successful generation if storage is temporarily down;
+		// it remains on disk for the deploy sync to publish later.
+		log.Printf("zimage gallery upload failed: %v", err)
+	}
 
 	width := intFromPayload(payload, "width", req.Width)
 	if width <= 0 {
@@ -542,6 +556,36 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 		return result, img
 	}
 	return updated, img
+}
+
+// uploadGalleryImageToR2 keeps the public gallery on its dedicated bucket,
+// rather than relying on the API server's /images route. relPath is stored in
+// the database without the gallery prefix (for example originals/foo.webp).
+func uploadGalleryImageToR2(relPath string, image []byte) error {
+	if len(image) == 0 {
+		return fmt.Errorf("gallery image is empty")
+	}
+	key := strings.TrimSuffix(r2PathPrefix, "/") + "/" + strings.TrimLeft(relPath, "/")
+	uploadURL, err := presignR2PutObject(key, "image/webp", 900)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPut, uploadURL, bytes.NewReader(image))
+	if err != nil {
+		return err
+	}
+	req.ContentLength = int64(len(image))
+	req.Header.Set("Content-Type", "image/webp")
+	resp, err := backendClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("R2 gallery upload returned %d: %s", resp.StatusCode, tailOutput(body))
+	}
+	return nil
 }
 
 func intFromPayload(payload map[string]interface{}, key string, fallback int) int {

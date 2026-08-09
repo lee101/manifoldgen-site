@@ -4,6 +4,7 @@ node_modules/
 frontend/out/
 frontend/test-results/
 frontend/playwright-report/
+test-results/
 .local-certs/
 server/manifoldgen-server
 .env
@@ -14,5 +15,4 @@ visualbench/*
 !visualbench/studio-desktop.png
 !visualbench/studio-mobile-audio.png
 !visualbench/studio-mobile-workspace.png
-visualbench/
 .local-gallery-images/

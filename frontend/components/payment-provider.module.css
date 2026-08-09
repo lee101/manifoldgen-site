@@ -1,0 +1,46 @@
+.backdrop { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 20px; background: rgba(3, 4, 8, .78); backdrop-filter: blur(10px); }
+.dialog { width: min(560px, 100%); max-height: min(820px, calc(100dvh - 32px)); overflow: hidden; border: 1px solid rgba(255,255,255,.13); border-radius: 24px; background: #0d0f14; color: #f7f7fa; box-shadow: 0 34px 120px rgba(0,0,0,.7); }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 22px 22px 18px; border-bottom: 1px solid rgba(255,255,255,.08); background: radial-gradient(circle at 10% 0%, rgba(132,114,239,.22), transparent 52%); }
+.eyebrow { display: block; margin-bottom: 5px; color: #a99cf5; font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+.header h2 { margin: 0; font-size: 23px; line-height: 1.15; }
+.header p { margin: 7px 0 0; color: #8e949e; font-size: 12px; line-height: 1.45; }
+.close { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.1); border-radius: 50%; background: rgba(255,255,255,.06); color: #b8bdc6; cursor: pointer; }
+.body { max-height: calc(100dvh - 150px); overflow-y: auto; padding: 18px 22px 22px; }
+.plans { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.plan { position: relative; min-height: 112px; padding: 16px; border: 1px solid rgba(255,255,255,.11); border-radius: 16px; background: rgba(255,255,255,.04); color: white; text-align: left; cursor: pointer; transition: transform .15s ease, border-color .15s ease, background .15s ease; }
+.plan:hover { transform: translateY(-1px); border-color: #8071e8; background: rgba(128,113,232,.12); }
+.planRecommended { border-color: rgba(132,114,239,.65); background: linear-gradient(145deg, rgba(132,114,239,.2), rgba(255,255,255,.035)); }
+.plan b, .plan small { display: block; }
+.plan b { margin-bottom: 7px; font-size: 14px; }
+.plan small { color: #9298a3; font-size: 11px; line-height: 1.45; }
+.tag { position: absolute; top: 12px; right: 12px; padding: 4px 7px; border-radius: 999px; background: #8877ef; color: #0c0919; font-size: 8px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; }
+.divider { display: flex; align-items: center; gap: 10px; margin: 18px 0 12px; color: #686f7a; font-size: 9px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.divider::before, .divider::after { content: ''; height: 1px; flex: 1; background: rgba(255,255,255,.08); }
+.creditOptions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.creditOptions button { height: 47px; border: 1px solid rgba(255,255,255,.1); border-radius: 13px; background: rgba(255,255,255,.045); color: #e7e8eb; font-weight: 750; cursor: pointer; }
+.creditOptions button:hover { border-color: #7568d4; background: rgba(117,104,212,.14); }
+.busy, .error, .signin { margin: 14px 0 0; padding: 11px 13px; border-radius: 12px; font-size: 11px; line-height: 1.45; }
+.busy { display: flex; align-items: center; justify-content: center; gap: 8px; color: #aaaebb; }
+.error { background: rgba(191,63,78,.14); color: #f0a4ad; }
+.signin { background: rgba(132,114,239,.12); color: #c7bfff; }
+.signin a { color: white; font-weight: 800; }
+.checkoutHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.checkoutHeader button { border: 0; background: transparent; color: #9e92ec; font-weight: 750; cursor: pointer; }
+.checkoutLabel { color: #858b96; font-size: 11px; }
+.checkoutMount { min-height: 430px; overflow: hidden; border-radius: 15px; background: white; }
+.success { display: grid; justify-items: center; gap: 10px; padding: 28px 10px 20px; text-align: center; }
+.successIcon { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 50%; background: rgba(54,190,133,.16); color: #61d6a2; }
+.success h3 { margin: 0; font-size: 20px; }
+.success p { margin: 0; color: #8e949e; font-size: 12px; }
+.done { margin-top: 10px; padding: 10px 22px; border: 0; border-radius: 999px; background: #8b7af0; color: #100d1c; font-weight: 850; cursor: pointer; }
+.spin { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 560px) {
+  .backdrop { align-items: end; padding: 0; }
+  .dialog { max-height: 94dvh; border-radius: 24px 24px 0 0; }
+  .header { padding: 19px 17px 15px; }
+  .body { padding: 15px 17px 20px; }
+  .plans { grid-template-columns: 1fr; }
+  .plan { min-height: 92px; }
+}

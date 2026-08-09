@@ -1,0 +1,13 @@
+{
+  "name": "manifold-video-restyle-wan22",
+  "template": "wan-2.2-a14b-v2v",
+  "workersMin": 0,
+  "workersMax": 2,
+  "idleTimeout": 30,
+  "flashboot": true,
+  "scalerType": "QUEUE_DELAY",
+  "scalerValue": 4,
+  "executionTimeout": 3600,
+  "modelCache": "network-volume",
+  "notes": "Keep Wan weights separate from the warm H3 worker. Attach the existing regional model volume when the worker image is published."
+}

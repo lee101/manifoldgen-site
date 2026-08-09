@@ -4,6 +4,9 @@ export type StudioAdjustments = {
   contrast: number;
   highlights: number;
   shadows: number;
+  shadowHue: number;
+  midtoneHue: number;
+  highlightHue: number;
   saturation: number;
   temperature: number;
   tint: number;
@@ -18,6 +21,9 @@ export const DEFAULT_ADJUSTMENTS: StudioAdjustments = {
   contrast: 0,
   highlights: 0,
   shadows: 0,
+  shadowHue: 0,
+  midtoneHue: 0,
+  highlightHue: 0,
   saturation: 0,
   temperature: 0,
   tint: 0,
@@ -44,6 +50,9 @@ uniform float u_brightness;
 uniform float u_contrast;
 uniform float u_highlights;
 uniform float u_shadows;
+uniform float u_shadowHue;
+uniform float u_midtoneHue;
+uniform float u_highlightHue;
 uniform float u_saturation;
 uniform float u_temperature;
 uniform float u_tint;
@@ -58,6 +67,26 @@ float random(vec2 p) {
   return fract(sin(dot(p, vec2(12.9898, 78.233)) + u_seed) * 43758.5453);
 }
 
+vec3 rgbToHsv(vec3 color) {
+  vec4 k = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+  vec4 p = mix(vec4(color.bg, k.wz), vec4(color.gb, k.xy), step(color.b, color.g));
+  vec4 q = mix(vec4(p.xyw, color.r), vec4(color.r, p.yzx), step(p.x, color.r));
+  float d = q.x - min(q.w, q.y);
+  float e = 1.0e-10;
+  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+vec3 hsvToRgb(vec3 color) {
+  vec3 p = abs(fract(color.xxx + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+  return color.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), color.y);
+}
+
+vec3 shiftHue(vec3 color, float degrees, float amount) {
+  vec3 hsv = rgbToHsv(max(color, 0.0));
+  hsv.x = fract(hsv.x + degrees / 360.0);
+  return mix(color, hsvToRgb(hsv), amount);
+}
+
 void main() {
   vec4 sampleColor = texture(u_image, v_texCoord);
   vec3 color = sampleColor.rgb * exp2(u_exposure);
@@ -67,8 +96,12 @@ void main() {
   float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
   float shadowMask = 1.0 - smoothstep(0.05, 0.62, luma);
   float highlightMask = smoothstep(0.38, 0.95, luma);
+  float midtoneMask = clamp(1.0 - shadowMask - highlightMask, 0.0, 1.0);
   color += u_shadows * shadowMask * 0.45;
   color += u_highlights * highlightMask * 0.45;
+  color = shiftHue(color, u_shadowHue, shadowMask);
+  color = shiftHue(color, u_midtoneHue, midtoneMask);
+  color = shiftHue(color, u_highlightHue, highlightMask);
 
   luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
   color = mix(vec3(luma), color, 1.0 + u_saturation);
@@ -100,13 +133,16 @@ export class StudioRenderer {
   private program: WebGLProgram;
   private texture: WebGLTexture;
   private uniforms: Record<string, WebGLUniformLocation | null>;
+  private textureWidth = 0;
+  private textureHeight = 0;
 
   constructor(public readonly canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', {
       alpha: true,
-      antialias: true,
-      preserveDrawingBuffer: true,
+      antialias: false,
+      preserveDrawingBuffer: false,
       premultipliedAlpha: false,
+      powerPreference: 'high-performance',
     });
     if (!gl) throw new Error('WebGL 2 is required for Studio');
     this.gl = gl;
@@ -146,9 +182,20 @@ export class StudioRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.useProgram(program);
 
-    const names = ['exposure', 'brightness', 'contrast', 'highlights', 'shadows', 'saturation', 'temperature', 'tint', 'fade', 'vignette', 'grain', 'seed'];
+    const names = ['exposure', 'brightness', 'contrast', 'highlights', 'shadows', 'shadowHue', 'midtoneHue', 'highlightHue', 'saturation', 'temperature', 'tint', 'fade', 'vignette', 'grain', 'seed'];
     this.uniforms = Object.fromEntries(names.map((name) => [name, gl.getUniformLocation(program, `u_${name}`)]));
     this.uniforms.resolution = gl.getUniformLocation(program, 'u_resolution');
+  }
+
+  diagnostics() {
+    const debug = this.gl.getExtension('WEBGL_debug_renderer_info');
+    return {
+      api: 'webgl2' as const,
+      renderer: String(debug ? this.gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : this.gl.getParameter(this.gl.RENDERER)),
+      vendor: String(debug ? this.gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) : this.gl.getParameter(this.gl.VENDOR)),
+      maxTextureSize: Number(this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE)),
+      powerPreference: 'high-performance' as const,
+    };
   }
 
   resize(width: number, height: number) {
@@ -164,7 +211,18 @@ export class StudioRenderer {
     gl.useProgram(this.program);
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    const dimensions = source instanceof HTMLVideoElement
+      ? [source.videoWidth, source.videoHeight]
+      : source instanceof HTMLImageElement
+        ? [source.naturalWidth, source.naturalHeight]
+        : ['width' in source && 'height' in source ? Number(source.width) : 0, 'width' in source && 'height' in source ? Number(source.height) : 0];
+    if (dimensions[0] !== this.textureWidth || dimensions[1] !== this.textureHeight) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+      this.textureWidth = dimensions[0];
+      this.textureHeight = dimensions[1];
+    } else {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    }
     gl.uniform2f(this.uniforms.resolution, this.canvas.width, this.canvas.height);
     (Object.keys(DEFAULT_ADJUSTMENTS) as (keyof StudioAdjustments)[]).forEach((key) => {
       gl.uniform1f(this.uniforms[key], adjustments[key]);

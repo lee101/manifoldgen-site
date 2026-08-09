@@ -1,3 +1,5 @@
+import { PAYMENT_REQUIRED_EVENT, type PaymentDialogDetail } from './payments';
+
 export class HTTPResponseError extends Error {
   status: number;
   statusText: string;
@@ -45,6 +47,11 @@ export async function parseJSONResponse<T>(res: Response, fallback: string): Pro
       messageFromData(data) ||
       textFallback(text) ||
       `${fallback} (${res.status}${res.statusText ? ` ${res.statusText}` : ''})`;
+    if (res.status === 402 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent<PaymentDialogDetail>(PAYMENT_REQUIRED_EVENT, {
+        detail: { message },
+      }));
+    }
     throw new HTTPResponseError(message, res, data);
   }
 
