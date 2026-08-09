@@ -8,5 +8,11 @@ frontend/playwright-report/
 server/manifoldgen-server
 .env
 *.sum.bak
+visualbench/*
+!visualbench/README.md
+!visualbench/capture-studio.cjs
+!visualbench/studio-desktop.png
+!visualbench/studio-mobile-audio.png
+!visualbench/studio-mobile-workspace.png
 visualbench/
-visualbench/
+.local-gallery-images/

@@ -830,7 +830,7 @@ export default function HomePage() {
                       ? 'bg-[var(--color-accent)] text-white'
                       : 'bg-white/5 text-[var(--color-mute)] hover:text-white'
                   }`}
-                  title="Generate a matching still and use it as H3's first and last keyframe"
+                  title="Generate a looping video" 
                 >
                   <Repeat2 size={14} />
                   Loop
@@ -1061,7 +1061,7 @@ export default function HomePage() {
               <span>
                 Seamless loop
                 <span className="mt-0.5 block text-xs text-[var(--color-mute)]">
-                  Generates one {h3Dimensions(aspect, size).join('×')} still, then uses that exact image as H3&apos;s first and last keyframe.
+                make a looping video / cinemagraph
                 </span>
               </span>
             </label>

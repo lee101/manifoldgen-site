@@ -296,6 +296,7 @@ export default function StudioPage() {
   const [audioResults, setAudioResults] = useState<AudioCatalogAsset[]>([]);
   const [audioSearching, setAudioSearching] = useState(false);
   const [h3AudioEstimateUSD, setH3AudioEstimateUSD] = useState(1.01);
+  const [ttsPer100USD, setTTSPer100USD] = useState(0.005);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<StudioRenderer | null>(null);
@@ -313,7 +314,7 @@ export default function StudioPage() {
   const extendCredits = Math.ceil(customerExtendUSD / creditPrice);
   const audioEstimateUSD = Math.max(0.1, Math.ceil(h3AudioEstimateUSD * audioDuration / 5 * 100) / 100);
   const audioEstimateCredits = Math.ceil(audioEstimateUSD / creditPrice);
-  const speechUSD = Math.max(0.0005, Math.ceil(Math.max(1, speechText.trim().length) / 100 * 0.005 * 10000) / 10000);
+  const speechUSD = Math.max(ttsPer100USD * 0.1, Math.ceil(Math.max(1, speechText.trim().length) / 100 * ttsPer100USD * 10000) / 10000);
   const speechCredits = speechUSD / creditPrice;
   const creditsLabel = useMemo(() => {
     if (!user) return 'Sign in';
@@ -337,6 +338,8 @@ export default function StudioPage() {
         setExtendRates({ input: data.studio.extend_input_second_usd, output: data.studio.extend_output_second_usd });
       }
       if (data.h3_video_estimate?.estimated_cost_usd) setH3AudioEstimateUSD(data.h3_video_estimate.estimated_cost_usd);
+      const ttsPrice = Array.isArray(data.pricing) ? data.pricing.find((item: { service?: string }) => item.service === 'tts')?.price_usd : 0;
+      if (ttsPrice) setTTSPer100USD(ttsPrice);
     }).catch(() => undefined);
     return () => assets.forEach((asset) => URL.revokeObjectURL(asset.url));
     // Object URLs are revoked as individual assets are deleted.
@@ -742,7 +745,7 @@ export default function StudioPage() {
       let encodedAudioSink: EncodedPacketSink | null = null;
       let encodedAudioConfig: AudioDecoderConfig | null = null;
       let mixedAudio: AudioBuffer | null = null;
-      const audioCodec = exportFormat === 'webm-av1' ? 'opus' : 'aac';
+      const audioCodec = exportFormat === 'webm-av1' || !(await canEncodeAudio('aac')) ? 'opus' : 'aac';
       if (timelineAudio.length) {
         if (!(await canEncodeAudio(audioCodec))) throw new Error(`${audioCodec.toUpperCase()} audio encoding is not available in this browser`);
         mixedAudio = await renderTimelineAudio(selected, timelineAudio, duration);
@@ -959,7 +962,7 @@ export default function StudioPage() {
           <button className={exportFormat === 'webm-av1' ? styles.optionSelected : ''} onClick={() => setExportFormat('webm-av1')}><span className={styles.optionIcon}>AV1</span><span><b>WebM · AV1</b><small>Smallest file, modern playback</small></span></button>
           <button className={exportFormat === 'mp4-h264' ? styles.optionSelected : ''} onClick={() => setExportFormat('mp4-h264')}><span className={styles.optionIcon}>264</span><span><b>MP4 · H.264</b><small>Maximum compatibility</small></span></button>
         </div>
-        <div className={styles.exportSummary}><span>Resolution <b>{selected?.width} × {selected?.height}</b></span><span>Frame rate <b>30 fps</b></span><span>Processing <b>On this device</b></span></div>
+        <div className={styles.exportSummary}><span>Resolution <b>{selected?.width} × {selected?.height}</b></span><span>Frame rate <b>30 fps</b></span><span>Timeline audio <b>{assets.some((asset) => asset.kind === 'audio') ? 'Mixed · AAC/Opus' : 'Source audio'}</b></span><span>Processing <b>On this device</b></span></div>
         {exportProgress > 0 && <div className={styles.progress}><i style={{ width: `${exportProgress * 100}%` }} /></div>}
         <button className={styles.modalPrimary} disabled={!!busy} onClick={() => void exportVideo()}>{busy === 'export' ? <><Loader2 className={styles.spin} size={16} /> Exporting {Math.round(exportProgress * 100)}%</> : <><Download size={16} /> Export locally</>}</button>
       </Modal>}
