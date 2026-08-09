@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -1046,6 +1047,45 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 		"job":        job,
 		"status_url": "/api/video-jobs/" + job.ID,
 	})
+}
+
+func videoJobUser(ctx *fasthttp.RequestCtx) (*User, error) {
+	authHeader := string(ctx.Request.Header.Peek("Authorization"))
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil, fmt.Errorf("authorization required")
+	}
+	return dbConn.GetUserByAPIKey(strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer ")))
+}
+
+func handleListVideoJobs(ctx *fasthttp.RequestCtx) {
+	user, err := videoJobUser(ctx)
+	if err != nil {
+		jsonError(ctx, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	jobs, err := dbConn.ListVideoJobs(user.ID, 100)
+	if err != nil {
+		jsonError(ctx, http.StatusInternalServerError, "could not load video jobs")
+		return
+	}
+	jsonResponse(ctx, http.StatusOK, map[string]interface{}{"jobs": jobs})
+}
+
+func handleDeleteVideoJob(ctx *fasthttp.RequestCtx, jobID string) {
+	user, err := videoJobUser(ctx)
+	if err != nil {
+		jsonError(ctx, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if err := dbConn.DeleteVideoJob(strings.TrimSpace(jobID), user.ID); err != nil {
+		if err == sql.ErrNoRows {
+			jsonError(ctx, http.StatusNotFound, "video job not found")
+			return
+		}
+		jsonError(ctx, http.StatusInternalServerError, "could not delete video job")
+		return
+	}
+	jsonResponse(ctx, http.StatusOK, map[string]bool{"deleted": true})
 }
 
 func proxyFallbackFalVideo(req ServiceUsageRequest) ([]byte, error) {

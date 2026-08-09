@@ -182,6 +182,15 @@ type CloudProject = {
   updated_at: string;
 };
 
+type GenerationJob = {
+  job_id: string;
+  status: string;
+  prompt?: string;
+  result?: unknown;
+  error?: string;
+  created_at?: string;
+};
+
 type StudioPerfDiagnostics = {
   renderer?: ReturnType<StudioRenderer['diagnostics']>;
   previewFrames: number;
@@ -529,6 +538,7 @@ export default function StudioPage() {
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
   const [tool, setTool] = useState<Tool>('media');
   const [user, setUser] = useState<StoredUser | null>(null);
+  const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [extendRates, setExtendRates] = useState({ input: 0.012, output: 0.084 });
   const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
@@ -765,6 +775,23 @@ export default function StudioPage() {
     // Object URLs are revoked as individual assets are deleted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!user?.api_key) { setGenerationJobs([]); return; }
+    let cancelled = false;
+    const loadJobs = async () => {
+      try {
+        const response = await fetch('/api/video-jobs', { headers: authHeaders(user.api_key, false) });
+        const data = await parseJSONResponse<{ jobs?: GenerationJob[] }>(response, 'Could not load generations');
+        if (!cancelled) setGenerationJobs(data.jobs || []);
+      } catch (reason) {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load generations');
+      }
+    };
+    void loadJobs();
+    const interval = window.setInterval(() => void loadJobs(), 5000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, [user?.api_key]);
 
   useEffect(() => {
     const updateCredits = () => {
@@ -1084,6 +1111,29 @@ export default function StudioPage() {
     selectOnly(asset.id);
     setPlayhead(asset.timelineStart);
     return asset;
+  }
+
+  async function addGenerationToTimeline(job: GenerationJob) {
+    const url = resultURL(job.result);
+    if (!url) return;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Could not download this generated video');
+      const blob = await response.blob();
+      const extension = blob.type.includes('webm') || url.includes('.webm') ? 'webm' : 'mp4';
+      await importFiles([new File([blob], `manifold-generation-${job.job_id.slice(-8)}.${extension}`, { type: blob.type || 'video/webm' })]);
+      setNotice('Generated video added to this project');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add generated video'); }
+  }
+
+  async function deleteGeneration(jobID: string) {
+    if (!user?.api_key) return;
+    try {
+      const response = await fetch(`/api/video-jobs/${encodeURIComponent(jobID)}`, { method: 'DELETE', headers: authHeaders(user.api_key, false) });
+      await parseJSONResponse(response, 'Could not delete generation');
+      setGenerationJobs((current) => current.filter((job) => job.job_id !== jobID));
+      setNotice('Generation removed from your media library');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not delete generation'); }
   }
 
   function removeSelected() {
@@ -2162,6 +2212,21 @@ export default function StudioPage() {
                 <span className={styles.assetName}>{asset.name}</span>
               </button>)}
             </div>
+            {user && <section className={styles.generationLibrary}>
+              <div className={styles.generationHeader}><span>YOUR GENERATIONS</span><small>Saved automatically</small></div>
+              {!generationJobs.length ? <p className={styles.generationEmpty}>New videos started from Generate appear here. Finished videos can be added to this timeline.</p> : generationJobs.map((generation) => {
+                const readyURL = resultURL(generation.result);
+                const pending = ['queued', 'pending', 'processing', 'running', 'accepted'].includes(generation.status);
+                const failed = ['failed', 'error', 'payment_required'].includes(generation.status);
+                return <div key={generation.job_id} className={styles.generationCard}>
+                  <button className={styles.generationMain} disabled={!readyURL} onClick={() => void addGenerationToTimeline(generation)} title={readyURL ? 'Add to timeline' : undefined}>
+                    <span className={styles.generationThumb}>{readyURL ? <Film size={16} /> : pending ? <Loader2 className={styles.spin} size={16} /> : <X size={16} />}</span>
+                    <span><b>{pending ? 'Generating video…' : failed ? 'Generation failed' : 'Ready to add'}</b><small>{generation.prompt || generation.error || 'Manifold video generation'}</small></span>
+                  </button>
+                  <button className={styles.deleteGeneration} aria-label="Delete generation" onClick={() => void deleteGeneration(generation.job_id)}><Trash2 size={13} /></button>
+                </div>;
+              })}
+            </section>}
             {!assets.length && <div className={styles.emptyLibrary}><Clapperboard size={24} /><p>{user ? 'Imports stay local while they upload securely in the background.' : 'Your imported files stay in this browser. Sign in for cloud sync.'}</p></div>}
           </>}
 

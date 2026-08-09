@@ -54,6 +54,7 @@ async function installMocks(page, hooks = {}) {
   await page.route('**/api/auth/session', (route) => route.fulfill({ status: 200, json: {
     user: { id: 'studio-user', email: 'studio@example.com', api_key: API_KEY, credits: 10000, credits_usd: 100 },
   } }));
+  await page.route('**/api/video-jobs', (route) => route.fulfill({ status: 200, json: { jobs: [] } }));
   await page.route('**/api/studio/projects', (route) => route.fulfill({ status: 200, json: { projects: hooks.cloudProjects || [] } }));
   await page.route('**/api/studio/projects/*', async (route) => {
     if (route.request().method() === 'PUT') {
@@ -140,7 +141,7 @@ test('video assets open the shared restyle modal and completed jobs return to th
 
   await page.goto('/studio');
   await page.locator('input[type=file]').setInputFiles(VIDEO);
-  const card = page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.mp4/ });
+  const card = page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ });
   await card.click({ button: 'right' });
   await page.getByRole('button', { name: /Restyle video Transform look/ }).click();
   await expect(page.getByRole('heading', { name: 'Restyle video' })).toBeVisible();
@@ -565,7 +566,7 @@ test('local MP4 export mixes an added audio clip into the downloaded video', asy
   await input.setInputFiles(VIDEO);
   await input.setInputFiles({ name: 'timeline-tone.wav', mimeType: 'audio/wav', buffer: wavFixture(1) });
   await page.getByTestId('studio-tool-media').click();
-  await page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.mp4/ }).click();
+  await page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ }).click();
   await page.getByTestId('studio-export').click();
   await page.getByRole('button', { name: /MP4 · H\.264/ }).click();
   const downloadPromise = page.waitForEvent('download');

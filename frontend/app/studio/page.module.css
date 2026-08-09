@@ -98,6 +98,20 @@
 .assetGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
 .assetCard { position: relative; overflow: hidden; border: 1px solid #252930; background: #181b20; padding: 0; border-radius: 8px; cursor: pointer; text-align: left; aspect-ratio: 1.2; }
 .assetCard img, .assetCard video { width: 100%; height: calc(100% - 24px); object-fit: cover; display: block; background: #08090b; }
+.generationLibrary { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.generationHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: #777f8a; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
+.generationHeader small { color: #5e6873; font-size: 8px; font-weight: 600; letter-spacing: 0; }
+.generationEmpty { margin: 0; color: #66707b; font-size: 10px; line-height: 1.45; }
+.generationCard { display: grid; grid-template-columns: minmax(0, 1fr) 29px; align-items: center; gap: 5px; margin-top: 6px; border: 1px solid #292d35; border-radius: 8px; background: #171a1f; }
+.generationMain { min-width: 0; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 8px; border: 0; padding: 6px; background: transparent; cursor: pointer; text-align: left; }
+.generationMain:not(:disabled):hover b { color: #c9beff; }
+.generationMain > span:last-child { min-width: 0; display: grid; gap: 2px; }
+.generationMain b, .generationMain small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.generationMain b { color: #d8dbe0; font-size: 10px; }
+.generationMain small { color: #707883; font-size: 9px; }
+.generationThumb { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; color: #b5a9ff; background: linear-gradient(135deg, #28223d, #1c1d28); }
+.deleteGeneration { width: 27px; height: 27px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #68707a; cursor: pointer; }
+.deleteGeneration:hover { color: #ffb3bd; background: #2b1a20; }
 .audioThumb { height: calc(100% - 24px); display: grid; place-items: center; color: #7eecd5; background: radial-gradient(circle at 50% 20%, rgba(58,160,140,.22), transparent 58%), #101b1a; }
 .assetName { position: absolute; bottom: 0; left: 7px; right: 5px; height: 24px; line-height: 24px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #b8bdc5; font-size: 10px; }
 .assetType { position: absolute; top: 5px; left: 5px; width: 20px; height: 18px; display: grid; place-items: center; background: rgba(7, 8, 10, .8); border-radius: 5px; }

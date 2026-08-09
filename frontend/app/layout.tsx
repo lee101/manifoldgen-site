@@ -79,7 +79,7 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       { url: '/images/favicon.webp', type: 'image/webp', sizes: '64x64' },
-      { url: '/brand/logo-mark.webp', type: 'image/webp', sizes: '512x512' },
+      { url: '/images/favicon-32.webp', type: 'image/webp', sizes: '32x32' },
     ],
     apple: [{ url: '/images/apple-touch-icon.webp', sizes: '180x180' }],
   },

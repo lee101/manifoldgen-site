@@ -692,6 +692,46 @@ func (db *DB) GetVideoJob(jobID, userID string) (*VideoJob, error) {
 	return &job, nil
 }
 
+// ListVideoJobs returns the signed-in user's generation history, newest first.
+func (db *DB) ListVideoJobs(userID string, limit int) ([]VideoJob, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	rows, err := db.conn.Query(`SELECT `+videoJobSelectColumns+` FROM video_jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jobs := make([]VideoJob, 0)
+	for rows.Next() {
+		var job VideoJob
+		if err := scanVideoJob(rows, &job); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+func (db *DB) DeleteVideoJob(jobID, userID string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	result, err := db.conn.Exec(`DELETE FROM video_jobs WHERE id = $1 AND user_id = $2`, jobID, userID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (db *DB) GetVideoJobInternal(jobID string) (*VideoJob, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()

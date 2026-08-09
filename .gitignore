@@ -17,3 +17,4 @@ visualbench/*
 !visualbench/studio-mobile-audio.png
 !visualbench/studio-mobile-workspace.png
 .local-gallery-images/
+visualbench/
