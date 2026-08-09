@@ -3,7 +3,7 @@ FROM ghcr.io/lee101/accelerated-cgtaylor-wan-app-nz:t2v
 COPY predict.py /src/predict.py
 COPY patch_schema.py /tmp/patch_schema.py
 RUN python /tmp/patch_schema.py \
-    && pip install --no-cache-dir runpod requests \
+    && pip install --no-cache-dir runpod requests imageio imageio-ffmpeg ftfy \
     && rm /tmp/patch_schema.py
 
 COPY rp_cog_handler.py /rp_cog_handler.py

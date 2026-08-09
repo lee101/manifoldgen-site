@@ -118,6 +118,18 @@ class Predictor(BasePredictor):
             use_safetensors=True,
             low_cpu_mem_usage=True,
         ).to("cuda")
+        # Current Diffusers preprocesses V2V frames as float32 immediately
+        # before calling a bfloat16 Wan VAE. Cast only the VAE input at that
+        # boundary; the pipeline intentionally keeps its diffusion latents in
+        # float32 after encoding.
+        prepare_latents = self.pipeline.prepare_latents
+
+        def prepare_latents_with_vae_dtype(video=None, *args, **kwargs):
+            if video is not None:
+                video = video.to(dtype=self.pipeline.vae.dtype)
+            return prepare_latents(video, *args, **kwargs)
+
+        self.pipeline.prepare_latents = prepare_latents_with_vae_dtype
         self.pipeline.enable_attention_slicing(slice_size="auto")
         if hasattr(self.pipeline, "enable_vae_slicing"):
             self.pipeline.enable_vae_slicing()

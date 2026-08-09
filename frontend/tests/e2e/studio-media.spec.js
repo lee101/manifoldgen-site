@@ -4,7 +4,7 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const { test, expect } = require('@playwright/test');
 
-const VIDEO = path.resolve(__dirname, '../../public/showcase/h3-loop-glass-torus.mp4');
+const VIDEO = path.resolve(__dirname, '../../public/showcase/h3-loop-glass-torus.webm');
 const IMAGE = path.resolve(__dirname, '../../public/images/logo.png');
 const API_KEY = 'mg_studio_e2e_key';
 const PERF_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'manifold-studio-perf-'));

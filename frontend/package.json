@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack --port 3006",
+    "dev": "NEXT_DIST_DIR=.next-dev next dev --turbopack --port 3006",
     "dev:https": "../scripts/dev-https.sh",
     "build": "NEXT_OUTPUT=export next build",
     "start": "next start",

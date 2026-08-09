@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -314,8 +315,15 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
-	if local := h3LocalCogURL(); local != "" {
-		handleLocalH3VideoService(ctx, req, user, local)
+	route := h3RouteForPrompt(req.Prompt)
+	if route.RunpodEndpointID != "" {
+		logH3Route(req.Prompt, route)
+		handleRunpodH3VideoService(ctx, req, user, route)
+		return
+	}
+	if route.CogURL != "" {
+		logH3Route(req.Prompt, route)
+		handleLocalH3VideoService(ctx, req, user, route)
 		return
 	}
 	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
@@ -354,9 +362,99 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 	})
 }
 
-func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, cogURL string) {
-	_ = cogURL
+func h3RunpodAPIKey() string {
+	return strings.TrimSpace(getEnv("H3_RUNPOD_API_KEY", os.Getenv("RUNPOD_API_KEY")))
+}
+
+func h3RunpodBaseURL() string {
+	return strings.TrimRight(getEnv("H3_RUNPOD_BASE_URL", "https://api.runpod.ai/v2"), "/")
+}
+
+type h3RunpodQueuedJob struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
+
+func callH3Runpod(endpointID, suffix string, method string, input interface{}, output interface{}) (int, error) {
+	key := h3RunpodAPIKey()
+	if key == "" {
+		return 0, fmt.Errorf("H3_RUNPOD_API_KEY is not configured")
+	}
+	var body io.Reader
+	if input != nil {
+		encoded, err := json.Marshal(input)
+		if err != nil {
+			return 0, err
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequest(method, h3RunpodBaseURL()+"/"+url.PathEscape(endpointID)+suffix, body)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	response, err := appNZVideoClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxGeneratedVideoBytes+(4<<20)))
+	if err != nil {
+		return response.StatusCode, err
+	}
+	if response.StatusCode >= 300 {
+		return response.StatusCode, fmt.Errorf("RunPod H3 returned %d: %s", response.StatusCode, tailOutput(data))
+	}
+	if output != nil && json.Unmarshal(data, output) != nil {
+		return response.StatusCode, fmt.Errorf("RunPod H3 returned invalid JSON")
+	}
+	return response.StatusCode, nil
+}
+
+func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, route h3WorkerRoute) {
 	input := appNZH3Input(req)
+	var queued h3RunpodQueuedJob
+	status, err := callH3Runpod(route.RunpodEndpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, &queued)
+	if err != nil {
+		code := http.StatusBadGateway
+		if status == 0 {
+			code = http.StatusServiceUnavailable
+		}
+		jsonError(ctx, code, "video service: "+err.Error())
+		return
+	}
+	if queued.ID == "" {
+		jsonError(ctx, http.StatusBadGateway, "video service did not return a job")
+		return
+	}
+	job, err := dbConn.CreateVideoJobForService(user.ID, "runpod:"+route.RunpodEndpointID+":"+queued.ID, "h3_video", req.Prompt)
+	if err != nil {
+		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 video job")
+		return
+	}
+	persisted, _ := json.Marshal(map[string]interface{}{"_h3_variant": route.Variant})
+	if err := dbConn.UpdateVideoJob(job.ID, "queued", persisted, ""); err != nil {
+		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 route")
+		return
+	}
+	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
+	launchVideoJob(job.ID)
+	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
+		"result":       map[string]interface{}{"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID, "backend": "runpod-serverless"},
+		"credits_used": 0, "settlement": "final price based on generation",
+		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
+		"estimated_generation_seconds": estimatedSeconds,
+	})
+}
+
+func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, route h3WorkerRoute) {
+	input := appNZH3Input(req)
+	// These keys are persisted for the internal worker only and removed before
+	// the request reaches Cog. They must never be controllable by a client.
+	input["_h3_cog_url"] = route.CogURL
+	input["_h3_variant"] = route.Variant
 	payload, _ := json.Marshal(input)
 	job, err := dbConn.CreateVideoJobForService(user.ID, "local:sync", "h3_video", req.Prompt)
 	if err != nil {
@@ -371,7 +469,7 @@ func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"result": map[string]interface{}{
-			"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID, "backend": "local-cog",
+			"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID, "backend": "h3-cog",
 		},
 		"credits_used": 0, "settlement": "final price based on generation",
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
@@ -551,6 +649,10 @@ func h3Result(pred appNZH3Prediction) map[string]interface{} {
 }
 
 func processH3VideoJob(job *VideoJob) {
+	if strings.HasPrefix(job.ProviderJobID, "runpod:") {
+		processRunpodH3VideoJob(job)
+		return
+	}
 	if strings.HasPrefix(job.ProviderJobID, "local:") {
 		processLocalH3VideoJob(job)
 		return
@@ -616,12 +718,162 @@ func processH3VideoJob(job *VideoJob) {
 	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "video generation did not finish within 45 minutes")
 }
 
-func processLocalH3VideoJob(job *VideoJob) {
-	cogURL := h3LocalCogURL()
-	if cogURL == "" {
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "H3_LOCAL_COG_URL is not configured")
+type h3RunpodStatus struct {
+	ID            string `json:"id"`
+	Status        string `json:"status"`
+	Error         string `json:"error"`
+	ExecutionTime int64  `json:"executionTime"`
+	Output        struct {
+		Outputs []struct {
+			Filename    string `json:"filename"`
+			Data        string `json:"data"`
+			ContentType string `json:"content_type"`
+		} `json:"outputs"`
+		Metrics map[string]interface{} `json:"metrics"`
+	} `json:"output"`
+}
+
+func parseRunpodH3ProviderJob(value string) (endpointID, jobID string, ok bool) {
+	parts := strings.SplitN(value, ":", 3)
+	if len(parts) != 3 || parts[0] != "runpod" || parts[1] == "" || parts[2] == "" {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
+}
+
+func uploadH3RunpodWebM(ctx context.Context, video []byte, userID string) (string, error) {
+	if len(video) == 0 || len(video) > maxGeneratedVideoBytes {
+		return "", fmt.Errorf("RunPod H3 output must be between 1 byte and 256 MiB")
+	}
+	shortID := sanitizeUploadName(userID)
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	objectKey := fmt.Sprintf("%s/%s/videos/%s.webm", strings.TrimSuffix(r2PathPrefix, "/"), shortID, newUUID())
+	uploadURL, err := presignR2PutObject(objectKey, "video/webm", 900)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(video))
+	if err != nil {
+		return "", err
+	}
+	req.ContentLength = int64(len(video))
+	req.Header.Set("Content-Type", "video/webm")
+	resp, err := backendClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return "", fmt.Errorf("R2 H3 video upload returned %d: %s", resp.StatusCode, tailOutput(body))
+	}
+	return fmt.Sprintf("https://%s/%s", r2PublicHost, objectKey), nil
+}
+
+func processRunpodH3VideoJob(job *VideoJob) {
+	endpointID, providerJobID, ok := parseRunpodH3ProviderJob(job.ProviderJobID)
+	if !ok {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "invalid RunPod H3 job reference")
 		return
 	}
+	variant := h3NormalVariant
+	if len(job.Result) > 0 {
+		var persisted map[string]interface{}
+		if json.Unmarshal(job.Result, &persisted) == nil {
+			if v, ok := persisted["_h3_variant"].(string); ok && v != "" {
+				variant = v
+			}
+		}
+	}
+	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
+	deadline := time.Now().Add(60 * time.Minute)
+	consecutiveErrors := 0
+	for time.Now().Before(deadline) {
+		var state h3RunpodStatus
+		_, err := callH3Runpod(endpointID, "/status/"+url.PathEscape(providerJobID), http.MethodGet, nil, &state)
+		if err != nil {
+			consecutiveErrors++
+			if consecutiveErrors >= 10 {
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 status unavailable: "+err.Error())
+				return
+			}
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		consecutiveErrors = 0
+		switch strings.ToUpper(strings.TrimSpace(state.Status)) {
+		case "COMPLETED":
+			if len(state.Output.Outputs) == 0 || state.Output.Outputs[0].Data == "" {
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 completed without a video artifact")
+				return
+			}
+			artifact, err := base64.StdEncoding.DecodeString(state.Output.Outputs[0].Data)
+			if err != nil {
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 returned malformed video data")
+				return
+			}
+			user, err := dbConn.GetUserByID(job.UserID)
+			if err != nil {
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "video job owner no longer exists")
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			videoURL, err := uploadH3RunpodWebM(ctx, artifact, user.ID)
+			cancel()
+			if err != nil {
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "failed to store RunPod H3 output: "+err.Error())
+				return
+			}
+			predictSeconds := float64(state.ExecutionTime) / 1000
+			if predictSeconds <= 0 {
+				predictSeconds = 300
+			}
+			providerUSD := servicePricesUSD["h3_video"] * predictSeconds / 3600
+			providerMicros := int64(providerUSD * 1_000_000)
+			if providerMicros < 1 {
+				providerMicros = 1
+			}
+			chargedUSD := float64(h3DownstreamMicros(providerMicros)) / 1_000_000
+			cutePrice := getCUTEPriceUSD()
+			if cutePrice <= 0 || math.IsNaN(cutePrice) || math.IsInf(cutePrice, 0) {
+				_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "CUTE price unavailable; retry status after pricing recovers")
+				return
+			}
+			result, _ := json.Marshal(map[string]interface{}{
+				"video_url": videoURL, "provider": "runpod", "model_variant": variant,
+				"output_format": "webm", "codec": "av1", "bytes": len(artifact),
+				"predict_seconds": predictSeconds, "provider_cost_usd": providerUSD,
+				"charged_usd": chargedUSD, "cute_price_usd": cutePrice,
+				"credits_used": chargedUSD / cutePrice, "metrics": state.Output.Metrics,
+			})
+			_, _, settleErr := dbConn.SettleH3VideoJob(job.ID, result, providerUSD, chargedUSD, cutePrice)
+			if settleErr == ErrVideoPaymentRequired {
+				_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, fmt.Sprintf("top up to release completed video; $%.6f required", chargedUSD))
+				return
+			}
+			if settleErr != nil {
+				_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "settlement unavailable; retry status")
+				return
+			}
+			indexCompletedVideo(job, result)
+			maybeTriggerAutoTopup(job.UserID)
+			return
+		case "FAILED", "CANCELLED", "TIMED_OUT":
+			message := strings.TrimSpace(state.Error)
+			if message == "" {
+				message = "RunPod H3 generation failed"
+			}
+			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, message)
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 generation did not finish within 60 minutes")
+}
+
+func processLocalH3VideoJob(job *VideoJob) {
 	// Prefer sync POST: this coglet build has no GET /predictions/{id} poll route.
 	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
 	input := map[string]interface{}{}
@@ -634,6 +886,20 @@ func processLocalH3VideoJob(job *VideoJob) {
 			"duration": 5, "steps": 20, "structured_prompt": true, "include_audio": true,
 			"output_codec": "webm-av1", "encode_quality": 22, "quant": "int8_convrot",
 		}
+	}
+	cogURL, _ := input["_h3_cog_url"].(string)
+	variant, _ := input["_h3_variant"].(string)
+	delete(input, "_h3_cog_url")
+	delete(input, "_h3_variant")
+	if cogURL == "" {
+		cogURL = h3LocalCogURL()
+	}
+	if cogURL == "" {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "H3 worker URL is not configured")
+		return
+	}
+	if variant == "" {
+		variant = h3NormalVariant
 	}
 	body, _ := json.Marshal(map[string]interface{}{"input": input})
 	req, err := http.NewRequest(http.MethodPost, cogURL+"/predictions", bytes.NewReader(body))
@@ -705,7 +971,7 @@ func processLocalH3VideoJob(job *VideoJob) {
 	resultMap := map[string]interface{}{
 		"video_url": videoURL, "provider": "manifoldgen",
 		"provider_cost_usd": providerUSD, "charged_usd": chargedUSD,
-		"predict_seconds": predictSeconds,
+		"predict_seconds": predictSeconds, "model_variant": variant,
 	}
 	cutePrice := getCUTEPriceUSD()
 	if cutePrice <= 0 || math.IsNaN(cutePrice) || math.IsInf(cutePrice, 0) {

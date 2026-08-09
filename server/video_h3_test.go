@@ -2,6 +2,34 @@ package main
 
 import "testing"
 
+func TestH3RouteUsesDedicatedPinkCherryWorkerForExplicitAdultPrompt(t *testing.T) {
+	t.Setenv("H3_NORMAL_RUNPOD_ENDPOINT", "normal-endpoint")
+	t.Setenv("H3_PINKCHERRY_RUNPOD_ENDPOINT", "pink-endpoint")
+	route := h3RouteForPrompt("Two consenting adults have explicit sex in a hotel room")
+	if route.Variant != h3PinkCherryVariant || route.RunpodEndpointID != "pink-endpoint" {
+		t.Fatalf("explicit route = %#v", route)
+	}
+}
+
+func TestH3RouteKeepsNormalPromptOnNormalWorker(t *testing.T) {
+	t.Setenv("H3_NORMAL_RUNPOD_ENDPOINT", "normal-endpoint")
+	t.Setenv("H3_PINKCHERRY_RUNPOD_ENDPOINT", "pink-endpoint")
+	route := h3RouteForPrompt("A glass hummingbird drinks from an orange flower, gentle camera push-in")
+	if route.Variant != h3NormalVariant || route.RunpodEndpointID != "normal-endpoint" {
+		t.Fatalf("normal route = %#v", route)
+	}
+}
+
+func TestParseRunpodH3ProviderJob(t *testing.T) {
+	endpoint, job, ok := parseRunpodH3ProviderJob("runpod:endpoint-1:job-1")
+	if !ok || endpoint != "endpoint-1" || job != "job-1" {
+		t.Fatalf("parse = %q %q %t", endpoint, job, ok)
+	}
+	if _, _, ok := parseRunpodH3ProviderJob("local:sync"); ok {
+		t.Fatal("local job must not parse as RunPod")
+	}
+}
+
 func TestNormalizeH3VideoRequestDefaults(t *testing.T) {
 	req := ServiceUsageRequest{Prompt: "neon alley rain"}
 	if err := normalizeH3VideoRequest(&req); err != nil {

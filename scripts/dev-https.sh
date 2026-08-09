@@ -3,8 +3,8 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cert_dir="${root_dir}/.local-certs"
-key_file="${cert_dir}/manifestgen.local-key.pem"
-cert_file="${cert_dir}/manifestgen.local-cert.pem"
+key_file="${cert_dir}/manifoldgen.local-key.pem"
+cert_file="${cert_dir}/manifoldgen.local-cert.pem"
 
 mkdir -p "${cert_dir}"
 if [[ ! -s "${key_file}" || ! -s "${cert_file}" ]]; then
@@ -14,12 +14,13 @@ if [[ ! -s "${key_file}" || ! -s "${cert_file}" ]]; then
   }
   openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 30 \
     -keyout "${key_file}" -out "${cert_file}" \
-    -subj "/CN=manifestgen.local" \
-    -addext "subjectAltName=DNS:manifestgen.local,DNS:localhost,IP:127.0.0.1"
+    -subj "/CN=manifoldgen.local" \
+    -addext "subjectAltName=DNS:manifoldgen.local,DNS:localhost,IP:127.0.0.1"
 fi
 
 dev_host="${DEV_HOST:-0.0.0.0}"
-echo "ManifoldGen HTTPS dev server: https://manifestgen.local:${PORT:-3006}"
+export NEXT_DIST_DIR="${NEXT_DIST_DIR:-.next-dev}"
+echo "ManifoldGen HTTPS dev server: https://manifoldgen.local:${PORT:-3006}"
 echo "The certificate is self-signed; accept the browser warning for local testing."
 exec bunx next dev --turbopack --experimental-https --hostname "${dev_host}" --port "${PORT:-3006}" \
   --experimental-https-key "${key_file}" \
