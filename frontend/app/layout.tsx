@@ -36,6 +36,9 @@ export const metadata: Metadata = {
     'video generation',
     'generative video',
     'ManifoldGen',
+    'H3 video',
+    'manifoldgen',
+    'omniserve',
   ],
   alternates: {
     canonical: '/',

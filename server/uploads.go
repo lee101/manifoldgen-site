@@ -54,9 +54,9 @@ func initUploads() {
 	r2AccountID = getEnv("R2_ACCOUNT_ID", "f76d25b8b86cfa5638f43016510d8f77")
 	r2AccessKeyID = getEnv("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
 	r2SecretAccessKey = getEnv("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
-	r2Bucket = getEnv("R2_BUCKET", "appstatic")
-	r2PathPrefix = getEnv("R2_PATH_PREFIX", "manifoldgen/uploads")
-	r2PublicHost = getEnv("R2_PUBLIC_HOST", "appstatic.app.nz")
+	r2Bucket = getEnv("R2_BUCKET", "manifoldgenstatic")
+	r2PathPrefix = getEnv("R2_PATH_PREFIX", "gallery")
+	r2PublicHost = getEnv("R2_PUBLIC_HOST", "manifoldgenstatic.manifoldgen.com")
 }
 
 // presignR2PutObject builds an SigV4 query-string-signed PUT URL for R2.

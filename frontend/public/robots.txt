@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /account
+Disallow: /api/
+
+Sitemap: https://manifoldgen.com/sitemap.xml
+Sitemap: https://manifoldgen.com/sitemap-images.xml
+Sitemap: https://manifoldgen.com/videos.xml

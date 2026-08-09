@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, CreditCard, KeyRound, Loader2, LogOut, UserPlus } from 'lucide-react';
+import { ArrowLeft, CreditCard, KeyRound, Loader2, LogOut, UserPlus, X } from 'lucide-react';
 import {
   clearUser,
   loadStoredUser,
@@ -287,7 +287,6 @@ export default function AccountPage() {
       );
       setPublishableKey(data.publishable_key);
       setClientSecret(data.client_secret);
-      setMessage('Secure Stripe checkout ready.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Checkout failed');
     } finally {
@@ -298,12 +297,12 @@ export default function AccountPage() {
   return (
     <main className="min-h-screen bg-[var(--color-ink)] px-4 py-10 text-white">
       <div className="mx-auto max-w-lg">
-        <Link href="/" className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-mute)]">
+        <Link href="/studio" className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-mute)]">
           <ArrowLeft size={16} /> Back to studio
         </Link>
         <h1 className="font-display text-3xl font-700">Account</h1>
         <p className="mt-2 text-[var(--color-mute)]">
-          Pay-as-you-go credits and subscriptions. H3 video is metered at app.nz + 20%.
+          Pay-as-you-go credits and subscriptions. Video shows an estimate before it runs.
         </p>
 
         {!apiKey ? (
@@ -559,11 +558,11 @@ curl -X POST https://manifoldgen.com/api/service \\
   -H "Content-Type: application/json" \\
   -d '{"service":"zimage","prompt":"teal ribbon logo","n":2,"width":1024,"height":1024}'
 
-# H3 video — metered credits (app.nz GPU $ + 20%)
+# Native video — price shown before rendering
 curl -X POST https://manifoldgen.com/api/service \\
   -H "Authorization: Bearer ${apiKey}" \\
   -H "Content-Type: application/json" \\
-  -d '{"service":"h3_video","prompt":"cinematic neon alley","aspect_ratio":"16:9","size":"balanced","duration":5}'`}</pre>
+  -d '{"service":"h3_video","prompt":"cinematic neon alley","aspect_ratio":"16:9","size":"native","duration":5,"num_steps":20}'`}</pre>
             <button
               type="button"
               data-testid="account-copy-api-snippet"
@@ -581,19 +580,41 @@ curl -X POST https://manifoldgen.com/api/service \\
                 {message}
               </p>
             )}
-            {clientSecret && (
-              <div
-                className="mt-4 rounded-2xl border border-white/10 bg-white p-3 text-black"
-                data-testid="embedded-checkout-container"
-              >
-                <div className="mb-2 text-sm font-semibold text-slate-700">Secure Stripe checkout</div>
-                {checkoutMeta && <div className="mb-3 text-xs text-slate-500">{checkoutMeta}</div>}
-                <div ref={checkoutMountRef} data-testid="embedded-checkout-mount" />
-              </div>
-            )}
           </div>
         )}
       </div>
+
+      {clientSecret && (
+        <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/80 p-0 backdrop-blur-sm md:items-center md:p-6">
+          <div
+            className="relative flex h-full w-full max-w-xl flex-col overflow-hidden bg-white text-black md:h-auto md:max-h-[92dvh] md:rounded-3xl"
+            data-testid="embedded-checkout-container"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <div className="font-semibold">Checkout</div>
+                {checkoutMeta && <div className="text-xs text-slate-500">{checkoutMeta}</div>}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  embeddedCheckoutRef.current?.destroy();
+                  embeddedCheckoutRef.current = null;
+                  setClientSecret('');
+                  setPublishableKey('');
+                }}
+                className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-black"
+                aria-label="Close checkout"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-3">
+              <div ref={checkoutMountRef} data-testid="embedded-checkout-mount" />
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -113,10 +113,10 @@ func TestCallAppNZH3PreservesLoopPayload(t *testing.T) {
 }
 
 func TestH3LoopSettlementMarkupRoundsUp(t *testing.T) {
-	if got := h3DownstreamMicros(1); got != 2 {
-		t.Fatalf("one micro provider cost settled to %d, want 2", got)
+	if got := h3DownstreamMicros(1); got != h3MinimumChargeMicros {
+		t.Fatalf("one micro provider cost settled to %d, want minimum %d", got, h3MinimumChargeMicros)
 	}
-	if got := h3DownstreamMicros(1_000_000); got != 1_200_000 {
-		t.Fatalf("$1 provider cost settled to %d micros, want 1200000", got)
+	if got := h3DownstreamMicros(1_000_000); got != 1_500_000 {
+		t.Fatalf("$1 provider cost settled to %d micros, want 1500000", got)
 	}
 }

@@ -226,6 +226,9 @@ func getZImageSteps(req ServiceUsageRequest) int {
 // handleGetPricing returns current pricing for all services
 func handleGetPricing(ctx *fasthttp.RequestCtx) {
 	cutePrice := getCUTEPriceUSD()
+	h3EstimateUSD, h3EstimateCredits, h3EstimateSeconds := h3Estimate(ServiceUsageRequest{
+		Service: "h3_video", Size: "native", Duration: 5, NumSteps: 20,
+	})
 
 	units := map[string]string{
 		"zimage":         fmt.Sprintf("per generation (base); $%.2f for 20+ steps", zimageHighStepPriceUSD),
@@ -237,13 +240,17 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"lora_training":  "per training job",
 		"ltx_video":      "per ~6s video",
 		"video_generate": "per generated video (model dependent)",
-		"h3_video":       "per GPU-hour, metered by app.nz execution time (includes 20% reseller markup)",
+		"h3_video":       "per video; final price follows measured generation time",
 		"flux_image":     "per image",
 	}
 
 	var pricing []ServicePricing
 	for service, usdPrice := range servicePricesUSD {
 		cuteCost := getServicePriceCUTE(service)
+		if service == "h3_video" {
+			usdPrice = h3EstimateUSD
+			cuteCost = h3EstimateCredits
+		}
 		pricing = append(pricing, ServicePricing{
 			Service:   service,
 			PriceUSD:  usdPrice,
@@ -254,17 +261,29 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 	}
 
 	jsonResponse(ctx, 200, map[string]interface{}{
-		"pricing":           pricing,
-		"cute_price_usd":    cutePrice,
-		"credit_price_usd":  cutePrice,
+		"pricing":            pricing,
+		"cute_price_usd":     cutePrice,
+		"credit_price_usd":   cutePrice,
 		"credits_per_dollar": 1.0 / cutePrice,
-		"cute_price_ath":    getCUTEPriceATH(),
-		"sol_price_usd":     getSOLPriceUSD(),
-		"image_price_usd":   servicePricesUSD["zimage"],
-		"image_credits":     servicePricesUSD["zimage"] / cutePrice,
+		"cute_price_ath":     getCUTEPriceATH(),
+		"sol_price_usd":      getSOLPriceUSD(),
+		"image_price_usd":    servicePricesUSD["zimage"],
+		"image_credits":      servicePricesUSD["zimage"] / cutePrice,
+		"h3_video_estimate": map[string]interface{}{
+			"size": "native", "duration_seconds": 5, "steps": 20,
+			"estimated_cost_usd": h3EstimateUSD, "estimated_credits": h3EstimateCredits,
+			"estimated_generation_seconds": h3EstimateSeconds,
+			"minimum_cost_usd":             float64(h3MinimumChargeMicros) / 1_000_000,
+			"final_billing":                "final price based on generation",
+		},
 		"topup_presets_usd": []int{25, 50, 100, 200},
 		"topup_default_usd": 50,
 		"topup_min_usd":     5,
+		"studio": map[string]interface{}{
+			"background_removal_credits": studioBackgroundCredits,
+			"extend_input_second_usd":    studioExtendInputPerSec,
+			"extend_output_second_usd":   studioExtendOutputPerSec,
+		},
 	})
 }
 
@@ -1158,9 +1177,9 @@ func proxyLegacyZImageHTTP(req ServiceUsageRequest, backendURL string) ([]byte, 
 
 	endpoint := fmt.Sprintf("%s/generate_image", strings.TrimRight(backendURL, "/"))
 	payload := map[string]interface{}{
-		"prompt":               req.Prompt,
-		"num_inference_steps":  getZImageSteps(req),
-		"num_images":           getImageCount(req),
+		"prompt":              req.Prompt,
+		"num_inference_steps": getZImageSteps(req),
+		"num_images":          getImageCount(req),
 	}
 	if req.Width > 0 {
 		payload["width"] = req.Width

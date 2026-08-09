@@ -100,6 +100,13 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
+	// Human-readable API documentation. Keep the trailing-slash variant out of
+	// the JSON router so both /api and /api/ open the same static docs page.
+	if path == "/api/" && method == "GET" {
+		serveStatic(ctx, "/api")
+		return
+	}
+
 	// API routes
 	if strings.HasPrefix(path, "/api/") {
 		routeAPI(ctx, path, method)
@@ -130,6 +137,14 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 	isSitemapMethod := method == "GET" || method == "HEAD"
 	if path == "/sitemap.xml" && isSitemapMethod {
 		handleSitemapIndex(ctx)
+		return
+	}
+	if path == "/sitemap-images.xml" && isSitemapMethod {
+		handleSitemapImages(ctx, "")
+		return
+	}
+	if path == "/videos.xml" && isSitemapMethod {
+		handleSitemapVideos(ctx)
 		return
 	}
 	if path == "/sitemap-pages.xml" && isSitemapMethod {
@@ -275,6 +290,10 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	// AI Service usage
 	case path == "/api/service" && method == "POST":
 		handleServiceRequest(ctx)
+	case path == "/api/studio/remove-background" && method == "POST":
+		handleStudioRemoveBackground(ctx)
+	case path == "/api/studio/extend-video" && method == "POST":
+		handleStudioExtendVideo(ctx)
 	case strings.HasPrefix(path, "/api/video-jobs/") && method == "GET":
 		handleVideoJobStatus(ctx, strings.TrimPrefix(path, "/api/video-jobs/"))
 
@@ -344,6 +363,9 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	// Semantic prompt search (gobed) — returns prompts + similarity scores
 	case path == "/api/search" && method == "GET":
 		handleSemanticSearch(ctx)
+
+	case path == "/api/videos/featured" && method == "GET":
+		handleFeaturedVideos(ctx)
 
 	case path == "/api/search/stats" && method == "GET":
 		handleSearchStats(ctx)
@@ -1181,6 +1203,29 @@ func handleSemanticSearch(ctx *fasthttp.RequestCtx) {
 		"query":   query,
 		"results": results,
 		"count":   len(results),
+		"kind":    "videos",
+	})
+}
+
+// handleFeaturedVideos serves GET /api/videos/featured — recent completed clips for the landing strip.
+func handleFeaturedVideos(ctx *fasthttp.RequestCtx) {
+	limit, _ := strconv.Atoi(string(ctx.QueryArgs().Peek("limit")))
+	if limit < 1 || limit > 48 {
+		limit = 12
+	}
+	if dbConn == nil {
+		jsonError(ctx, 503, "database unavailable")
+		return
+	}
+	rows, err := dbConn.ListFeaturedVideos(limit)
+	if err != nil {
+		jsonError(ctx, 500, "featured videos failed")
+		return
+	}
+	setPublicGalleryCache(ctx)
+	jsonResponse(ctx, 200, map[string]interface{}{
+		"results": rows,
+		"count":   len(rows),
 		"kind":    "videos",
 	})
 }

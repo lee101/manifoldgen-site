@@ -26,7 +26,6 @@ func getCUTEPriceUSD() float64 {
 func getCUTEPriceATH() float64 { return getCUTEPriceUSD() }
 func getSOLPriceUSD() float64  { return 0 }
 
-
 func parseFloat(s string) float64 {
 	v, _ := strconv.ParseFloat(s, 64)
 	return v
@@ -45,12 +44,6 @@ func generateImageC(prompt string, width, height, steps, seed int, guidance floa
 	return nil, fmt.Errorf("local image generation disabled on manifoldgen")
 }
 
-func handleSitemapIndex(ctx *fasthttp.RequestCtx) { ctx.SetStatusCode(404) }
-func handleSitemapPages(ctx *fasthttp.RequestCtx) { ctx.SetStatusCode(404) }
-func handleSitemapImages(ctx *fasthttp.RequestCtx, _ string) {
-	ctx.SetStatusCode(404)
-}
-func handleSitemapTags(ctx *fasthttp.RequestCtx) { ctx.SetStatusCode(404) }
 func handlePromptHTML(ctx *fasthttp.RequestCtx, _ string) {
 	ctx.SetStatusCode(404)
 }
@@ -70,10 +63,10 @@ func handleGetCheckoutStatus(ctx *fasthttp.RequestCtx, _ string) {
 }
 func handleGetCUTEPrice(ctx *fasthttp.RequestCtx) {
 	jsonResponse(ctx, 200, map[string]any{
-		"cute_price_usd":    getCUTEPriceUSD(),
-		"credit_price_usd":  getCUTEPriceUSD(),
+		"cute_price_usd":     getCUTEPriceUSD(),
+		"credit_price_usd":   getCUTEPriceUSD(),
 		"credits_per_dollar": 1.0 / getCUTEPriceUSD(),
-		"sol_price_usd":     0,
+		"sol_price_usd":      0,
 	})
 }
 func handleSwapQuote(ctx *fasthttp.RequestCtx)       { jsonError(ctx, 501, "token swap disabled") }

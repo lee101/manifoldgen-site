@@ -68,14 +68,16 @@ PROMPTS = [
 ]
 
 VIDEO_PROMPTS = [
-    "Slow orbit around a marble goddess under candle smoke, camera push-in, museum hush, cinematic 16:9",
-    "Cyber-geisha walking through monsoon neon, tracking shot, rain beads, reflective asphalt, native detail",
-    "Dancer spinning in translucent gold chiffon among temple ruins at dusk, dust motes, IMAX wide motion",
-    "Underwater ballroom: floating chandeliers drift as camera glides past velvet dress and plankton trails",
-    "Noir jazz singer in scarlet satin, slow dolly, cigarette haze curling, wet cobblestones catching light",
-    "Intimate boudoir: silk robe slips as soft Rembrandt light shifts, tasteful artistic nude study, gentle pan",
-    "Glass orchid greenhouse night: condensation trails as silhouette moves behind frosted panes, eerie beauty",
-    "Astronaut removing helmet in flower field, pollen rising, soft focus rack, editorial fashion motion",
+    "Slow orbit around a marble goddess under candle smoke, camera push-in, museum hush; soft room tone and distant footsteps, cinematic 16:9",
+    "Cyber-geisha walking through monsoon neon, tracking shot, rain beads on lacquer, reflective asphalt; rain ambience and distant traffic",
+    "Dancer spinning in translucent gold chiffon among temple ruins at dusk, dust motes, IMAX wide motion; wind through stone and silk rustle",
+    "Underwater ballroom: floating chandeliers drift as camera glides past velvet dress and bioluminescent plankton; muffled hydrophone hush",
+    "Noir jazz singer in scarlet satin, slow dolly, cigarette haze curling, wet cobblestones catching light; brushed snare and muted trumpet bed",
+    "Intimate boudoir: silk robe slips as soft Rembrandt light shifts, tasteful artistic nude study, gentle pan; quiet fabric and breath",
+    "Glass orchid greenhouse night: condensation trails as silhouette moves behind frosted panes; soft rain on glass, eerie beauty",
+    "Astronaut removing helmet in flower field, pollen rising, soft focus rack, editorial fashion motion; breeze and distant birds",
+    "A glass hummingbird drinks from a bright orange flower, soft morning light, gentle camera push-in; crystalline wing chimes",
+    "Chrome android ballerina mid-arabesque in a museum atrium, hard speculars circling; quiet HVAC and heel clicks on marble",
 ]
 
 
@@ -224,6 +226,8 @@ def queue_h3_video(api_key: str, prompt: str) -> dict:
             "duration": 5,
             "num_steps": 20,
             "include_audio": True,
+            "structured_prompt": True,
+            "output_format": "webm-av1",
         },
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=60,

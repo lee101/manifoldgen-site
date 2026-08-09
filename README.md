@@ -12,7 +12,7 @@ focused on H3 video (app.nz cogs) with optional omniserve-native LTX.
 | API | Go + fasthttp (`server/`) |
 | DB | Postgres (`users`, `video_jobs`, Stripe cols) |
 | Billing | Stripe checkout + webhook, prepaid credits + monthly/annual |
-| Video | `h3_video` via `APPNZ_*` (app.nz + **20%** markup ≈ **$2.688/GPU-hr**) |
+| Video | `h3_video` via `APPNZ_*` (estimated up front, settled from actual compute) |
 | UI | Next.js dark full-bleed studio, settings cog, prompt box |
 
 ## Quick start
@@ -40,10 +40,10 @@ certificate from `mkcert`.
 
 ## Pricing
 
-H3 settles from app.nz `costMicros` with `h3DownstreamMarkupPercent = 20`
-(same reseller math as CuteDSL). Display rate:
-
-`0.89 × 1.80 × 1.4 × 1.20 ≈ $2.688 / GPU-hour`
+H3 settles from app.nz `costMicros` with `h3DownstreamMarkupPercent = 50`,
+giving a 33% gross margin before fixed costs. The minimum video charge is $0.10.
+The customer-facing estimate uses a measured 5-second native baseline and scales
+with output duration, steps, and size; the final job response reports actual cost.
 
 Override with `H3_VIDEO_PRICE_USD_PER_GPU_HOUR`.
 
@@ -67,8 +67,22 @@ the token in the API response for local testing.
 ## Gallery seed
 
 ```bash
-python scripts/backfill_seed.py --images 24 --videos 0
+# Publish existing demos + remux LTX onto manifoldgenstatic, then gobed reindex
+python scripts/publish_gallery_videos.py
+
+# Local accelerated H3 on the host 5090 (bypasses RunPod quota)
+# Temporarily frees VRAM if needed, then:
+python scripts/gen_gallery_local.py --count 3
+python scripts/gen_gallery_local.py --stop
+
+# Queue via API (app.nz, or H3_LOCAL_COG_URL when set)
+python scripts/backfill_seed.py --images 0 --videos 8
 ```
+
+Gallery CDN: `https://manifoldgenstatic.manifoldgen.com/gallery/videos/…`
+
+When RunPod `workersMax` quota is hit, set `H3_LOCAL_COG_URL=http://127.0.0.1:18089`
+after `gen_gallery_local.py` has started the cog.
 
 ## Deploy
 

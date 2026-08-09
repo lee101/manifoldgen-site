@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clapperboard,
   CreditCard,
@@ -9,10 +9,15 @@ import {
   LogIn,
   LogOut,
   Repeat2,
+  Maximize2,
+  Music2,
+  Paperclip,
   Search,
   Settings2,
   Sparkles,
   UserPlus,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import {
@@ -40,6 +45,48 @@ type AuthMode = 'signup' | 'signin';
 type AuthResponse = Parameters<typeof userFromAuthResponse>[0] & {
   created?: boolean;
 };
+type CheckoutKind = 'credits' | 'monthly' | 'annual';
+
+interface StripeEmbeddedCheckout {
+  mount: (target: string | HTMLElement) => void;
+  destroy: () => void;
+}
+
+interface StripeBrowserClient {
+  initEmbeddedCheckout: (options: {
+    clientSecret: string;
+    onComplete?: () => void;
+  }) => Promise<StripeEmbeddedCheckout>;
+}
+
+declare global {
+  interface Window {
+    Stripe?: (publishableKey: string) => StripeBrowserClient;
+  }
+}
+
+let stripeJsPromise: Promise<void> | null = null;
+
+function loadStripeJS() {
+  if (typeof window === 'undefined') return Promise.reject(new Error('Stripe.js requires a browser'));
+  if (window.Stripe) return Promise.resolve();
+  if (stripeJsPromise) return stripeJsPromise;
+  stripeJsPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[src="https://js.stripe.com/v3/"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error('Failed to load Stripe.js')), { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://js.stripe.com/v3/';
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load Stripe.js'));
+    document.head.appendChild(script);
+  });
+  return stripeJsPromise;
+}
 
 type SessionUser = StoredUser;
 
@@ -77,13 +124,20 @@ interface VideoHit {
   job_id: string;
   prompt: string;
   video_url?: string;
+  service?: string;
   similarity?: number;
+}
+
+interface PromptAsset {
+  kind: 'image' | 'audio';
+  url: string;
+  name: string;
 }
 
 const ASPECTS: Aspect[] = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'];
 const SIZES: { id: Size; label: string; hint: string }[] = [
   { id: 'preview', label: 'Preview', hint: 'Fast draft' },
-  { id: 'balanced', label: 'Balanced', hint: 'Default' },
+  { id: 'balanced', label: 'Balanced', hint: 'Balanced speed and detail' },
   { id: 'native', label: 'Native', hint: 'Max detail' },
 ];
 
@@ -112,7 +166,12 @@ export default function HomePage() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>('signup');
-  const [authWelcome, setAuthWelcome] = useState(false);
+  const [checkoutStep, setCheckoutStep] = useState(false);
+  const [checkoutClientSecret, setCheckoutClientSecret] = useState('');
+  const [checkoutPublishableKey, setCheckoutPublishableKey] = useState('');
+  const [checkoutLabel, setCheckoutLabel] = useState('');
+  const checkoutMountRef = useRef<HTMLDivElement>(null);
+  const embeddedCheckoutRef = useRef<StripeEmbeddedCheckout | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [prompt, setPrompt] = useState(
     'Slow aerial drift over a neon harbor at night, wet asphalt reflections, cinematic anamorphic bokeh',
@@ -129,7 +188,7 @@ export default function HomePage() {
   const [error, setError] = useState('');
   const [authError, setAuthError] = useState('');
   const [job, setJob] = useState<VideoJob | null>(null);
-  const [h3Rate, setH3Rate] = useState(2.688);
+  const [h3BaseEstimateUSD, setH3BaseEstimateUSD] = useState(1.01);
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [imageCredits, setImageCredits] = useState(4);
   const [gallery, setGallery] = useState<GalleryImage[]>([]);
@@ -137,6 +196,12 @@ export default function HomePage() {
   const [searchQ, setSearchQ] = useState('');
   const [searchBusy, setSearchBusy] = useState(false);
   const [videoHits, setVideoHits] = useState<VideoHit[]>([]);
+  const [heroMuted, setHeroMuted] = useState(true);
+  const [assets, setAssets] = useState<PromptAsset[]>([]);
+  const [assetBusy, setAssetBusy] = useState(false);
+  const [draggingAsset, setDraggingAsset] = useState(false);
+  const heroVideoRef = useRef<HTMLVideoElement>(null);
+  const assetInputRef = useRef<HTMLInputElement>(null);
 
   const creditsLabel = useMemo(() => {
     if (!user) return 'Sign in';
@@ -145,11 +210,14 @@ export default function HomePage() {
     return `${creds.toLocaleString()} cr · $${usd.toFixed(2)}`;
   }, [user, creditPrice]);
 
-  const estVideoCredits = useMemo(() => {
-    // Rough UI estimate: ~duration seconds of GPU at published hourly rate.
-    const usd = (h3Rate * duration) / 3600;
-    return Math.max(1, Math.ceil(usd / creditPrice));
-  }, [h3Rate, duration, creditPrice]);
+  const estVideoUSD = useMemo(() => {
+    const sizeFactor = size === 'preview' ? 0.45 : size === 'balanced' ? 0.7 : 1;
+    return Math.max(0.1, Math.ceil(h3BaseEstimateUSD * (duration / 5) * (steps / 20) * sizeFactor * 100) / 100);
+  }, [h3BaseEstimateUSD, duration, size, steps]);
+  const estVideoCredits = useMemo(
+    () => Math.max(Math.ceil(0.1 / creditPrice), Math.ceil(estVideoUSD / creditPrice)),
+    [creditPrice, estVideoUSD],
+  );
 
   const applyUser = useCallback((next: StoredUser) => {
     saveUser(next);
@@ -165,8 +233,8 @@ export default function HomePage() {
 
   const loadGallery = useCallback(async (q = '') => {
     const url = q.trim()
-      ? `${API}/images/semantic?q=${encodeURIComponent(q.trim())}&top_k=36`
-      : `${API}/images?skip_total=true&varied=true&per_page=36&allow_nsfw=true`;
+      ? `${API}/images/semantic?q=${encodeURIComponent(q.trim())}&top_k=48`
+      : `${API}/images?skip_total=true&varied=true&per_page=48&allow_nsfw=true`;
     const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();
@@ -174,19 +242,19 @@ export default function HomePage() {
   }, []);
 
   const loadFeaturedVideos = useCallback(async () => {
-    const res = await fetch(`${API}/search?q=${encodeURIComponent('cinematic neon light')}&top_k=12`);
+    const res = await fetch(`${API}/videos/featured?limit=24`);
     if (!res.ok) return;
     const data = await res.json();
     const rows: VideoHit[] = (data.results || []).filter((r: VideoHit) => r.video_url);
     setFeaturedVideos(rows);
-    setJob((prev) => {
-      if (prev?.result_url || !rows[0]?.video_url) return prev;
-      return {
-        id: rows[0].job_id,
-        status: 'completed',
-        result_url: rows[0].video_url,
-      };
-    });
+    if (rows[0]?.prompt) {
+      setPrompt((p) =>
+        p ===
+          'Slow aerial drift over a neon harbor at night, wet asphalt reflections, cinematic anamorphic bokeh'
+          ? rows[0].prompt
+          : p,
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -200,9 +268,9 @@ export default function HomePage() {
       .then((data) => {
         if (data.credit_price_usd) setCreditPrice(data.credit_price_usd);
         if (data.image_credits) setImageCredits(data.image_credits);
-        const rows = data.pricing || data.services || [];
-        const row = rows.find?.((s: { service: string; price_usd: number }) => s.service === 'h3_video');
-        if (row?.price_usd) setH3Rate(row.price_usd);
+        if (data.h3_video_estimate?.estimated_cost_usd) {
+          setH3BaseEstimateUSD(data.h3_video_estimate.estimated_cost_usd);
+        }
       })
       .catch(() => undefined);
     // The studio is usable without these feeds. Start them after the initial
@@ -219,6 +287,46 @@ export default function HomePage() {
     };
   }, [applyUser, softRefresh, loadGallery, loadFeaturedVideos]);
 
+  useEffect(() => {
+    if (!checkoutClientSecret || !checkoutPublishableKey || !checkoutMountRef.current) return;
+    let cancelled = false;
+    const mountCheckout = async () => {
+      try {
+        embeddedCheckoutRef.current?.destroy();
+        embeddedCheckoutRef.current = null;
+        await loadStripeJS();
+        if (cancelled) return;
+        const stripe = window.Stripe?.(checkoutPublishableKey);
+        if (!stripe) throw new Error('Stripe.js did not initialize');
+        const checkout = await stripe.initEmbeddedCheckout({
+          clientSecret: checkoutClientSecret,
+          onComplete: () => {
+            setCheckoutClientSecret('');
+            setCheckoutStep(false);
+            setAuthOpen(false);
+            if (apiKey) {
+              void softRefresh(apiKey);
+              window.setTimeout(() => void softRefresh(apiKey), 1500);
+            }
+          },
+        });
+        if (cancelled) {
+          checkout.destroy();
+          return;
+        }
+        checkout.mount(checkoutMountRef.current!);
+        embeddedCheckoutRef.current = checkout;
+      } catch (err) {
+        if (!cancelled) setAuthError(err instanceof Error ? err.message : 'Failed to open checkout');
+      }
+    };
+    void mountCheckout();
+    return () => {
+      cancelled = true;
+      embeddedCheckoutRef.current?.destroy();
+      embeddedCheckoutRef.current = null;
+    };
+  }, [apiKey, checkoutClientSecret, checkoutPublishableKey, softRefresh]);
   async function runSearch(e?: React.FormEvent) {
     e?.preventDefault();
     const q = searchQ.trim();
@@ -244,8 +352,51 @@ export default function HomePage() {
   function openAuth(mode: AuthMode = 'signup') {
     setAuthMode(mode);
     setAuthError('');
-    setAuthWelcome(false);
+    setCheckoutStep(false);
+    setCheckoutClientSecret('');
+    setCheckoutPublishableKey('');
     setAuthOpen(true);
+  }
+
+  function closeAuth() {
+    embeddedCheckoutRef.current?.destroy();
+    embeddedCheckoutRef.current = null;
+    setCheckoutClientSecret('');
+    setCheckoutPublishableKey('');
+    setCheckoutStep(false);
+    setAuthOpen(false);
+  }
+
+  async function startCheckout(kind: CheckoutKind, amountUSD = 25) {
+    if (!apiKey) return;
+    setBusy(true);
+    setAuthError('');
+    setCheckoutClientSecret('');
+    setCheckoutPublishableKey('');
+    try {
+      const body = kind === 'credits'
+        ? { type: 'credits', amount_usd: amountUSD, return_url: `${window.location.origin}/?payment=success` }
+        : { type: 'subscription', plan: kind, return_url: `${window.location.origin}/?payment=success` };
+      const res = await fetch(`${API}/stripe-checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Checkout failed');
+      if (data.url && !data.client_secret) {
+        window.location.href = data.url;
+        return;
+      }
+      if (!data.client_secret || !data.publishable_key) throw new Error('Stripe checkout is unavailable');
+      setCheckoutLabel(kind === 'credits' ? `$${amountUSD} credits` : `${kind} subscription`);
+      setCheckoutPublishableKey(data.publishable_key);
+      setCheckoutClientSecret(data.client_secret);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Checkout failed');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function submitAuth(e: React.FormEvent) {
@@ -267,7 +418,7 @@ export default function HomePage() {
       if (!next) throw new Error('No API key returned');
       applyUser(next);
       if (data.created || authMode === 'signup') {
-        setAuthWelcome(true);
+        setCheckoutStep(true);
       } else {
         setAuthOpen(false);
       }
@@ -278,7 +429,7 @@ export default function HomePage() {
     }
   }
 
-  async function generate() {
+  async function generate(overrides?: { prompt?: string; image?: string; audio?: string }) {
     if (!apiKey) {
       openAuth('signup');
       return;
@@ -313,7 +464,7 @@ export default function HomePage() {
         headers: authHeaders(apiKey),
         body: JSON.stringify({
           service: 'h3_video',
-          prompt,
+          prompt: overrides?.prompt ?? prompt,
           aspect_ratio: aspect,
           size,
           duration,
@@ -322,6 +473,9 @@ export default function HomePage() {
           include_audio: includeAudio,
           loop: loopMode,
           ...(firstFrame ? { first_frame: firstFrame } : {}),
+          structured_prompt: true,
+          ...(!firstFrame ? { first_frame: overrides?.image ?? assets.find((asset) => asset.kind === 'image')?.url } : {}),
+          audio_url: overrides?.audio ?? assets.find((asset) => asset.kind === 'audio')?.url,
         }),
       });
       const data = await parseJSONResponse<Record<string, unknown> & {
@@ -339,6 +493,67 @@ export default function HomePage() {
     } finally {
       setBusy(false);
       setGenerationStage('');
+    }
+  }
+
+  function useGalleryImage(img: GalleryImage) {
+    const src = img.image_url || img.thumb_url;
+    if (!src) return;
+    setPrompt(img.prompt);
+    setAssets((current) => [
+      { kind: 'image', url: src, name: img.prompt.slice(0, 48) || 'Gallery image' },
+      ...current.filter((asset) => asset.kind !== 'image'),
+    ]);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function uploadAssets(files: FileList | File[]) {
+    const accepted = Array.from(files).filter(
+      (file) => file.type.startsWith('image/') || file.type.startsWith('audio/'),
+    );
+    if (accepted.length === 0) {
+      setError('Drop an image or audio file');
+      return;
+    }
+    if (!apiKey) {
+      openAuth('signup');
+      return;
+    }
+    setAssetBusy(true);
+    setError('');
+    try {
+      const uploaded: PromptAsset[] = [];
+      for (const file of accepted) {
+        const params = new URLSearchParams({
+          filename: file.name,
+          content_type: file.type || 'application/octet-stream',
+          dataset: 'prompt-assets',
+        });
+        const presign = await fetch(`${API}/uploads/presign?${params}`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        const target = await presign.json();
+        if (!presign.ok) throw new Error(target.error || 'Could not prepare upload');
+        const put = await fetch(target.upload_url, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file,
+        });
+        if (!put.ok) throw new Error(`Upload failed for ${file.name}`);
+        uploaded.push({
+          kind: file.type.startsWith('audio/') ? 'audio' : 'image',
+          url: target.public_url,
+          name: file.name,
+        });
+      }
+      setAssets((current) => {
+        const kinds = new Set(uploaded.map((asset) => asset.kind));
+        return [...uploaded, ...current.filter((asset) => !kinds.has(asset.kind))];
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Asset upload failed');
+    } finally {
+      setAssetBusy(false);
     }
   }
 
@@ -375,6 +590,8 @@ export default function HomePage() {
   }
 
   function signOut() {
+    embeddedCheckoutRef.current?.destroy();
+    embeddedCheckoutRef.current = null;
     clearUser();
     setUser(null);
     setApiKey('');
@@ -388,10 +605,22 @@ export default function HomePage() {
     }
   }
 
+  async function playFullscreen() {
+    const video = heroVideoRef.current;
+    if (!video) return;
+    await video.play().catch(() => undefined);
+    if (video.requestFullscreen) {
+      await video.requestFullscreen().catch(() => undefined);
+      return;
+    }
+    const iosVideo = video as HTMLVideoElement & { webkitEnterFullscreen?: () => void };
+    iosVideo.webkitEnterFullscreen?.();
+  }
+
   const [logoOk, setLogoOk] = useState(true);
   const logoSrc = '/brand/logo-nobg.webp';
 
-  const resultUrl = job?.result_url;
+  const resultUrl = job?.result_url || featuredVideos[0]?.video_url;
   // A local, cacheable poster protects LCP from slow API/gallery responses.
   const heroImage = '/brand/manifoldgen-og.webp';
   const displayVideos = videoHits.length > 0 ? videoHits : featuredVideos;
@@ -403,11 +632,12 @@ export default function HomePage() {
         <div className="absolute inset-0">
           {resultUrl ? (
             <video
+              ref={heroVideoRef}
               key={resultUrl}
               className="hero-motion h-full w-full object-cover"
               src={resultUrl}
               autoPlay
-              muted
+              muted={heroMuted}
               loop
               playsInline
             />
@@ -422,8 +652,9 @@ export default function HomePage() {
           ) : (
             <div className="hero-motion h-full w-full bg-[radial-gradient(ellipse_at_20%_20%,#2a1f66_0%,transparent_45%),radial-gradient(ellipse_at_80%_10%,#123a45_0%,transparent_40%),linear-gradient(160deg,#07070a,#12101c_55%,#0a0a10)]" />
           )}
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/35 to-black/20" />
-          <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-transparent to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/25" />
+          <div className="absolute inset-0 bg-gradient-to-r from-black/55 via-transparent to-transparent" />
+          <div className="hero-grain pointer-events-none absolute inset-0 opacity-[0.35]" />
         </div>
 
         <header className="relative z-20 flex items-center justify-between px-4 py-4 md:px-8">
@@ -435,15 +666,44 @@ export default function HomePage() {
                 alt=""
                 width={54}
                 height={36}
-                className="h-9 w-auto object-contain brightness-125 drop-shadow"
+                className="h-8 w-auto object-contain brightness-125 drop-shadow md:h-9"
                 onError={() => setLogoOk(false)}
               />
             ) : (
               <Clapperboard className="text-[var(--color-accent-2)]" size={22} />
             )}
-            <div className="font-display text-xl font-700 tracking-tight md:text-2xl">ManifoldGen</div>
+            <h1 className="font-display text-base font-700 tracking-tight sm:text-xl md:text-2xl">
+              ManifoldGen
+            </h1>
           </div>
           <div className="flex items-center gap-2">
+            <a href="/studio" className="glass hidden items-center gap-2 rounded-full px-3 py-2 text-sm text-[var(--color-mute)] hover:text-white sm:flex">
+              <Clapperboard size={14} />
+              Editor
+            </a>
+            <a href="/api" className="glass hidden rounded-full px-3 py-2 text-sm text-[var(--color-mute)] hover:text-white sm:block">
+              API
+            </a>
+            {resultUrl ? (
+              <>
+                <button
+                  type="button"
+                  onClick={playFullscreen}
+                  className="glass rounded-full p-2.5 text-[var(--color-mute)] transition hover:text-white"
+                  aria-label="Play hero video fullscreen"
+                >
+                  <Maximize2 size={18} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHeroMuted((m) => !m)}
+                  className="glass rounded-full p-2.5 text-[var(--color-mute)] transition hover:text-white"
+                  aria-label={heroMuted ? 'Unmute hero video' : 'Mute hero video'}
+                >
+                  {heroMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
@@ -506,7 +766,38 @@ export default function HomePage() {
             <p className="mb-3 max-w-xl text-sm text-white/65 md:text-base">
               Describe the shot, then set the format, duration, quality, and audio.
             </p>
-            <div className="glass prompt-glow rounded-3xl p-3 md:p-4">
+            <div
+              className={`glass prompt-glow rounded-3xl p-3 transition md:p-4 ${draggingAsset ? 'ring-2 ring-[var(--color-accent-2)]' : ''}`}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                setDraggingAsset(true);
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setDraggingAsset(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDraggingAsset(false);
+                void uploadAssets(e.dataTransfer.files);
+              }}
+            >
+              {assets.length > 0 ? (
+                <div className="mb-2 flex flex-wrap gap-2 px-1">
+                  {assets.map((asset) => (
+                    <div key={`${asset.kind}-${asset.url}`} className="flex max-w-full items-center gap-2 rounded-xl bg-black/35 p-1.5 pr-2 text-xs">
+                      {asset.kind === 'image' ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={asset.url} alt="" className="h-10 w-10 rounded-lg object-cover" />
+                      ) : (
+                        <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10"><Music2 size={17} /></span>
+                      )}
+                      <span className="max-w-40 truncate text-white/75">{asset.name}</span>
+                      <button type="button" onClick={() => setAssets((rows) => rows.filter((row) => row.url !== asset.url))} aria-label={`Remove ${asset.name}`} className="rounded-full p-1 text-white/45 hover:text-white"><X size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
@@ -554,16 +845,21 @@ export default function HomePage() {
                   Loop
                 </button>
                 <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] sm:inline" data-testid="home-video-cost">
-                  {duration}s · ~{estVideoCredits + (loopMode ? imageCredits : 0)} credits · ${h3Rate.toFixed(3)}/GPU-hr
+                  {duration}s · ~{estVideoCredits + (loopMode ? imageCredits : 0)} credits · est. ${estVideoUSD.toFixed(2)}
                 </span>
                 <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] md:inline" data-testid="home-image-cost">
                   Image {imageCredits} credits ($0.04)
                 </span>
                 <div className="ml-auto flex items-center gap-2">
+                  <input ref={assetInputRef} type="file" accept="image/*,audio/*" multiple className="hidden" onChange={(e) => { if (e.target.files) void uploadAssets(e.target.files); e.currentTarget.value = ''; }} />
+                  <button type="button" disabled={assetBusy} onClick={() => assetInputRef.current?.click()} className="glass inline-flex items-center gap-2 rounded-full px-3 py-2.5 text-sm text-white/75 disabled:opacity-50" aria-label="Attach image or audio">
+                    {assetBusy ? <Loader2 className="animate-spin" size={16} /> : <Paperclip size={16} />}
+                    <span className="hidden sm:inline">Add asset</span>
+                  </button>
                   <button
                     type="button"
                     disabled={busy || !prompt.trim()}
-                    onClick={generate}
+                    onClick={() => void generate()}
                     className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
                   >
                     {busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
@@ -593,8 +889,8 @@ export default function HomePage() {
       </section>
 
       {/* Search + videos full width */}
-      <section className="relative z-10 w-full border-t border-white/5 bg-black/40">
-        <form onSubmit={runSearch} className="flex gap-2 px-3 py-4 md:px-6">
+      <section className="relative z-10 w-full border-t border-white/5 bg-[#050508]">
+        <form onSubmit={runSearch} className="flex gap-2 px-3 py-5 md:px-6">
           <div className="glass flex flex-1 items-center gap-2 rounded-full px-4 py-2.5">
             <Search size={16} className="text-[var(--color-mute)]" />
             <input
@@ -614,14 +910,21 @@ export default function HomePage() {
         </form>
 
         {displayVideos.length > 0 && (
-          <div className="pb-2">
-            <div className="flex gap-2 overflow-x-auto px-0 pb-2 md:gap-3">
-              {displayVideos.map((hit) => (
+          <div className="pb-4" data-testid="showcase-reel">
+            <div className="flex items-end justify-between px-3 pb-3 md:px-6">
+              <div>
+                <h2 className="font-display text-lg tracking-wide text-white md:text-xl">Showcase</h2>
+                <p className="text-sm text-[var(--color-mute)]">H3 clips — click to load into the studio</p>
+              </div>
+              <span className="hidden text-xs text-white/40 sm:inline">{displayVideos.length}</span>
+            </div>
+            <div className="reel-scroll flex snap-x snap-mandatory gap-0 overflow-x-auto pb-1">
+              {displayVideos.map((hit, idx) => (
                 <button
                   key={hit.job_id}
                   type="button"
                   onClick={() => playVideo(hit)}
-                  className="group relative h-[42vw] min-w-[72vw] shrink-0 overflow-hidden bg-white/5 sm:h-[28vw] sm:min-w-[44vw] md:h-[22vw] md:min-w-[32vw] lg:h-[18vw] lg:min-w-[28vw]"
+                  className="group relative aspect-video h-[46vw] shrink-0 snap-start overflow-hidden sm:h-[30vw] md:h-[24vw] lg:h-[20vw]"
                 >
                   {hit.video_url ? (
                     <video
@@ -629,8 +932,8 @@ export default function HomePage() {
                       muted
                       loop
                       playsInline
-                      preload="metadata"
-                      className="h-full w-full object-cover transition duration-700 group-hover:scale-[1.03]"
+                      preload={idx < 3 ? 'metadata' : 'none'}
+                      className="h-full w-full object-cover transition duration-700 group-hover:scale-[1.04]"
                       onMouseEnter={(e) => {
                         void e.currentTarget.play().catch(() => undefined);
                       }}
@@ -640,12 +943,13 @@ export default function HomePage() {
                       }}
                     />
                   ) : (
-                    <div className="flex h-full items-end p-4 text-left text-sm text-white/70">
+                    <div className="flex h-full items-end bg-white/5 p-4 text-left text-sm text-white/70">
                       {hit.prompt}
                     </div>
                   )}
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-3 text-left md:p-4">
-                    <div className="line-clamp-2 text-sm text-white/90 md:text-base">{hit.prompt}</div>
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent opacity-90 transition group-hover:opacity-100" />
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3 text-left md:p-4">
+                    <div className="line-clamp-2 text-sm leading-snug text-white/95 md:text-base">{hit.prompt}</div>
                   </div>
                 </button>
               ))}
@@ -655,24 +959,28 @@ export default function HomePage() {
       </section>
 
       {/* Full-bleed gallery */}
-      <section className="relative z-10 w-full">
+      <section className="relative z-10 w-full" data-testid="still-gallery">
+        <div className="flex items-end justify-between px-3 py-4 md:px-6">
+          <div>
+            <h2 className="font-display text-lg tracking-wide text-white md:text-xl">Gallery</h2>
+            <p className="text-sm text-[var(--color-mute)]">Stills to remix into video prompts</p>
+          </div>
+          {gallery.length > 0 ? (
+            <span className="text-xs text-white/40">{gallery.length}</span>
+          ) : null}
+        </div>
         {gallery.length === 0 ? (
-          <p className="px-4 py-10 text-sm text-[var(--color-mute)]">Gallery warming up…</p>
+          <p className="px-4 pb-12 text-sm text-[var(--color-mute)]">Gallery warming up…</p>
         ) : (
           <div className="gallery-bleed grid grid-cols-2 gap-px bg-black sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
             {gallery.map((img) => {
               const src = img.image_url || img.thumb_url;
               return (
-                <button
+                <div
                   key={img.id}
-                  type="button"
-                  onClick={() => {
-                    setPrompt(img.prompt);
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
                   className="group relative aspect-[3/4] overflow-hidden bg-[#0c0c12]"
-                  title={img.prompt}
                 >
+                  <button type="button" onClick={() => useGalleryImage(img)} className="absolute inset-0 h-full w-full" title={img.prompt}>
                   {src ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -682,11 +990,13 @@ export default function HomePage() {
                       loading="lazy"
                     />
                   ) : null}
-                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 transition group-hover:opacity-100" />
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3 text-left text-xs leading-snug text-white/90 opacity-0 transition group-hover:opacity-100 md:text-sm">
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent opacity-70 transition group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100" />
+                  </button>
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3 pb-14 text-left text-xs leading-snug text-white/90 opacity-90 transition group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 md:text-sm">
                     {img.prompt.slice(0, 140)}
                   </div>
-                </button>
+                  {src ? <button type="button" onClick={() => { useGalleryImage(img); void generate({ prompt: img.prompt, image: src }); }} className="absolute inset-x-3 bottom-3 z-10 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white opacity-100 shadow-lg transition sm:opacity-0 sm:group-hover:opacity-100"><Sparkles size={14} />Generate video</button> : null}
+                </div>
               );
             })}
           </div>
@@ -703,16 +1013,19 @@ export default function HomePage() {
               </button>
             </div>
             <label className="mb-3 block text-sm text-[var(--color-mute)]">
-              Duration (4–15s)
+              Duration (4–60s; &gt;15s chains segments)
               <input
                 type="range"
                 min={4}
-                max={15}
+                max={60}
+                step={1}
                 value={duration}
                 onChange={(e) => setDuration(Number(e.target.value))}
                 className="mt-2 w-full"
               />
-              <span className="text-white">{duration}s</span>
+              <span className="text-white">
+                {duration}s{duration > 15 ? ' · multi-seg chain' : ''}
+              </span>
             </label>
             <label className="mb-3 block text-sm text-[var(--color-mute)]">
               Steps (8–30)
@@ -731,7 +1044,7 @@ export default function HomePage() {
               <select
                 value={format}
                 onChange={(e) => setFormat(e.target.value as Format)}
-                className="mt-2 w-full rounded-xl bg-white/5 px-3 py-2 text-white"
+                className="dark-select mt-2 w-full rounded-xl px-3 py-2"
               >
                 <option value="webm-av1">WebM AV1</option>
                 <option value="mp4-h264">MP4 H.264</option>
@@ -762,8 +1075,8 @@ export default function HomePage() {
               </span>
             </label>
             <p className="mt-4 text-xs text-[var(--color-mute)]">
-              H3 settles per GPU-second from app.nz + 20% (≈ ${h3Rate.toFixed(3)} / GPU-hour).
-              Credits are $0.01 each — images cost {imageCredits} credits ($0.04). Copy API examples on Account.
+              Video shows an estimate up front and settles from actual generation time. Credits are about $0.01 each;
+              images cost {imageCredits} credits ($0.04). Full examples are in the API docs.
             </p>
           </div>
         </div>
@@ -784,7 +1097,7 @@ export default function HomePage() {
               <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b12] via-[#0b0b12]/40 to-black/20" />
               <button
                 type="button"
-                onClick={() => setAuthOpen(false)}
+                onClick={closeAuth}
                 className="absolute right-4 top-4 rounded-full bg-black/40 p-2 text-white/80 hover:text-white"
                 aria-label="Close"
               >
@@ -797,43 +1110,81 @@ export default function HomePage() {
                   <div className="font-display text-3xl font-800 tracking-tight">ManifoldGen</div>
                 </div>
                 <p className="mt-1 text-sm text-white/70">
-                  {authWelcome
-                    ? 'Studio ready. Top up credits anytime and start rendering.'
+                  {checkoutStep
+                    ? 'Pick a plan.'
                     : authMode === 'signup'
-                      ? 'Create your studio account in under a minute.'
+                      ? 'Create your account.'
                       : 'Welcome back. Pick up where you left off.'}
                 </p>
               </div>
             </div>
 
             <div className="flex flex-1 flex-col overflow-y-auto px-5 pb-6 pt-2">
-              {authWelcome ? (
-                <div className="flex flex-1 flex-col justify-between gap-6 py-4">
-                  <ul className="space-y-3 text-sm text-white/75">
-                    <li className="flex gap-3">
-                      <Sparkles size={16} className="mt-0.5 text-[var(--color-accent-2)]" />
-                      API key saved on this device — generate from the prompt bar.
-                    </li>
-                    <li className="flex gap-3">
-                      <CreditCard size={16} className="mt-0.5 text-[var(--color-accent-2)]" />
-                      Add credits on Account when you are ready to render H3.
-                    </li>
-                    <li className="flex gap-3">
-                      <Clapperboard size={16} className="mt-0.5 text-[var(--color-accent-2)]" />
-                      Remix any gallery still into a native-resolution video prompt.
-                    </li>
-                  </ul>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthOpen(false);
-                      setAuthWelcome(false);
-                    }}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-3 font-semibold"
-                  >
-                    <Sparkles size={16} />
-                    Enter studio
-                  </button>
+              {checkoutStep ? (
+                <div className="flex flex-1 flex-col gap-4 py-4">
+                  {checkoutClientSecret ? (
+                    <>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold">Checkout</div>
+                          <div className="text-xs text-white/45">{checkoutLabel}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCheckoutClientSecret('');
+                            setCheckoutPublishableKey('');
+                          }}
+                          className="text-sm text-white/55 hover:text-white"
+                        >
+                          Change
+                        </button>
+                      </div>
+                      <div ref={checkoutMountRef} className="min-h-80 overflow-hidden rounded-2xl bg-white" />
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void startCheckout('monthly')}
+                        className="rounded-2xl border border-[var(--color-accent)] bg-[var(--color-accent)]/15 p-4 text-left transition hover:bg-[var(--color-accent)]/25 disabled:opacity-50"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-semibold">Subscribe monthly</span>
+                          <span className="rounded-full bg-[var(--color-accent)] px-2.5 py-1 text-xs font-semibold">Recommended</span>
+                        </div>
+                        <div className="mt-1 text-sm text-white/60">Unlimited images + $25 video credits/month</div>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void startCheckout('annual')}
+                        className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <div className="font-semibold">Subscribe annually</div>
+                        <div className="mt-1 text-sm text-white/60">Unlimited images + $300 video credits/year</div>
+                      </button>
+                      <div className="pt-1">
+                        <div className="mb-2 text-xs font-medium uppercase tracking-wider text-white/40">Or buy credits</div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[10, 25, 50].map((amount) => (
+                            <button
+                              key={amount}
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void startCheckout('credits', amount)}
+                              className="rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-semibold hover:bg-white/10 disabled:opacity-50"
+                            >
+                              ${amount}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {busy ? <Loader2 className="mx-auto animate-spin text-white/50" size={20} /> : null}
+                      {authError ? <p className="rounded-xl bg-red-500/15 px-3 py-2 text-sm text-red-200">{authError}</p> : null}
+                    </>
+                  )}
                 </div>
               ) : (
                 <form onSubmit={submitAuth} className="flex flex-1 flex-col">
@@ -897,6 +1248,11 @@ export default function HomePage() {
                     </p>
                   )}
 
+                  {authMode === 'signup' && (
+                    <p className="mb-4 text-xs leading-relaxed text-white/45">
+                      Creates an API key and Stripe-ready wallet. Video pricing is estimated before rendering.
+                    </p>
+                  )}
 
                   <button
                     type="submit"
