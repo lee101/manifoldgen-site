@@ -3,6 +3,7 @@ node_modules/
 frontend/out/
 frontend/test-results/
 frontend/playwright-report/
+.local-certs/
 server/manifoldgen-server
 .env
 *.sum.bak

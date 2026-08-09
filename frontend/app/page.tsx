@@ -617,7 +617,7 @@ export default function HomePage() {
                 alt=""
                 width={54}
                 height={36}
-                className="h-8 w-auto object-contain drop-shadow md:h-9"
+                className="h-8 w-auto object-contain brightness-125 drop-shadow md:h-9"
                 onError={() => setLogoOk(false)}
               />
             ) : (
@@ -1014,7 +1014,7 @@ export default function HomePage() {
               <div className="absolute bottom-4 left-5 right-5">
                 <div className="flex items-center gap-3">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/brand/logo-nobg.webp" alt="" className="h-10 w-auto object-contain" />
+                  <img src="/brand/logo-nobg.webp" alt="" className="h-10 w-auto object-contain brightness-125" />
                   <div className="font-display text-3xl font-800 tracking-tight">ManifoldGen</div>
                 </div>
                 <p className="mt-1 text-sm text-white/70">

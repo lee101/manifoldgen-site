@@ -1,4 +1,4 @@
-.PHONY: install server frontend build visualbench
+.PHONY: install server frontend dev dev-https build visualbench
 
 install:
 	cd frontend && bun install
@@ -9,6 +9,12 @@ server:
 
 frontend:
 	cd frontend && bun run dev
+
+dev:
+	cd frontend && bun run dev
+
+dev-https:
+	cd frontend && bun run dev:https
 
 build-frontend:
 	cd frontend && NEXT_OUTPUT=export bun run build

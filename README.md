@@ -23,7 +23,20 @@ cp .env.example .env
 make install
 make server      # :8116
 make frontend    # :3006, proxies /api → :8116
+
+# HTTPS frontend for browser/auth testing
+make dev-https   # https://manifestgen.local:3006
 ```
+
+For the friendly local hostname, add this once to `/etc/hosts`:
+
+```text
+127.0.0.1 manifestgen.local
+```
+
+The HTTPS command creates a short-lived self-signed certificate in `.local-certs/`.
+Accept the browser warning locally, or replace the generated files with a trusted
+certificate from `mkcert`.
 
 ## Pricing
 
