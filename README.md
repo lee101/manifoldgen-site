@@ -1,5 +1,25 @@
 # ManifoldGen
 
+## API key administration
+
+User API keys use the recognizable `sk-mg-` prefix. Run `gitleaks detect --config .gitleaks.toml` locally or add that command to CI to catch committed keys. GitHub Secret Scanning does not automatically recognize private formats; the `sk-` prefix helps generic detectors, while the included Gitleaks rule is the enforceable project check.
+
+Set `MANIFOLD_ADMIN_API_KEY` only in the server environment. It is a separate `sk-mg-admin-...` credential and is never returned by the API. An administrator can mint an email-backed account key or invalidate its previous key:
+
+```bash
+curl -X POST https://manifoldgen.com/api/admin/api-keys \
+  -H "Authorization: Bearer $MANIFOLD_ADMIN_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"leepenkman@gmail.com"}'
+
+curl -X POST https://manifoldgen.com/api/admin/api-keys/rotate \
+  -H "Authorization: Bearer $MANIFOLD_ADMIN_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"leepenkman@gmail.com"}'
+```
+
+The rotate endpoint returns the replacement once and immediately invalidates the old user key.
+
 Dark-mode AI video studio at [manifoldgen.com](https://manifoldgen.com).
 
 Built on the same Go fasthttp + Postgres + Stripe stack as CuteDSL / app.nz,

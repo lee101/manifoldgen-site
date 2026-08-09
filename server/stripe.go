@@ -57,6 +57,11 @@ type stripePaymentMethod struct {
 	} `json:"card"`
 }
 
+type stripeBillingPortalSession struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
 type stripeWebhookEvent struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
@@ -135,6 +140,21 @@ func (s *stripeService) createCustomer(email, wallet string) (string, error) {
 		return "", err
 	}
 	return resp.ID, nil
+}
+
+func (s *stripeService) createBillingPortalSession(customerID, returnURL string) (*stripeBillingPortalSession, error) {
+	vals := url.Values{
+		"customer":   {customerID},
+		"return_url": {returnURL},
+	}
+	var resp stripeBillingPortalSession
+	if err := s.post("/v1/billing_portal/sessions", vals, nil, &resp); err != nil {
+		return nil, err
+	}
+	if resp.URL == "" {
+		return nil, errors.New("stripe billing portal response missing URL")
+	}
+	return &resp, nil
 }
 
 func (s *stripeService) createCheckoutSession(customerID, returnURL string, amountUSDCents int64, metadata map[string]string) (*stripeCheckoutSession, error) {
@@ -346,6 +366,56 @@ func handleStripeConfig(ctx *fasthttp.RequestCtx) {
 	jsonResponse(ctx, 200, map[string]interface{}{
 		"configured":      stripeSvc != nil,
 		"publishable_key": os.Getenv("STRIPE_PUBLISHABLE_KEY"),
+	})
+}
+
+// handleStripePortal creates a short-lived, Stripe-hosted billing portal URL
+// for the authenticated account. The customer ID always comes from the server,
+// never from a caller-provided value.
+func handleStripePortal(ctx *fasthttp.RequestCtx) {
+	if stripeSvc == nil {
+		jsonError(ctx, 503, "stripe payments not configured")
+		return
+	}
+
+	apiKey := strings.TrimSpace(strings.TrimPrefix(string(ctx.Request.Header.Peek("Authorization")), "Bearer "))
+	if apiKey == "" {
+		jsonError(ctx, 401, "api key required")
+		return
+	}
+	user, err := dbConn.GetUserByAPIKey(apiKey)
+	if err != nil {
+		jsonError(ctx, 401, "invalid API key")
+		return
+	}
+
+	customerID := user.StripeCustomerID
+	if customerID == "" {
+		if !looksLikeEmail(user.Email) {
+			jsonError(ctx, 400, "email required before accessing the billing portal")
+			return
+		}
+		customerID, err = stripeSvc.createCustomer(user.Email, user.WalletAddress)
+		if err != nil {
+			log.Printf("stripe portal customer error: %v", err)
+			jsonError(ctx, 502, "failed to create stripe customer")
+			return
+		}
+		if err := dbConn.SetStripeCustomerID(user.ID, customerID); err != nil {
+			jsonError(ctx, 500, "failed to save stripe customer")
+			return
+		}
+	}
+
+	session, err := stripeSvc.createBillingPortalSession(customerID, defaultPublicURL(ctx)+"/account")
+	if err != nil {
+		log.Printf("stripe billing portal error: %v", err)
+		jsonError(ctx, 502, "failed to create billing portal session")
+		return
+	}
+	jsonResponse(ctx, 200, map[string]interface{}{
+		"url":         session.URL,
+		"customer_id": customerID,
 	})
 }
 

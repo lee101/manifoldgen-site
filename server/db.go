@@ -17,6 +17,10 @@ import (
 
 var ErrAPIKeyMismatch = errors.New("api key no longer matches")
 
+func newAPIKey() string {
+	return "sk-mg-" + strings.ReplaceAll(newUUID(), "-", "")
+}
+
 // DB wraps the PostgreSQL connection
 type DB struct {
 	conn *sql.DB
@@ -276,7 +280,7 @@ func (db *DB) GetOrCreateUser(walletAddress string) (*User, bool, error) {
 		user = User{
 			ID:                    newUUID(),
 			WalletAddress:         walletAddress,
-			APIKey:                "manifoldgen_" + newUUID()[:24],
+			APIKey:                newAPIKey(),
 			Credits:               0,
 			AutotopupThresholdUSD: 5,
 			AutotopupAmountUSD:    25,
@@ -350,7 +354,7 @@ func (db *DB) GetOrCreateUserByEmailWithPassword(email, passwordHash string) (*U
 		WalletAddress:         emailWalletAddress(email),
 		Email:                 email,
 		PasswordHash:          passwordHash,
-		APIKey:                "manifoldgen_" + newUUID()[:24],
+		APIKey:                newAPIKey(),
 		Credits:               0,
 		AutotopupThresholdUSD: 5,
 		AutotopupAmountUSD:    25,
@@ -455,7 +459,7 @@ func (db *DB) RotateAPIKey(userID, oldKey string) (*User, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	newKey := "manifoldgen_" + newUUID()[:24]
+	newKey := newAPIKey()
 	result, err := db.conn.Exec(
 		"UPDATE users SET api_key = $1, updated_at = NOW() WHERE id = $2 AND api_key = $3",
 		newKey, userID, oldKey,

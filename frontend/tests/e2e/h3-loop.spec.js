@@ -21,6 +21,11 @@ async function installStudioMocks(page, serviceHandler) {
     json: {
       credit_price_usd: 0.01,
       image_credits: 4,
+      h3_video_estimate: {
+        duration_seconds: 5,
+        estimated_cost_usd: 0.01,
+        estimated_credits: 1,
+      },
       pricing: [{ service: 'h3_video', price_usd: 2.688 }],
     },
   }));
@@ -37,6 +42,7 @@ async function installStudioMocks(page, serviceHandler) {
     },
   }));
   await page.route('**/api/images**', (route) => route.fulfill({ status: 200, json: { images: [] } }));
+  await page.route('**/api/videos/featured**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
   await page.route('**/api/search**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
   await page.route('**/api/service', serviceHandler);
   await page.route('**/api/video-jobs/job-loop-e2e', (route) => route.fulfill({
@@ -72,7 +78,7 @@ test('loop toggle generates a native-sized anchor before H3 and reuses it', asyn
   const toggle = page.getByTestId('home-loop-toggle');
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('home-video-cost')).toContainText('~5 credits');
+  await expect(page.getByTestId('home-video-cost')).toContainText('~14 credits');
   await page.getByRole('button', { name: /^Generate$/ }).click();
   await expect(page.getByTestId('home-job-cost')).toContainText('completed');
 

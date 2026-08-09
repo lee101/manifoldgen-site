@@ -1,0 +1,6 @@
+[[rules]]
+id = "manifoldgen-api-key"
+description = "ManifoldGen API key"
+regex = '''sk-mg-(?:admin-)?[a-f0-9]{32,64}'''
+secretGroup = 0
+entropy = 3.5

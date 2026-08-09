@@ -170,6 +170,18 @@ async function installAccountAPIMocks(page) {
       },
     });
   });
+
+  await page.route('**/api/stripe/portal', async (route) => {
+    const auth = route.request().headers().authorization || '';
+    if (!auth.startsWith('Bearer ')) {
+      await route.fulfill({ status: 401, json: { error: 'api key required' } });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      json: { url: 'https://billing.stripe.com/mock-manifoldgen-portal', customer_id: 'cus_test_account_flow' },
+    });
+  });
 }
 
 test('account signup, logout, login, and embedded Stripe checkout', async ({ page }) => {
@@ -180,7 +192,6 @@ test('account signup, logout, login, and embedded Stripe checkout', async ({ pag
 
   await page.getByTestId('account-email').fill(FIXED_EMAIL);
   await page.getByTestId('account-password').fill(FIXED_PASSWORD);
-  await page.getByTestId('account-password-confirm').fill(FIXED_PASSWORD);
   await page.getByTestId('account-auth-submit').click();
   await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
   await expect(page.getByRole('heading', { name: 'Checkout' })).toBeVisible();
@@ -203,6 +214,22 @@ test('account signup, logout, login, and embedded Stripe checkout', async ({ pag
   await expect(page.locator('iframe[title="Mock Stripe Checkout Frame"]')).toHaveCount(1);
 });
 
+test('account opens the Stripe billing portal', async ({ page }) => {
+  await installAccountAPIMocks(page);
+  await page.route('https://billing.stripe.com/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Stripe billing portal</title>' });
+  });
+
+  await page.goto('/account');
+  await page.getByTestId('account-email').fill(FIXED_EMAIL);
+  await page.getByTestId('account-password').fill(FIXED_PASSWORD);
+  await page.getByTestId('account-auth-submit').click();
+
+  await page.getByTestId('account-manage-billing').click();
+  await expect(page).toHaveURL('https://billing.stripe.com/mock-manifoldgen-portal');
+  await expect(page).toHaveTitle('Stripe billing portal');
+});
+
 test('homepage signup then account monthly embedded checkout', async ({ page }) => {
   await installAccountAPIMocks(page);
 
@@ -210,7 +237,6 @@ test('homepage signup then account monthly embedded checkout', async ({ page }) 
   await page.getByTestId('home-sign-up').click();
   await page.getByTestId('home-auth-email').fill(FIXED_EMAIL);
   await page.getByTestId('home-auth-password').fill(FIXED_PASSWORD);
-  await page.getByTestId('home-auth-password-confirm').fill(FIXED_PASSWORD);
   await page.getByTestId('home-auth-submit').click();
   await expect(page.getByRole('button', { name: /Subscribe monthly/i })).toBeVisible();
   const stored = await page.evaluate(() => {
@@ -237,7 +263,6 @@ test('account stays signed in from localStorage even if session refresh fails', 
   await page.goto('/account');
   await page.getByTestId('account-email').fill(FIXED_EMAIL);
   await page.getByTestId('account-password').fill(FIXED_PASSWORD);
-  await page.getByTestId('account-password-confirm').fill(FIXED_PASSWORD);
   await page.getByTestId('account-auth-submit').click();
   await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
 
@@ -258,7 +283,6 @@ test('account page soft-refreshes credits after reload without signing out', asy
   await page.goto('/account');
   await page.getByTestId('account-email').fill(FIXED_EMAIL);
   await page.getByTestId('account-password').fill(FIXED_PASSWORD);
-  await page.getByTestId('account-password-confirm').fill(FIXED_PASSWORD);
   await page.getByTestId('account-auth-submit').click();
   await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
 
@@ -281,7 +305,6 @@ test('account forgot + reset password flow signs user in', async ({ page }) => {
   await page.getByTestId('account-auth-submit').click();
   await expect(page.getByTestId('account-auth-mode-label')).toHaveText('Set a new password');
   await page.getByTestId('account-password').fill('new-manifold-456');
-  await page.getByTestId('account-password-confirm').fill('new-manifold-456');
   await page.getByTestId('account-auth-submit').click();
   await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
 });
@@ -291,7 +314,6 @@ test('account reset_token query opens reset form', async ({ page }) => {
   await page.goto('/account?reset_token=from_email_link_token');
   await expect(page.getByTestId('account-auth-mode-label')).toHaveText('Set a new password');
   await page.getByTestId('account-password').fill('reset-from-link-99');
-  await page.getByTestId('account-password-confirm').fill('reset-from-link-99');
   await page.getByTestId('account-auth-submit').click();
   await expect(page.getByTestId('account-signed-in-email')).toBeVisible();
 });
@@ -301,7 +323,6 @@ test('account topup presets default to $50 and show API copy', async ({ page }) 
   await page.goto('/account');
   await page.getByTestId('account-email').fill(FIXED_EMAIL);
   await page.getByTestId('account-password').fill(FIXED_PASSWORD);
-  await page.getByTestId('account-password-confirm').fill(FIXED_PASSWORD);
   await page.getByTestId('account-auth-submit').click();
   await expect(page.getByTestId('account-topup-credits-preview')).toContainText('5,000');
   await page.getByTestId('account-topup-100').click();
@@ -311,7 +332,24 @@ test('account topup presets default to $50 and show API copy', async ({ page }) 
 });
 
 test.describe('live API', () => {
-  test.skip(!process.env.MANIFOLDGEN_E2E_LIVE, 'set MANIFOLDGEN_E2E_LIVE=1 against :8116');
+  test.skip(!process.env.MANIFOLDGEN_E2E_LIVE, 'set MANIFOLDGEN_E2E_LIVE=1 to run against the configured API');
+
+  test('live API resolves MANIFOLD_API_KEY and creates a Stripe portal URL', async ({ request }) => {
+    const apiKey = process.env.MANIFOLD_API_KEY;
+    test.skip(!apiKey, 'MANIFOLD_API_KEY is required');
+    const apiOrigin = process.env.MANIFOLDGEN_E2E_API_ORIGIN || process.env.MANIFOLDGEN_API_ORIGIN || 'https://manifoldgen.com';
+    const headers = { Authorization: `Bearer ${apiKey}` };
+
+    const session = await request.get(`${apiOrigin}/api/auth/session`, { headers });
+    expect(session.ok()).toBeTruthy();
+    expect((await session.json()).api_key).toBe(apiKey);
+
+    const portal = await request.post(`${apiOrigin}/api/stripe/portal`, { headers });
+    expect(portal.ok()).toBeTruthy();
+    const data = await portal.json();
+    expect(data.customer_id).toMatch(/^cus_/);
+    expect(data.url).toMatch(/^https:\/\/billing\.stripe\.com\//);
+  });
 
   test('live signup/login and Stripe checkout session mounts', async ({ page }) => {
     await installStripeMock(page);
@@ -321,7 +359,6 @@ test.describe('live API', () => {
     await page.goto('/account');
     await page.getByTestId('account-email').fill(email);
     await page.getByTestId('account-password').fill(password);
-    await page.getByTestId('account-password-confirm').fill(password);
     await page.getByTestId('account-auth-submit').click();
     await expect(page.getByTestId('account-signed-in-email')).toHaveText(email);
 

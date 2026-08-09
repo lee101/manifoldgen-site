@@ -21,9 +21,98 @@ const (
 	studioBackgroundCredits  = 1.0
 	studioExtendInputPerSec  = 0.012
 	studioExtendOutputPerSec = 0.084
+	studioAudioSearchLimit   = 24
 )
 
 var studioHTTPClient = &http.Client{Timeout: 4 * time.Minute}
+
+type studioAudioAsset struct {
+	ID          int64    `json:"id"`
+	Title       string   `json:"title"`
+	Tags        []string `json:"tags,omitempty"`
+	URL         string   `json:"url"`
+	PreviewURL  string   `json:"preview_url,omitempty"`
+	Duration    float64  `json:"duration"`
+	Provider    string   `json:"provider"`
+	Kind        string   `json:"kind"`
+	Description string   `json:"description,omitempty"`
+	License     string   `json:"license"`
+	LicenseURL  string   `json:"license_url,omitempty"`
+	Attribution string   `json:"attribution,omitempty"`
+	SourceURL   string   `json:"source_url,omitempty"`
+}
+
+func studioAudioSearchURL(base, query, kind string, limit int) (string, error) {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if parsed, err := url.Parse(base); err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid audio index URL")
+	}
+	query = strings.TrimSpace(query)
+	if len(query) > 200 {
+		return "", fmt.Errorf("search is too long")
+	}
+	switch kind {
+	case "", "music", "sfx", "voice":
+	default:
+		return "", fmt.Errorf("unsupported audio kind")
+	}
+	if limit < 1 {
+		limit = 12
+	}
+	if limit > studioAudioSearchLimit {
+		limit = studioAudioSearchLimit
+	}
+	values := url.Values{"query": {query}, "limit": {fmt.Sprintf("%d", limit)}}
+	if kind != "" {
+		values.Set("kind", kind)
+	}
+	return base + "/api/search-audio?" + values.Encode(), nil
+}
+
+func handleStudioAudioSearch(ctx *fasthttp.RequestCtx) {
+	endpoint, err := studioAudioSearchURL(
+		getEnv("NETWRCK_AUDIO_INDEX_URL", "https://netwrck.com"),
+		string(ctx.QueryArgs().Peek("q")),
+		strings.ToLower(strings.TrimSpace(string(ctx.QueryArgs().Peek("kind")))),
+		parseInt(string(ctx.QueryArgs().Peek("limit"))),
+	)
+	if err != nil {
+		jsonError(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+	req, _ := http.NewRequest(http.MethodGet, endpoint, nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := studioHTTPClient.Do(req)
+	if err != nil {
+		jsonError(ctx, http.StatusBadGateway, "audio catalog is temporarily unavailable")
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		jsonError(ctx, http.StatusBadGateway, "audio catalog is temporarily unavailable")
+		return
+	}
+	var assets []studioAudioAsset
+	if json.Unmarshal(body, &assets) != nil {
+		jsonError(ctx, http.StatusBadGateway, "audio catalog returned invalid data")
+		return
+	}
+	clean := assets[:0]
+	for _, asset := range assets {
+		if asset.Title == "" || studioPublicMediaURL(asset.URL) != nil {
+			continue
+		}
+		if asset.PreviewURL != "" && studioPublicMediaURL(asset.PreviewURL) != nil {
+			asset.PreviewURL = ""
+		}
+		clean = append(clean, asset)
+	}
+	ctx.Response.Header.Set("Cache-Control", "public, max-age=300")
+	jsonResponse(ctx, http.StatusOK, map[string]interface{}{
+		"kind": "audio", "results": clean, "count": len(clean), "source": "netwrck",
+	})
+}
 
 func studioUser(ctx *fasthttp.RequestCtx) (*User, error) {
 	auth := strings.TrimSpace(string(ctx.Request.Header.Peek("Authorization")))

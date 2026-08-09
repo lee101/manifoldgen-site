@@ -294,6 +294,28 @@ export default function AccountPage() {
     }
   }
 
+  async function openBillingPortal() {
+    if (!apiKey) {
+      setError('Sign in first');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const res = await fetch(`${API}/stripe/portal`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const data = await parseJSONResponse<{ url?: string }>(res, 'Unable to open billing portal');
+      if (!data.url) throw new Error('Billing portal URL missing');
+      window.location.assign(data.url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to open billing portal');
+      setBusy(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[var(--color-ink)] px-4 py-10 text-white">
       <div className="mx-auto max-w-lg">
@@ -307,38 +329,6 @@ export default function AccountPage() {
 
         {!apiKey ? (
           <form onSubmit={submitAuth} className="glass mt-6 rounded-3xl p-5" data-testid="account-auth-form">
-            {authMode !== 'forgot' && authMode !== 'reset' && (
-              <div className="mb-4 flex rounded-full bg-white/5 p-1 text-sm">
-                <button
-                  type="button"
-                  data-testid="account-auth-signup-tab"
-                  onClick={() => {
-                    setAuthMode('signup');
-                    setError('');
-                    setMessage('');
-                  }}
-                  className={`flex-1 rounded-full py-2 font-medium transition ${
-                    authMode === 'signup' ? 'bg-white/15 text-white' : 'text-white/50'
-                  }`}
-                >
-                  Sign up
-                </button>
-                <button
-                  type="button"
-                  data-testid="account-auth-signin-tab"
-                  onClick={() => {
-                    setAuthMode('signin');
-                    setError('');
-                    setMessage('');
-                  }}
-                  className={`flex-1 rounded-full py-2 font-medium transition ${
-                    authMode === 'signin' ? 'bg-white/15 text-white' : 'text-white/50'
-                  }`}
-                >
-                  Sign in
-                </button>
-              </div>
-            )}
             {(authMode === 'forgot' || authMode === 'reset') && (
               <div className="mb-4 text-sm font-medium text-white/80" data-testid="account-auth-mode-label">
                 {authMode === 'forgot' ? 'Forgot password' : 'Set a new password'}
@@ -434,6 +424,23 @@ export default function AccountPage() {
               >
                 Back to sign in
               </button>
+            )}
+            {(authMode === 'signup' || authMode === 'signin') && (
+              <p className="mt-4 text-center text-sm text-white/60">
+                {authMode === 'signup' ? 'Already have an account?' : 'New to Manifold?'}{' '}
+                <button
+                  type="button"
+                  data-testid={authMode === 'signup' ? 'account-auth-signin-tab' : 'account-auth-signup-tab'}
+                  className="font-medium text-[var(--color-accent-2)] transition hover:text-white"
+                  onClick={() => {
+                    setAuthMode(authMode === 'signup' ? 'signin' : 'signup');
+                    setError('');
+                    setMessage('');
+                  }}
+                >
+                  {authMode === 'signup' ? 'Sign in' : 'Sign up'}
+                </button>
+              </p>
             )}
           </form>
         ) : (
@@ -547,6 +554,17 @@ export default function AccountPage() {
                 Annual · $300 video + ∞ images
               </button>
             </div>
+
+            <button
+              type="button"
+              disabled={busy}
+              data-testid="account-manage-billing"
+              onClick={openBillingPortal}
+              className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-2.5 text-sm font-medium text-white/85 disabled:opacity-50"
+            >
+              {busy ? <Loader2 className="animate-spin" size={16} /> : <CreditCard size={16} />}
+              Manage billing & subscriptions
+            </button>
 
             <h2 className="mt-6 text-lg font-semibold">API</h2>
             <pre

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { ArrowLeft, Check, Clock3, Code2, KeyRound, Sparkles, WalletCards } from 'lucide-react';
+import { CopyMarkdownButton } from './copy-markdown-button';
 
 export const metadata = {
   title: 'API Documentation',
@@ -46,6 +47,21 @@ const createImage = `curl https://manifoldgen.com/api/service \\
     "num_steps": 12
   }'`;
 
+const llmMarkdown = `# ManifoldGen API integration
+
+Use \`Authorization: Bearer $MANIFOLDGEN_API_KEY\` on every protected request. Never expose the key in browser code.
+
+## Generate video
+POST \`https://manifoldgen.com/api/service\` with JSON: \`{"service":"h3_video","prompt":"...","aspect_ratio":"16:9","size":"native","duration":5,"num_steps":20,"include_audio":true,"output_format":"webm-av1"}\`. This returns HTTP 202 with \`result.job_id\` and \`result.status_url\`. Poll \`GET https://manifoldgen.com/api/video-jobs/{job_id}\` every 2–5 seconds until \`status\` is \`completed\`.
+
+## Generate images
+POST \`/api/service\` with \`{"service":"zimage","prompt":"...","width":1024,"height":1024,"num_steps":12,"n":1}\`. Image generation returns synchronously. Use \`n\` for batches.
+
+## Extend video
+POST \`/api/studio/extend-video\` with \`{"video_url":"https://...","prompt":"continue the camera move","duration":5}\`. Authenticate with the same Bearer key, then poll the returned job/status URL if supplied.
+
+Check \`GET /api/pricing\` before presenting prices. Handle 401 (key), 402 (credits), 429/503 (retry with backoff).`;
+
 function CodeBlock({ children }: { children: string }) {
   return (
     <pre className="overflow-x-auto rounded-2xl border border-white/10 bg-black/45 p-4 text-[13px] leading-6 text-white/75">
@@ -90,6 +106,7 @@ export default function ApiDocsPage() {
               Generate native video with audio and production-ready images through one small JSON API.
               Pay only for successful generations.
             </p>
+            <div className="mt-5"><CopyMarkdownButton markdown={llmMarkdown} /></div>
           </div>
 
           <section id="quickstart" className="scroll-mt-28 border-t border-white/10 py-10">

@@ -254,6 +254,9 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	case path == "/api/stripe/config" && method == "GET":
 		handleStripeConfig(ctx)
 
+	case path == "/api/stripe/portal" && method == "POST":
+		handleStripePortal(ctx)
+
 	case (path == "/api/stripe-webhook" || path == "/api/stripe/webhook") && method == "POST":
 		handleStripeWebhook(ctx)
 
@@ -294,6 +297,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStudioRemoveBackground(ctx)
 	case path == "/api/studio/extend-video" && method == "POST":
 		handleStudioExtendVideo(ctx)
+	case path == "/api/studio/audio-search" && method == "GET":
+		handleStudioAudioSearch(ctx)
 	case strings.HasPrefix(path, "/api/video-jobs/") && method == "GET":
 		handleVideoJobStatus(ctx, strings.TrimPrefix(path, "/api/video-jobs/"))
 
@@ -342,6 +347,12 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	// Rotate (regenerate) the user's API key
 	case path == "/api/auth/rotate-api-key" && method == "POST":
 		handleRotateAPIKey(ctx)
+
+	case path == "/api/admin/api-keys" && method == "POST":
+		handleAdminMintAPIKey(ctx)
+
+	case path == "/api/admin/api-keys/rotate" && method == "POST":
+		handleAdminRotateAPIKey(ctx)
 
 	// Image gallery / search
 	case path == "/api/images" && method == "GET":
@@ -979,6 +990,67 @@ func handleRotateAPIKey(ctx *fasthttp.RequestCtx) {
 		"api_key": user.APIKey,
 		"user":    user,
 	})
+}
+
+type adminAPIKeyRequest struct {
+	Email string `json:"email"`
+}
+
+func requireAdminAPIKey(ctx *fasthttp.RequestCtx) bool {
+	expected := strings.TrimSpace(os.Getenv("MANIFOLD_ADMIN_API_KEY"))
+	presented := strings.TrimSpace(strings.TrimPrefix(string(ctx.Request.Header.Peek("Authorization")), "Bearer "))
+	if expected == "" || presented == "" || subtle.ConstantTimeCompare([]byte(expected), []byte(presented)) != 1 {
+		jsonError(ctx, 401, "admin API key required")
+		return false
+	}
+	return true
+}
+
+func decodeAdminAPIKeyRequest(ctx *fasthttp.RequestCtx) (adminAPIKeyRequest, bool) {
+	var req adminAPIKeyRequest
+	if err := json.Unmarshal(ctx.PostBody(), &req); err != nil || !looksLikeEmail(req.Email) {
+		jsonError(ctx, 400, "valid email required")
+		return req, false
+	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	return req, true
+}
+
+func handleAdminMintAPIKey(ctx *fasthttp.RequestCtx) {
+	if !requireAdminAPIKey(ctx) {
+		return
+	}
+	req, ok := decodeAdminAPIKeyRequest(ctx)
+	if !ok {
+		return
+	}
+	user, created, err := dbConn.GetOrCreateUserByEmail(req.Email)
+	if err != nil {
+		jsonError(ctx, 500, "failed to mint API key")
+		return
+	}
+	jsonResponse(ctx, 200, map[string]interface{}{"email": user.Email, "api_key": user.APIKey, "created": created})
+}
+
+func handleAdminRotateAPIKey(ctx *fasthttp.RequestCtx) {
+	if !requireAdminAPIKey(ctx) {
+		return
+	}
+	req, ok := decodeAdminAPIKeyRequest(ctx)
+	if !ok {
+		return
+	}
+	user, err := dbConn.GetUserByEmail(req.Email)
+	if err != nil {
+		jsonError(ctx, 404, "user not found")
+		return
+	}
+	rotated, err := dbConn.RotateAPIKey(user.ID, user.APIKey)
+	if err != nil {
+		jsonError(ctx, 500, "failed to rotate API key")
+		return
+	}
+	jsonResponse(ctx, 200, map[string]string{"email": rotated.Email, "api_key": rotated.APIKey})
 }
 
 // Static file serving for frontend

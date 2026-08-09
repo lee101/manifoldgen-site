@@ -757,15 +757,6 @@ export default function HomePage() {
 
         <div className="absolute inset-x-0 bottom-0 z-20 px-3 pb-4 pt-24 md:px-6 md:pb-6">
           <div className="mx-auto w-full max-w-4xl">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-accent-2)] md:text-sm">
-              AI video generator
-            </p>
-            <h1 className="mb-2 max-w-2xl font-display text-3xl font-700 tracking-tight text-white md:text-5xl">
-              Make cinematic video from a prompt.
-            </h1>
-            <p className="mb-3 max-w-xl text-sm text-white/65 md:text-base">
-              Describe the shot, then set the format, duration, quality, and audio.
-            </p>
             <div
               className={`glass prompt-glow rounded-3xl p-3 transition md:p-4 ${draggingAsset ? 'ring-2 ring-[var(--color-accent-2)]' : ''}`}
               onDragEnter={(e) => {
