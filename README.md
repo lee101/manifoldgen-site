@@ -30,7 +30,13 @@ files additionally run the fast mocked Studio browser suite; server-only and
 docs-only pushes skip Chromium. The GPU/WebGL export benchmarks remain in the
 full browser suite run by CI. Use `make check-fast` or `make verify` to run
 those fast gates manually; `make test-studio-full` runs the complete browser
-suite.
+suite. Hook browser tests use two workers by default; override that with
+`PLAYWRIGHT_WORKERS=1` (or another small value).
+
+To bypass only the pre-push browser suite once, run
+`MANIFOLDGEN_SKIP_HOOK_E2E=1 git push`. To keep it disabled in this checkout,
+run `git config hooks.manifoldgen.skipE2E true`; set the value to `false` to
+turn it back on. Fast formatting, Go, and TypeScript checks still run.
 
 Built on the same Go fasthttp + Postgres + Stripe stack as CuteDSL / app.nz,
 focused on H3 video (app.nz cogs) with optional omniserve-native LTX.
