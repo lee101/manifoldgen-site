@@ -334,6 +334,13 @@ func h3PublicRequestService(req ServiceUsageRequest) string {
 	return "video"
 }
 
+func h3StatusURL(req ServiceUsageRequest, jobID string) string {
+	if h3JobService(req) == "sfx_generation" {
+		return "/api/audio-jobs/" + jobID
+	}
+	return "/api/video-jobs/" + jobID
+}
+
 func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User) {
 	if err := normalizeH3VideoRequest(&req); err != nil {
 		jsonError(ctx, http.StatusBadRequest, err.Error())
@@ -385,7 +392,7 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"service":      h3PublicRequestService(req),
-		"result":       map[string]interface{}{"job_id": job.ID, "status": job.Status, "status_url": "/api/video-jobs/" + job.ID},
+		"result":       map[string]interface{}{"job_id": job.ID, "status": job.Status, "status_url": h3StatusURL(req, job.ID)},
 		"credits_used": 0, "settlement": "final price based on generation",
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
 		"estimated_generation_seconds": estimatedSeconds,
@@ -485,7 +492,7 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"service":      h3PublicRequestService(req),
-		"result":       map[string]interface{}{"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID},
+		"result":       map[string]interface{}{"job_id": job.ID, "status": "queued", "status_url": h3StatusURL(req, job.ID)},
 		"credits_used": 0, "settlement": "final price based on generation",
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
 		"estimated_generation_seconds": estimatedSeconds,
@@ -513,7 +520,7 @@ func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"service": h3PublicRequestService(req),
 		"result": map[string]interface{}{
-			"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID,
+			"job_id": job.ID, "status": "queued", "status_url": h3StatusURL(req, job.ID),
 		},
 		"credits_used": 0, "settlement": "final price based on generation",
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
@@ -1273,8 +1280,15 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 	}
 	jsonResponse(ctx, status, map[string]interface{}{
 		"job":        publicVideoJob(job),
-		"status_url": "/api/video-jobs/" + job.ID,
+		"status_url": publicJobStatusURL(job),
 	})
+}
+
+func publicJobStatusURL(job *VideoJob) string {
+	if h3AudioJob(job) {
+		return "/api/audio-jobs/" + job.ID
+	}
+	return "/api/video-jobs/" + job.ID
 }
 
 func videoJobUser(ctx *fasthttp.RequestCtx) (*User, error) {
@@ -1308,6 +1322,31 @@ func handleListVideoJobs(ctx *fasthttp.RequestCtx) {
 	}
 	publicJobs := make([]*VideoJob, 0, len(jobs))
 	for i := range jobs {
+		publicJobs = append(publicJobs, publicVideoJob(&jobs[i]))
+	}
+	jsonResponse(ctx, http.StatusOK, map[string]interface{}{"jobs": publicJobs})
+}
+
+func handleListAudioJobs(ctx *fasthttp.RequestCtx) {
+	user, err := videoJobUser(ctx)
+	if err != nil {
+		jsonError(ctx, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	jobs, err := dbConn.ListVideoJobs(user.ID, 100)
+	if err != nil {
+		jsonError(ctx, http.StatusInternalServerError, "could not load audio jobs")
+		return
+	}
+	publicJobs := make([]*VideoJob, 0)
+	for i := range jobs {
+		if !h3AudioJob(&jobs[i]) {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(jobs[i].Status))
+		if (status == "queued" || status == "processing") && strings.TrimSpace(jobs[i].ProviderJobID) != "" {
+			launchVideoJob(jobs[i].ID)
+		}
 		publicJobs = append(publicJobs, publicVideoJob(&jobs[i]))
 	}
 	jsonResponse(ctx, http.StatusOK, map[string]interface{}{"jobs": publicJobs})

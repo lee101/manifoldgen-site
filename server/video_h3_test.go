@@ -125,6 +125,12 @@ func TestH3AudioRequestsUseSFXJobService(t *testing.T) {
 	if got := h3JobService(ServiceUsageRequest{Service: "h3_video", Size: "balanced"}); got != "h3_video" {
 		t.Fatalf("video job service = %q", got)
 	}
+	if got := h3StatusURL(ServiceUsageRequest{Service: "sfx_generation", Size: "audio"}, "video_123"); got != "/api/audio-jobs/video_123" {
+		t.Fatalf("SFX status URL = %q", got)
+	}
+	if got := publicJobStatusURL(&VideoJob{ID: "video_123", Service: "sfx_generation"}); got != "/api/audio-jobs/video_123" {
+		t.Fatalf("public SFX status URL = %q", got)
+	}
 }
 
 func TestH3RunpodQueueTimeout(t *testing.T) {

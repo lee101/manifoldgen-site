@@ -76,7 +76,7 @@ const sfxQueuedResponse = `{
   "result": {
     "job_id": "video_71c9…",
     "status": "queued",
-    "status_url": "/api/video-jobs/video_71c9…"
+    "status_url": "/api/audio-jobs/video_71c9…"
   },
   "estimated_credits": 51,
   "estimated_cost_usd": 0.51

@@ -347,6 +347,12 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStudioAssetPresign(ctx)
 	case path == "/api/video-jobs" && method == "GET":
 		handleListVideoJobs(ctx)
+	case path == "/api/audio-jobs" && method == "GET":
+		handleListAudioJobs(ctx)
+	case strings.HasPrefix(path, "/api/audio-jobs/") && method == "DELETE":
+		handleDeleteVideoJob(ctx, strings.TrimPrefix(path, "/api/audio-jobs/"))
+	case strings.HasPrefix(path, "/api/audio-jobs/") && method == "GET":
+		handleVideoJobStatus(ctx, strings.TrimPrefix(path, "/api/audio-jobs/"))
 	case strings.HasPrefix(path, "/api/video-jobs/") && method == "DELETE":
 		handleDeleteVideoJob(ctx, strings.TrimPrefix(path, "/api/video-jobs/"))
 	case strings.HasPrefix(path, "/api/video-jobs/") && method == "GET":
