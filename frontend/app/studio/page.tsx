@@ -2943,7 +2943,10 @@ export default function StudioPage() {
 
       for (const asset of visualAssets) {
         const filteredCanvas = document.createElement('canvas');
-        const renderer = new StudioRenderer(filteredCanvas);
+        // The export compositor copies this WebGL canvas into a 2D canvas for
+        // WebCodecs. Retain its framebuffer so the encoded frames are not
+        // blank after WebGL presents the draw call.
+        const renderer = new StudioRenderer(filteredCanvas, { preserveDrawingBuffer: true });
         renderer.resize(asset.width, asset.height);
         const state: ExportVisualState = { asset, canvas: filteredCanvas, renderer, image: null, input: null, iterator: null, current: null, next: null };
         if (asset.kind === 'image') {
@@ -3492,7 +3495,7 @@ export default function StudioPage() {
           <label><span>Quality</span><select data-testid="export-quality" value={exportSettings.quality} disabled={!!busy} onChange={(event) => setExportSettings((current) => ({ ...current, quality: event.target.value as ExportQuality }))}><option value="draft">Draft</option><option value="balanced">Balanced</option><option value="high">High</option></select></label>
         </div>
         <p className={styles.exportRemembered}>Complete {formatTime(timelineDuration)} timeline · settings saved on this device.</p>
-        <div className={styles.exportSummary}><span>Output <b>{selectedExportSize ? `${selectedExportSize.width} × ${selectedExportSize.height}` : '—'}</b></span><span>Frame rate <b>{exportSettings.frameRate === 'source' ? '30 fps timeline' : `${exportSettings.frameRate} fps`}</b></span><span>Audio <b>{assets.some((asset) => asset.kind !== 'image') ? 'Mixed · AAC/Opus' : 'None'}</b></span><span>Processing <b>Local GPU · hardware codec preferred</b></span></div>
+        <div className={styles.exportSummary}><span>Output <b>{selectedExportSize ? `${selectedExportSize.width} × ${selectedExportSize.height}` : '—'}</b></span><span>Frame rate <b>{exportSettings.frameRate === 'source' ? '30 fps timeline' : `${exportSettings.frameRate} fps`}</b></span><span>Audio <b>{assets.some((asset) => asset.kind !== 'image') ? 'Mixed · AAC/Opus' : 'None'}</b></span></div>
         {exportProgress > 0 && <div className={styles.progress}><i style={{ width: `${exportProgress * 100}%` }} /></div>}
         <button className={styles.modalPrimary} disabled={!!busy} onClick={() => void exportVideo()}>{busy === 'export' ? <><Loader2 className={styles.spin} size={16} /> Exporting {Math.round(exportProgress * 100)}%</> : <><Download size={16} /> Export</>}</button>
       </Modal>}
@@ -3638,5 +3641,5 @@ function PanelEmpty() {
 }
 
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return <div className={styles.modalBackdrop} onMouseDown={(event) => event.currentTarget === event.target && onClose()}><div className={styles.modal} role="dialog" aria-modal="true" aria-label={title}><div className={styles.modalHeader}><div><span className={styles.eyebrow}>STUDIO</span><h2>{title}</h2></div><button aria-label={`Close ${title}`} onClick={onClose}><X size={17} /></button></div><div className={styles.modalBody}>{children}</div></div></div>;
+  return <div className={styles.modalBackdrop} onMouseDown={(event) => event.currentTarget === event.target && onClose()}><div className={styles.modal} role="dialog" aria-modal="true" aria-label={title}><div className={styles.modalHeader}><h2>{title}</h2><button aria-label={`Close ${title}`} onClick={onClose}><X size={18} /></button></div><div className={styles.modalBody}>{children}</div></div></div>;
 }
