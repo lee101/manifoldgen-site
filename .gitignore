@@ -1,4 +1,5 @@
 node_modules/
+frontend/.next*
 .next/
 .next-dev/
 *.tsbuildinfo
@@ -21,3 +22,4 @@ visualbench/
 frontend/.next-playwright/
 monitoring
 scripts/prompts/manifold-gallery-100k.jsonl
+.trash/
