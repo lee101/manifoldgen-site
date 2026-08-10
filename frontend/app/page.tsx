@@ -43,6 +43,7 @@ const GALLERY_CDN = 'https://manifoldgenstatic.manifoldgen.com/gallery';
 type Aspect = H3Aspect;
 type Size = H3Size;
 type Format = 'webm-av1' | 'mp4-h264';
+type GenerationMode = 'video' | 'images';
 type AuthMode = 'signup' | 'signin';
 type AuthResponse = Parameters<typeof userFromAuthResponse>[0] & {
   created?: boolean;
@@ -194,6 +195,7 @@ export default function HomePage() {
   const [prompt, setPrompt] = useState(
     'Slow aerial drift over a neon harbor at night, wet asphalt reflections, cinematic anamorphic bokeh',
   );
+  const [generationMode, setGenerationMode] = useState<GenerationMode>('video');
   const [aspect, setAspect] = useState<Aspect>('16:9');
   const [size, setSize] = useState<Size>('native');
   const [duration, setDuration] = useState(5);
@@ -300,8 +302,8 @@ export default function HomePage() {
         if (data.studio?.upscale_base_usd && data.studio?.upscale_output_mp_second_usd) {
           setUpscaleRates({ base: data.studio.upscale_base_usd, outputMPSecond: data.studio.upscale_output_mp_second_usd });
         }
-        if (data.h3_video_estimate?.estimated_cost_usd) {
-          setH3BaseEstimateUSD(data.h3_video_estimate.estimated_cost_usd);
+        if (data.video_estimate?.estimated_cost_usd) {
+          setH3BaseEstimateUSD(data.video_estimate.estimated_cost_usd);
         }
       })
       .catch(() => undefined);
@@ -468,8 +470,28 @@ export default function HomePage() {
     }
     setError('');
     setBusy(true);
-    setGenerationStage(loopMode ? 'Creating loop keyframe…' : 'Starting H3 render…');
+    setGenerationStage(generationMode === 'images' ? 'Creating 4 image variations…' : loopMode ? 'Creating loop keyframe…' : 'Starting H3 render…');
     try {
+      if (generationMode === 'images') {
+        const [width, height] = h3Dimensions(aspect, size);
+        const imageRes = await fetch(`${API}/service`, {
+          method: 'POST',
+          headers: authHeaders(apiKey),
+          body: JSON.stringify({
+            service: 'zimage',
+            prompt: overrides?.prompt ?? prompt,
+            width,
+            height,
+            n: 4,
+            num_images: 4,
+            image_backend: 'auto',
+          }),
+        });
+        await parseJSONResponse(imageRes, 'Image generation failed');
+        await loadGallery();
+        setGenerationStage('4 images added to your gallery');
+        return;
+      }
       let firstFrame = '';
       if (loopMode) {
         const [width, height] = h3Dimensions(aspect, size);
@@ -901,11 +923,27 @@ export default function HomePage() {
                     </option>
                   ))}
                 </select>
+                <div className="flex items-center rounded-full bg-white/5 p-0.5" role="group" aria-label="Generation type" data-testid="home-generation-mode">
+                  <button
+                    type="button"
+                    aria-pressed={generationMode === 'video'}
+                    disabled={busy}
+                    onClick={() => setGenerationMode('video')}
+                    className={`rounded-full px-3 py-1.5 text-sm transition ${generationMode === 'video' ? 'bg-white/15 text-white' : 'text-[var(--color-mute)] hover:text-white'}`}
+                  >Video</button>
+                  <button
+                    type="button"
+                    aria-pressed={generationMode === 'images'}
+                    disabled={busy}
+                    onClick={() => setGenerationMode('images')}
+                    className={`rounded-full px-3 py-1.5 text-sm transition ${generationMode === 'images' ? 'bg-white/15 text-white' : 'text-[var(--color-mute)] hover:text-white'}`}
+                  >4 images</button>
+                </div>
                 <button
                   type="button"
                   data-testid="home-loop-toggle"
                   aria-pressed={loopMode}
-                  disabled={busy}
+                  disabled={busy || generationMode === 'images'}
                   onClick={() => setLoopMode((enabled) => !enabled)}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
                     loopMode
@@ -921,7 +959,7 @@ export default function HomePage() {
                   type="button"
                   data-testid="home-upscale-toggle"
                   aria-pressed={upscaleMode}
-                  disabled={busy}
+                  disabled={busy || generationMode === 'images'}
                   onClick={() => setUpscaleMode((enabled) => !enabled)}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
                     upscaleMode
@@ -937,7 +975,7 @@ export default function HomePage() {
                   {duration}s · ~{estVideoCredits + (loopMode ? imageCredits : 0) + estUpscaleCredits} credits · est. ${(estVideoUSD + estUpscaleUSD).toFixed(2)}
                 </span>
                 <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] md:inline" data-testid="home-image-cost">
-                  Image {imageCredits} credits ($0.04)
+                  4 images · {imageCredits * 4} credits (${(imageCredits * 4 * creditPrice).toFixed(2)})
                 </span>
                 <div className="ml-auto flex items-center gap-2">
                   <input ref={assetInputRef} type="file" accept="image/*,audio/*" multiple className="hidden" onChange={(e) => { if (e.target.files) void uploadAssets(e.target.files); e.currentTarget.value = ''; }} />
@@ -952,7 +990,7 @@ export default function HomePage() {
                     className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
                   >
                     {busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
-                    {user ? 'Generate' : 'Sign up to generate'}
+                    {user ? (generationMode === 'images' ? 'Generate 4 images' : 'Generate video') : 'Sign up to generate'}
                   </button>
                 </div>
               </div>

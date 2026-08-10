@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowLeft, Check, Clock3, Code2, KeyRound, Sparkles, WalletCards } from 'lucide-react';
 import { CopyMarkdownButton } from './copy-markdown-button';
+import { PricingTable } from './pricing-table';
 
 export const metadata = {
   title: 'API Documentation',
@@ -12,7 +13,7 @@ const createVideo = `curl https://manifoldgen.com/api/service \\
   -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "service": "h3_video",
+    "service": "video",
     "prompt": "A glass greenhouse at night, rain on the roof",
     "aspect_ratio": "16:9",
     "size": "native",
@@ -40,7 +41,7 @@ const createImage = `curl https://manifoldgen.com/api/service \\
   -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "service": "zimage",
+    "service": "image",
     "prompt": "Editorial portrait, hard side light",
     "width": 1024,
     "height": 1024,
@@ -52,15 +53,15 @@ const llmMarkdown = `# ManifoldGen API integration
 Use \`Authorization: Bearer $MANIFOLDGEN_API_KEY\` on every protected request. Never expose the key in browser code.
 
 ## Generate video
-POST \`https://manifoldgen.com/api/service\` with JSON: \`{"service":"h3_video","prompt":"...","aspect_ratio":"16:9","size":"native","duration":5,"num_steps":20,"include_audio":true,"output_format":"webm-av1"}\`. This returns HTTP 202 with \`result.job_id\` and \`result.status_url\`. Poll \`GET https://manifoldgen.com/api/video-jobs/{job_id}\` every 2–5 seconds until \`status\` is \`completed\`.
+POST \`https://manifoldgen.com/api/service\` with JSON: \`{"service":"video","prompt":"...","aspect_ratio":"16:9","size":"native","duration":5,"num_steps":20,"include_audio":true,"output_format":"webm-av1"}\`. This returns HTTP 202 with \`result.job_id\` and \`result.status_url\`. Poll \`GET https://manifoldgen.com/api/video-jobs/{job_id}\` every 2–5 seconds until \`status\` is \`completed\`.
 
 ## Generate images
-POST \`/api/service\` with \`{"service":"zimage","prompt":"...","width":1024,"height":1024,"num_steps":12,"n":1}\`. Image generation returns synchronously. Use \`n\` for batches.
+POST \`/api/service\` with \`{"service":"image","prompt":"...","width":1024,"height":1024,"num_steps":12,"n":1}\`. Image generation returns synchronously. Use \`n\` for batches.
 
 ## Extend video
 POST \`/api/studio/extend-video\` with \`{"video_url":"https://...","prompt":"continue the camera move","duration":5}\`. Authenticate with the same Bearer key, then poll the returned job/status URL if supplied.
 
-Check \`GET /api/pricing\` before presenting prices. Handle 401 (key), 402 (credits), 429/503 (retry with backoff).`;
+\`GET /api/pricing\` returns the current video quality, resolution, duration, dollar, and credit matrix. Handle 401 (key), 402 (credits), 429/503 (retry with backoff).`;
 
 function CodeBlock({ children }: { children: string }) {
   return (
@@ -178,20 +179,10 @@ export default function ApiDocsPage() {
           <section id="pricing" className="scroll-mt-28 border-t border-white/10 py-10">
             <h2 className="font-display text-2xl font-700">Clear, usage-based pricing</h2>
             <p className="mt-3 leading-7 text-white/55">
-              The create response includes an estimate before the job runs. Video is billed from actual generation
-              time, resolution, duration, and steps; the completed job contains the final dollar and credit amounts.
-              One credit is approximately $0.01. Fetch current estimates from <code>/api/pricing</code>.
+              Choose a quality tier and duration up front. Every request returns the same preflight dollar and credit
+              estimate shown below; completed video jobs settle from measured generation time and include the final charge.
             </p>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
-                <div className="text-sm text-white/45">Image</div>
-                <div className="mt-1 text-2xl font-semibold">from 4 credits</div>
-              </div>
-              <div className="rounded-2xl border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 p-5">
-                <div className="text-sm text-white/45">5s native video</div>
-                <div className="mt-1 text-2xl font-semibold">estimate returned by API</div>
-              </div>
-            </div>
+            <PricingTable />
           </section>
 
           <section id="errors" className="scroll-mt-28 border-t border-white/10 py-10">

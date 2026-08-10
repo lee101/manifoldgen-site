@@ -16,3 +16,7 @@ visualbench/*
 !visualbench/studio-mobile-audio.png
 !visualbench/studio-mobile-workspace.png
 .local-gallery-images/
+monitoring/
+frontend/public/showcase/h3-loop-glass-torus.webm
+scripts/prompts/manifold-gallery-100k.jsonl
+.env.example

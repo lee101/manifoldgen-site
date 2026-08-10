@@ -226,6 +226,80 @@ func getZImageSteps(req ServiceUsageRequest) int {
 	return zimageDefaultSteps
 }
 
+type h3VideoPricePoint struct {
+	DurationSeconds int     `json:"duration_seconds"`
+	PriceUSD        float64 `json:"price_usd"`
+	Credits         float64 `json:"credits"`
+}
+
+type h3VideoPricingTier struct {
+	Size           string              `json:"size"`
+	Label          string              `json:"label"`
+	Width16x9      int                 `json:"width_16_9"`
+	Height16x9     int                 `json:"height_16_9"`
+	Resolution16x9 string              `json:"resolution_16_9"`
+	Prices         []h3VideoPricePoint `json:"prices"`
+}
+
+func h3VideoPricingTiers() []h3VideoPricingTier {
+	tiers := []h3VideoPricingTier{
+		{Size: "preview", Label: "Preview", Width16x9: 1024, Height16x9: 576, Resolution16x9: "1024 × 576"},
+		{Size: "balanced", Label: "Balanced", Width16x9: 1184, Height16x9: 672, Resolution16x9: "1184 × 672"},
+		{Size: "native", Label: "Native", Width16x9: 1344, Height16x9: 768, Resolution16x9: "1344 × 768"},
+	}
+	for tierIndex := range tiers {
+		for _, duration := range []int{5, 10, 15, 30, 60} {
+			priceUSD, credits, _ := h3Estimate(ServiceUsageRequest{
+				Service: "h3_video", Size: tiers[tierIndex].Size, Duration: duration, NumSteps: 20,
+			})
+			tiers[tierIndex].Prices = append(tiers[tierIndex].Prices, h3VideoPricePoint{
+				DurationSeconds: duration, PriceUSD: priceUSD, Credits: credits,
+			})
+		}
+	}
+	return tiers
+}
+
+type publicServiceAlias struct {
+	Public   string
+	Internal string
+}
+
+var publicServiceAliases = []publicServiceAlias{
+	{Public: "image", Internal: "zimage"},
+	{Public: "video", Internal: "h3_video"},
+	{Public: "speech", Internal: "tts"},
+	{Public: "transcription", Internal: "stt"},
+	{Public: "caption", Internal: "caption"},
+	{Public: "forecast", Internal: "chronos2"},
+	{Public: "text", Internal: "gemma4"},
+	{Public: "training", Internal: "lora_training"},
+	{Public: "video_restyle", Internal: "video_restyle"},
+	{Public: "safety", Internal: "nsfw_detect"},
+}
+
+func requestedServiceName(service string) string {
+	clean := strings.ToLower(strings.TrimSpace(service))
+	if clean == "" || clean == "z-image-turbo" || clean == "zimage-turbo" {
+		return "zimage"
+	}
+	for _, alias := range publicServiceAliases {
+		if clean == alias.Public {
+			return alias.Internal
+		}
+	}
+	return strings.TrimSpace(service)
+}
+
+func publicServiceName(service string) string {
+	for _, alias := range publicServiceAliases {
+		if service == alias.Internal {
+			return alias.Public
+		}
+	}
+	return ""
+}
+
 // handleGetPricing returns current pricing for all services
 func handleGetPricing(ctx *fasthttp.RequestCtx) {
 	cutePrice := getCUTEPriceUSD()
@@ -248,43 +322,56 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"flux_image":     "per image",
 	}
 
-	var pricing []ServicePricing
-	for service, usdPrice := range servicePricesUSD {
-		cuteCost := getServicePriceCUTE(service)
-		if service == "h3_video" {
+	pricing := make([]ServicePricing, 0, len(publicServiceAliases))
+	for _, alias := range publicServiceAliases {
+		usdPrice, available := servicePricesUSD[alias.Internal]
+		if !available {
+			continue
+		}
+		cuteCost := getServicePriceCUTE(alias.Internal)
+		if alias.Internal == "h3_video" {
 			usdPrice = h3EstimateUSD
 			cuteCost = h3EstimateCredits
 		}
 		pricing = append(pricing, ServicePricing{
-			Service:   service,
+			Service:   alias.Public,
 			PriceUSD:  usdPrice,
 			PriceCute: cuteCost,
 			CutePrice: cutePrice,
-			Unit:      units[service],
+			Unit:      units[alias.Internal],
 		})
 	}
 
 	jsonResponse(ctx, 200, map[string]interface{}{
-		"pricing":            pricing,
-		"cute_price_usd":     cutePrice,
-		"credit_price_usd":   cutePrice,
-		"credits_per_dollar": 1.0 / cutePrice,
-		"cute_price_ath":     getCUTEPriceATH(),
-		"sol_price_usd":      getSOLPriceUSD(),
-		"image_price_usd":    servicePricesUSD["zimage"],
-		"image_credits":      servicePricesUSD["zimage"] / cutePrice,
-		"h3_video_estimate": map[string]interface{}{
+		"pricing":                   pricing,
+		"cute_price_usd":            cutePrice,
+		"credit_price_usd":          cutePrice,
+		"credits_per_dollar":        1.0 / cutePrice,
+		"cute_price_ath":            getCUTEPriceATH(),
+		"sol_price_usd":             getSOLPriceUSD(),
+		"image_price_usd":           servicePricesUSD["zimage"],
+		"image_credits":             servicePricesUSD["zimage"] / cutePrice,
+		"image_high_step_price_usd": zimageHighStepPriceUSD,
+		"image_high_step_credits":   zimageHighStepPriceUSD / cutePrice,
+		"video_estimate": map[string]interface{}{
 			"size": "native", "duration_seconds": 5, "steps": 20,
 			"estimated_cost_usd": h3EstimateUSD, "estimated_credits": h3EstimateCredits,
 			"estimated_generation_seconds": h3EstimateSeconds,
 			"minimum_cost_usd":             float64(h3MinimumChargeMicros) / 1_000_000,
 			"final_billing":                "final price based on generation",
 		},
+		"video_pricing": map[string]interface{}{
+			"basis_steps":            20,
+			"duration_range_seconds": []int{4, 60},
+			"billing":                "Final video price follows measured generation time; these are the current preflight estimates.",
+			"tiers":                  h3VideoPricingTiers(),
+		},
 		"topup_presets_usd": []int{25, 50, 100, 200},
 		"topup_default_usd": 50,
 		"topup_min_usd":     5,
 		"studio": map[string]interface{}{
 			"background_removal_credits":   studioBackgroundCredits,
+			"music_generation_credits":     studioMusicCredits,
 			"extend_input_second_usd":      studioExtendInputPerSec,
 			"extend_output_second_usd":     studioExtendOutputPerSec,
 			"upscale_base_usd":             studioUpscaleBaseUSD,
@@ -301,12 +388,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	if req.Service == "" {
-		req.Service = "zimage"
-	}
-	if req.Service == "z-image-turbo" || req.Service == "zimage-turbo" {
-		req.Service = "zimage"
-	}
+	req.Service = requestedServiceName(req.Service)
 
 	// Validate service exists
 	_, ok := servicePricesUSD[req.Service]
@@ -451,6 +533,15 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 
 	result, savedImage := persistGeneratedZImage(req, user, result)
+	savedImages := make([]*GeneratedImage, 0, getImageCount(req))
+	if savedImage != nil {
+		savedImages = append(savedImages, savedImage)
+	}
+	if req.Service == "zimage" && getImageCount(req) > 1 {
+		var additional []*GeneratedImage
+		result, additional = persistAdditionalZImages(req, user, result)
+		savedImages = append(savedImages, additional...)
+	}
 
 	// Return backend response with billing info
 	response := map[string]interface{}{
@@ -464,6 +555,14 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	if savedImage != nil {
 		response["saved_image"] = savedImage
 		response["saved_image_url"] = fmt.Sprintf("https://%s/%s/%s", r2PublicHost, strings.TrimSuffix(r2PathPrefix, "/"), strings.TrimLeft(savedImage.FilePath, "/"))
+	}
+	if len(savedImages) > 0 {
+		response["saved_images"] = savedImages
+		urls := make([]string, 0, len(savedImages))
+		for _, image := range savedImages {
+			urls = append(urls, fmt.Sprintf("https://%s/%s/%s", r2PublicHost, strings.TrimSuffix(r2PathPrefix, "/"), strings.TrimLeft(image.FilePath, "/")))
+		}
+		response["saved_image_urls"] = urls
 	}
 	jsonResponse(ctx, 200, response)
 }
@@ -556,6 +655,59 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 		return result, img
 	}
 	return updated, img
+}
+
+// persistAdditionalZImages stores the remaining members of a batched image
+// response. The primary image is persisted by persistGeneratedZImage above;
+// this keeps the legacy saved_image response intact while making n=4 useful to
+// the gallery as well.
+func persistAdditionalZImages(req ServiceUsageRequest, user *User, result []byte) ([]byte, []*GeneratedImage) {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return result, nil
+	}
+	rows, ok := payload["images"].([]interface{})
+	if !ok || len(rows) < 2 {
+		return result, nil
+	}
+	additional := make([]*GeneratedImage, 0, len(rows)-1)
+	galleryRows := make([]interface{}, 0, len(rows))
+	if first, ok := payload["gallery_image"]; ok {
+		galleryRows = append(galleryRows, first)
+	}
+	for _, row := range rows[1:] {
+		item, ok := row.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		b64, _ := item["image_base64"].(string)
+		if b64 == "" {
+			continue
+		}
+		one, _ := json.Marshal(map[string]interface{}{
+			"image_base64": b64,
+			"width":        payload["width"], "height": payload["height"], "seed": payload["seed"],
+		})
+		updated, saved := persistGeneratedZImage(req, user, one)
+		if saved == nil {
+			continue
+		}
+		additional = append(additional, saved)
+		var savedPayload map[string]interface{}
+		if json.Unmarshal(updated, &savedPayload) == nil {
+			if gallery, ok := savedPayload["gallery_image"]; ok {
+				galleryRows = append(galleryRows, gallery)
+			}
+		}
+	}
+	if len(galleryRows) > 0 {
+		payload["gallery_images"] = galleryRows
+	}
+	updated, err := json.Marshal(payload)
+	if err != nil {
+		return result, additional
+	}
+	return updated, additional
 }
 
 // uploadGalleryImageToR2 keeps the public gallery on its dedicated bucket,

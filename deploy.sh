@@ -227,6 +227,7 @@ else
     /etc/nginx/sites-available \
     /etc/nginx/sites-enabled \
     /etc/nginx/ssl
+  "${SUDO[@]}" install -d -o www-data -g www-data -m 755 "$DEPLOY_ROOT/logs"
 
   "${SUDO[@]}" rsync -a --delete --chown=www-data:www-data \
     "$OUT_DIR/" "$DEPLOY_ROOT/frontend/out/"
@@ -256,12 +257,33 @@ else
   "${SUDO[@]}" mv -f "$server_next" "$DEPLOY_ROOT/server/manifoldgen-server"
   echo "  ✓ Server binary installed atomically"
 
+  service_unit_previous="$DEPLOY_ROOT/server/.manifoldgen-service.previous.$$"
+  socket_unit_previous="$DEPLOY_ROOT/server/.manifoldgen-socket.previous.$$"
+  socket_unit_existed=0
+  socket_was_active=0
+  if "${SUDO[@]}" test -f /etc/systemd/system/manifoldgen.service; then
+    "${SUDO[@]}" cp -p /etc/systemd/system/manifoldgen.service "$service_unit_previous"
+  fi
+  if "${SUDO[@]}" test -f /etc/systemd/system/manifoldgen.socket; then
+    socket_unit_existed=1
+    "${SUDO[@]}" cp -p /etc/systemd/system/manifoldgen.socket "$socket_unit_previous"
+  fi
+  if "${SUDO[@]}" systemctl is-active --quiet manifoldgen.socket; then
+    socket_was_active=1
+  fi
+
   unit_changed=0
+  socket_changed=0
   nginx_changed=0
   if install_root_file_if_changed \
     "$ROOT/deploy/manifoldgen.service" \
     /etc/systemd/system/manifoldgen.service 644; then
     unit_changed=1
+  fi
+  if install_root_file_if_changed \
+    "$ROOT/deploy/manifoldgen.socket" \
+    /etc/systemd/system/manifoldgen.socket 644; then
+    socket_changed=1
   fi
   if install_root_file_if_changed \
     "$ROOT/deploy/nginx-manifoldgen.conf" \
@@ -285,10 +307,11 @@ else
     echo "  ✓ Issued self-signed origin TLS certificate"
   fi
 
-  if [ "$unit_changed" -eq 1 ]; then
+  if [ "$unit_changed" -eq 1 ] || [ "$socket_changed" -eq 1 ]; then
     "${SUDO[@]}" systemctl daemon-reload
   fi
   "${SUDO[@]}" systemctl enable manifoldgen.service >/dev/null
+  "${SUDO[@]}" systemctl enable manifoldgen.socket >/dev/null
 
   if [ "$nginx_changed" -eq 1 ]; then
     "${SUDO[@]}" nginx -t
@@ -296,12 +319,41 @@ else
     echo "  ✓ nginx configuration reloaded"
   fi
 
-  if ! "${SUDO[@]}" systemctl restart manifoldgen.service || ! wait_for_server; then
+  # The socket unit owns port 8116 across service restarts. On its first
+  # installation the old process must release the port once; later deploys
+  # leave the socket listening continuously and queue requests during startup.
+  socket_ready=1
+  if [ "$socket_changed" -eq 1 ] || ! "${SUDO[@]}" systemctl is-active --quiet manifoldgen.socket; then
+    socket_ready=0
+    "${SUDO[@]}" systemctl stop manifoldgen.service
+    "${SUDO[@]}" systemctl stop manifoldgen.socket || true
+    if "${SUDO[@]}" systemctl start manifoldgen.socket; then
+      socket_ready=1
+    fi
+  fi
+
+  if [ "$socket_ready" -ne 1 ] || \
+     ! "${SUDO[@]}" systemctl restart manifoldgen.service || ! wait_for_server; then
     echo "ERROR: new server failed its health check; attempting rollback" >&2
     "${SUDO[@]}" systemctl status manifoldgen.service --no-pager -n 30 >&2 || true
     if "${SUDO[@]}" test -f "$server_previous"; then
+      "${SUDO[@]}" systemctl stop manifoldgen.service || true
+      "${SUDO[@]}" systemctl stop manifoldgen.socket || true
       "${SUDO[@]}" mv -f \
         "$server_previous" "$DEPLOY_ROOT/server/manifoldgen-server"
+      if "${SUDO[@]}" test -f "$service_unit_previous"; then
+        "${SUDO[@]}" mv -f "$service_unit_previous" /etc/systemd/system/manifoldgen.service
+      fi
+      if [ "$socket_unit_existed" -eq 1 ]; then
+        "${SUDO[@]}" mv -f "$socket_unit_previous" /etc/systemd/system/manifoldgen.socket
+      else
+        "${SUDO[@]}" systemctl disable manifoldgen.socket >/dev/null 2>&1 || true
+        "${SUDO[@]}" rm -f /etc/systemd/system/manifoldgen.socket
+      fi
+      "${SUDO[@]}" systemctl daemon-reload
+      if [ "$socket_was_active" -eq 1 ]; then
+        "${SUDO[@]}" systemctl start manifoldgen.socket
+      fi
       "${SUDO[@]}" systemctl restart manifoldgen.service
       if wait_for_server; then
         echo "  ✓ Previous server restored" >&2
@@ -311,7 +363,7 @@ else
     fi
     exit 1
   fi
-  "${SUDO[@]}" rm -f "$server_previous"
+  "${SUDO[@]}" rm -f "$server_previous" "$service_unit_previous" "$socket_unit_previous"
   echo "  ✓ manifoldgen.service restarted and healthy"
 fi
 

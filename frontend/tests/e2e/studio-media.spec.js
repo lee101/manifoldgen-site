@@ -4,7 +4,7 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const { test, expect } = require('@playwright/test');
 
-const VIDEO = path.resolve(__dirname, '../../public/showcase/h3-loop-glass-torus.mp4');
+const VIDEO = path.resolve(__dirname, '../../public/showcase/h3-loop-glass-torus.webm');
 const IMAGE = path.resolve(__dirname, '../../public/images/logo.png');
 const API_KEY = 'mg_studio_e2e_key';
 const PERF_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'manifold-studio-perf-'));
@@ -43,7 +43,7 @@ async function installMocks(page, hooks = {}) {
   }, { apiKey: API_KEY });
   await page.route('**/api/pricing', (route) => route.fulfill({ status: 200, json: {
     credit_price_usd: 0.01,
-    h3_video_estimate: { estimated_cost_usd: 1.01 },
+    video_estimate: { estimated_cost_usd: 1.01 },
     studio: {
       extend_input_second_usd: 0.012,
       extend_output_second_usd: 0.084,
@@ -54,6 +54,7 @@ async function installMocks(page, hooks = {}) {
   await page.route('**/api/auth/session', (route) => route.fulfill({ status: 200, json: {
     user: { id: 'studio-user', email: 'studio@example.com', api_key: API_KEY, credits: 10000, credits_usd: 100 },
   } }));
+  await page.route('**/api/video-jobs', (route) => route.fulfill({ status: 200, json: { jobs: [] } }));
   await page.route('**/api/studio/projects', (route) => route.fulfill({ status: 200, json: { projects: hooks.cloudProjects || [] } }));
   await page.route('**/api/studio/projects/*', async (route) => {
     if (route.request().method() === 'PUT') {
@@ -126,6 +127,104 @@ test('an account project restores its R2 media on a device without a local copy'
   await expect(page.getByTestId('studio-render-status')).toContainText('2 × 2 · GPU preview');
 });
 
+test('a stale queued generation reconciles into a video tile and reuses its prompt', async ({ page }) => {
+  const prompt = 'A silver fox running through luminous alpine grass at blue hour';
+  let statusChecks = 0;
+  await installMocks(page);
+  await page.route('**/api/video-jobs', (route) => route.fulfill({ status: 200, json: { jobs: [{
+    job_id: 'generation-finished-1', status: 'processing', prompt,
+    created_at: '2026-08-10T00:00:00Z', updated_at: '2026-08-10T00:00:01Z',
+  }] } }));
+  await page.route('**/api/video-jobs/generation-finished-1', (route) => {
+    statusChecks += 1;
+    return route.fulfill({ status: 200, json: { job: {
+      job_id: 'generation-finished-1', status: 'completed', prompt,
+      result: { video_url: 'https://studio-result.example/generation.webm' },
+      created_at: '2026-08-10T00:00:00Z', updated_at: '2026-08-10T00:00:02Z',
+    } } });
+  });
+  await page.route('https://studio-result.example/generation.webm', (route) => route.fulfill({
+    status: 200, contentType: 'video/webm', body: fs.readFileSync(VIDEO),
+  }));
+
+  await page.goto('/studio');
+  const tile = page.getByTestId('studio-generation-generation-finished-1');
+  await expect(tile.getByText('Ready to add')).toBeVisible();
+  await expect(tile.locator('video')).toHaveAttribute('src', 'https://studio-result.example/generation.webm');
+  expect(statusChecks).toBeGreaterThan(0);
+
+  await tile.click({ button: 'right' });
+  await expect(page.getByTestId('studio-generation-copy-prompt')).toBeVisible();
+  await page.getByTestId('studio-generation-copy-prompt').click();
+  await expect(page.getByText('Generation prompt copied')).toBeVisible();
+  await tile.click({ button: 'right' });
+  await page.getByTestId('studio-generation-similar').click();
+  await expect(page.getByRole('heading', { name: 'Generate videos' })).toBeVisible();
+  await expect(page.getByTestId('studio-video-generate-prompt')).toHaveValue(prompt);
+});
+
+test('Studio searches community video and image libraries while generating with the selected image engine', async ({ page }) => {
+  const imagePrompt = 'opal glass greenhouse in dawn fog';
+  const imageRequests = [];
+  await installMocks(page);
+  await page.route('**/api/images?**', (route) => route.fulfill({ status: 200, json: { images: [] } }));
+  await page.route('**/api/images/semantic?**', (route) => route.fulfill({ status: 200, json: { results: [{
+    id: 'similar-image-1', prompt: 'Opal conservatory', image_url: '/images/similar.png', thumb_url: '/images/similar.png', model: 'zimage', similarity: 0.91,
+  }] } }));
+  await page.route('**/api/search?**', (route) => route.fulfill({ status: 200, json: { results: [{
+    job_id: 'community-video-1', prompt: 'Fog moving through a glass greenhouse', video_url: 'https://studio-result.example/community.webm', service: 'h3_video', similarity: 0.88,
+  }] } }));
+  await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route('**/api/service', async (route) => {
+    imageRequests.push(route.request().postDataJSON());
+    await route.fulfill({ status: 200, json: { images: [{ image_url: 'https://studio-result.example/generated.png' }], engine: 'omniserve-native' } });
+  });
+  await page.route('https://studio-result.example/generated.png', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE }));
+  await page.route('**/gallery/similar.png', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE }));
+  await page.route('https://studio-result.example/community.webm', (route) => route.fulfill({ status: 200, contentType: 'video/webm', body: fs.readFileSync(VIDEO) }));
+
+  await page.goto('/studio');
+  await page.getByTestId('studio-media-images').click();
+  await page.getByTestId('studio-image-prompt').fill(imagePrompt);
+  await page.getByTestId('studio-image-engine-omniserve').click();
+  await page.getByTestId('studio-image-count').selectOption('1');
+  await page.getByTestId('studio-image-generate').click();
+  await expect(page.getByText('1 generated image added · similar work shown below')).toBeVisible();
+  await expect(page.getByTestId('studio-image-hit-similar-image-1')).toBeVisible();
+  expect(imageRequests[0]).toMatchObject({ service: 'zimage', prompt: imagePrompt, n: 1, num_images: 1, image_backend: 'omniserve' });
+  await page.getByTestId('studio-image-engine-images3').click();
+  await page.getByTestId('studio-image-generate').click();
+  await expect.poll(() => imageRequests.length).toBe(2);
+  expect(imageRequests[1]).toMatchObject({ service: 'zimage', image_backend: 'images3' });
+
+  await page.getByTestId('studio-media-videos').click();
+  await page.getByTestId('studio-media-search').fill('glass greenhouse fog');
+  await page.getByTestId('studio-media-search').press('Enter');
+  await expect(page.getByTestId('studio-video-hit-community-video-1')).toBeVisible();
+  await page.getByTestId('studio-video-hit-community-video-1').click();
+  await expect(page.getByText('Community video added to the timeline')).toBeVisible();
+});
+
+test('text layers stay editable and are persisted in the project document', async ({ page }) => {
+  const saves = [];
+  await installMocks(page, { onProjectSave: (project) => saves.push(project) });
+  await page.goto('/studio');
+  await page.getByTestId('studio-tool-text').click();
+  await page.getByTestId('studio-add-title').click();
+  await expect(page.getByTestId('studio-text-content')).toHaveValue('Add a title');
+  await page.getByTestId('studio-text-content').fill('Launch night');
+  await page.getByTestId('studio-text-apply').click();
+  await expect(page.getByText('Text updated')).toBeVisible();
+  await expect(page.getByTestId('studio-save-status')).toHaveText('Saved to cloud', { timeout: 20_000 });
+  const latest = saves.at(-1);
+  expect(latest.document.assets).toHaveLength(1);
+  expect(latest.document.assets[0].text).toMatchObject({ content: 'Launch night', fontSize: 132, fontWeight: 800, align: 'center' });
+  expect(latest.document.assets[0].contentType).toBe('image/png');
+  await page.reload();
+  await page.getByTestId('studio-tool-text').click();
+  await expect(page.getByTestId('studio-text-content')).toHaveValue('Launch night');
+});
+
 test('video assets open the shared restyle modal and completed jobs return to the timeline', async ({ page }) => {
   let submitted;
   await installMocks(page);
@@ -140,7 +239,7 @@ test('video assets open the shared restyle modal and completed jobs return to th
 
   await page.goto('/studio');
   await page.locator('input[type=file]').setInputFiles(VIDEO);
-  const card = page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.mp4/ });
+  const card = page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ });
   await card.click({ button: 'right' });
   await page.getByRole('button', { name: /Restyle video Transform look/ }).click();
   await expect(page.getByRole('heading', { name: 'Restyle video' })).toBeVisible();
@@ -176,7 +275,7 @@ test('2K preview stays frame-driven on WebGL and export requests GPU and hardwar
   await page.getByRole('button', { name: /MP4 · H\.264/ }).click();
   const startedAt = Date.now();
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export locally' }).click();
+  await page.getByRole('dialog', { name: 'Export' }).getByRole('button', { name: 'Export', exact: true }).click();
   await downloadPromise;
   const elapsedSeconds = (Date.now() - startedAt) / 1000;
   const exported = await page.evaluate(() => window.__MANIFOLD_STUDIO_PERF__.export);
@@ -203,6 +302,21 @@ test('studio mobile workspace has no horizontal overflow and uses an overlay too
   expect(panel.x + panel.width).toBeLessThanOrEqual(390);
   await page.getByRole('button', { name: 'Close tools' }).click();
   await expect(page.getByTestId('studio-panel')).toBeHidden();
+});
+
+test('Help opens the Studio shortcut reference', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+
+  await page.getByTestId('studio-help').click();
+  await expect(page.getByRole('heading', { name: 'Keyboard shortcuts' })).toBeVisible();
+  await expect(page.getByText('Move selected visual clips between layers')).toBeVisible();
+  await expect(page.getByText('Drag clips left or right to retime them')).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: 'Keyboard shortcuts' })).toBeHidden();
+  await page.keyboard.press('Shift+Slash');
+  await expect(page.getByRole('heading', { name: 'Keyboard shortcuts' })).toBeVisible();
 });
 
 test('timeline supports grouped dragging, click seeking, keyboard split, and handle trimming', async ({ page }) => {
@@ -242,6 +356,71 @@ test('timeline supports grouped dragging, click seeking, keyboard split, and han
   await page.mouse.up();
   const widthAfterTrim = await splitClip.evaluate((item) => Number.parseFloat(item.style.width));
   expect(widthAfterTrim).toBeLessThan(widthBeforeTrim - 20);
+});
+
+test('Shift-drag draws a timeline marquee and selects every intersecting clip', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'marquee-one.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'marquee-two.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'marquee-three.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+  ]);
+
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  await expect(clips).toHaveCount(3);
+  await clips.nth(0).click();
+  const canvas = await page.getByTestId('studio-timeline-canvas').boundingBox();
+  await page.keyboard.down('Shift');
+  await page.mouse.move(canvas.x + 5, canvas.y + 32);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + 630, canvas.y + 158, { steps: 6 });
+  const marquee = page.getByTestId('studio-timeline-marquee');
+  await expect(marquee).toBeVisible();
+  const marqueeBox = await marquee.boundingBox();
+  expect(marqueeBox.width).toBeGreaterThan(600);
+  expect(marqueeBox.height).toBeGreaterThan(100);
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+
+  await expect(marquee).toBeHidden();
+  await expect(clips.nth(0)).toHaveAttribute('aria-selected', 'true');
+  await expect(clips.nth(1)).toHaveAttribute('aria-selected', 'true');
+  await expect(clips.nth(2)).toHaveAttribute('aria-selected', 'false');
+  await expect(page.getByText('2 selected')).toBeVisible();
+});
+
+test('overlapping visual clips stack into ordered lanes and bracket shortcuts swap their layer order', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'base-layer.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'overlay-layer.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+  ]);
+
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  const overlay = clips.nth(1);
+  const overlayBox = await overlay.boundingBox();
+  await page.mouse.move(overlayBox.x + overlayBox.width / 2, overlayBox.y + overlayBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(overlayBox.x + overlayBox.width / 2 - 280, overlayBox.y + overlayBox.height / 2, { steps: 6 });
+  await page.mouse.up();
+
+  await expect(clips.nth(0)).toHaveAttribute('data-visual-track', '0');
+  await expect(overlay).toHaveAttribute('data-visual-track', '1');
+  await expect(page.getByTestId('timeline-track-label-v2')).toBeVisible();
+
+  await page.keyboard.press('Control+BracketLeft');
+  await expect(overlay).toHaveAttribute('data-visual-track', '0');
+  await expect(clips.nth(0)).toHaveAttribute('data-visual-track', '1');
+  await page.keyboard.press('Control+BracketRight');
+  await expect(overlay).toHaveAttribute('data-visual-track', '1');
+  await expect(clips.nth(0)).toHaveAttribute('data-visual-track', '0');
+
+  await page.getByTestId('studio-timeline-ruler').click({ position: { x: 64, y: 10 } });
+  const baseStage = page.getByRole('button', { name: 'Move base-layer.png' });
+  const overlayStage = page.getByRole('button', { name: 'Move overlay-layer.png' });
+  expect(Number(await overlayStage.evaluate((item) => item.style.zIndex))).toBeGreaterThan(Number(await baseStage.evaluate((item) => item.style.zIndex)));
 });
 
 test('visual clips stack across timeline layers with vertical dragging and bracket shortcuts', async ({ page }) => {
@@ -299,7 +478,7 @@ test('visual clips stack across timeline layers with vertical dragging and brack
   await page.keyboard.press('Control+BracketLeft');
 
   await expect.poll(() => saves.at(-1)?.document?.assets?.map((asset) => asset.visualTrack)).toEqual([2, 1]);
-  expect(saves.at(-1).document.version).toBe(2);
+  expect(saves.at(-1).document.version).toBe(3);
 });
 
 test('timeline copy paste aligns groups to the playhead and accepts dropped media', async ({ page }) => {
@@ -371,6 +550,83 @@ test('visual elements can be dragged and nudged around the stage', async ({ page
   await element.dblclick();
   await expect(element).toHaveAttribute('data-position-x', '0.0000');
   await expect(element).toHaveAttribute('data-position-y', '0.0000');
+
+  await page.getByTestId('studio-tool-crop').click();
+  await page.getByTestId('studio-transform-scale').fill('1.5');
+  await page.getByTestId('studio-transform-rotation').fill('30');
+  await expect(element).toHaveAttribute('data-scale', '1.5000');
+  await expect(element).toHaveAttribute('data-rotation', '30.00');
+  await page.getByTestId('studio-transform-reset').click();
+  await expect(element).toHaveAttribute('data-scale', '1.0000');
+  await expect(element).toHaveAttribute('data-rotation', '0.00');
+});
+
+test('multiple PNGs export the complete slideshow as a local WebM video', async ({ page }) => {
+  test.setTimeout(120_000);
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'slide-one.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'slide-two.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+  ]);
+  await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(2);
+  await page.getByTestId('studio-export').click();
+  await expect(page.getByRole('heading', { name: 'Export' })).toBeVisible();
+  await expect(page.getByText(/Complete .* timeline/)).toBeVisible();
+  await page.getByTestId('export-format-webm-vp9').click();
+  await page.getByTestId('export-frame-rate').selectOption('24');
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('dialog', { name: 'Export' }).getByRole('button', { name: 'Export', exact: true }).click();
+  const download = await Promise.race([
+    downloadPromise,
+    page.getByTestId('studio-notice').waitFor({ state: 'visible' }).then(async () => { throw new Error(await page.getByTestId('studio-notice').innerText()); }),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/-studio\.webm$/);
+  const outputPath = await download.path();
+  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-show_entries', 'stream=codec_name,codec_type', '-of', 'json', outputPath], { encoding: 'utf8' }));
+  expect(probe.streams).toContainEqual(expect.objectContaining({ codec_type: 'video', codec_name: 'vp9' }));
+  expect(Number(probe.format.duration)).toBeGreaterThan(9.8);
+});
+
+test('Media Music searches real catalog-shaped results, imports a track, and generates music', async ({ page }) => {
+  await installMocks(page);
+  const wav = wavFixture();
+  let searchRequest;
+  let generationRequest;
+  await page.route('**/api/studio/audio-search**', async (route) => {
+    searchRequest = new URL(route.request().url());
+    await route.fulfill({ status: 200, json: { results: [{
+      id: 4283, title: 'Midnight Moon', url: 'https://audio.example/midnight-moon.wav', duration: 207.279,
+      provider: 'opengameart', kind: 'music', description: 'Cinematic ambient C minor',
+      license: 'cc0', attribution: 'iamoneabe', source_url: 'https://opengameart.org/content/midnight-moon',
+    }] } });
+  });
+  await page.route('**/api/studio/generate-music', async (route) => {
+    generationRequest = route.request().postDataJSON();
+    await route.fulfill({ status: 200, json: {
+      audio_url: 'https://audio.example/generated-score.wav', credits_used: 80, credits_remain: 9920,
+    } });
+  });
+  await page.route('https://audio.example/**', (route) => route.fulfill({ status: 200, contentType: 'audio/wav', body: wav }));
+
+  await page.goto('/studio');
+  await page.getByTestId('studio-media-music').click();
+  const result = page.getByTestId('studio-music-hit-4283');
+  await expect(result).toContainText('Midnight Moon');
+  await expect(result).toContainText('CC0');
+  expect(searchRequest.searchParams.get('kind')).toBe('music');
+  expect(searchRequest.searchParams.get('limit')).toBe('24');
+  await result.getByRole('button', { name: 'Add Midnight Moon to timeline' }).click();
+  await expect(page.locator('[data-timeline-asset]')).toHaveCount(1);
+  await expect(page.getByText('Midnight Moon added · CC0')).toBeVisible();
+
+  await page.getByTestId('studio-music-create').click();
+  await expect(page.getByRole('heading', { name: 'Generate music' })).toBeVisible();
+  await page.getByTestId('studio-audio-prompt').fill('Warm analog synth pulse with glass harmonics');
+  await page.getByTestId('studio-audio-generate').click();
+  await expect(page.locator('[data-timeline-asset]')).toHaveCount(2);
+  expect(generationRequest).toEqual({ prompt: 'Warm analog synth pulse with glass harmonics', duration: 30 });
+  await expect(page.getByText('Music added · 80 credits')).toBeVisible();
 });
 
 test('licensed Netwrck catalog result imports as an editable audio clip for free', async ({ page }) => {
@@ -388,7 +644,7 @@ test('licensed Netwrck catalog result imports as an editable audio clip for free
   const card = page.getByText('Night Pulse').locator('..').locator('..');
   await expect(card).toContainText('CC0');
   await card.locator('button').last().click();
-  await expect(page.getByRole('heading', { name: 'Night Pulse.wav' })).toBeVisible();
+  await expect(page.locator('[data-timeline-asset][title^="Night Pulse.wav"]')).toBeVisible();
   await expect(page.getByTestId('studio-export')).toBeEnabled();
 });
 
@@ -475,9 +731,9 @@ test('video import exposes local MP4 export and priced Grok extension', async ({
   await page.locator('input[type=file]').setInputFiles(VIDEO);
   await expect(page.getByTestId('studio-export')).toBeEnabled();
   await page.getByTestId('studio-export').click();
-  await expect(page.getByRole('heading', { name: 'Export video' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Export' })).toBeVisible();
   await expect(page.getByText('MP4 · H.264')).toBeVisible();
-  await page.getByRole('heading', { name: 'Export video' }).locator('../..').getByRole('button').click();
+  await page.getByRole('heading', { name: 'Export' }).locator('../..').getByRole('button').click();
   await page.getByTestId('studio-tool-ai').click();
   await page.getByRole('button', { name: /Extend video/ }).click();
   await expect(page.getByRole('heading', { name: 'Extend video' })).toBeVisible();
@@ -506,7 +762,7 @@ test('export dialog offers renderer presets and remembers them across reloads', 
   await page.getByTestId('export-quality').selectOption('high');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('mg_studio_export_settings_v1'))).toContain('webm-vp9');
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export locally' }).click();
+  await page.getByRole('dialog', { name: 'Export' }).getByRole('button', { name: 'Export', exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/-studio\.webm$/);
   const outputPath = await download.path();
@@ -521,7 +777,7 @@ test('export dialog offers renderer presets and remembers them across reloads', 
   await expect(page.getByTestId('export-resolution')).toHaveValue('720p');
   await expect(page.getByTestId('export-frame-rate')).toHaveValue('24');
   await expect(page.getByTestId('export-quality')).toHaveValue('high');
-  await expect(page.getByText('Local download')).toBeVisible();
+  await expect(page.getByText('Local GPU · hardware codec preferred')).toBeVisible();
 });
 
 test('video upscale previews price, queues Real-ESRGAN, and adds the result', async ({ page }) => {
@@ -565,11 +821,11 @@ test('local MP4 export mixes an added audio clip into the downloaded video', asy
   await input.setInputFiles(VIDEO);
   await input.setInputFiles({ name: 'timeline-tone.wav', mimeType: 'audio/wav', buffer: wavFixture(1) });
   await page.getByTestId('studio-tool-media').click();
-  await page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.mp4/ }).click();
+  await page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ }).click();
   await page.getByTestId('studio-export').click();
   await page.getByRole('button', { name: /MP4 · H\.264/ }).click();
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export locally' }).click();
+  await page.getByRole('dialog', { name: 'Export' }).getByRole('button', { name: 'Export', exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/-studio\.mp4$/);
   const outputPath = await download.path();

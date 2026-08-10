@@ -99,6 +99,28 @@ python scripts/gen_gallery_local.py --stop
 python scripts/backfill_seed.py --images 0 --videos 8
 ```
 
+## Gallery art farm
+
+The public image catalog is generated from a deterministic, family-safe prompt
+set and is safe to resume on any machine sharing the database and R2 bucket.
+The renderer stops before its local spool falls below the configured free-space
+floor. Publish before indexing so every searchable image is immediately CDN
+loadable; run moderation continuously in a second process.
+
+```bash
+python3 scripts/build_gallery_catalog.py --count 100000 \
+  --out scripts/prompts/manifold-gallery-100k.jsonl
+nice -n 19 python3 scripts/generate_gallery_art.py \
+  --prompts scripts/prompts/manifold-gallery-100k.jsonl --limit 500 \
+  --low-priority --upload-r2 --min-free-gib 80
+nice -n 19 python3 scripts/moderate_gallery_art.py --limit 500
+```
+
+The scripts are deliberately bounded by `--limit`; schedule repeated batches
+after confirming the first set looks good. Unclassified files are held out of
+semantic search once moderation starts, and NSFW/child content is excluded from
+the public gallery.
+
 Gallery CDN: `https://manifoldgenstatic.manifoldgen.com/gallery/videos/…`
 
 When RunPod `workersMax` quota is hit, set `H3_LOCAL_COG_URL=http://127.0.0.1:18089`
@@ -120,6 +142,14 @@ weights into the warm 32 GB H3 process.
 See `deploy/manifoldgen.service` and `deploy/nginx-manifoldgen.conf`.
 `./deploy.sh` installs the server binary, syncs `frontend/out`, and rsyncs `emails/`.
 Set `DIST_DIR` to `frontend/out` after `NEXT_OUTPUT=export bun run build`.
+
+## Monitoring
+
+`monitoring/` runs confirmed-error-gated frontend and backend checks plus a real
+H3 video canary every 12 hours. Repair agents use `gpt-5.6-sol` at high reasoning
+and start only for deduplicated, confirmed failures. See
+[`monitoring/README.md`](monitoring/README.md) for schedules, safeguards, and
+manual check-only commands.
 
 ## Visualbench
 

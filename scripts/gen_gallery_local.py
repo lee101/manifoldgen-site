@@ -29,6 +29,7 @@ IMAGE = os.environ.get("H3_LOCAL_IMAGE", "ghcr.io/lee101/h3-cog:accel-test")
 PORT = int(os.environ.get("H3_LOCAL_PORT", "18089"))
 WEIGHTS = Path(os.environ.get("H3_WEIGHTS_DIR", "/nvme0n1-disk/h3-w4a8-weights"))
 PATCH = Path(os.environ.get("H3_PATCH_DIR", "/tmp/h3-accel-patch"))
+ACCEL_PROFILE = os.environ.get("H3_ACCEL_PROFILE", "off")
 COG_URL = f"http://127.0.0.1:{PORT}"
 API = os.environ.get("MANIFOLDGEN_API", "http://127.0.0.1:8116").rstrip("/")
 DATABASE_URL = os.environ.get(
@@ -144,6 +145,11 @@ def sync_patch() -> None:
         p = src / name
         if p.exists():
             subprocess.check_call(["cp", str(p), str(PATCH / name)])
+    schema = src / ".cog" / "openapi_schema.json"
+    if schema.exists():
+        schema_dest = PATCH / ".cog" / "openapi_schema.json"
+        schema_dest.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.check_call(["cp", str(schema), str(schema_dest)])
     sol = src / "vendor" / "ComfyUI-SolAttn_triton"
     if not sol.exists():
         sol = Path("/tmp/h3-accel-patch/ComfyUI-SolAttn_triton")
@@ -227,6 +233,9 @@ def ensure_container() -> None:
         "h3_chain.py",
     ):
         mounts += ["-v", f"{PATCH / name}:/src/{name}:ro"]
+    schema = PATCH / ".cog" / "openapi_schema.json"
+    if schema.exists():
+        mounts += ["-v", f"{schema}:/src/.cog/openapi_schema.json:ro"]
     sol = PATCH / "ComfyUI-SolAttn_triton"
     if sol.exists():
         mounts += ["-v", f"{sol}:/opt/ComfyUI/custom_nodes/ComfyUI-SolAttn_triton:ro"]
@@ -246,7 +255,7 @@ def ensure_container() -> None:
         "-e",
         "MINIMAX_H3_LICENSE_ACCEPTED=1",
         "-e",
-        "H3_ACCEL_PROFILE=spectrum-sol",
+        f"H3_ACCEL_PROFILE={ACCEL_PROFILE}",
         "-e",
         "H3_QUANT=int8_convrot",
         "-e",
@@ -255,6 +264,10 @@ def ensure_container() -> None:
         "H3_INCLUDE_REF2VA=0",
         "-e",
         "H3_RESERVE_VRAM_GB=2",
+        "-e",
+        "H3_IDLE_UNLOAD_SECONDS=30",
+        "-e",
+        "H3_CACHE_RESET_EVERY=16",
         "-e",
         "WEIGHTS_DIR=/weights",
         "-e",
@@ -303,11 +316,11 @@ def http_json(method: str, url: str, payload: dict | None = None, timeout: int =
         return resp.status, json.loads(body) if body else {}
 
 
-def generate(prompt: str, *, steps: int, duration: float, seed: int | None) -> Path:
+def generate(prompt: str, *, size: str, steps: int, duration: float, seed: int | None) -> Path:
     input_obj = {
         "prompt": prompt,
         "aspect_ratio": "16:9",
-        "size": "native",
+        "size": size,
         "duration": duration,
         "steps": steps,
         "structured_prompt": True,
@@ -320,7 +333,7 @@ def generate(prompt: str, *, steps: int, duration: float, seed: int | None) -> P
         input_obj["seed"] = seed
     # This coglet build only exposes POST /predictions (+ cancel). No GET poll route,
     # so wait synchronously (full-quality stable weights can take 10–20 min on a 5090).
-    print("  predicting (sync, spectrum-sol)…", flush=True)
+    print(f"  predicting (sync, accel={ACCEL_PROFILE})…", flush=True)
     t0 = time.time()
     status, poll = http_json(
         "POST",
@@ -423,15 +436,17 @@ def psql(sql: str) -> str:
     return subprocess.check_output(["psql", os.environ.get("DATABASE_URL", DATABASE_URL), "-At", "-c", sql], text=True).strip()
 
 
-def upsert(job_id: str, user_id: str, prompt: str, video_url: str) -> None:
+def upsert(job_id: str, user_id: str, prompt: str, video_url: str, *, size: str, quant: str) -> None:
     result = json.dumps(
         {
             "video_url": video_url,
             "provider": "local-h3",
             "service": "h3_video",
             "codec": "av1",
-            "accel": "spectrum-sol",
-            "quant": "int8_convrot",
+            "accel": ACCEL_PROFILE,
+            "quant": quant,
+            "size": size,
+            "featured": True,
             "output_codec": "webm-av1",
             "encode_quality": 22,
         }
@@ -479,6 +494,13 @@ def main() -> None:
     ap.add_argument("--slug", default="")
     ap.add_argument("--steps", type=int, default=24)
     ap.add_argument("--duration", type=float, default=5)
+    ap.add_argument("--size", choices=("preview", "balanced", "native"), default="native")
+    ap.add_argument(
+        "--actual-quant",
+        choices=("int8_convrot", "w4a8"),
+        default=os.environ.get("H3_LOCAL_ACTUAL_QUANT", "w4a8"),
+        help="quant actually exposed by the running cog schema (the accel-test image currently defaults to w4a8)",
+    )
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--stop", action="store_true", help="stop local container and exit")
     ap.add_argument("--no-start", action="store_true", help="assume container already running")
@@ -527,10 +549,10 @@ def main() -> None:
     for slug, prompt in jobs:
         print(f"[{slug}] {prompt[:70]}…")
         try:
-            local = generate(prompt, steps=args.steps, duration=args.duration, seed=args.seed)
+            local = generate(prompt, size=args.size, steps=args.steps, duration=args.duration, seed=args.seed)
             url = upload(local, slug)
             job_id = f"video_h3_{slug.replace('-', '_')}"
-            upsert(job_id, user_id, prompt, url)
+            upsert(job_id, user_id, prompt, url, size=args.size, quant=args.actual_quant)
             print(f"  published {url}")
             ok += 1
         except Exception as e:

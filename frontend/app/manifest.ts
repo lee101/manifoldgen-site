@@ -13,13 +13,13 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: '#07070a',
     icons: [
       {
-        src: '/brand/logo-192.webp',
+        src: '/images/favicon-192.webp',
         sizes: '192x192',
         type: 'image/webp',
       },
       {
-        src: '/brand/logo-mark.webp',
-        sizes: '512x512',
+        src: '/images/apple-touch-icon.webp',
+        sizes: '180x180',
         type: 'image/webp',
       },
     ],
