@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+	"time"
+)
 
 func TestH3RouteUsesDedicatedPinkCherryWorkerForExplicitAdultPrompt(t *testing.T) {
 	t.Setenv("H3_NORMAL_RUNPOD_ENDPOINT", "normal-endpoint")
@@ -62,6 +66,63 @@ func TestNormalizeH3AudioSizeAllowsLongDuration(t *testing.T) {
 	}
 }
 
+func TestH3AudioJobIsNotGalleryEligible(t *testing.T) {
+	request, err := json.Marshal(map[string]interface{}{
+		"_h3_request": map[string]interface{}{"size": "audio"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !h3AudioJob(&VideoJob{Service: "h3_video", Result: request}) {
+		t.Fatal("expected H3 audio request to be detected")
+	}
+	if h3AudioJob(&VideoJob{Service: "h3_video", Result: []byte(`{"_h3_request":{"size":"balanced"}}`)}) {
+		t.Fatal("video request must remain gallery eligible")
+	}
+	if !h3AudioJob(&VideoJob{Service: "h3_video", Result: []byte(`{"size":"audio"}`)}) {
+		t.Fatal("normalized direct audio request must be detected")
+	}
+}
+
+func TestH3RunpodQueueTimeout(t *testing.T) {
+	t.Setenv("H3_RUNPOD_QUEUE_TIMEOUT", "90s")
+	if got := h3RunpodQueueTimeout(); got != 90*time.Second {
+		t.Fatalf("configured queue timeout = %s", got)
+	}
+	t.Setenv("H3_RUNPOD_QUEUE_TIMEOUT", "invalid")
+	if got := h3RunpodQueueTimeout(); got != h3RunpodQueueTimeoutDefault {
+		t.Fatalf("invalid queue timeout fallback = %s", got)
+	}
+}
+
+func TestPublicVideoJobRemovesProviderDetails(t *testing.T) {
+	job := &VideoJob{Service: "h3_video", Result: json.RawMessage(`{"_h3_variant":"normal-h3","provider":"runpod","provider_cost_usd":1.2,"video_url":"https://media.example/video.webm"}`)}
+	public := publicVideoJob(job)
+	if public.Service != "video" {
+		t.Fatalf("public service = %q", public.Service)
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(public.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := result["_h3_variant"]; ok {
+		t.Fatal("internal variant leaked")
+	}
+	if _, ok := result["provider"]; ok {
+		t.Fatal("provider leaked")
+	}
+	if result["video_url"] == nil {
+		t.Fatal("public video URL was removed")
+	}
+}
+
+func TestPaymentRequiredJobIsTerminalForInference(t *testing.T) {
+	job := &VideoJob{Status: "payment_required", Result: json.RawMessage(`{"video_url":"https://media.example/done.webm"}`)}
+	if job.Status == "queued" || job.Status == "processing" {
+		t.Fatal("payment-required result must never relaunch inference")
+	}
+}
+
 func TestNormalizeH3DrivingAudioRequiresImage(t *testing.T) {
 	req := ServiceUsageRequest{Prompt: "portrait speaking", AudioURL: "https://cdn.example/voice.wav"}
 	if err := normalizeH3VideoRequest(&req); err == nil {
@@ -92,6 +153,50 @@ func TestH3DownstreamPricingHasMarginAndMinimum(t *testing.T) {
 	}
 	if got := h3DownstreamMicros(1_000_000); got != 1_500_000 {
 		t.Fatalf("$1 provider charge = %d micros, want 1500000", got)
+	}
+}
+
+func TestH3VideoPricingTiersExposeResolutionAndDurationMatrix(t *testing.T) {
+	tiers := h3VideoPricingTiers()
+	if len(tiers) != 3 {
+		t.Fatalf("tiers = %d, want 3", len(tiers))
+	}
+	if tiers[0].Size != "preview" || tiers[0].Resolution16x9 != "1024 × 576" {
+		t.Fatalf("preview tier = %#v", tiers[0])
+	}
+	if tiers[1].Size != "balanced" || tiers[1].Resolution16x9 != "1184 × 672" {
+		t.Fatalf("balanced tier = %#v", tiers[1])
+	}
+	if tiers[2].Size != "native" || tiers[2].Resolution16x9 != "1344 × 768" {
+		t.Fatalf("native tier = %#v", tiers[2])
+	}
+	for _, tier := range tiers {
+		if len(tier.Prices) != 5 || tier.Prices[0].DurationSeconds != 5 || tier.Prices[4].DurationSeconds != 60 {
+			t.Fatalf("%s price matrix = %#v", tier.Size, tier.Prices)
+		}
+	}
+	if got := tiers[0].Prices[0].PriceUSD; got != 0.46 {
+		t.Fatalf("5s preview = %.2f, want 0.46", got)
+	}
+	if got := tiers[1].Prices[1].PriceUSD; got != 1.42 {
+		t.Fatalf("10s balanced = %.2f, want 1.42", got)
+	}
+	if got := tiers[2].Prices[4].PriceUSD; got != 12.10 {
+		t.Fatalf("60s native = %.2f, want 12.10", got)
+	}
+}
+
+func TestPublicServiceNamesMapToInternalCapabilities(t *testing.T) {
+	for _, alias := range publicServiceAliases {
+		if got := requestedServiceName(alias.Public); got != alias.Internal {
+			t.Fatalf("requestedServiceName(%q) = %q, want %q", alias.Public, got, alias.Internal)
+		}
+		if got := publicServiceName(alias.Internal); got != alias.Public {
+			t.Fatalf("publicServiceName(%q) = %q, want %q", alias.Internal, got, alias.Public)
+		}
+	}
+	if got := requestedServiceName("tts"); got != "tts" {
+		t.Fatalf("unrelated service changed to %q", got)
 	}
 }
 

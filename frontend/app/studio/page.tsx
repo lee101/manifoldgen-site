@@ -5,15 +5,18 @@ import Link from 'next/link';
 import {
   ArrowLeft,
   AudioLines,
+  BookOpen,
   ChevronDown,
   ChevronUp,
   CircleHelp,
   Clapperboard,
   Copy,
+  CreditCard,
   Crop,
   Download,
   Film,
   Image as ImageIcon,
+  KeyRound,
   Library,
   Loader2,
   Maximize,
@@ -27,10 +30,12 @@ import {
   Plus,
   Redo2,
   RotateCcw,
+  RotateCw,
   Search,
   Scissors,
   SlidersHorizontal,
   Sparkles,
+  Type,
   Trash2,
   Undo2,
   Upload,
@@ -43,18 +48,16 @@ import {
 import {
   ALL_FORMATS,
   AudioSample,
-  AudioSampleSink,
   AudioSampleSource,
   BlobSource,
   BufferTarget,
   CanvasSource,
-  EncodedAudioPacketSource,
-  EncodedPacketSink,
   Input,
   Mp4OutputFormat,
   Output,
   Quality,
   VideoSampleSink,
+  VideoSample,
   WebMOutputFormat,
   canEncodeAudio,
   canEncodeVideo,
@@ -74,15 +77,20 @@ import {
   type LocalStudioProject,
   type PortableStudioAsset,
   type PortableStudioDocument,
+  type PortableStudioHistoryState,
 } from '../../lib/studio-projects';
+import { h3Dimensions, loopAnchorURL, type H3Aspect, type H3Size } from '../../lib/h3-loop';
 import styles from './page.module.css';
 
 type MediaKind = 'video' | 'image' | 'audio';
-type Tool = 'media' | 'adjust' | 'crop' | 'effects' | 'audio' | 'ai';
+type Tool = 'media' | 'text' | 'adjust' | 'crop' | 'effects' | 'audio' | 'ai';
+type MediaBrowserMode = 'project' | 'videos' | 'images' | 'music';
+type ImageGenerationEngine = 'images3' | 'omniserve';
 type ExportFormat = 'mp4-h264' | 'webm-vp9' | 'webm-av1';
 type ExportResolution = 'source' | '2160p' | '1440p' | '1080p' | '720p';
 type ExportFrameRate = 'source' | 24 | 30 | 60;
 type ExportQuality = 'draft' | 'balanced' | 'high';
+type H3Format = 'webm-av1' | 'webm-vp9' | 'mp4-h264';
 type ExportSettings = {
   format: ExportFormat;
   resolution: ExportResolution;
@@ -91,7 +99,7 @@ type ExportSettings = {
 };
 type SpeechVoice = 'M1' | 'F1' | 'M2' | 'F2';
 type TimelineDrag = {
-  mode: 'move' | 'trim-left' | 'trim-right' | 'scrub';
+  mode: 'move' | 'trim-left' | 'trim-right' | 'scrub' | 'marquee';
   pointerID: number;
   startX: number;
   startY: number;
@@ -102,8 +110,11 @@ type TimelineDrag = {
   toggleOnClick?: boolean;
   trackDelta: number;
   originals: Map<string, Pick<StudioAsset, 'timelineStart' | 'trimStart' | 'trimEnd' | 'duration' | 'visualTrack' | 'kind'>>;
+  baseSelection?: string[];
+  marqueeIDs?: string[];
 };
 type StageDrag = {
+  mode: 'move' | 'scale' | 'rotate';
   assetID: string;
   pointerID: number;
   startX: number;
@@ -114,6 +125,14 @@ type StageDrag = {
   currentY: number;
   stageWidth: number;
   stageHeight: number;
+  originScale: number;
+  originRotation: number;
+  currentScale: number;
+  currentRotation: number;
+  centerX: number;
+  centerY: number;
+  startDistance: number;
+  startAngle: number;
 };
 
 type AudioCatalogAsset = {
@@ -140,6 +159,34 @@ type RestyleReference = {
   cloudURL?: string;
 };
 
+type StudioTextStyle = {
+  content: string;
+  fontSize: number;
+  fontFamily: 'Inter' | 'Arial' | 'Georgia' | 'Courier New';
+  fontWeight: 400 | 600 | 800;
+  color: string;
+  align: 'left' | 'center' | 'right';
+};
+
+type StudioImageHit = {
+  id: string;
+  prompt: string;
+  image_url?: string;
+  thumb_url?: string;
+  file_path?: string;
+  thumb_path?: string;
+  model?: string;
+  similarity?: number;
+};
+
+type StudioVideoHit = {
+  job_id: string;
+  prompt: string;
+  video_url?: string;
+  service?: string;
+  similarity?: number;
+};
+
 const SPEECH_VOICES: { id: SpeechVoice; name: string; character: string }[] = [
   { id: 'M1', name: 'Balanced', character: 'Natural and versatile' },
   { id: 'F1', name: 'Clear', character: 'Crisp and articulate' },
@@ -148,6 +195,7 @@ const SPEECH_VOICES: { id: SpeechVoice; name: string; character: string }[] = [
 ];
 
 const voiceSampleBaseURL = (process.env.NEXT_PUBLIC_STATIC_BASE_URL || '/static').replace(/\/$/, '');
+const GALLERY_CDN = 'https://manifoldgenstatic.manifoldgen.com/gallery';
 
 type StudioAsset = {
   id: string;
@@ -167,11 +215,28 @@ type StudioAsset = {
   fadeOut: number;
   stageX: number;
   stageY: number;
+  stageScale: number;
+  stageRotation: number;
   attribution?: string;
   adjustments: StudioAdjustments;
   cloudURL?: string;
   objectKey?: string;
+  text?: StudioTextStyle;
 };
+
+type EditorHistoryState = {
+  assets: StudioAsset[];
+  selectedID: string;
+  selectedIDs: string[];
+  playhead: number;
+};
+
+type EditorHistory = {
+  undo: EditorHistoryState[];
+  redo: EditorHistoryState[];
+};
+
+const HISTORY_LIMIT = 20;
 
 type CloudProject = {
   id: string;
@@ -189,6 +254,7 @@ type GenerationJob = {
   result?: unknown;
   error?: string;
   created_at?: string;
+  updated_at?: string;
 };
 
 type StudioPerfDiagnostics = {
@@ -283,9 +349,14 @@ function uid() {
 
 function fitWithin(width: number, height: number, maxWidth: number, maxHeight: number) {
   const scale = Math.min(1, maxWidth / Math.max(1, width), maxHeight / Math.max(1, height));
+  const scaledWidth = Math.max(2, Math.round(width * scale / 2) * 2);
+  const scaledHeight = Math.max(2, Math.round(height * scale / 2) * 2);
+  // WebCodecs implementations commonly reject icon-sized 2×2/4×4 frames.
+  // Preserve aspect while meeting a conservative encoder minimum.
+  const encoderScale = Math.max(1, 16 / scaledWidth, 16 / scaledHeight);
   return {
-    width: Math.max(2, Math.round(width * scale / 2) * 2),
-    height: Math.max(2, Math.round(height * scale / 2) * 2),
+    width: Math.max(16, Math.round(scaledWidth * encoderScale / 2) * 2),
+    height: Math.max(16, Math.round(scaledHeight * encoderScale / 2) * 2),
   };
 }
 
@@ -337,14 +408,40 @@ function portableAsset(asset: StudioAsset): PortableStudioAsset {
     visualTrack: asset.visualTrack,
     volume: asset.volume, fadeIn: asset.fadeIn, fadeOut: asset.fadeOut,
     stageX: asset.stageX, stageY: asset.stageY, attribution: asset.attribution,
+    stageScale: asset.stageScale, stageRotation: asset.stageRotation,
     adjustments: asset.adjustments, cloudURL: asset.cloudURL, objectKey: asset.objectKey,
+    text: asset.text,
     contentType: asset.file.type || 'application/octet-stream', size: asset.file.size,
     lastModified: asset.file.lastModified,
   };
 }
 
-function projectDocument(assets: StudioAsset[], selectedID: string): PortableStudioDocument {
-  return { version: STUDIO_PROJECT_VERSION, selectedID, assets: assets.map(portableAsset) };
+function portableHistoryState(state: EditorHistoryState): PortableStudioHistoryState {
+  return {
+    selectedID: state.selectedID,
+    selectedIDs: state.selectedIDs,
+    playhead: state.playhead,
+    assets: state.assets.map(portableAsset),
+  };
+}
+
+function projectDocument(assets: StudioAsset[], selectedID: string, history: EditorHistory): PortableStudioDocument {
+  const document: PortableStudioDocument = {
+    version: STUDIO_PROJECT_VERSION,
+    selectedID,
+    assets: assets.map(portableAsset),
+    history: {
+      undo: history.undo.map(portableHistoryState),
+      redo: history.redo.map(portableHistoryState),
+    },
+  };
+  // Project documents are capped by the API. Preserve the newest history
+  // entries, but trim the oldest ones before a large project can block sync.
+  while (JSON.stringify(document).length > 1_500_000 && (document.history!.undo.length || document.history!.redo.length)) {
+    if (document.history!.undo.length) document.history!.undo.shift();
+    else document.history!.redo.shift();
+  }
+  return document;
 }
 
 async function materializeProject(document: PortableStudioDocument, localFiles = new Map<string, File>()) {
@@ -356,17 +453,22 @@ async function materializeProject(document: PortableStudioDocument, localFiles =
       if (!response.ok) throw new Error(`Could not download ${stored.name}`);
       const blob = await response.blob();
       file = new File([blob], stored.name, { type: stored.contentType || blob.type, lastModified: stored.lastModified });
+      // History states often reference the same asset. Reuse the download for
+      // the remaining snapshots instead of fetching the media repeatedly.
+      localFiles.set(stored.id, file);
     }
     if (!file) continue;
     assets.push({
       ...stored,
       visualTrack: stored.kind === 'audio' ? 0 : Math.max(0, Math.floor(stored.visualTrack || 0)),
+      stageScale: Math.max(0.1, Math.min(4, stored.stageScale ?? 1)),
+      stageRotation: stored.stageRotation ?? 0,
       file,
       url: URL.createObjectURL(file),
       adjustments: { ...DEFAULT_ADJUSTMENTS, ...stored.adjustments },
     });
   }
-  return assets;
+  return stackOverlappingVisuals(assets);
 }
 
 const MIN_CLIP_DURATION = 0.1;
@@ -378,6 +480,47 @@ function clipDuration(asset: Pick<StudioAsset, 'trimStart' | 'trimEnd'>) {
 
 function clipEnd(asset: Pick<StudioAsset, 'timelineStart' | 'trimStart' | 'trimEnd'>) {
   return asset.timelineStart + clipDuration(asset);
+}
+
+function visualClipsOverlap(left: StudioAsset, right: StudioAsset) {
+  return left.kind !== 'audio' && right.kind !== 'audio'
+    && left.timelineStart < clipEnd(right) - 0.0001
+    && right.timelineStart < clipEnd(left) - 0.0001;
+}
+
+// A visual lane may contain many sequential clips, but never two clips that
+// occupy the same time. Stable asset order keeps older material below newer
+// overlays, while pinned IDs let an explicit layer command take precedence.
+function stackOverlappingVisuals(items: StudioAsset[], pinnedIDs = new Set<string>()) {
+  const visuals = items.map((asset, index) => ({ asset, index })).filter(({ asset }) => asset.kind !== 'audio');
+  visuals.sort((left, right) => (
+    left.asset.visualTrack - right.asset.visualTrack
+    || Number(pinnedIDs.has(right.asset.id)) - Number(pinnedIDs.has(left.asset.id))
+    || left.index - right.index
+  ));
+  const lanes: StudioAsset[][] = Array.from({ length: MAX_VISUAL_TRACKS }, () => []);
+  const assigned = new Map<string, number>();
+  for (const { asset } of visuals) {
+    let track = Math.max(0, Math.min(MAX_VISUAL_TRACKS - 1, Math.floor(asset.visualTrack)));
+    while (track < MAX_VISUAL_TRACKS - 1 && lanes[track].some((other) => visualClipsOverlap(asset, other))) track += 1;
+    assigned.set(asset.id, track);
+    lanes[track].push(asset);
+  }
+  return items.map((asset) => asset.kind === 'audio' ? asset : { ...asset, visualTrack: assigned.get(asset.id) ?? asset.visualTrack });
+}
+
+function moveVisualLayersWithSwap(items: StudioAsset[], selectedIDs: Set<string>, delta: number) {
+  if (!delta) return stackOverlappingVisuals(items, selectedIDs);
+  const moved = items.map((asset) => selectedIDs.has(asset.id) && asset.kind !== 'audio'
+    ? { ...asset, visualTrack: Math.max(0, Math.min(MAX_VISUAL_TRACKS - 1, asset.visualTrack + delta)) }
+    : asset);
+  const selected = moved.filter((asset) => selectedIDs.has(asset.id) && asset.kind !== 'audio');
+  const swapped = moved.map((asset) => {
+    if (asset.kind === 'audio' || selectedIDs.has(asset.id)) return asset;
+    const displaced = selected.some((chosen) => chosen.visualTrack === asset.visualTrack && visualClipsOverlap(chosen, asset));
+    return displaced ? { ...asset, visualTrack: Math.max(0, Math.min(MAX_VISUAL_TRACKS - 1, asset.visualTrack - delta)) } : asset;
+  });
+  return stackOverlappingVisuals(swapped, selectedIDs);
 }
 
 function PassiveStageMedia({ asset, playhead, playing }: { asset: StudioAsset; playhead: number; playing: boolean }) {
@@ -424,6 +567,30 @@ function resultURL(payload: unknown): string {
   return '';
 }
 
+const ACTIVE_GENERATION_STATUSES = new Set(['queued', 'pending', 'processing', 'running', 'accepted']);
+const READY_GENERATION_STATUSES = new Set(['completed', 'complete', 'succeeded', 'success']);
+
+function generationStatus(job: GenerationJob) {
+  return job.status.trim().toLowerCase();
+}
+
+function isActiveGeneration(job: GenerationJob) {
+  return ACTIVE_GENERATION_STATUSES.has(generationStatus(job));
+}
+
+function mergeGenerationJobs(current: GenerationJob[], incoming: GenerationJob[]) {
+  const currentByID = new Map(current.map((job) => [job.job_id, job]));
+  return incoming.map((job) => {
+    const previous = currentByID.get(job.job_id);
+    if (!previous) return job;
+    const previousUpdated = Date.parse(previous.updated_at || previous.created_at || '');
+    const incomingUpdated = Date.parse(job.updated_at || job.created_at || '');
+    if (Number.isFinite(previousUpdated) && Number.isFinite(incomingUpdated) && previousUpdated > incomingUpdated) return previous;
+    if (!isActiveGeneration(previous) && isActiveGeneration(job)) return previous;
+    return job;
+  });
+}
+
 function resultJobID(payload: unknown): string {
   if (!payload || typeof payload !== 'object') return '';
   const data = payload as Record<string, unknown>;
@@ -439,6 +606,68 @@ function resultJobID(payload: unknown): string {
 function base64File(value: string, contentType: string, name: string) {
   const bytes = Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
   return new File([bytes], name, { type: contentType || 'audio/wav' });
+}
+
+function generatedImageItems(payload: unknown): { url?: string; base64?: string }[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const data = payload as Record<string, unknown>;
+  const collection = Array.isArray(data.images) ? data.images : Array.isArray(data.data) ? data.data : null;
+  if (collection) {
+    return collection.flatMap((item) => generatedImageItems(item));
+  }
+  const url = [data.image_url, data.url, data.path].find((value): value is string => typeof value === 'string' && Boolean(value.trim()));
+  const base64 = [data.image_base64, data.b64_json].find((value): value is string => typeof value === 'string' && Boolean(value.trim()));
+  return url || base64 ? [{ url, base64 }] : [];
+}
+
+function galleryImageURL(value?: string) {
+  const source = value?.trim();
+  if (!source) return '';
+  if (source.startsWith(`${GALLERY_CDN}/`)) return source;
+  if (/^https?:\/\//i.test(source)) {
+    try {
+      const parsed = new URL(source);
+      if (parsed.pathname.startsWith('/gallery/')) return `${GALLERY_CDN}${parsed.pathname.slice('/gallery'.length)}${parsed.search}`;
+      if (parsed.pathname.startsWith('/images/')) return `${GALLERY_CDN}/${parsed.pathname.slice('/images/'.length)}${parsed.search}`;
+    } catch { return source; }
+    return source;
+  }
+  return `${GALLERY_CDN}/${source.replace(/^\/?(?:images\/|gallery\/)?/, '')}`;
+}
+
+function textFileName(content: string) {
+  const stem = content.trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 42) || 'text';
+  return `${stem}.png`;
+}
+
+async function renderTextFile(style: StudioTextStyle) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1920;
+  canvas.height = 1080;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Text rendering is unavailable');
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = style.color;
+  context.textAlign = style.align;
+  context.textBaseline = 'middle';
+  context.font = `${style.fontWeight} ${style.fontSize}px ${JSON.stringify(style.fontFamily)}, sans-serif`;
+  const maxWidth = 1600;
+  const words = style.content.trim().split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = '';
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (line && context.measureText(candidate).width > maxWidth) { lines.push(line); line = word; }
+    else line = candidate;
+  }
+  if (line) lines.push(line);
+  const visible = lines.slice(0, 8);
+  const lineHeight = style.fontSize * 1.18;
+  const startY = canvas.height / 2 - (visible.length - 1) * lineHeight / 2;
+  const x = style.align === 'left' ? 160 : style.align === 'right' ? canvas.width - 160 : canvas.width / 2;
+  visible.forEach((value, index) => context.fillText(value, x, startY + index * lineHeight, maxWidth));
+  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Could not render text')), 'image/png'));
+  return new File([blob], textFileName(style.content), { type: 'image/png' });
 }
 
 function wavBlob(buffer: AudioBuffer) {
@@ -487,7 +716,7 @@ async function readDimensions(file: File, kind: MediaKind) {
   }
 }
 
-async function renderTimelineAudio(video: StudioAsset, audioClips: StudioAsset[], duration: number, timelineOffset: number) {
+async function renderTimelineAudio(timelineAssets: StudioAsset[], duration: number) {
   const decoder = new AudioContext();
   const offline = new OfflineAudioContext(2, Math.max(1, Math.ceil(duration * 48_000)), 48_000);
   let scheduled = 0;
@@ -513,12 +742,11 @@ async function renderTimelineAudio(video: StudioAsset, audioClips: StudioAsset[]
       // Silent videos and unsupported source audio are valid; additional clips still render.
     }
   };
-  await schedule(video, 0, video.trimStart, duration);
-  for (const clip of audioClips) {
-    const overlapStart = Math.max(timelineOffset, clip.timelineStart);
-    const overlapEnd = Math.min(timelineOffset + duration, clipEnd(clip));
+  for (const clip of timelineAssets.filter((asset) => asset.kind !== 'image')) {
+    const overlapStart = Math.max(0, clip.timelineStart);
+    const overlapEnd = Math.min(duration, clipEnd(clip));
     if (overlapEnd <= overlapStart) continue;
-    await schedule(clip, overlapStart - timelineOffset, clip.trimStart + overlapStart - clip.timelineStart, overlapEnd - overlapStart);
+    await schedule(clip, overlapStart, clip.trimStart + overlapStart - clip.timelineStart, overlapEnd - overlapStart);
   }
   await decoder.close();
   if (!scheduled) return null;
@@ -531,25 +759,51 @@ export default function StudioPage() {
   const [projectName, setProjectName] = useState('Untitled project');
   const [projectReady, setProjectReady] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([]);
   const [saveStatus, setSaveStatus] = useState('Loading project…');
   const [syncRetry, setSyncRetry] = useState(0);
   const [selectedID, setSelectedID] = useState('');
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
+  const [editHistory, setEditHistory] = useState<EditorHistory>({ undo: [], redo: [] });
   const [tool, setTool] = useState<Tool>('media');
   const [user, setUser] = useState<StoredUser | null>(null);
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
+  const [generationContextMenu, setGenerationContextMenu] = useState<{ jobID: string; x: number; y: number } | null>(null);
+  const [mediaBrowserMode, setMediaBrowserMode] = useState<MediaBrowserMode>('project');
+  const [mediaSearch, setMediaSearch] = useState('');
+  const [mediaSearchBusy, setMediaSearchBusy] = useState(false);
+  const [imageHits, setImageHits] = useState<StudioImageHit[]>([]);
+  const [videoHits, setVideoHits] = useState<StudioVideoHit[]>([]);
+  const [imagePrompt, setImagePrompt] = useState('Editorial portrait lit by soft window light, tactile detail, restrained color palette');
+  const [imageEngine, setImageEngine] = useState<ImageGenerationEngine>('images3');
+  const [imageAspect, setImageAspect] = useState<H3Aspect>('1:1');
+  const [imageCount, setImageCount] = useState<1 | 4>(4);
+  const [textDraft, setTextDraft] = useState<StudioTextStyle>({ content: 'Your story starts here', fontSize: 112, fontFamily: 'Inter', fontWeight: 800, color: '#ffffff', align: 'center' });
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [extendRates, setExtendRates] = useState({ input: 0.012, output: 0.084 });
   const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [stageZoom, setStageZoom] = useState(1);
-  const [stageDragPosition, setStageDragPosition] = useState<{ assetID: string; x: number; y: number } | null>(null);
+  const [stageDragPosition, setStageDragPosition] = useState<{ assetID: string; x: number; y: number; scale: number; rotation: number } | null>(null);
   const [stageGuides, setStageGuides] = useState({ horizontal: false, vertical: false });
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [timelineDropTime, setTimelineDropTime] = useState<number | null>(null);
+  const [timelineMarquee, setTimelineMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [videoGenerateOpen, setVideoGenerateOpen] = useState(false);
+  const [videoGeneratePrompt, setVideoGeneratePrompt] = useState('');
+  const [videoGenerateAspect, setVideoGenerateAspect] = useState<H3Aspect>('16:9');
+  const [videoGenerateSize, setVideoGenerateSize] = useState<H3Size>('balanced');
+  const [videoGenerateDuration, setVideoGenerateDuration] = useState(5);
+  const [videoGenerateSteps, setVideoGenerateSteps] = useState(20);
+  const [videoGenerateFormat, setVideoGenerateFormat] = useState<H3Format>('webm-av1');
+  const [videoGenerateAudio, setVideoGenerateAudio] = useState(true);
+  const [videoGenerateLoop, setVideoGenerateLoop] = useState(false);
+  const [videoGenerateUseSelected, setVideoGenerateUseSelected] = useState(false);
+  const [videoGenerateQueueStatus, setVideoGenerateQueueStatus] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
   const [exportSettings, setExportSettings] = useState<ExportSettings>(loadExportSettings);
   const [exportProgress, setExportProgress] = useState(0);
@@ -599,6 +853,7 @@ export default function StudioPage() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const galleryImportStartedRef = useRef(false);
+  const mediaHandoffProjectIDRef = useRef('');
   const timelineCanvasRef = useRef<HTMLDivElement>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
   const timelineLabelsRef = useRef<HTMLDivElement>(null);
@@ -606,8 +861,9 @@ export default function StudioPage() {
   const timelineClipboardRef = useRef<StudioAsset[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
   const stageDragRef = useRef<StageDrag | null>(null);
-  const uploadInFlightRef = useRef(new Set<string>());
+  const uploadInFlightRef = useRef(new Set<File>());
   const projectSaveSequenceRef = useRef(0);
+  const editHistoryRef = useRef<EditorHistory>({ undo: [], redo: [] });
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
 
   const selected = assets.find((asset) => asset.id === selectedID) || null;
@@ -615,7 +871,9 @@ export default function StudioPage() {
   const stageVisualAssets = useMemo(() => assets
     .filter((asset) => asset.kind !== 'audio' && (asset.id === selectedID || (playhead >= asset.timelineStart && playhead < clipEnd(asset))))
     .sort((left, right) => left.visualTrack - right.visualTrack), [assets, playhead, selectedID]);
-  const selectedExportSize = selected ? exportSize(selected.width, selected.height, exportSettings.resolution) : null;
+  const timelineVisuals = useMemo(() => assets.filter((asset) => asset.kind !== 'audio'), [assets]);
+  const compositionBase = useMemo(() => [...timelineVisuals].sort((left, right) => left.timelineStart - right.timelineStart || left.visualTrack - right.visualTrack)[0] || null, [timelineVisuals]);
+  const selectedExportSize = compositionBase ? exportSize(compositionBase.width, compositionBase.height, exportSettings.resolution) : null;
   const selectedClipDuration = selected ? clipDuration(selected) : 0;
   const canExtendSelected = selected?.kind === 'video' && selectedClipDuration >= 2 && selectedClipDuration <= 15.1;
   const canOpenUpscale = selected?.kind === 'video' && selected.duration <= 60 && selected.width * 2 <= 8192 && selected.height * 2 <= 8192;
@@ -637,6 +895,18 @@ export default function StudioPage() {
     return Math.ceil((upscaleRates.base + outputMP * selected.duration * upscaleRates.outputMPSecond) * 100 - 1e-8) / 100;
   }, [selected, upscaleRates, upscaleScale]);
   const upscaleCredits = Math.ceil(customerUpscaleUSD / creditPrice);
+  const videoGeneratePrompts = useMemo(() => videoGeneratePrompt
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 12), [videoGeneratePrompt]);
+  const videoGenerateUnitUSD = useMemo(() => {
+    const sizeFactor = videoGenerateSize === 'preview' ? 0.45 : videoGenerateSize === 'balanced' ? 0.7 : 1;
+    return Math.max(0.1, Math.ceil(h3AudioEstimateUSD * (videoGenerateDuration / 5) * (videoGenerateSteps / 20) * sizeFactor * 100) / 100);
+  }, [h3AudioEstimateUSD, videoGenerateDuration, videoGenerateSize, videoGenerateSteps]);
+  const videoGenerateBatchCount = Math.max(1, videoGeneratePrompts.length);
+  const videoGenerateBatchUSD = videoGenerateUnitUSD * videoGenerateBatchCount;
+  const videoGenerateBatchCredits = Math.ceil(videoGenerateBatchUSD / creditPrice);
   const audioEstimateUSD = Math.max(0.1, Math.ceil(h3AudioEstimateUSD * audioDuration / 5 * 100) / 100);
   const audioEstimateCredits = Math.ceil(audioEstimateUSD / creditPrice);
   const speechUSD = Math.max(ttsPer100USD * 0.1, Math.ceil(Math.max(1, speechText.trim().length) / 100 * ttsPer100USD * 10000) / 10000);
@@ -660,6 +930,54 @@ export default function StudioPage() {
   const updateAsset = useCallback((id: string, update: Partial<StudioAsset>) => {
     setAssets((current) => current.map((item) => (item.id === id ? { ...item, ...update } : item)));
   }, []);
+
+  const replaceEditHistory = useCallback((next: EditorHistory | ((current: EditorHistory) => EditorHistory)) => {
+    const value = typeof next === 'function' ? next(editHistoryRef.current) : next;
+    editHistoryRef.current = value;
+    setEditHistory(value);
+  }, []);
+
+  const snapshotEditor = useCallback((): EditorHistoryState => ({
+    assets: assets.map((asset) => ({ ...asset, adjustments: { ...asset.adjustments } })),
+    selectedID,
+    selectedIDs: [...selectedIDs],
+    playhead,
+  }), [assets, playhead, selectedID, selectedIDs]);
+
+  const rememberEdit = useCallback(() => {
+    const snapshot = snapshotEditor();
+    replaceEditHistory((current) => ({
+      undo: [...current.undo, snapshot].slice(-HISTORY_LIMIT),
+      redo: [],
+    }));
+  }, [replaceEditHistory, snapshotEditor]);
+
+  const restoreEditor = useCallback((state: EditorHistoryState) => {
+    setAssets(stackOverlappingVisuals(state.assets.map((asset) => ({ ...asset, adjustments: { ...asset.adjustments } }))));
+    setSelectedID(state.selectedID);
+    setSelectedIDs([...state.selectedIDs]);
+    setPlayhead(state.playhead);
+  }, []);
+
+  const undo = useCallback(() => {
+    const current = editHistoryRef.current;
+    const previous = current.undo.at(-1);
+    if (!previous) return;
+    const present = snapshotEditor();
+    replaceEditHistory({ undo: current.undo.slice(0, -1), redo: [...current.redo, present].slice(-HISTORY_LIMIT) });
+    restoreEditor(previous);
+    setNotice('Undid timeline edit');
+  }, [replaceEditHistory, restoreEditor, snapshotEditor]);
+
+  const redo = useCallback(() => {
+    const current = editHistoryRef.current;
+    const next = current.redo.at(-1);
+    if (!next) return;
+    const present = snapshotEditor();
+    replaceEditHistory({ undo: [...current.undo, present].slice(-HISTORY_LIMIT), redo: current.redo.slice(0, -1) });
+    restoreEditor(next);
+    setNotice('Redid timeline edit');
+  }, [replaceEditHistory, restoreEditor, snapshotEditor]);
 
   const selectOnly = useCallback((id: string) => {
     setSelectedID(id);
@@ -697,6 +1015,17 @@ export default function StudioPage() {
 
   const applyProject = useCallback(async (id: string, name: string, document: PortableStudioDocument, files?: Map<string, File>) => {
     const restored = await materializeProject(document, files);
+    const restoreHistoryState = async (state: PortableStudioHistoryState): Promise<EditorHistoryState> => ({
+      assets: await materializeProject({ version: document.version, selectedID: state.selectedID, assets: state.assets }, files),
+      selectedID: state.selectedID,
+      selectedIDs: state.selectedIDs?.filter((assetID) => state.assets.some((asset) => asset.id === assetID)) || (state.selectedID ? [state.selectedID] : []),
+      playhead: Number.isFinite(state.playhead) ? Math.max(0, state.playhead) : 0,
+    });
+    const storedHistory = document.history;
+    const restoredHistory: EditorHistory = {
+      undo: await Promise.all((storedHistory?.undo || []).slice(-HISTORY_LIMIT).map(restoreHistoryState)),
+      redo: await Promise.all((storedHistory?.redo || []).slice(-HISTORY_LIMIT).map(restoreHistoryState)),
+    };
     setAssets((current) => {
       current.forEach((asset) => URL.revokeObjectURL(asset.url));
       return restored;
@@ -707,8 +1036,9 @@ export default function StudioPage() {
     setSelectedID(restoredSelected);
     setSelectedIDs(restoredSelected ? [restoredSelected] : []);
     setPlayhead(restored.find((asset) => asset.id === restoredSelected)?.timelineStart || 0);
+    replaceEditHistory(restoredHistory);
     window.history.replaceState({}, '', `/studio?project=${encodeURIComponent(id)}`);
-  }, []);
+  }, [replaceEditHistory]);
 
   const fetchCloudProject = useCallback(async (id: string, apiKey: string) => {
     const response = await fetch(`/api/studio/projects/${encodeURIComponent(id)}`, { headers: authHeaders(apiKey, false) });
@@ -748,6 +1078,7 @@ export default function StudioPage() {
     assets.forEach((asset) => URL.revokeObjectURL(asset.url));
     const id = uid();
     setAssets([]); setSelectedID(''); setSelectedIDs([]); setPlayhead(0);
+    replaceEditHistory({ undo: [], redo: [] });
     setProjectID(id); setProjectName('Untitled project'); setProjectMenuOpen(false);
     window.history.replaceState({}, '', `/studio?project=${encodeURIComponent(id)}`);
     setSaveStatus(user ? 'Saving to cloud…' : 'Saving locally…');
@@ -767,8 +1098,8 @@ export default function StudioPage() {
       if (data.studio?.upscale_base_usd && data.studio?.upscale_output_mp_second_usd) {
         setUpscaleRates({ base: data.studio.upscale_base_usd, outputMPSecond: data.studio.upscale_output_mp_second_usd });
       }
-      if (data.h3_video_estimate?.estimated_cost_usd) setH3AudioEstimateUSD(data.h3_video_estimate.estimated_cost_usd);
-      const ttsPrice = Array.isArray(data.pricing) ? data.pricing.find((item: { service?: string }) => item.service === 'tts')?.price_usd : 0;
+      if (data.video_estimate?.estimated_cost_usd) setH3AudioEstimateUSD(data.video_estimate.estimated_cost_usd);
+      const ttsPrice = Array.isArray(data.pricing) ? data.pricing.find((item: { service?: string }) => item.service === 'speech')?.price_usd : 0;
       if (ttsPrice) setTTSPer100USD(ttsPrice);
     }).catch(() => undefined);
     return () => assets.forEach((asset) => URL.revokeObjectURL(asset.url));
@@ -777,20 +1108,70 @@ export default function StudioPage() {
   }, []);
 
   useEffect(() => {
-    if (!user?.api_key) { setGenerationJobs([]); return; }
+    if (!user?.api_key) {
+      setGenerationJobs([]);
+      return;
+    }
     let cancelled = false;
+    let timer = 0;
+    let inFlight = false;
+    let rerun = false;
+    let failures = 0;
+    const controller = new AbortController();
+    const schedule = (delay: number) => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void loadJobs(), delay);
+    };
     const loadJobs = async () => {
+      if (inFlight) { rerun = true; return; }
+      inFlight = true;
       try {
-        const response = await fetch('/api/video-jobs', { headers: authHeaders(user.api_key, false) });
+        const response = await fetch('/api/video-jobs', { headers: authHeaders(user.api_key, false), signal: controller.signal });
         const data = await parseJSONResponse<{ jobs?: GenerationJob[] }>(response, 'Could not load generations');
-        if (!cancelled) setGenerationJobs(data.jobs || []);
+        const listed = data.jobs || [];
+        const refreshed = new Map<string, GenerationJob>();
+        for (let index = 0; index < listed.length; index += 4) {
+          const batch = listed.slice(index, index + 4);
+          const statuses = await Promise.allSettled(batch.map(async (job) => {
+            if (!isActiveGeneration(job)) return job;
+            const statusResponse = await fetch(`/api/video-jobs/${encodeURIComponent(job.job_id)}`, {
+              headers: authHeaders(user.api_key, false),
+              signal: controller.signal,
+            });
+            const statusData = await parseJSONResponse<{ job?: GenerationJob }>(statusResponse, 'Could not refresh generation');
+            return statusData.job || job;
+          }));
+          statuses.forEach((status, offset) => refreshed.set(batch[offset].job_id, status.status === 'fulfilled' ? status.value : batch[offset]));
+        }
+        const next = listed.map((job) => refreshed.get(job.job_id) || job);
+        failures = 0;
+        if (!cancelled) setGenerationJobs((current) => mergeGenerationJobs(current, next));
+        const hasActive = next.some(isActiveGeneration);
+        schedule(document.hidden ? 30_000 : hasActive ? 2_500 : 12_000);
       } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load generations');
+        if (!cancelled && !(reason instanceof DOMException && reason.name === 'AbortError')) {
+          failures += 1;
+          schedule(Math.min(30_000, 2_500 * (2 ** failures)));
+        }
+      } finally {
+        inFlight = false;
+        if (!cancelled && rerun) { rerun = false; schedule(0); }
       }
     };
     void loadJobs();
-    const interval = window.setInterval(() => void loadJobs(), 5000);
-    return () => { cancelled = true; window.clearInterval(interval); };
+    const wake = () => schedule(0);
+    const visibilityChanged = () => { if (!document.hidden) wake(); };
+    window.addEventListener('focus', wake);
+    window.addEventListener('online', wake);
+    document.addEventListener('visibilitychange', visibilityChanged);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', wake);
+      window.removeEventListener('online', wake);
+      document.removeEventListener('visibilitychange', visibilityChanged);
+    };
   }, [user?.api_key]);
 
   useEffect(() => {
@@ -803,6 +1184,26 @@ export default function StudioPage() {
   }, []);
 
   useEffect(() => {
+    if (mediaBrowserMode === 'project') return;
+    void searchStudioMedia(mediaBrowserMode, mediaSearch);
+    // Switching library modes should immediately populate useful public work.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaBrowserMode]);
+
+  useEffect(() => {
+    if (selected?.text) setTextDraft({ ...selected.text });
+  }, [selected?.id, selected?.text]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [menuOpen]);
+
+  useEffect(() => {
     window.localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify(exportSettings));
   }, [exportSettings]);
 
@@ -810,28 +1211,44 @@ export default function StudioPage() {
     let cancelled = false;
     void (async () => {
       const storedUser = loadStoredUser();
-      const requestedID = new URLSearchParams(window.location.search).get('project');
+      const params = new URLSearchParams(window.location.search);
+      const hasMediaHandoff = Boolean((params.get('video_url') || params.get('image_url'))?.trim());
+      const forceNewProject = hasMediaHandoff || params.get('new') === '1';
+      const requestedID = forceNewProject ? null : params.get('project');
       try {
-        const local = await loadLocalStudioProject(requestedID);
-        if (cancelled) return;
-        if (local) {
-          await applyProject(local.id, local.name, local.document, local.files);
+        if (forceNewProject) {
+          const id = uid();
+          mediaHandoffProjectIDRef.current = id;
+          setProjectID(id);
+          setProjectName(params.get('name')?.trim().slice(0, 80) || 'Untitled project');
         } else if (storedUser && requestedID) {
-          const cloud = await fetchCloudProject(requestedID, storedUser.api_key);
+          const local = await loadLocalStudioProject(requestedID);
           if (cancelled) return;
-          await applyProject(cloud.id, cloud.name, cloud.document!);
-        } else if (storedUser) {
-          const projects = await refreshCloudProjects(storedUser.api_key).catch(() => []);
-          if (cancelled) return;
-          if (projects[0]) {
-            const cloud = await fetchCloudProject(projects[0].id, storedUser.api_key);
+          if (local) {
+            await applyProject(local.id, local.name, local.document, local.files);
+          } else {
+            const cloud = await fetchCloudProject(requestedID, storedUser.api_key);
             if (cancelled) return;
             await applyProject(cloud.id, cloud.name, cloud.document!);
+          }
+        } else {
+          const local = await loadLocalStudioProject(requestedID);
+          if (cancelled) return;
+          if (local) {
+            await applyProject(local.id, local.name, local.document, local.files);
+          } else if (storedUser) {
+            const projects = await refreshCloudProjects(storedUser.api_key).catch(() => []);
+            if (cancelled) return;
+            if (projects[0]) {
+              const cloud = await fetchCloudProject(projects[0].id, storedUser.api_key);
+              if (cancelled) return;
+              await applyProject(cloud.id, cloud.name, cloud.document!);
+            } else {
+              setProjectID(uid());
+            }
           } else {
             setProjectID(uid());
           }
-        } else {
-          setProjectID(uid());
         }
       } catch (reason) {
         if (!cancelled) {
@@ -851,14 +1268,20 @@ export default function StudioPage() {
 
   useEffect(() => {
     if (!projectReady || !projectID || !user) return;
-    const pending = assets.filter((asset) => !asset.cloudURL && !uploadInFlightRef.current.has(asset.id));
+    const retainedAssets = [
+      ...assets,
+      ...editHistory.undo.flatMap((state) => state.assets),
+      ...editHistory.redo.flatMap((state) => state.assets),
+    ];
+    const pending = [...new Map(retainedAssets.map((asset) => [asset.file, asset])).values()]
+      .filter((asset) => !asset.cloudURL && !uploadInFlightRef.current.has(asset.file));
     if (!pending.length) return;
     let started = false;
     const start = () => {
       started = true;
       const batch = pending.slice(0, 2);
-      batch.forEach((asset) => uploadInFlightRef.current.add(asset.id));
-      setSaveStatus(`Uploading ${assets.filter((asset) => !asset.cloudURL).length} asset${assets.filter((asset) => !asset.cloudURL).length === 1 ? '' : 's'}…`);
+      batch.forEach((asset) => uploadInFlightRef.current.add(asset.file));
+      setSaveStatus(`Uploading ${pending.length} asset${pending.length === 1 ? '' : 's'}…`);
       void Promise.all(batch.map(async (asset) => {
         const fallbackType = asset.kind === 'video' ? 'video/mp4' : asset.kind === 'audio' ? 'audio/wav' : 'image/png';
         const contentType = asset.file.type || fallbackType;
@@ -870,13 +1293,22 @@ export default function StudioPage() {
           const prepared = await parseJSONResponse<{ upload_url: string; public_url: string; object_key: string }>(response, `Could not upload ${asset.name}`);
           const uploaded = await fetch(prepared.upload_url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: asset.file });
           if (!uploaded.ok) throw new Error(`Asset upload failed (${uploaded.status})`);
-          setAssets((current) => current.map((item) => item.id === asset.id ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item));
+          // Do not attach an upload URL to a newer file revision that reused
+          // the same asset ID (editable text can change while upload is live).
+          setAssets((current) => current.map((item) => item.id === asset.id && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item));
+          replaceEditHistory((current) => ({
+            undo: current.undo.map((state) => ({ ...state, assets: state.assets.map((item) => item.id === asset.id && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
+            redo: current.redo.map((state) => ({ ...state, assets: state.assets.map((item) => item.id === asset.id && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
+          }));
         } catch (reason) {
           setSaveStatus('Cloud upload will retry');
           setError(reason instanceof Error ? reason.message : `Could not upload ${asset.name}`);
           window.setTimeout(() => setSyncRetry((value) => value + 1), 5000);
         } finally {
-          uploadInFlightRef.current.delete(asset.id);
+          uploadInFlightRef.current.delete(asset.file);
+          // If a newer revision was skipped while this ID was in flight, give
+          // the uploader another pass even when no other state changed.
+          setSyncRetry((value) => value + 1);
         }
       }));
     };
@@ -887,15 +1319,20 @@ export default function StudioPage() {
       if (!started && idleID !== undefined) idleWindow.cancelIdleCallback?.(idleID);
       if (!started && timerID !== undefined) window.clearTimeout(timerID);
     };
-  }, [assets, projectID, projectReady, syncRetry, user]);
+  }, [assets, editHistory, projectID, projectReady, replaceEditHistory, syncRetry, user]);
 
   useEffect(() => {
     if (!projectReady || !projectID) return;
     const sequence = ++projectSaveSequenceRef.current;
     setSaveStatus(user ? (assets.some((asset) => !asset.cloudURL) ? 'Uploading assets…' : 'Saving to cloud…') : 'Saving locally…');
     const timer = window.setTimeout(() => {
-      const document = projectDocument(assets, selectedID);
-      const files = new Map(assets.map((asset) => [asset.id, asset.file]));
+      const document = projectDocument(assets, selectedID, editHistory);
+      const retainedAssets = [
+        ...assets,
+        ...editHistory.undo.flatMap((state) => state.assets),
+        ...editHistory.redo.flatMap((state) => state.assets),
+      ];
+      const files = new Map(retainedAssets.map((asset) => [asset.id, asset.file]));
       const local: LocalStudioProject = { id: projectID, name: projectName, document, files, updatedAt: Date.now() };
       void saveLocalStudioProject(local).then(async () => {
         if (sequence !== projectSaveSequenceRef.current) return;
@@ -919,7 +1356,7 @@ export default function StudioPage() {
       });
     }, 650);
     return () => window.clearTimeout(timer);
-  }, [assets, projectID, projectName, projectReady, selectedID, syncRetry, user]);
+  }, [assets, editHistory, projectID, projectName, projectReady, selectedID, syncRetry, user]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -947,7 +1384,8 @@ export default function StudioPage() {
       .then((imported) => {
         const first = imported?.[0];
         setNotice(`Gallery ${isVideo ? 'video' : 'image'} added to the studio`);
-        window.history.replaceState({}, '', '/studio');
+        const projectID = mediaHandoffProjectIDRef.current;
+        window.history.replaceState({}, '', projectID ? `/studio?project=${encodeURIComponent(projectID)}` : '/studio');
         if (isVideo && params.get('restyle') === '1' && first?.kind === 'video') openRestyle(first);
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : `Could not load the gallery ${isVideo ? 'video' : 'image'}`));
@@ -1071,7 +1509,7 @@ export default function StudioPage() {
           id: uid(), name: file.name, kind, file, url: URL.createObjectURL(file),
           ...metadata, trimStart: 0, trimEnd: metadata.duration,
           timelineStart, visualTrack: kind === 'audio' ? 0 : visualTrackPlacement, volume: 1, fadeIn: 0, fadeOut: 0,
-          stageX: 0, stageY: 0,
+          stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0,
           adjustments: { ...DEFAULT_ADJUSTMENTS },
         });
         if (kind === 'audio') {
@@ -1097,33 +1535,111 @@ export default function StudioPage() {
     return next;
   }
 
-  async function addGeneratedFile(file: File, kind: MediaKind, attribution?: string) {
-    const metadata = await readDimensions(file, kind);
-    const visualEnd = assets.filter((item) => item.kind !== 'audio').reduce((end, item) => Math.max(end, clipEnd(item)), 0);
-    const asset: StudioAsset = {
-      id: uid(), name: file.name, kind, file, url: URL.createObjectURL(file), ...metadata,
-      trimStart: 0, trimEnd: metadata.duration, timelineStart: kind === 'audio' ? playhead : visualEnd, volume: 1, fadeIn: 0, fadeOut: 0,
-      visualTrack: 0,
-      stageX: 0, stageY: 0,
-      attribution, adjustments: { ...DEFAULT_ADJUSTMENTS },
-    };
-    setAssets((current) => [...current, asset]);
-    selectOnly(asset.id);
-    setPlayhead(asset.timelineStart);
-    return asset;
-  }
-
   async function addGenerationToTimeline(job: GenerationJob) {
     const url = resultURL(job.result);
     if (!url) return;
+    setError('');
     try {
       const response = await fetch(url);
       if (!response.ok) throw new Error('Could not download this generated video');
       const blob = await response.blob();
-      const extension = blob.type.includes('webm') || url.includes('.webm') ? 'webm' : 'mp4';
-      await importFiles([new File([blob], `manifold-generation-${job.job_id.slice(-8)}.${extension}`, { type: blob.type || 'video/webm' })]);
+      const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
+      await importFiles([new File([blob], `manifold-generation-${job.job_id.slice(-8)}.${extension}`, { type: blob.type || 'video/mp4' })]);
       setNotice('Generated video added to this project');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add generated video'); }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not add generated video');
+    }
+  }
+
+  async function addRemoteMedia(url: string, name: string, kind: 'image' | 'video', attribution: string) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Could not download this ${kind}`);
+    const blob = await response.blob();
+    const fallback = kind === 'image' ? 'webp' : 'mp4';
+    const extension = blob.type.split('/')[1]?.replace('jpeg', 'jpg').replace('quicktime', 'mov') || fallback;
+    return addGeneratedFile(new File([blob], `${name.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 72) || kind}.${extension}`, { type: blob.type || `${kind}/${fallback}` }), kind, attribution);
+  }
+
+  async function addDiscoveredMedia(url: string, prompt: string, kind: 'image' | 'video') {
+    if (!url) return;
+    setBusy('import-discovery');
+    setError('');
+    try {
+      await addRemoteMedia(url, prompt || `Community ${kind}`, kind, `Community ${kind} · ${prompt}`);
+      setNotice(`Community ${kind} added to the timeline`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : `Could not add ${kind}`);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function searchStudioMedia(mode: Exclude<MediaBrowserMode, 'project'>, query = mediaSearch) {
+    setMediaSearchBusy(true);
+    setError('');
+    try {
+      const q = query.trim();
+      if (mode === 'videos') {
+        const endpoint = q ? `/api/search?q=${encodeURIComponent(q)}&top_k=24` : '/api/videos/featured?limit=24';
+        const response = await fetch(endpoint);
+        const data = await parseJSONResponse<{ results?: StudioVideoHit[] }>(response, 'Could not search videos');
+        setVideoHits((data.results || []).filter((item) => item.video_url));
+      } else if (mode === 'images') {
+        const endpoint = q ? `/api/images/semantic?q=${encodeURIComponent(q)}&top_k=24` : '/api/images?skip_total=true&varied=true&per_page=24&allow_nsfw=true';
+        const response = await fetch(endpoint);
+        const data = await parseJSONResponse<{ results?: StudioImageHit[]; images?: StudioImageHit[] }>(response, 'Could not search images');
+        setImageHits(data.results || data.images || []);
+      } else {
+        const params = new URLSearchParams({ q, kind: 'music', limit: '24' });
+        const response = await fetch(`/api/studio/audio-search?${params}`);
+        const data = await parseJSONResponse<{ results?: AudioCatalogAsset[] }>(response, 'Could not search music');
+        setAudioResults(data.results || []);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : `Could not search ${mode}`);
+    } finally {
+      setMediaSearchBusy(false);
+    }
+  }
+
+  async function generateStudioImages() {
+    if (!user) { setError('Sign in to generate images'); return; }
+    const prompt = imagePrompt.trim();
+    if (!prompt) return;
+    setBusy('generate-images');
+    setError('');
+    setNotice('Finding related work while your images render…');
+    setMediaBrowserMode('images');
+    setMediaSearch(prompt);
+    const discovery = searchStudioMedia('images', prompt);
+    try {
+      const [width, height] = h3Dimensions(imageAspect, 'balanced');
+      const response = await fetch('/api/service', {
+        method: 'POST', headers: authHeaders(user.api_key),
+        body: JSON.stringify({ service: 'zimage', prompt, width, height, n: imageCount, num_images: imageCount, image_backend: imageEngine }),
+      });
+      const data = await parseJSONResponse<unknown>(response, 'Image generation failed');
+      const generated = generatedImageItems(data).slice(0, imageCount);
+      if (!generated.length) throw new Error('Image generation returned no images');
+      const imported: StudioAsset[] = [];
+      for (const [index, item] of generated.entries()) {
+        if (item.base64) {
+          const file = base64File(item.base64.replace(/^data:[^,]+,/, ''), 'image/webp', `generated-${index + 1}.webp`);
+          imported.push(await addGeneratedFile(file, 'image', `${imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
+        } else if (item.url) {
+          imported.push(await addRemoteMedia(item.url, `generated-${index + 1}`, 'image', `${imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
+        }
+      }
+      if (!imported.length) throw new Error('Generated images could not be imported');
+      const refreshed = await refreshUser(user.api_key).catch(() => null);
+      if (refreshed) { setUser(refreshed); saveUser(refreshed); }
+      setNotice(`${imported.length} generated image${imported.length === 1 ? '' : 's'} added · similar work shown below`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Image generation failed');
+    } finally {
+      await discovery;
+      setBusy('');
+    }
   }
 
   async function deleteGeneration(jobID: string) {
@@ -1133,16 +1649,97 @@ export default function StudioPage() {
       await parseJSONResponse(response, 'Could not delete generation');
       setGenerationJobs((current) => current.filter((job) => job.job_id !== jobID));
       setNotice('Generation removed from your media library');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not delete generation'); }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not delete generation');
+    }
+  }
+
+  async function retryGeneration(jobID: string) {
+    if (!user?.api_key) return;
+    setError('');
+    try {
+      const response = await fetch(`/api/video-jobs/${encodeURIComponent(jobID)}/retry`, {
+        method: 'POST',
+        headers: authHeaders(user.api_key, false),
+      });
+      const data = await parseJSONResponse<{ job?: GenerationJob }>(response, 'Could not retry generation');
+      setGenerationJobs((current) => current.map((job) => (
+        job.job_id === jobID ? (data.job || { ...job, status: 'queued', error: '', updated_at: new Date().toISOString() }) : job
+      )));
+      setNotice('Generation queued for retry');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not retry generation');
+    }
+  }
+
+  async function copyGenerationPrompt(job: GenerationJob) {
+    if (!job.prompt?.trim()) return;
+    setGenerationContextMenu(null);
+    try {
+      await navigator.clipboard.writeText(job.prompt);
+      setNotice('Generation prompt copied');
+    } catch {
+      setError('Could not copy the prompt');
+    }
+  }
+
+  function generateSimilar(job: GenerationJob) {
+    if (!job.prompt?.trim()) return;
+    setVideoGeneratePrompt(job.prompt);
+    setVideoGenerateQueueStatus('');
+    setVideoGenerateOpen(true);
+    setGenerationContextMenu(null);
+  }
+
+  async function addGeneratedFile(file: File, kind: MediaKind, attribution?: string, text?: StudioTextStyle) {
+    const metadata = await readDimensions(file, kind);
+    const visualEnd = assets.filter((item) => item.kind !== 'audio').reduce((end, item) => Math.max(end, clipEnd(item)), 0);
+    const asset: StudioAsset = {
+      id: uid(), name: file.name, kind, file, url: URL.createObjectURL(file), ...metadata,
+      trimStart: 0, trimEnd: metadata.duration, timelineStart: kind === 'audio' ? playhead : visualEnd, volume: 1, fadeIn: 0, fadeOut: 0,
+      visualTrack: 0,
+      stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0,
+      attribution, text, adjustments: { ...DEFAULT_ADJUSTMENTS },
+    };
+    setAssets((current) => [...current, asset]);
+    selectOnly(asset.id);
+    setPlayhead(asset.timelineStart);
+    return asset;
+  }
+
+  async function addText(style: StudioTextStyle) {
+    setError('');
+    try {
+      const file = await renderTextFile(style);
+      await addGeneratedFile(file, 'image', 'Editable text', { ...style });
+      setNotice('Text added to the timeline');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not add text');
+    }
+  }
+
+  async function updateSelectedText() {
+    if (!selected?.text || !textDraft.content.trim()) return;
+    setError('');
+    try {
+      const file = await renderTextFile(textDraft);
+      rememberEdit();
+      const url = URL.createObjectURL(file);
+      setAssets((current) => current.map((asset) => asset.id === selected.id ? {
+        ...asset, name: file.name, file, url, width: 1920, height: 1080, text: { ...textDraft }, cloudURL: undefined, objectKey: undefined,
+      } : asset));
+      setNotice('Text updated');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not update text');
+    }
   }
 
   function removeSelected() {
     if (!selectedIDs.length) return;
-    const removed = assets.filter((item) => selectedIDs.includes(item.id));
     const remaining = assets.filter((item) => !selectedIDs.includes(item.id));
-    removed.forEach((asset) => {
-      if (!remaining.some((item) => item.url === asset.url)) URL.revokeObjectURL(asset.url);
-    });
+    // Keep the files and object URLs alive in the history snapshot so Ctrl/Cmd
+    // + Z can restore a deleted clip, including after the project syncs.
+    rememberEdit();
     setAssets(remaining);
     selectOnly(remaining[0]?.id || '');
   }
@@ -1158,7 +1755,7 @@ export default function StudioPage() {
       stageY: Math.min(0.48, asset.stageY + 0.02),
       adjustments: { ...asset.adjustments },
     }));
-    setAssets((items) => [...items, ...copies]);
+    setAssets((items) => stackOverlappingVisuals([...items, ...copies]));
     setSelectedIDs(copies.map((asset) => asset.id));
     setSelectedID(copies.at(-1)?.id || '');
   }
@@ -1177,7 +1774,7 @@ export default function StudioPage() {
       setNotice(direction > 0 ? 'Selection is already on the top layer' : 'Selection is already on V1');
       return;
     }
-    setAssets((current) => current.map((asset) => selectedSet.has(asset.id) ? { ...asset, visualTrack: asset.visualTrack + delta } : asset));
+    setAssets((current) => moveVisualLayersWithSwap(current, selectedSet, delta));
     const destination = direction > 0 ? `V${selectedMax + delta + 1}` : `V${selectedMin + delta + 1}`;
     setNotice(`${selectedVisuals.length === 1 ? selectedVisuals[0].name : `${selectedVisuals.length} elements`} moved to ${destination}`);
   }
@@ -1205,7 +1802,7 @@ export default function StudioPage() {
       timelineStart: playhead + asset.timelineStart - groupStart,
       adjustments: { ...asset.adjustments },
     }));
-    setAssets((current) => [...current, ...pasted]);
+    setAssets((current) => stackOverlappingVisuals([...current, ...pasted]));
     setSelectedIDs(pasted.map((asset) => asset.id));
     setSelectedID(pasted.at(-1)?.id || '');
     setNotice(`${pasted.length === 1 ? pasted[0].name : `${pasted.length} clips`} pasted at ${formatTime(playhead)}`);
@@ -1333,6 +1930,24 @@ export default function StudioPage() {
 
   function beginScrub(event: ReactPointerEvent<HTMLElement>) {
     if (event.button !== 0) return;
+    if (event.shiftKey) {
+      const rect = timelineCanvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      event.preventDefault();
+      timelineDragRef.current = {
+        mode: 'marquee', pointerID: event.pointerId,
+        startX: event.clientX, startY: event.clientY,
+        pixelsPerSecond, trackHeight: 1, didMove: false, trackDelta: 0,
+        originals: new Map(), baseSelection: [...selectedIDs], marqueeIDs: [...selectedIDs],
+      };
+      setTimelineMarquee({
+        left: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+        top: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+        width: 0, height: 0,
+      });
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      return;
+    }
     timelineDragRef.current = {
       mode: 'scrub',
       pointerID: event.pointerId,
@@ -1351,6 +1966,31 @@ export default function StudioPage() {
   function moveTimelinePointer(event: ReactPointerEvent<HTMLElement>) {
     const drag = timelineDragRef.current;
     if (!drag || drag.pointerID !== event.pointerId) return;
+    if (drag.mode === 'marquee') {
+      const canvas = timelineCanvasRef.current;
+      const rect = canvas?.getBoundingClientRect();
+      if (!canvas || !rect) return;
+      const startX = Math.max(0, Math.min(rect.width, drag.startX - rect.left));
+      const startY = Math.max(0, Math.min(rect.height, drag.startY - rect.top));
+      const currentX = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+      const currentY = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+      const selection = { left: Math.min(startX, currentX), top: Math.min(startY, currentY), width: Math.abs(currentX - startX), height: Math.abs(currentY - startY) };
+      setTimelineMarquee(selection);
+      drag.didMove = selection.width > 2 || selection.height > 2;
+      const selectionRight = rect.left + selection.left + selection.width;
+      const selectionBottom = rect.top + selection.top + selection.height;
+      const selectionLeft = rect.left + selection.left;
+      const selectionTop = rect.top + selection.top;
+      const hitIDs = [...canvas.querySelectorAll<HTMLElement>('[data-timeline-asset]')].filter((element) => {
+        const clip = element.getBoundingClientRect();
+        return clip.right >= selectionLeft && clip.left <= selectionRight && clip.bottom >= selectionTop && clip.top <= selectionBottom;
+      }).map((element) => element.dataset.timelineAsset || '').filter(Boolean);
+      const next = [...new Set([...(drag.baseSelection || []), ...hitIDs])];
+      drag.marqueeIDs = next;
+      setSelectedIDs(next);
+      setSelectedID(hitIDs.at(-1) || next.at(-1) || '');
+      return;
+    }
     if (drag.mode === 'scrub') {
       seekTimeline(timelineTimeAt(event.clientX, drag.pixelsPerSecond));
       return;
@@ -1400,15 +2040,30 @@ export default function StudioPage() {
     if (drag.mode === 'move' && drag.didMove && drag.trackDelta) {
       setNotice(`Moved ${drag.originals.size === 1 ? 'clip' : `${drag.originals.size} clips`} ${Math.abs(drag.trackDelta)} layer${Math.abs(drag.trackDelta) === 1 ? '' : 's'} ${drag.trackDelta > 0 ? 'up' : 'down'}`);
     }
+    if (drag.mode === 'move' && drag.didMove) {
+      const movedIDs = new Set(drag.originals.keys());
+      setAssets((current) => drag.trackDelta
+        ? moveVisualLayersWithSwap(current.map((asset) => {
+          const original = drag.originals.get(asset.id);
+          return original && asset.kind !== 'audio' ? { ...asset, visualTrack: original.visualTrack } : asset;
+        }), movedIDs, drag.trackDelta)
+        : stackOverlappingVisuals(current));
+    }
+    if (drag.mode === 'marquee') {
+      const count = drag.marqueeIDs?.length || 0;
+      if (drag.didMove && count > 1) setNotice(`${count} timeline items selected`);
+      setTimelineMarquee(null);
+    }
     timelineDragRef.current = null;
   }
 
-  function beginStageDrag(event: ReactPointerEvent<HTMLDivElement>, asset: StudioAsset) {
+  function beginStageDrag(event: ReactPointerEvent<HTMLElement>, asset: StudioAsset) {
     if (asset.kind === 'audio' || (event.pointerType === 'mouse' && event.button !== 0)) return;
     event.preventDefault();
     const rect = stageRef.current?.getBoundingClientRect();
     if (!rect) return;
     stageDragRef.current = {
+      mode: 'move',
       assetID: asset.id,
       pointerID: event.pointerId,
       startX: event.clientX,
@@ -1419,16 +2074,64 @@ export default function StudioPage() {
       currentY: asset.stageY,
       stageWidth: rect.width,
       stageHeight: rect.height,
+      originScale: asset.stageScale,
+      originRotation: asset.stageRotation,
+      currentScale: asset.stageScale,
+      currentRotation: asset.stageRotation,
+      centerX: rect.left + rect.width * (0.5 + asset.stageX),
+      centerY: rect.top + rect.height * (0.5 + asset.stageY),
+      startDistance: 1,
+      startAngle: 0,
     };
     selectOnly(asset.id);
-    setStageDragPosition({ assetID: asset.id, x: asset.stageX, y: asset.stageY });
+    setStageDragPosition({ assetID: asset.id, x: asset.stageX, y: asset.stageY, scale: asset.stageScale, rotation: asset.stageRotation });
     event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
-  function moveStagePointer(event: ReactPointerEvent<HTMLDivElement>) {
+  function beginStageTransform(event: ReactPointerEvent<HTMLElement>, asset: StudioAsset, mode: 'scale' | 'rotate') {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = stageRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const centerX = rect.left + rect.width * (0.5 + asset.stageX);
+    const centerY = rect.top + rect.height * (0.5 + asset.stageY);
+    const startAngle = Math.atan2(event.clientY - centerY, event.clientX - centerX);
+    stageDragRef.current = {
+      mode, assetID: asset.id, pointerID: event.pointerId,
+      startX: event.clientX, startY: event.clientY,
+      originX: asset.stageX, originY: asset.stageY,
+      currentX: asset.stageX, currentY: asset.stageY,
+      stageWidth: rect.width, stageHeight: rect.height,
+      originScale: asset.stageScale, originRotation: asset.stageRotation,
+      currentScale: asset.stageScale, currentRotation: asset.stageRotation,
+      centerX, centerY,
+      startDistance: Math.max(1, Math.hypot(event.clientX - centerX, event.clientY - centerY)),
+      startAngle,
+    };
+    selectOnly(asset.id);
+    setStageDragPosition({ assetID: asset.id, x: asset.stageX, y: asset.stageY, scale: asset.stageScale, rotation: asset.stageRotation });
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function moveStagePointer(event: ReactPointerEvent<HTMLElement>) {
     const drag = stageDragRef.current;
     if (!drag || drag.pointerID !== event.pointerId) return;
+    if (drag.mode === 'scale') {
+      const distance = Math.hypot(event.clientX - drag.centerX, event.clientY - drag.centerY);
+      drag.currentScale = Math.max(0.1, Math.min(4, drag.originScale * distance / drag.startDistance));
+      setStageDragPosition({ assetID: drag.assetID, x: drag.currentX, y: drag.currentY, scale: drag.currentScale, rotation: drag.currentRotation });
+      return;
+    }
+    if (drag.mode === 'rotate') {
+      const angle = Math.atan2(event.clientY - drag.centerY, event.clientX - drag.centerX);
+      let rotation = drag.originRotation + (angle - drag.startAngle) * 180 / Math.PI;
+      if (event.shiftKey) rotation = Math.round(rotation / 15) * 15;
+      drag.currentRotation = ((rotation + 180) % 360 + 360) % 360 - 180;
+      setStageDragPosition({ assetID: drag.assetID, x: drag.currentX, y: drag.currentY, scale: drag.currentScale, rotation: drag.currentRotation });
+      return;
+    }
     let x = Math.max(-0.48, Math.min(0.48, drag.originX + (event.clientX - drag.startX) / drag.stageWidth));
     let y = Math.max(-0.48, Math.min(0.48, drag.originY + (event.clientY - drag.startY) / drag.stageHeight));
     const vertical = Math.abs(x) * drag.stageWidth <= 6;
@@ -1438,13 +2141,16 @@ export default function StudioPage() {
     drag.currentX = x;
     drag.currentY = y;
     setStageGuides({ horizontal, vertical });
-    setStageDragPosition({ assetID: drag.assetID, x, y });
+    setStageDragPosition({ assetID: drag.assetID, x, y, scale: drag.currentScale, rotation: drag.currentRotation });
   }
 
-  function endStagePointer(event: ReactPointerEvent<HTMLDivElement>) {
+  function endStagePointer(event: ReactPointerEvent<HTMLElement>) {
     const drag = stageDragRef.current;
     if (!drag || drag.pointerID !== event.pointerId) return;
-    updateAsset(drag.assetID, { stageX: drag.currentX, stageY: drag.currentY });
+    updateAsset(drag.assetID, {
+      stageX: drag.currentX, stageY: drag.currentY,
+      stageScale: drag.currentScale, stageRotation: drag.currentRotation,
+    });
     stageDragRef.current = null;
     setStageDragPosition(null);
     setStageGuides({ horizontal: false, vertical: false });
@@ -1500,6 +2206,18 @@ export default function StudioPage() {
         || target?.tagName === 'TEXTAREA'
         || target?.tagName === 'SELECT'
         || (target?.tagName === 'INPUT' && /^(text|search|email|password|url|tel|number)$/i.test((target as HTMLInputElement).type));
+      if (helpOpen) {
+        if (event.key === 'Escape' || (event.key === '?' && !isTextEntry)) {
+          event.preventDefault();
+          setHelpOpen(false);
+        }
+        return;
+      }
+      if (event.key === '?' && !isTextEntry && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        setHelpOpen(true);
+        return;
+      }
       if (event.code === 'Space') {
         if (isTextEntry || event.repeat) return;
         event.preventDefault();
@@ -1508,7 +2226,13 @@ export default function StudioPage() {
       }
       if (target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName || '')) return;
       const commandKey = event.metaKey || event.ctrlKey;
-      if (commandKey && event.key.toLowerCase() === 'c' && selectedAssets.length) {
+      if (commandKey && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) redo(); else undo();
+      } else if (commandKey && event.key.toLowerCase() === 'y') {
+        event.preventDefault();
+        redo();
+      } else if (commandKey && event.key.toLowerCase() === 'c' && selectedAssets.length) {
         event.preventDefault();
         copyTimelineSelection();
       } else if (commandKey && event.key.toLowerCase() === 'v') {
@@ -1543,6 +2267,88 @@ export default function StudioPage() {
     const put = await fetch(data.upload_url, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
     if (!put.ok) throw new Error('Asset upload failed');
     return data.public_url;
+  }
+
+  async function startStudioVideoGeneration(prompt: string, selectedImageURL = '') {
+    if (!user) throw new Error('Sign in to generate videos');
+    let firstFrame = selectedImageURL;
+    if (videoGenerateLoop) {
+      const [width, height] = h3Dimensions(videoGenerateAspect, videoGenerateSize);
+      const imageResponse = await fetch('/api/service', {
+        method: 'POST',
+        headers: authHeaders(user.api_key),
+        body: JSON.stringify({ service: 'zimage', prompt, width, height, n: 1 }),
+      });
+      const imageData = await parseJSONResponse<Parameters<typeof loopAnchorURL>[0]>(imageResponse, 'Loop keyframe generation failed');
+      firstFrame = loopAnchorURL(imageData, window.location.origin);
+    }
+    const response = await fetch('/api/service', {
+      method: 'POST',
+      headers: authHeaders(user.api_key),
+      body: JSON.stringify({
+        service: 'h3_video',
+        prompt,
+        aspect_ratio: videoGenerateAspect,
+        size: videoGenerateSize,
+        duration: videoGenerateDuration,
+        num_steps: videoGenerateSteps,
+        output_format: videoGenerateFormat,
+        include_audio: videoGenerateAudio,
+        loop: videoGenerateLoop,
+        structured_prompt: true,
+        ...(firstFrame ? { first_frame: firstFrame } : {}),
+      }),
+    });
+    const data = await parseJSONResponse<unknown>(response, 'Could not queue video generation');
+    const jobID = resultJobID(data);
+    if (!jobID) throw new Error('Video generation returned no job');
+    return jobID;
+  }
+
+  async function queueVideoGenerations() {
+    if (!user) {
+      setVideoGenerateQueueStatus('Sign in before queueing a video creation.');
+      return;
+    }
+    if (!videoGeneratePrompts.length) {
+      setVideoGenerateQueueStatus('Enter at least one video prompt.');
+      return;
+    }
+    setMediaBrowserMode('videos');
+    setMediaSearch(videoGeneratePrompts[0]);
+    void searchStudioMedia('videos', videoGeneratePrompts[0]);
+    setBusy('generate-videos');
+    setError('');
+    setVideoGenerateQueueStatus(`Queueing ${videoGeneratePrompts.length} video creation${videoGeneratePrompts.length === 1 ? '' : 's'}…`);
+    try {
+      let selectedImageURL = '';
+      if (videoGenerateUseSelected) {
+        if (selected?.kind !== 'image') throw new Error('Select an image in the timeline or turn off “Use selected image”.');
+        selectedImageURL = selected.cloudURL || await uploadPublic(selected.file);
+      }
+      const submissions = await Promise.allSettled(videoGeneratePrompts.map(async (prompt) => ({
+        prompt,
+        jobID: await startStudioVideoGeneration(prompt, selectedImageURL),
+      })));
+      const queued = submissions
+        .filter((submission): submission is PromiseFulfilledResult<{ prompt: string; jobID: string }> => submission.status === 'fulfilled')
+        .map((submission) => submission.value);
+      if (!queued.length) {
+        const failed = submissions.find((submission): submission is PromiseRejectedResult => submission.status === 'rejected');
+        throw failed?.reason instanceof Error ? failed.reason : new Error('Could not queue any video creations');
+      }
+      const now = new Date().toISOString();
+      setGenerationJobs((current) => [
+        ...queued.map(({ jobID, prompt }) => ({ job_id: jobID, status: 'queued', prompt, created_at: now })),
+        ...current.filter((job) => !queued.some(({ jobID }) => jobID === job.job_id)),
+      ]);
+      const failedCount = submissions.length - queued.length;
+      setVideoGenerateQueueStatus(`${queued.length} video creation${queued.length === 1 ? '' : 's'} queued.${failedCount ? ` ${failedCount} could not be queued.` : ''} You can launch more now.`);
+    } catch (reason) {
+      setVideoGenerateQueueStatus(reason instanceof Error ? reason.message : 'Could not queue video creation');
+    } finally {
+      setBusy('');
+    }
   }
 
   function openRestyle(asset: StudioAsset) {
@@ -1683,9 +2489,9 @@ export default function StudioPage() {
     if (!selected || selected.kind !== 'video') return;
     setBusy('extend'); setError(''); setNotice('Preparing H.264 source for Grok…');
     try {
-      const sourceBlob = await renderSelectedVideo({
+      const sourceBlob = await renderTimelineVideo({
         format: 'mp4-h264', resolution: '720p', frameRate: 'source', quality: 'balanced',
-      });
+      }, selected);
       const sourceFile = new File([sourceBlob], `${selected.name.replace(/\.[^.]+$/, '')}-grok-source.mp4`, { type: 'video/mp4' });
       setNotice('Uploading source video…');
       const videoURL = await uploadPublic(sourceFile);
@@ -1876,14 +2682,15 @@ export default function StudioPage() {
         const data = await parseJSONResponse<{ result?: { audio_base64?: string; content_type?: string; format?: string }; credits_remain?: number }>(response, 'Speech generation failed');
         if (!data.result?.audio_base64) throw new Error('Speech generation returned no audio');
         const format = data.result.format || 'wav';
-        await addGeneratedFile(base64File(data.result.audio_base64, data.result.content_type || 'audio/wav', `speech-${Date.now()}.${format}`), 'audio');
+        const voice = SPEECH_VOICES.find((item) => item.id === speechVoice);
+        await addGeneratedFile(base64File(data.result.audio_base64, data.result.content_type || 'audio/wav', `voice-${speechVoice.toLowerCase()}-${Date.now()}.${format}`), 'audio', voice ? `${voice.name} voice` : 'Generated voice');
         if (typeof data.credits_remain === 'number') {
           const next = { ...user, credits: data.credits_remain }; setUser(next); saveUser(next);
         }
         setNotice(`Speech added · ${speechCredits.toFixed(2)} credits`);
       } else {
 		if (audioMode === 'music') {
-		  setNotice('Generating music with Fal…');
+		  setNotice('Generating music…');
 		  const response = await fetch('/api/studio/generate-music', {
 			method: 'POST', headers: authHeaders(user.api_key), body: JSON.stringify({ prompt: audioPrompt.trim(), duration: audioDuration }),
 		  });
@@ -1892,9 +2699,9 @@ export default function StudioPage() {
 		  const media = await fetch(data.audio_url);
 		  if (!media.ok) throw new Error('Could not download generated music');
 		  const blob = await media.blob();
-		  await addGeneratedFile(new File([blob], `music-${Date.now()}.wav`, { type: blob.type || 'audio/wav' }), 'audio', 'Generated with Fal');
+		  await addGeneratedFile(new File([blob], `music-${Date.now()}.wav`, { type: blob.type || 'audio/wav' }), 'audio', 'Generated music');
 		  if (typeof data.credits_remain === 'number') { const next = { ...user, credits: data.credits_remain }; setUser(next); saveUser(next); }
-		  setNotice('Music added · Fal · 80 credits');
+		  setNotice('Music added · 80 credits');
 		} else {
 		  setNotice('Starting sound generation…');
 		  const prompt = `Sound effect: ${audioPrompt.trim()}`;
@@ -1956,14 +2763,6 @@ export default function StudioPage() {
     }
   }
 
-  async function exportImage() {
-    if (!selected || selected.kind !== 'image' || !canvasRef.current) return;
-    drawCurrent();
-    const blob = await new Promise<Blob | null>((resolve) => canvasRef.current?.toBlob(resolve, 'image/png'));
-    if (!blob) throw new Error('Could not export image');
-    downloadBlob(blob, `${selected.name.replace(/\.[^.]+$/, '')}-graded.png`);
-  }
-
   function downloadBlob(blob: Blob, name: string) {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -1971,16 +2770,29 @@ export default function StudioPage() {
     window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 
-  async function renderSelectedVideo(settings: ExportSettings) {
-    if (!selected || selected.kind !== 'video') throw new Error('Select a video first');
+  async function renderTimelineVideo(settings: ExportSettings, singleAsset?: StudioAsset) {
+    const visualAssets = singleAsset ? [{ ...singleAsset, timelineStart: 0 }] : timelineVisuals;
+    const exportBase = singleAsset || compositionBase;
+    const exportDuration = singleAsset ? clipDuration(singleAsset) : timelineDuration;
+    const exportAssets = singleAsset ? visualAssets : assets;
+    if (!exportBase || !visualAssets.length) throw new Error('Add an image or video to the timeline first');
     setExportProgress(0.01);
-    let input: Input | null = null;
     let output: Output | null = null;
-    let exportRenderer: StudioRenderer | null = null;
+    type ExportVisualState = {
+      asset: StudioAsset;
+      canvas: HTMLCanvasElement;
+      renderer: StudioRenderer;
+      image: HTMLImageElement | null;
+      input: Input | null;
+      iterator: AsyncIterator<VideoSample> | null;
+      current: VideoSample | null;
+      next: VideoSample | null;
+    };
+    const visualStates: ExportVisualState[] = [];
     try {
       const format = exportFormatDetails(settings.format);
       const codec = format.codec;
-      const requestedSize = exportSize(selected.width, selected.height, settings.resolution);
+      const requestedSize = exportSize(exportBase.width, exportBase.height, settings.resolution);
       const qualityLevel = settings.quality === 'draft' ? 'medium' : settings.quality === 'high' ? 'very-high' : 'high';
       const requestedQuality = new Quality(qualityLevel);
       const hardwareSupported = await canEncodeVideo(codec, { ...requestedSize, quality: requestedQuality, hardwareAcceleration: 'prefer-hardware' });
@@ -1989,7 +2801,7 @@ export default function StudioPage() {
       // otherwise, so export never wedges a laptop for minutes per second.
       const { width, height } = hardwareSupported || settings.resolution !== 'source'
         ? requestedSize
-        : fitWithin(selected.width, selected.height, 1920, 1080);
+        : fitWithin(exportBase.width, exportBase.height, 1920, 1080);
       const quality = hardwareSupported ? requestedQuality : new Quality(settings.quality === 'high' ? 'high' : qualityLevel);
       const hardwareAcceleration = hardwareSupported
         ? 'prefer-hardware' as const
@@ -1997,16 +2809,37 @@ export default function StudioPage() {
       if (!(await canEncodeVideo(codec, { width, height, quality, hardwareAcceleration }))) {
         throw new Error(`${format.label} encoding is not available in this browser`);
       }
-      perfDiagnostics().export = { sourceWidth: selected.width, sourceHeight: selected.height, width, height, hardwareAcceleration, hardwareRequested: 'prefer-hardware', startedAt: performance.now(), format: settings.format, frameRate: settings.frameRate, quality: settings.quality };
-      input = new Input({ source: new BlobSource(selected.file), formats: ALL_FORMATS });
-      const videoTrack = await input.getPrimaryVideoTrack();
-      if (!videoTrack || !(await videoTrack.canDecode())) throw new Error('This browser cannot decode the source video');
-      const duration = selected.trimEnd - selected.trimStart;
-      const timelineAudio = assets.filter((asset) => asset.kind === 'audio');
+      perfDiagnostics().export = { sourceWidth: exportBase.width, sourceHeight: exportBase.height, width, height, hardwareAcceleration, hardwareRequested: 'prefer-hardware', startedAt: performance.now(), format: settings.format, frameRate: settings.frameRate, quality: settings.quality };
+      const duration = exportDuration;
 
       const workCanvas = document.createElement('canvas');
-      exportRenderer = new StudioRenderer(workCanvas);
-      exportRenderer.resize(width, height);
+      workCanvas.width = width;
+      workCanvas.height = height;
+      const compositor = workCanvas.getContext('2d', { alpha: false, desynchronized: true });
+      if (!compositor) throw new Error('This browser cannot start the timeline compositor');
+
+      for (const asset of visualAssets) {
+        const filteredCanvas = document.createElement('canvas');
+        const renderer = new StudioRenderer(filteredCanvas);
+        renderer.resize(asset.width, asset.height);
+        const state: ExportVisualState = { asset, canvas: filteredCanvas, renderer, image: null, input: null, iterator: null, current: null, next: null };
+        if (asset.kind === 'image') {
+          state.image = new Image();
+          state.image.src = asset.url;
+          await state.image.decode();
+          renderer.draw(state.image, asset.adjustments, 0);
+        } else {
+          state.input = new Input({ source: new BlobSource(asset.file), formats: ALL_FORMATS });
+          const track = await state.input.getPrimaryVideoTrack();
+          if (!track || !(await track.canDecode())) throw new Error(`${asset.name} cannot be decoded in this browser`);
+          const sink = new VideoSampleSink(track, { optimizeForLatency: true });
+          state.iterator = sink.samples(asset.trimStart, asset.trimEnd)[Symbol.asyncIterator]();
+          const first = await state.iterator.next();
+          state.next = first.done ? null : first.value;
+        }
+        visualStates.push(state);
+      }
+
       const target = new BufferTarget();
       output = new Output({
         format: settings.format.startsWith('webm-') ? new WebMOutputFormat() : new Mp4OutputFormat({ fastStart: 'in-memory' }),
@@ -2019,75 +2852,56 @@ export default function StudioPage() {
       });
       output.addVideoTrack(videoSource);
 
-      const audioTrack = await input.getPrimaryAudioTrack();
       let audioSource: AudioSampleSource | null = null;
-      let audioSink: AudioSampleSink | null = null;
-      let encodedAudioSource: EncodedAudioPacketSource | null = null;
-      let encodedAudioSink: EncodedPacketSink | null = null;
-      let encodedAudioConfig: AudioDecoderConfig | null = null;
-      let mixedAudio: AudioBuffer | null = null;
       const audioCodec = settings.format.startsWith('webm-') || !(await canEncodeAudio('aac')) ? 'opus' : 'aac';
-      if (timelineAudio.length) {
+      const mixedAudio = exportAssets.some((asset) => asset.kind !== 'image') ? await renderTimelineAudio(exportAssets, duration) : null;
+      if (mixedAudio) {
         if (!(await canEncodeAudio(audioCodec))) throw new Error(`${audioCodec.toUpperCase()} audio encoding is not available in this browser`);
-        mixedAudio = await renderTimelineAudio(selected, timelineAudio, duration, selected.timelineStart);
-        if (!mixedAudio) throw new Error('The timeline audio could not be decoded');
         audioSource = new AudioSampleSource({ codec: audioCodec, quality: new Quality('high') });
         output.addAudioTrack(audioSource);
-      } else if (audioTrack) {
-        const sourceAudioCodec = await audioTrack.getCodec();
-        if (sourceAudioCodec === audioCodec) {
-          encodedAudioConfig = await audioTrack.getDecoderConfig();
-          encodedAudioSource = new EncodedAudioPacketSource(sourceAudioCodec);
-          output.addAudioTrack(encodedAudioSource, encodedAudioConfig ? { decoderConfig: encodedAudioConfig } : undefined);
-          encodedAudioSink = new EncodedPacketSink(audioTrack);
-        } else if (await audioTrack.canDecode() && await canEncodeAudio(audioCodec)) {
-          audioSource = new AudioSampleSource({ codec: audioCodec, quality: new Quality('high') });
-          output.addAudioTrack(audioSource);
-          audioSink = new AudioSampleSink(audioTrack);
-        }
       }
 
       await output.start();
-      const outputFPS = settings.frameRate === 'source' ? null : settings.frameRate;
-      const progressFPS = outputFPS || 30;
-      const frames = Math.max(1, Math.ceil(duration * progressFPS));
-      // Decoder preference is intentionally left to the browser. On Linux,
-      // forcing `prefer-hardware` can select a nominal VA-API config that never
-      // emits frames; WebGL and the encoder retain explicit GPU preferences.
-      const sink = new VideoSampleSink(videoTrack, { optimizeForLatency: true });
-      let index = 0;
-      let encodedFrames = 0;
-      let nextOutputTimestamp = 0;
-      let hasDrawnFrame = false;
-      const outputFrameDuration = outputFPS ? 1 / outputFPS : 0;
-      const addOutputFrame = async (timestamp: number, frameDuration: number) => {
-        await videoSource.add(timestamp, frameDuration, { keyFrame: encodedFrames % (progressFPS * 2) === 0 });
-        encodedFrames += 1;
-      };
-      for await (const sample of sink.samples(selected.trimStart, selected.trimEnd)) {
-        const timestamp = Math.max(0, sample.timestamp - selected.trimStart);
-        if (outputFPS && hasDrawnFrame) {
-          while (nextOutputTimestamp < Math.min(timestamp, duration) - 1e-7) {
-            await addOutputFrame(nextOutputTimestamp, Math.min(outputFrameDuration, duration - nextOutputTimestamp));
-            nextOutputTimestamp += outputFrameDuration;
+      // A mixed timeline has no single source cadence. "Source" therefore uses
+      // a deterministic 30 fps clock; explicit 24/30/60 choices stay exact.
+      const outputFPS = settings.frameRate === 'source' ? 30 : settings.frameRate;
+      const frameDuration = 1 / outputFPS;
+      const frames = Math.max(1, Math.ceil(duration * outputFPS));
+      const orderedStates = [...visualStates].sort((left, right) => left.asset.visualTrack - right.asset.visualTrack || visualAssets.indexOf(left.asset) - visualAssets.indexOf(right.asset));
+
+      for (let index = 0; index < frames; index += 1) {
+        const timestamp = index * frameDuration;
+        compositor.setTransform(1, 0, 0, 1, 0, 0);
+        compositor.fillStyle = '#000';
+        compositor.fillRect(0, 0, width, height);
+        for (const state of orderedStates) {
+          const { asset } = state;
+          if (timestamp < asset.timelineStart || timestamp >= clipEnd(asset)) continue;
+          if (asset.kind === 'video') {
+            const sourceTime = asset.trimStart + timestamp - asset.timelineStart;
+            while (state.next && state.next.timestamp <= sourceTime + 1e-7) {
+              state.current?.close();
+              state.current = state.next;
+              const following = await state.iterator!.next();
+              state.next = following.done ? null : following.value;
+            }
+            const sample = state.current || state.next;
+            if (!sample) continue;
+            const frame = sample.toVideoFrame();
+            state.renderer.draw(frame, asset.adjustments, index);
+            frame.close();
           }
+          const fit = Math.min(width / Math.max(1, asset.width), height / Math.max(1, asset.height));
+          const drawWidth = asset.width * fit * asset.stageScale;
+          const drawHeight = asset.height * fit * asset.stageScale;
+          compositor.save();
+          compositor.translate(width * (0.5 + asset.stageX), height * (0.5 + asset.stageY));
+          compositor.rotate(asset.stageRotation * Math.PI / 180);
+          compositor.drawImage(state.canvas, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+          compositor.restore();
         }
-        const frame = sample.toVideoFrame();
-        const frameDuration = Math.max(1 / 240, Math.min(sample.duration || 1 / progressFPS, duration - timestamp));
-        exportRenderer.draw(frame, selected.adjustments, index);
-        frame.close();
-        sample.close();
-        hasDrawnFrame = true;
-        if (!outputFPS) await addOutputFrame(timestamp, frameDuration);
-        index += 1;
-        setExportProgress(Math.min(0.9, Math.max(encodedFrames / frames, timestamp / duration) * 0.9));
-      }
-      if (outputFPS && hasDrawnFrame) {
-        while (nextOutputTimestamp < duration - 1e-7) {
-          await addOutputFrame(nextOutputTimestamp, Math.min(outputFrameDuration, duration - nextOutputTimestamp));
-          nextOutputTimestamp += outputFrameDuration;
-          setExportProgress(Math.min(0.9, encodedFrames / frames * 0.9));
-        }
+        await videoSource.add(timestamp, Math.min(frameDuration, duration - timestamp), { keyFrame: index % (outputFPS * 2) === 0 });
+        setExportProgress(Math.min(0.9, (index + 1) / frames * 0.9));
       }
 
       if (audioSource && mixedAudio) {
@@ -2095,28 +2909,12 @@ export default function StudioPage() {
           await audioSource.add(sample);
           sample.close();
         }
-      } else if (audioSource && audioSink) {
-        for await (const sample of audioSink.samples(selected.trimStart, selected.trimEnd)) {
-          sample.setTimestamp(Math.max(0, sample.timestamp - selected.trimStart));
-          await audioSource.add(sample);
-          sample.close();
-        }
-      }
-      if (encodedAudioSource && encodedAudioSink) {
-        let firstPacket = true;
-        for await (const packet of encodedAudioSink.packets()) {
-          if (packet.timestamp + packet.duration <= selected.trimStart) continue;
-          if (packet.timestamp >= selected.trimEnd) break;
-          const shifted = packet.clone({ timestamp: Math.max(0, packet.timestamp - selected.trimStart) });
-          await encodedAudioSource.add(shifted, firstPacket && encodedAudioConfig ? { decoderConfig: encodedAudioConfig } : undefined);
-          firstPacket = false;
-        }
       }
       await output.finalize();
       const perf = perfDiagnostics();
       if (perf.export) {
         perf.export.completedAt = performance.now();
-        perf.export.frames = encodedFrames;
+        perf.export.frames = frames;
       }
       setExportProgress(1);
       return new Blob([target.buffer!], { type: format.mime });
@@ -2124,18 +2922,23 @@ export default function StudioPage() {
       await output?.cancel().catch(() => undefined);
       throw reason;
     } finally {
-      exportRenderer?.destroy();
-      input?.dispose();
+      for (const state of visualStates) {
+        state.current?.close();
+        state.next?.close();
+        state.renderer.destroy();
+        state.input?.dispose();
+      }
     }
   }
 
   async function exportVideo() {
-    if (!selected || selected.kind !== 'video') return;
+    if (!timelineVisuals.length) return;
     setBusy('export'); setError('');
     try {
-      const blob = await renderSelectedVideo(exportSettings);
+      const blob = await renderTimelineVideo(exportSettings);
       const { extension } = exportFormatDetails(exportSettings.format);
-      downloadBlob(blob, `${selected.name.replace(/\.[^.]+$/, '')}-studio.${extension}`);
+      const safeName = projectName.replace(/[\\/:*?"<>|]+/g, '-').trim().slice(0, 100) || 'manifold-project';
+      downloadBlob(blob, `${safeName}-studio.${extension}`);
       setNotice(`Exported ${extension.toUpperCase()} locally`);
       setExportOpen(false);
     } catch (reason) {
@@ -2148,6 +2951,7 @@ export default function StudioPage() {
 
   const toolItems: { id: Tool; label: string; icon: typeof Film }[] = [
     { id: 'media', label: 'Media', icon: Film },
+    { id: 'text', label: 'Text', icon: Type },
     { id: 'adjust', label: 'Adjust', icon: SlidersHorizontal },
     { id: 'crop', label: 'Transform', icon: Crop },
     { id: 'effects', label: 'Looks', icon: WandSparkles },
@@ -2165,7 +2969,7 @@ export default function StudioPage() {
     >
       <header className={styles.topbar}>
         <div className={styles.brandGroup}>
-          <button className={styles.iconButton} aria-label="Menu"><Menu size={17} /></button>
+          <button type="button" className={styles.iconButton} aria-label="Menu" aria-expanded={menuOpen} aria-controls="studio-navigation" onClick={() => setMenuOpen((open) => !open)}><Menu size={17} /></button>
           <Link href="/" className={styles.brand} aria-label="Manifold home"><img className={styles.brandMark} src="/brand/logo-mark.webp" alt="" /><span>MANIFOLD</span></Link>
           <span className={styles.divider} />
           <div className={styles.projectPicker}>
@@ -2181,53 +2985,157 @@ export default function StudioPage() {
           </div>
         </div>
         <div className={styles.historyActions}>
-          <button className={styles.iconButton} aria-label="Undo" disabled><Undo2 size={16} /></button>
-          <button className={styles.iconButton} aria-label="Redo" disabled><Redo2 size={16} /></button>
+          <button className={styles.iconButton} aria-label="Undo" title="Undo (Ctrl/Cmd + Z)" onClick={undo} disabled={!editHistory.undo.length}><Undo2 size={16} /></button>
+          <button className={styles.iconButton} aria-label="Redo" title="Redo (Ctrl/Cmd + Shift + Z)" onClick={redo} disabled={!editHistory.redo.length}><Redo2 size={16} /></button>
           <span data-testid="studio-save-status" className={styles.saved}>{saveStatus}</span>
         </div>
         <div className={styles.accountActions}>
           <Link href="/account" className={styles.creditPill}><span className={styles.creditDot} /><span className={styles.creditFull}>{creditsLabel}</span><span className={styles.creditCompact}>{user ? compactCredits(user.credits) : 'Sign in'}</span></Link>
           <button type="button" className={styles.topupButton} onClick={() => openPaymentDialog({ message: 'Choose a plan or add credits without leaving the Studio.' })}><Plus size={14} /> Top up</button>
           <Link href="/account" className={styles.avatar} aria-label="Account"><UserRound size={16} /></Link>
-          <button data-testid="studio-export" className={styles.exportButton} disabled={!selected || !!busy} onClick={() => selected?.kind === 'image' ? void exportImage() : selected?.kind === 'audio' ? void exportAudio() : setExportOpen(true)}><Download size={15} /> Export</button>
+          <button data-testid="studio-export" className={styles.exportButton} disabled={!assets.length || !!busy} onClick={() => timelineVisuals.length ? setExportOpen(true) : void exportAudio()}><Download size={15} /> Export</button>
         </div>
       </header>
+
+      {menuOpen && <div className={styles.menuBackdrop} onMouseDown={(event) => { if (event.currentTarget === event.target) setMenuOpen(false); }}>
+        <aside id="studio-navigation" className={styles.menuDrawer} aria-label="Manifold navigation" onMouseDown={(event) => event.stopPropagation()}>
+          <div className={styles.menuHeader}>
+            <div><span className={styles.eyebrow}>MANIFOLDGEN</span><h2>Navigate</h2></div>
+            <button type="button" className={styles.menuClose} aria-label="Close menu" onClick={() => setMenuOpen(false)}><X size={16} /></button>
+          </div>
+          <nav className={styles.menuNav}>
+            <span className={styles.menuLabel}>WORKSPACE</span>
+            <Link href="/studio" className={styles.menuLink} onClick={() => setMenuOpen(false)}><Clapperboard size={17} /><span><b>Studio</b><small>Edit, generate, and export</small></span></Link>
+            <Link href="/" className={styles.menuLink} onClick={() => setMenuOpen(false)}><Sparkles size={17} /><span><b>Generator</b><small>Start from a prompt</small></span></Link>
+
+            <span className={styles.menuLabel}>ACCOUNT</span>
+            <Link href="/api" className={styles.menuLink} onClick={() => setMenuOpen(false)}><KeyRound size={17} /><span><b>API</b><small>Build with ManifoldGen</small></span></Link>
+            <Link href="/account" className={styles.menuLink} onClick={() => setMenuOpen(false)}><UserRound size={17} /><span><b>Account</b><small>Keys, sign-in, and billing</small></span></Link>
+            <Link href="/account#credits" className={styles.menuLink} onClick={() => setMenuOpen(false)}><CreditCard size={17} /><span><b>Credits</b><small>Top up or manage your balance</small></span></Link>
+
+            <span className={styles.menuLabel}>LEARN</span>
+            <Link href="/blog" className={styles.menuLink} onClick={() => setMenuOpen(false)}><BookOpen size={17} /><span><b>Blog</b><small>Prompt craft and faster AI systems</small></span></Link>
+          </nav>
+        </aside>
+      </div>}
 
       <div className={styles.workspace}>
         <aside className={styles.rail}>
           {toolItems.map(({ id, label, icon: Icon }) => <button data-testid={`studio-tool-${id}`} key={id} className={tool === id ? styles.railActive : ''} onClick={() => { setTool(id); setMobilePanelOpen(tool !== id || !mobilePanelOpen); }}><Icon size={19} /><span>{label}</span></button>)}
-          <div className={styles.railBottom}><button><CircleHelp size={18} /><span>Help</span></button></div>
+          <div className={styles.railBottom}><button type="button" data-testid="studio-help" aria-haspopup="dialog" aria-expanded={helpOpen} onClick={() => setHelpOpen(true)}><CircleHelp size={18} /><span>Help</span></button></div>
         </aside>
 
         <aside data-testid="studio-panel" className={`${styles.panel} ${mobilePanelOpen ? styles.panelOpen : ''}`}>
           <button className={styles.panelClose} aria-label="Close tools" onClick={() => setMobilePanelOpen(false)}><X size={16} /></button>
           {tool === 'media' && <>
-            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>PROJECT</span><h2>Media</h2></div><button className={styles.smallIcon} onClick={() => fileInputRef.current?.click()}><Plus size={15} /></button></div>
-            <button className={styles.importButton} onClick={() => fileInputRef.current?.click()}><Upload size={16} /> Import media</button>
-            <input ref={fileInputRef} type="file" multiple accept="video/*,image/*,audio/*" hidden onChange={(event) => event.target.files && void importFiles(event.target.files)} />
-            <div className={styles.assetGrid}>
-              {assets.map((asset) => <button key={asset.id} onContextMenu={(event) => { if (asset.kind !== 'video') return; event.preventDefault(); selectOnly(asset.id); setContextMenu({ assetID: asset.id, x: event.clientX, y: event.clientY }); }} onClick={(event) => { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); }} className={`${styles.assetCard} ${selectedIDs.includes(asset.id) ? styles.assetSelected : ''}`}>
-                {asset.kind === 'image' ? <img src={asset.url} alt="" /> : asset.kind === 'video' ? <video src={asset.url} muted preload="metadata" /> : <span className={styles.audioThumb}><AudioLines size={24} /></span>}
-                <span className={styles.assetType}>{asset.kind === 'video' ? <Film size={11} /> : asset.kind === 'audio' ? <Volume2 size={11} /> : <ImageIcon size={11} />}</span>
-                <span className={styles.assetName}>{asset.name}</span>
-              </button>)}
+            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>CREATE + DISCOVER</span><h2>Media</h2></div>{mediaBrowserMode === 'project' && <button className={styles.smallIcon} onClick={() => fileInputRef.current?.click()}><Plus size={15} /></button>}</div>
+            <div className={styles.mediaTabs} role="tablist" aria-label="Media library">
+              {([['project', 'Project'], ['videos', 'Videos'], ['images', 'Images'], ['music', 'Music']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={mediaBrowserMode === id} data-testid={`studio-media-${id}`} className={mediaBrowserMode === id ? styles.mediaTabActive : ''} onClick={() => setMediaBrowserMode(id)}>{label}</button>)}
             </div>
+            <input ref={fileInputRef} type="file" multiple accept="video/*,image/*,audio/*" hidden onChange={(event) => event.target.files && void importFiles(event.target.files)} />
+            {mediaBrowserMode === 'project' && <>
+              <div className={styles.mediaActions}>
+                <button className={styles.importButton} onClick={() => fileInputRef.current?.click()}><Upload size={16} /> Import media</button>
+                <button data-testid="studio-generate-media" className={styles.generateMediaButton} onClick={() => { setMediaBrowserMode('videos'); setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><Sparkles size={16} /> Generate video</button>
+              </div>
+              <div className={styles.assetGrid}>
+                {assets.map((asset) => <button key={asset.id} onContextMenu={(event) => { if (asset.kind !== 'video') return; event.preventDefault(); selectOnly(asset.id); setContextMenu({ assetID: asset.id, x: event.clientX, y: event.clientY }); }} onClick={(event) => { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); }} className={`${styles.assetCard} ${selectedIDs.includes(asset.id) ? styles.assetSelected : ''}`}>
+                  {asset.kind === 'image' ? <img src={asset.url} alt="" /> : asset.kind === 'video' ? <video src={asset.url} muted preload="metadata" /> : <span className={styles.audioThumb}><AudioLines size={24} /></span>}
+                  <span className={styles.assetType}>{asset.text ? <Type size={11} /> : asset.kind === 'video' ? <Film size={11} /> : asset.kind === 'audio' ? <Volume2 size={11} /> : <ImageIcon size={11} />}</span>
+                  <span className={styles.assetName}>{asset.text?.content || asset.name}</span>
+                </button>)}
+              </div>
             {user && <section className={styles.generationLibrary}>
               <div className={styles.generationHeader}><span>YOUR GENERATIONS</span><small>Saved automatically</small></div>
               {!generationJobs.length ? <p className={styles.generationEmpty}>New videos started from Generate appear here. Finished videos can be added to this timeline.</p> : generationJobs.map((generation) => {
                 const readyURL = resultURL(generation.result);
-                const pending = ['queued', 'pending', 'processing', 'running', 'accepted'].includes(generation.status);
-                const failed = ['failed', 'error', 'payment_required'].includes(generation.status);
-                return <div key={generation.job_id} className={styles.generationCard}>
-                  <button className={styles.generationMain} disabled={!readyURL} onClick={() => void addGenerationToTimeline(generation)} title={readyURL ? 'Add to timeline' : undefined}>
-                    <span className={styles.generationThumb}>{readyURL ? <Film size={16} /> : pending ? <Loader2 className={styles.spin} size={16} /> : <X size={16} />}</span>
-                    <span><b>{pending ? 'Generating video…' : failed ? 'Generation failed' : 'Ready to add'}</b><small>{generation.prompt || generation.error || 'Manifold video generation'}</small></span>
+                const status = generationStatus(generation);
+                const ready = READY_GENERATION_STATUSES.has(status) && Boolean(readyURL);
+                const pending = isActiveGeneration(generation);
+                const failed = ['failed', 'error', 'payment_required', 'cancelled', 'canceled'].includes(status);
+                return <article key={generation.job_id} data-testid={`studio-generation-${generation.job_id}`} className={styles.generationCard} onContextMenu={(event) => {
+                  if (!ready || !generation.prompt?.trim()) return;
+                  event.preventDefault();
+                  setGenerationContextMenu({ jobID: generation.job_id, x: event.clientX, y: event.clientY });
+                }}>
+                  <button className={styles.generationMain} disabled={!ready && !failed} onClick={() => failed ? void retryGeneration(generation.job_id) : void addGenerationToTimeline(generation)} title={ready ? 'Add to timeline' : failed ? 'Retry generation' : undefined}>
+                    <span className={styles.generationPreview}>{ready && readyURL ? <video src={readyURL} muted playsInline preload="metadata" /> : <span className={styles.generationThumb}>{pending ? <Loader2 className={styles.spin} size={20} /> : failed ? <RotateCcw size={20} /> : <X size={20} />}</span>}{ready && <span className={styles.generationAdd}><Plus size={13} /> Add to timeline</span>}</span>
+                    <span className={styles.generationMeta}><b>{ready ? 'Ready to add' : pending ? 'Generating video…' : failed ? 'Retry generation' : 'Generation unavailable'}</b><small>{generation.prompt || generation.error || 'Manifold video generation'}</small></span>
                   </button>
                   <button className={styles.deleteGeneration} aria-label="Delete generation" onClick={() => void deleteGeneration(generation.job_id)}><Trash2 size={13} /></button>
-                </div>;
+                </article>;
               })}
             </section>}
-            {!assets.length && <div className={styles.emptyLibrary}><Clapperboard size={24} /><p>{user ? 'Imports stay local while they upload securely in the background.' : 'Your imported files stay in this browser. Sign in for cloud sync.'}</p></div>}
+              {!assets.length && <div className={styles.emptyLibrary}><Clapperboard size={24} /><p>{user ? 'Imports stay local while they upload securely in the background.' : 'Your imported files stay in this browser. Sign in for cloud sync.'}</p></div>}
+            </>}
+
+            {mediaBrowserMode === 'videos' && <>
+              <button data-testid="studio-video-create" className={styles.mediaCreateCard} onClick={() => { setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Sparkles size={18} /></span><span><b>Generate videos</b><small>H3 · batches, audio, loops, image guidance</small></span></button>
+              <div className={styles.discoveryLabel}><span>VIDEOS FROM THE COMMUNITY</span><small>Semantic search</small></div>
+              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('videos')} placeholder="Search motion, subjects, styles…" /><button disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('videos')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
+              <div className={styles.discoveryGrid}>{videoHits.map((hit) => <button data-testid={`studio-video-hit-${hit.job_id}`} className={styles.discoveryCard} key={hit.job_id} disabled={!hit.video_url || busy === 'import-discovery'} onClick={() => void addDiscoveredMedia(hit.video_url || '', hit.prompt, 'video')}>
+                <span className={styles.discoveryPreview}>{hit.video_url && <video src={hit.video_url} muted playsInline preload="metadata" />}<span><Plus size={13} /> Add</span></span>
+                <b>{hit.prompt || 'Community video'}</b><small>{hit.service || 'H3'}{typeof hit.similarity === 'number' ? ` · ${Math.round(hit.similarity * 100)}% match` : ''}</small>
+              </button>)}</div>
+              {!mediaSearchBusy && !videoHits.length && <p className={styles.discoveryEmpty}>No videos found yet. Try a broader visual description.</p>}
+            </>}
+
+            {mediaBrowserMode === 'images' && <>
+              <section className={styles.imageComposer}>
+                <div className={styles.imageComposerTitle}><span><Sparkles size={15} /></span><div><b>Generate images</b><small>Related community work appears while rendering</small></div></div>
+                <textarea data-testid="studio-image-prompt" value={imagePrompt} maxLength={2000} rows={4} onChange={(event) => setImagePrompt(event.target.value)} placeholder="Describe the image you want…" />
+                <div className={styles.engineChoices}>
+                  <button data-testid="studio-image-engine-images3" className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
+                  <button data-testid="studio-image-engine-omniserve" className={imageEngine === 'omniserve' ? styles.engineActive : ''} onClick={() => setImageEngine('omniserve')}><b>Z-Image</b><small>OmniServe Native</small></button>
+                </div>
+                <div className={styles.imageSettings}>
+                  <label><span>Aspect</span><select data-testid="studio-image-aspect" value={imageAspect} onChange={(event) => setImageAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
+                  <label><span>Outputs</span><select data-testid="studio-image-count" value={imageCount} onChange={(event) => setImageCount(Number(event.target.value) as 1 | 4)}><option value="1">1 image</option><option value="4">4 images</option></select></label>
+                </div>
+                <button data-testid="studio-image-generate" className={styles.imageGenerateButton} disabled={busy === 'generate-images' || !imagePrompt.trim()} onClick={() => void generateStudioImages()}>{busy === 'generate-images' ? <><Loader2 className={styles.spin} size={15} /> Generating + searching…</> : <><Sparkles size={15} /> Generate {imageCount} image{imageCount === 1 ? '' : 's'}</>}</button>
+              </section>
+              <div className={styles.discoveryLabel}><span>SIMILAR IMAGES</span><small>From everyone</small></div>
+              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('images')} placeholder="Search subjects, lighting, composition…" /><button disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('images')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
+              <div className={styles.discoveryGrid}>{imageHits.map((hit) => {
+                const imageURL = galleryImageURL(hit.image_url || hit.file_path);
+                const thumbURL = galleryImageURL(hit.thumb_url || hit.thumb_path || hit.image_url || hit.file_path);
+                return <button data-testid={`studio-image-hit-${hit.id}`} className={styles.discoveryCard} key={hit.id} disabled={!imageURL || busy === 'import-discovery'} onClick={() => void addDiscoveredMedia(imageURL, hit.prompt, 'image')}>
+                  <span className={styles.discoveryPreview}>{thumbURL && <img src={thumbURL} alt="" />}<span><Plus size={13} /> Add</span></span>
+                  <b>{hit.prompt || 'Community image'}</b><small>{hit.model || 'Generated'}{typeof hit.similarity === 'number' ? ` · ${Math.round(hit.similarity * 100)}% match` : ''}</small>
+                </button>;
+              })}</div>
+              {!mediaSearchBusy && !imageHits.length && <p className={styles.discoveryEmpty}>No related images found yet. Generation still works independently.</p>}
+            </>}
+
+            {mediaBrowserMode === 'music' && <>
+              <button data-testid="studio-music-create" className={styles.mediaCreateCard} onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Music2 size={18} /></span><span><b>Generate music</b><small>Describe a soundtrack and add it directly to the timeline</small></span></button>
+              <div className={styles.discoveryLabel}><span>LICENSED MUSIC</span><small>Netwrck catalog</small></div>
+              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('music')} placeholder="Search mood, genre, instruments…" /><button disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('music')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
+              <div className={styles.catalogList}>{audioResults.map((asset) => <article key={asset.id} data-testid={`studio-music-hit-${asset.id}`} className={styles.catalogCard}><button className={styles.catalogPlay} onClick={() => { const audio = new Audio(asset.preview_url || asset.url); void audio.play(); }} aria-label={`Preview ${asset.title}`}><Play size={12} fill="currentColor" /></button><span><b>{asset.title}</b><small>{formatTime(asset.duration).slice(3)} · {asset.license.toUpperCase()} · {asset.attribution || asset.provider}</small></span><button aria-label={`Add ${asset.title} to timeline`} disabled={!!busy} onClick={() => void importCatalogAudio(asset)}>{busy === `catalog-${asset.id}` ? <Loader2 className={styles.spin} size={13} /> : <Plus size={13} />}</button></article>)}</div>
+              {!mediaSearchBusy && !audioResults.length && <p className={styles.discoveryEmpty}>No music found yet. Try a mood, genre, or instrument.</p>}
+            </>}
+          </>}
+
+          {tool === 'text' && <>
+            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>TYPOGRAPHY</span><h2>Text</h2></div></div>
+            <div className={styles.textPresets}>
+              <button data-testid="studio-add-title" onClick={() => void addText({ content: 'Add a title', fontSize: 132, fontFamily: 'Inter', fontWeight: 800, color: '#ffffff', align: 'center' })}><b>Add a title</b><small>Bold display text</small></button>
+              <button onClick={() => void addText({ content: 'Add a subtitle', fontSize: 76, fontFamily: 'Inter', fontWeight: 600, color: '#ffffff', align: 'center' })}><b>Add a subtitle</b><small>Supporting line</small></button>
+              <button onClick={() => void addText({ content: 'Add body text', fontSize: 48, fontFamily: 'Inter', fontWeight: 400, color: '#ffffff', align: 'left' })}><b>Add body text</b><small>Paragraph or caption</small></button>
+            </div>
+            {selected?.text ? <section className={styles.textEditor}>
+              <span className={styles.sectionLabel}>SELECTED TEXT</span>
+              <textarea data-testid="studio-text-content" rows={5} maxLength={800} value={textDraft.content} onChange={(event) => setTextDraft((current) => ({ ...current, content: event.target.value }))} />
+              <div className={styles.textEditorGrid}>
+                <label><span>Typeface</span><select value={textDraft.fontFamily} onChange={(event) => setTextDraft((current) => ({ ...current, fontFamily: event.target.value as StudioTextStyle['fontFamily'] }))}>{(['Inter', 'Arial', 'Georgia', 'Courier New'] as const).map((font) => <option key={font}>{font}</option>)}</select></label>
+                <label><span>Weight</span><select value={textDraft.fontWeight} onChange={(event) => setTextDraft((current) => ({ ...current, fontWeight: Number(event.target.value) as StudioTextStyle['fontWeight'] }))}><option value="400">Regular</option><option value="600">Semibold</option><option value="800">Bold</option></select></label>
+                <label><span>Size</span><input type="number" min="20" max="240" value={textDraft.fontSize} onChange={(event) => setTextDraft((current) => ({ ...current, fontSize: Math.max(20, Math.min(240, Number(event.target.value))) }))} /></label>
+                <label><span>Color</span><input aria-label="Text color" type="color" value={textDraft.color} onChange={(event) => setTextDraft((current) => ({ ...current, color: event.target.value }))} /></label>
+              </div>
+              <div className={styles.textAlignChoices}>{(['left', 'center', 'right'] as const).map((align) => <button key={align} className={textDraft.align === align ? styles.textAlignActive : ''} onClick={() => setTextDraft((current) => ({ ...current, align }))}>{align}</button>)}</div>
+              <button data-testid="studio-text-apply" className={styles.imageGenerateButton} disabled={!textDraft.content.trim()} onClick={() => void updateSelectedText()}><Type size={15} /> Update text</button>
+              <p className={styles.textHint}>Text remains editable after reopening the project and uses the same stage scale, rotation, layering, and export path as other visual elements.</p>
+            </section> : <div className={styles.panelEmpty}><Type size={22} /><p>Add a text style above, or select existing text on the stage.</p></div>}
           </>}
 
           {tool === 'adjust' && <>
@@ -2245,14 +3153,21 @@ export default function StudioPage() {
 
           {tool === 'crop' && <>
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>CANVAS</span><h2>Transform</h2></div></div>
-            <div className={styles.transformGrid}><button className={styles.settingCard}><Maximize size={17} /><span><b>Fit frame</b><small>Original ratio</small></span></button><button className={styles.settingCard} disabled><Crop size={17} /><span><b>Free crop</b><small>Coming next</small></span></button></div>
-            {selected && selected.kind !== 'audio' && <div className={styles.metaList}><span>Dimensions <b>{selected.width} × {selected.height}</b></span><span>Aspect <b>{(selected.width / selected.height).toFixed(2)}:1</b></span></div>}
+            {!selected || selected.kind === 'audio' ? <PanelEmpty /> : <>
+              <div className={styles.transformGrid}><button data-testid="studio-transform-reset" className={styles.settingCard} onClick={() => updateAsset(selected.id, { stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0 })}><Maximize size={17} /><span><b>Fit & center</b><small>Reset position, scale, and rotation</small></span></button></div>
+              <div className={styles.transformControls}>
+                <label className={styles.sliderRow}><span><b>Scale</b><output>{Math.round(selected.stageScale * 100)}%</output></span><input data-testid="studio-transform-scale" type="range" min="0.1" max="4" step="0.01" value={selected.stageScale} onChange={(event) => updateAsset(selected.id, { stageScale: Number(event.target.value) })} /></label>
+                <label className={styles.sliderRow}><span><b>Rotation</b><output>{Math.round(selected.stageRotation)}°</output></span><input data-testid="studio-transform-rotation" type="range" min="-180" max="180" step="1" value={selected.stageRotation} onChange={(event) => updateAsset(selected.id, { stageRotation: Number(event.target.value) })} /></label>
+                <div className={styles.rotateButtons}><button onClick={() => updateAsset(selected.id, { stageRotation: Math.max(-180, selected.stageRotation - 90) })}><RotateCcw size={14} /> -90°</button><button onClick={() => updateAsset(selected.id, { stageRotation: Math.min(180, selected.stageRotation + 90) })}><RotateCw size={14} /> +90°</button></div>
+              </div>
+              <div className={styles.metaList}><span>Dimensions <b>{selected.width} × {selected.height}</b></span><span>Aspect <b>{(selected.width / selected.height).toFixed(2)}:1</b></span></div>
+            </>}
           </>}
 
           {tool === 'audio' && <>
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>SOUND</span><h2>Audio</h2></div></div>
             <div className={styles.quickGenerate}>
-              <button onClick={() => { setAudioMode('music'); setAudioGenerateOpen(true); }}><Music2 size={17} /><span><b>Music</b><small>Fal · 80 cr</small></span></button>
+              <button onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><Music2 size={17} /><span><b>Music</b><small>AI music · 80 cr</small></span></button>
               <button onClick={() => { setAudioMode('sfx'); setAudioGenerateOpen(true); }}><AudioLines size={17} /><span><b>Sound</b><small>AI · metered</small></span></button>
               <button onClick={() => { setAudioMode('speech'); setAudioGenerateOpen(true); }}><Mic2 size={17} /><span><b>Speech</b><small>from {speechCredits.toFixed(2)} cr</small></span></button>
             </div>
@@ -2266,7 +3181,6 @@ export default function StudioPage() {
             <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-audio-search" value={audioSearch} onChange={(event) => setAudioSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchAudioCatalog()} placeholder="Search music and sounds" /><button disabled={audioSearching} onClick={() => void searchAudioCatalog()}>{audioSearching ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
             <div className={styles.kindChips}>{(['music', 'sfx', 'voice'] as const).map((kind) => <button key={kind} className={audioKind === kind ? styles.kindActive : ''} onClick={() => setAudioKind(kind)}>{kind === 'sfx' ? 'SFX' : kind}</button>)}</div>
             <div className={styles.catalogList}>{audioResults.map((asset) => <article key={asset.id} className={styles.catalogCard}><button className={styles.catalogPlay} onClick={() => { const audio = new Audio(asset.preview_url || asset.url); void audio.play(); }} aria-label={`Preview ${asset.title}`}><Play size={12} fill="currentColor" /></button><span><b>{asset.title}</b><small>{formatTime(asset.duration).slice(3)} · {asset.license.toUpperCase()} · {asset.provider}</small></span><button disabled={!!busy} onClick={() => void importCatalogAudio(asset)}>{busy === `catalog-${asset.id}` ? <Loader2 className={styles.spin} size={13} /> : <Plus size={13} />}</button></article>)}</div>
-            {!audioResults.length && <p className={styles.aiNote}>Search Netwrck&apos;s licensed music, sound-effects, and voice index. Catalog imports and local edits are free.</p>}
           </>}
 
           {tool === 'ai' && <>
@@ -2288,12 +3202,7 @@ export default function StudioPage() {
             <div className={styles.stageRight}><button className={styles.iconButton} onClick={() => setStageZoom((value) => Math.max(.5, value - .1))}><Minus size={14} /></button><span>{Math.round(stageZoom * 100)}%</span><button className={styles.iconButton} onClick={() => setStageZoom((value) => Math.min(2, value + .1))}><Plus size={14} /></button><button className={styles.iconButton} onClick={centerStageElement} disabled={!selected || selected.kind === 'audio'} title="Center element"><Maximize size={14} /></button></div>
           </div>
           <div ref={stageRef} className={styles.stage}>
-            {selected?.kind === 'audio' ? <div className={styles.audioPreview}>
-              <span><AudioLines size={36} /></span><small>AUDIO CLIP</small><h2>{selected.name}</h2>
-              <div className={styles.heroWaveform}>{Array.from({ length: 52 }, (_, index) => <i key={index} style={{ height: `${18 + ((index * 31) % 75)}%` }} />)}</div>
-              <audio ref={audioRef} src={selected.url} controls preload="metadata" onLoadedMetadata={(event) => { event.currentTarget.currentTime = selected.trimStart + Math.max(0, Math.min(clipDuration(selected), playhead - selected.timelineStart)); }} onTimeUpdate={(event) => { const next = selected.timelineStart + event.currentTarget.currentTime - selected.trimStart; if (next >= clipEnd(selected)) { event.currentTarget.pause(); setPlayhead(clipEnd(selected)); } else setPlayhead(next); }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} />
-              {selected.attribution && <p>Credit: {selected.attribution}</p>}
-            </div> : selected ? stageVisualAssets.map((asset, index) => {
+            {selected?.kind === 'audio' ? <audio hidden ref={audioRef} src={selected.url} preload="metadata" onLoadedMetadata={(event) => { event.currentTarget.currentTime = selected.trimStart + Math.max(0, Math.min(clipDuration(selected), playhead - selected.timelineStart)); }} onTimeUpdate={(event) => { const next = selected.timelineStart + event.currentTarget.currentTime - selected.trimStart; if (next >= clipEnd(selected)) { event.currentTarget.pause(); setPlayhead(clipEnd(selected)); } else setPlayhead(next); }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} /> : selected ? stageVisualAssets.map((asset, index) => {
               const isSelected = asset.id === selected.id;
               const dragPosition = stageDragPosition?.assetID === asset.id ? stageDragPosition : null;
               return <div
@@ -2303,11 +3212,13 @@ export default function StudioPage() {
                 data-visual-track={asset.visualTrack}
                 data-position-x={(dragPosition?.x ?? asset.stageX).toFixed(4)}
                 data-position-y={(dragPosition?.y ?? asset.stageY).toFixed(4)}
+                data-scale={(dragPosition?.scale ?? asset.stageScale).toFixed(4)}
+                data-rotation={(dragPosition?.rotation ?? asset.stageRotation).toFixed(2)}
                 className={`${styles.stageElement} ${isSelected ? styles.canvasWrap : styles.stageLayer} ${dragPosition ? styles.canvasWrapDragging : ''}`}
                 style={{
                   left: `${50 + (dragPosition?.x ?? asset.stageX) * 100}%`,
                   top: `${50 + (dragPosition?.y ?? asset.stageY) * 100}%`,
-                  transform: `translate(-50%, -50%) scale(${stageZoom})`,
+                  transform: `translate(-50%, -50%) rotate(${dragPosition?.rotation ?? asset.stageRotation}deg) scale(${stageZoom * (dragPosition?.scale ?? asset.stageScale)})`,
                   aspectRatio: `${asset.width}/${asset.height}`,
                   zIndex: asset.visualTrack * 10_000 + index,
                 }}
@@ -2326,10 +3237,11 @@ export default function StudioPage() {
                 {isSelected ? <>
                   {asset.kind === 'video' && <video ref={videoRef} className={styles.sourceVideo} src={asset.url} muted={false} playsInline preload="auto" onLoadedData={() => { if (videoRef.current) videoRef.current.currentTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart)); drawCurrent(); }} />}
                   <canvas ref={canvasRef} className={styles.previewCanvas} />
-                  <i className={`${styles.stageHandle} ${styles.stageHandleNW}`} />
-                  <i className={`${styles.stageHandle} ${styles.stageHandleNE}`} />
-                  <i className={`${styles.stageHandle} ${styles.stageHandleSW}`} />
-                  <i className={`${styles.stageHandle} ${styles.stageHandleSE}`} />
+                  <i className={`${styles.stageHandle} ${styles.stageHandleNW}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
+                  <i className={`${styles.stageHandle} ${styles.stageHandleNE}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
+                  <i className={`${styles.stageHandle} ${styles.stageHandleSW}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
+                  <i className={`${styles.stageHandle} ${styles.stageHandleSE}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
+                  <i className={styles.stageRotateHandle} title="Drag to rotate · hold Shift to snap" onPointerDown={(event) => beginStageTransform(event, asset, 'rotate')}><RotateCw size={10} /></i>
                 </> : <PassiveStageMedia asset={asset} playhead={playhead} playing={playing} />}
               </div>;
             }) : <button data-testid="studio-empty" className={styles.dropPrompt} onClick={() => fileInputRef.current?.click()}><span><Upload size={26} /></span><b>Drop media to begin</b><small>Video, image, audio, WebM, MP4, WAV, PNG</small><em>Browse files</em></button>}
@@ -2337,7 +3249,7 @@ export default function StudioPage() {
             {stageGuides.horizontal && <span className={`${styles.stageGuide} ${styles.stageGuideHorizontal}`} />}
             {dragging && <div className={styles.dropOverlay}><div><Upload size={28} /><b>Drop to import</b></div></div>}
           </div>
-          {(notice || error) && <div className={`${styles.toast} ${error ? styles.toastError : ''}`}><span>{error || notice}</span><button onClick={() => { setError(''); setNotice(''); }}><X size={14} /></button></div>}
+          {(notice || error) && <div data-testid="studio-notice" className={`${styles.toast} ${error ? styles.toastError : ''}`}><span>{error || notice}</span><button onClick={() => { setError(''); setNotice(''); }}><X size={14} /></button></div>}
         </section>
       </div>
 
@@ -2345,7 +3257,7 @@ export default function StudioPage() {
         <div className={styles.timelineToolbar}>
           <div className={styles.timelineTools}><button onClick={() => fileInputRef.current?.click()}><Plus size={14} /> Add</button><button onClick={splitAtPlayhead} disabled={!selectedAssets.length} title="Split at playhead (S)"><Scissors size={14} /> Split</button><button data-testid="studio-layer-up" onClick={() => moveSelectionBetweenLayers(1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move up a layer (Ctrl/Cmd + ])"><ChevronUp size={14} /> Layer</button><button data-testid="studio-layer-down" onClick={() => moveSelectionBetweenLayers(-1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move down a layer (Ctrl/Cmd + [)"><ChevronDown size={14} /> Layer</button><button onClick={duplicateSelected} disabled={!selectedAssets.length} title="Duplicate selected clips"><Copy size={14} /></button><button onClick={removeSelected} disabled={!selectedAssets.length} title="Delete selected clips"><Trash2 size={14} /></button>{selectedAssets.length > 1 && <span className={styles.selectionCount}>{selectedAssets.length} selected</span>}</div>
           <div className={styles.transport}><button aria-label={playing ? 'Pause' : 'Play'} title="Play/pause (Space)" className={styles.playButton} onClick={togglePlayback} disabled={!selected || selected.kind === 'image'}>{playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}</button><span>{formatTime(playhead)} <i>/</i> {formatTime(timelineDuration)}</span></div>
-          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Drag vertically to layer · Ctrl/Cmd [ ]</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
+          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Shift-drag to select · Ctrl/Cmd [ ] to layer</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
         </div>
         <div className={styles.timelineBody}>
           <div ref={timelineLabelsRef} className={styles.trackLabels} onWheel={(event) => { if (timelineContentRef.current) timelineContentRef.current.scrollTop += event.deltaY; }}><span>VIDEO</span>{Array.from({ length: visualTrackCount }, (_, index) => visualTrackCount - index - 1).map((track) => <div data-testid={`timeline-track-label-v${track + 1}`} key={track}>V{track + 1}</div>)}<div className={styles.audioLabel}>A1</div></div>
@@ -2353,7 +3265,7 @@ export default function StudioPage() {
             <div data-testid="studio-timeline-canvas" ref={timelineCanvasRef} className={styles.timelineCanvas} style={{ width: timelineWidth, minWidth: '100%' }}>
               <div data-testid="studio-timeline-ruler" className={styles.ruler} onPointerDown={beginScrub}>{Array.from({ length: Math.floor(rulerDuration / rulerStep) + 1 }, (_, index) => { const time = index * rulerStep; return <span key={time} style={{ left: time * pixelsPerSecond }}>{formatTime(time).slice(3)}</span>; })}</div>
               <div className={styles.videoTracks} onPointerDown={beginScrub}>
-            {assets.filter((asset) => asset.kind !== 'audio').map((asset) => <div data-testid={`timeline-clip-${asset.id}`} data-visual-track={asset.visualTrack} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} onContextMenu={(event) => { if (asset.kind !== 'video') return; event.preventDefault(); selectOnly(asset.id); setContextMenu({ assetID: asset.id, x: event.clientX, y: event.clientY }); }} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} className={`${styles.timelineClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''}`} style={{ '--track-from-top': visualTrackCount - asset.visualTrack - 1, left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) } as CSSProperties} title={`${asset.name} · V${asset.visualTrack + 1} · ${formatTime(clipDuration(asset))}`}>
+            {assets.filter((asset) => asset.kind !== 'audio').map((asset) => <div data-testid={`timeline-clip-${asset.id}`} data-timeline-asset={asset.id} data-visual-track={asset.visualTrack} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} onContextMenu={(event) => { if (asset.kind !== 'video') return; event.preventDefault(); selectOnly(asset.id); setContextMenu({ assetID: asset.id, x: event.clientX, y: event.clientY }); }} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} className={`${styles.timelineClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''}`} style={{ '--track-from-top': visualTrackCount - asset.visualTrack - 1, left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) } as CSSProperties} title={`${asset.name} · V${asset.visualTrack + 1} · ${formatTime(clipDuration(asset))}`}>
                   <span className={`${styles.trimHandle} ${styles.trimHandleLeft}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-left')} title="Trim start" />
                   <span className={styles.clipThumb} style={{ backgroundImage: `url(${asset.kind === 'image' ? asset.url : ''})` }}>{asset.kind === 'video' && <Film size={15} />}</span>
                   <span className={styles.clipMeta}><b>{asset.name}</b><small>{formatTime(clipDuration(asset))}</small></span>
@@ -2361,20 +3273,72 @@ export default function StudioPage() {
                 </div>)}
               </div>
               <div className={styles.audioTrack} onPointerDown={beginScrub}>
-                {assets.filter((asset) => asset.kind === 'audio').map((asset) => <div role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} className={`${styles.waveformClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''}`} style={{ left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) }} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} title={`${asset.name} · ${formatTime(clipDuration(asset))}`}>
+                {assets.filter((asset) => asset.kind === 'audio').map((asset) => <div data-timeline-asset={asset.id} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} className={`${styles.waveformClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''}`} style={{ left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) }} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} title={`${asset.name} · ${formatTime(clipDuration(asset))}`}>
                   <span className={`${styles.trimHandle} ${styles.trimHandleLeft}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-left')} title="Trim start" />
                   <span className={styles.waveform}>{Array.from({ length: 54 }, (_, index) => <i key={index} style={{ height: `${15 + ((index * 29) % 70)}%` }} />)}</span><b>{asset.name}</b>
                   <span className={`${styles.trimHandle} ${styles.trimHandleRight}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-right')} title="Trim end" />
                 </div>)}
               </div>
               {timelineDropTime !== null && <div className={styles.timelineDropMarker} style={{ left: timelineDropTime * pixelsPerSecond }}><span>Drop at {formatTime(timelineDropTime)}</span></div>}
+              {timelineMarquee && <div data-testid="studio-timeline-marquee" className={styles.timelineMarquee} style={timelineMarquee} />}
               <div className={styles.playhead} style={{ left: playhead * pixelsPerSecond }} />
             </div>
           </div>
         </div>
       </section>
 
-      {exportOpen && <Modal title="Export video" onClose={() => !busy && setExportOpen(false)}>
+      {videoGenerateOpen && <Modal title="Generate videos" onClose={() => busy !== 'generate-videos' && setVideoGenerateOpen(false)}>
+        <label className={styles.field}>
+          <span>Video prompts · one per line</span>
+          <textarea data-testid="studio-video-generate-prompt" value={videoGeneratePrompt} onChange={(event) => setVideoGeneratePrompt(event.target.value)} rows={5} maxLength={6000} placeholder={'A cinematic macro shot of glass flowers blooming\nA slow aerial move above a bioluminescent coast'} />
+        </label>
+        <p className={styles.generateHint}>Queue up to 12 videos at once. This window stays open after every launch so you can keep creating.</p>
+        <div className={styles.generateSettings}>
+          <label><span>Aspect</span><select data-testid="studio-video-generate-aspect" value={videoGenerateAspect} onChange={(event) => setVideoGenerateAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
+          <label><span>Canvas</span><select data-testid="studio-video-generate-size" value={videoGenerateSize} onChange={(event) => setVideoGenerateSize(event.target.value as H3Size)}><option value="preview">Preview</option><option value="balanced">Balanced</option><option value="native">Native</option></select></label>
+          <label><span>Duration</span><select data-testid="studio-video-generate-duration" value={videoGenerateDuration} onChange={(event) => setVideoGenerateDuration(Number(event.target.value))}><option value="5">5 seconds</option><option value="10">10 seconds</option></select></label>
+          <label><span>Steps</span><select data-testid="studio-video-generate-steps" value={videoGenerateSteps} onChange={(event) => setVideoGenerateSteps(Number(event.target.value))}><option value="12">12 · Fast</option><option value="20">20 · Standard</option><option value="28">28 · Detailed</option></select></label>
+          <label><span>Output</span><select data-testid="studio-video-generate-format" value={videoGenerateFormat} onChange={(event) => setVideoGenerateFormat(event.target.value as H3Format)}><option value="webm-av1">WebM · AV1</option><option value="webm-vp9">WebM · VP9</option><option value="mp4-h264">MP4 · H.264</option></select></label>
+        </div>
+        <div className={styles.generateToggles}>
+          <label><input data-testid="studio-video-generate-audio" type="checkbox" checked={videoGenerateAudio} onChange={(event) => setVideoGenerateAudio(event.target.checked)} /><span><b>Native audio</b><small>Generate synchronized sound with the video</small></span></label>
+          <label><input data-testid="studio-video-generate-loop" type="checkbox" checked={videoGenerateLoop} onChange={(event) => setVideoGenerateLoop(event.target.checked)} /><span><b>Seamless loop</b><small>Create and reuse a matching start/end keyframe</small></span></label>
+          <label className={selected?.kind !== 'image' ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-selected-image" type="checkbox" disabled={selected?.kind !== 'image' || videoGenerateLoop} checked={videoGenerateUseSelected && selected?.kind === 'image' && !videoGenerateLoop} onChange={(event) => setVideoGenerateUseSelected(event.target.checked)} /><span><b>Use selected image</b><small>{selected?.kind === 'image' ? selected.name : 'Select an image on the timeline first'}</small></span></label>
+        </div>
+        <div className={styles.priceLine}><span>Estimated batch · {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</span><b>~${videoGenerateBatchUSD.toFixed(2)} · ~{videoGenerateBatchCredits.toLocaleString()} credits</b></div>
+        {videoGenerateQueueStatus && <p data-testid="studio-video-generate-status" className={styles.queueStatus} role="status">{videoGenerateQueueStatus}</p>}
+        <button data-testid="studio-video-generate-submit" className={styles.modalPrimary} disabled={busy === 'generate-videos' || !videoGeneratePrompts.length} onClick={() => void queueVideoGenerations()}>{busy === 'generate-videos' ? <><Loader2 className={styles.spin} size={16} /> Queueing creations…</> : <><Sparkles size={16} /> Queue {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</>}</button>
+      </Modal>}
+
+      {helpOpen && <Modal title="Keyboard shortcuts" onClose={() => setHelpOpen(false)}>
+        <p className={styles.shortcutsIntro}>Use these controls anywhere in the Studio, unless you are typing in a field.</p>
+        <section className={styles.shortcutSection} aria-labelledby="timeline-shortcuts">
+          <h3 id="timeline-shortcuts">Timeline</h3>
+          <div className={styles.shortcutList}>
+            <div><span>Play or pause the selected video or audio</span><kbd>Space</kbd></div>
+            <div><span>Select every clip</span><span className={styles.shortcutKeys}><kbd>⌘ / Ctrl</kbd><kbd>A</kbd></span></div>
+            <div><span>Copy or paste selected clips at the playhead</span><span className={styles.shortcutKeys}><kbd>⌘ / Ctrl</kbd><kbd>C</kbd><em>/</em><kbd>V</kbd></span></div>
+            <div><span>Split selected clips at the playhead</span><kbd>S</kbd></div>
+            <div><span>Delete selected clips</span><span className={styles.shortcutKeys}><kbd>Delete</kbd><em>or</em><kbd>Backspace</kbd></span></div>
+            <div><span>Move selected visual clips between layers</span><span className={styles.shortcutKeys}><kbd>⌘ / Ctrl</kbd><kbd>[</kbd><kbd>]</kbd></span></div>
+          </div>
+        </section>
+        <section className={styles.shortcutSection} aria-labelledby="canvas-shortcuts">
+          <h3 id="canvas-shortcuts">Canvas</h3>
+          <div className={styles.shortcutList}>
+            <div><span>Nudge the selected element on the canvas</span><kbd>Arrow keys</kbd></div>
+            <div><span>Nudge further</span><span className={styles.shortcutKeys}><kbd>Shift</kbd><kbd>Arrow keys</kbd></span></div>
+            <div><span>Return to the Help panel</span><kbd>?</kbd></div>
+            <div><span>Exit a multi-selection and keep the active clip</span><kbd>Esc</kbd></div>
+          </div>
+        </section>
+        <section className={styles.shortcutTips} aria-label="Editing tips">
+          <h3>Editing tips</h3>
+          <ul><li>Drop files anywhere to import them, or use <b>Add</b> in the timeline.</li><li>Drag clips left or right to retime them; drag vertically to change video layers.</li><li>Drag either end of a clip to trim it. Double-click a canvas element to center it.</li></ul>
+        </section>
+      </Modal>}
+
+      {exportOpen && <Modal title="Export" onClose={() => !busy && setExportOpen(false)}>
         <div className={styles.exportOptions}>
           <button data-testid="export-format-mp4-h264" className={exportSettings.format === 'mp4-h264' ? styles.optionSelected : ''} onClick={() => setExportSettings((current) => ({ ...current, format: 'mp4-h264' }))}><span className={styles.optionIcon}>264</span><span><b>MP4 · H.264</b><small>Maximum compatibility</small></span></button>
           <button data-testid="export-format-webm-vp9" className={exportSettings.format === 'webm-vp9' ? styles.optionSelected : ''} onClick={() => setExportSettings((current) => ({ ...current, format: 'webm-vp9' }))}><span className={styles.optionIcon}>VP9</span><span><b>WebM · VP9</b><small>Efficient web playback</small></span></button>
@@ -2385,10 +3349,10 @@ export default function StudioPage() {
           <label><span>Frame rate</span><select data-testid="export-frame-rate" value={String(exportSettings.frameRate)} disabled={!!busy} onChange={(event) => setExportSettings((current) => ({ ...current, frameRate: event.target.value === 'source' ? 'source' : Number(event.target.value) as 24 | 30 | 60 }))}><option value="source">Source</option><option value="24">24 fps</option><option value="30">30 fps</option><option value="60">60 fps</option></select></label>
           <label><span>Quality</span><select data-testid="export-quality" value={exportSettings.quality} disabled={!!busy} onChange={(event) => setExportSettings((current) => ({ ...current, quality: event.target.value as ExportQuality }))}><option value="draft">Draft</option><option value="balanced">Balanced</option><option value="high">High</option></select></label>
         </div>
-        <p className={styles.exportRemembered}>Settings are remembered on this device.</p>
-        <div className={styles.exportSummary}><span>Output <b>{selectedExportSize ? `${selectedExportSize.width} × ${selectedExportSize.height}` : '—'}</b></span><span>Frame rate <b>{exportSettings.frameRate === 'source' ? 'Source timing' : `${exportSettings.frameRate} fps`}</b></span><span>Timeline audio <b>{assets.some((asset) => asset.kind === 'audio') ? 'Mixed · AAC/Opus' : 'Source audio'}</b></span><span>Processing <b>WebGL GPU · hardware codec preferred</b></span><span>Destination <b>Local download</b></span></div>
+        <p className={styles.exportRemembered}>Complete {formatTime(timelineDuration)} timeline · settings saved on this device.</p>
+        <div className={styles.exportSummary}><span>Output <b>{selectedExportSize ? `${selectedExportSize.width} × ${selectedExportSize.height}` : '—'}</b></span><span>Frame rate <b>{exportSettings.frameRate === 'source' ? '30 fps timeline' : `${exportSettings.frameRate} fps`}</b></span><span>Audio <b>{assets.some((asset) => asset.kind !== 'image') ? 'Mixed · AAC/Opus' : 'None'}</b></span><span>Processing <b>Local GPU · hardware codec preferred</b></span></div>
         {exportProgress > 0 && <div className={styles.progress}><i style={{ width: `${exportProgress * 100}%` }} /></div>}
-        <button className={styles.modalPrimary} disabled={!!busy} onClick={() => void exportVideo()}>{busy === 'export' ? <><Loader2 className={styles.spin} size={16} /> Exporting {Math.round(exportProgress * 100)}%</> : <><Download size={16} /> Export locally</>}</button>
+        <button className={styles.modalPrimary} disabled={!!busy} onClick={() => void exportVideo()}>{busy === 'export' ? <><Loader2 className={styles.spin} size={16} /> Exporting {Math.round(exportProgress * 100)}%</> : <><Download size={16} /> Export</>}</button>
       </Modal>}
 
       {extendOpen && <Modal title="Extend video" onClose={() => !busy && setExtendOpen(false)}>
@@ -2476,14 +3440,19 @@ export default function StudioPage() {
           <div className={styles.priceLine}><span>Exact text charge</span><b>${speechUSD.toFixed(4)} · {speechCredits.toFixed(2)} credits</b></div>
         </> : <>
           <label className={styles.field}><span>{audioMode === 'music' ? 'Describe the track' : 'Describe the sound'}</span><textarea data-testid="studio-audio-prompt" value={audioPrompt} onChange={(event) => setAudioPrompt(event.target.value)} rows={4} maxLength={2000} /></label>
-          <div className={styles.durationChoices}>{[5, 10, 20, 30, 45].map((duration) => <button key={duration} className={audioDuration === duration ? styles.durationActive : ''} onClick={() => setAudioDuration(duration)}>{duration}s</button>)}</div>
-          <div className={styles.priceLine}><span>{audioMode === 'music' ? 'Fal music charge' : 'Estimated H3 charge'}</span><b>{audioMode === 'music' ? '80 credits' : `~$${audioEstimateUSD.toFixed(2)} · ~${audioEstimateCredits.toLocaleString()} credits`}</b></div>
+          <div className={styles.durationChoices}>{(audioMode === 'music' ? [30, 45, 60, 90, 180] : [5, 10, 20, 30, 45]).map((duration) => <button key={duration} className={audioDuration === duration ? styles.durationActive : ''} onClick={() => setAudioDuration(duration)}>{duration}s</button>)}</div>
+          <div className={styles.priceLine}><span>{audioMode === 'music' ? 'music charge' : 'Estimated charge'}</span><b>{audioMode === 'music' ? '80 credits' : `~$${audioEstimateUSD.toFixed(2)} · ~${audioEstimateCredits.toLocaleString()} credits`}</b></div>
         </>}
         <p className={styles.billingNote}>Catalog search and editing are free. Generation is charged only through your Manifold credits.</p>
         <button data-testid="studio-audio-generate" className={styles.modalPrimary} disabled={!!busy || (audioMode === 'speech' ? !speechText.trim() : !audioPrompt.trim())} onClick={() => void generateAudio()}>{busy.startsWith('generate-') ? <><Loader2 className={styles.spin} size={16} /> Generating…</> : <><Sparkles size={16} /> Generate and add to timeline</>}</button>
       </Modal>}
 
       {contextMenu && <div className={styles.contextMenuBackdrop} onPointerDown={() => setContextMenu(null)} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); }}><div className={styles.contextMenu} style={{ left: Math.min(contextMenu.x, window.innerWidth - 190), top: Math.min(contextMenu.y, window.innerHeight - 70) }} onPointerDown={(event) => event.stopPropagation()}><button onClick={() => { const asset = assets.find((item) => item.id === contextMenu.assetID); if (asset) openRestyle(asset); }}><WandSparkles size={15} /><span><b>Restyle video</b><small>Transform look, preserve motion</small></span></button></div></div>}
+      {generationContextMenu && <div className={styles.contextMenuBackdrop} onPointerDown={() => setGenerationContextMenu(null)} onContextMenu={(event) => { event.preventDefault(); setGenerationContextMenu(null); }}><div className={styles.contextMenu} style={{ left: Math.min(generationContextMenu.x, window.innerWidth - 210), top: Math.min(generationContextMenu.y, window.innerHeight - 130) }} onPointerDown={(event) => event.stopPropagation()}>{(() => {
+        const generation = generationJobs.find((job) => job.job_id === generationContextMenu.jobID);
+        if (!generation) return null;
+        return <><button data-testid="studio-generation-copy-prompt" onClick={() => void copyGenerationPrompt(generation)}><Copy size={15} /><span><b>Copy prompt</b><small>Copy the exact text used</small></span></button><button data-testid="studio-generation-similar" onClick={() => generateSimilar(generation)}><Sparkles size={15} /><span><b>Generate similar</b><small>Open Generate with this prompt</small></span></button></>;
+      })()}</div></div>}
     </main>
   );
 }
@@ -2493,5 +3462,5 @@ function PanelEmpty() {
 }
 
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return <div className={styles.modalBackdrop} onMouseDown={(event) => event.currentTarget === event.target && onClose()}><div className={styles.modal}><div className={styles.modalHeader}><div><span className={styles.eyebrow}>STUDIO</span><h2>{title}</h2></div><button onClick={onClose}><X size={17} /></button></div><div className={styles.modalBody}>{children}</div></div></div>;
+  return <div className={styles.modalBackdrop} onMouseDown={(event) => event.currentTarget === event.target && onClose()}><div className={styles.modal} role="dialog" aria-modal="true" aria-label={title}><div className={styles.modalHeader}><div><span className={styles.eyebrow}>STUDIO</span><h2>{title}</h2></div><button aria-label={`Close ${title}`} onClick={onClose}><X size={17} /></button></div><div className={styles.modalBody}>{children}</div></div></div>;
 }

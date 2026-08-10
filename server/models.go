@@ -93,6 +93,20 @@ type StudioProject struct {
 	UpdatedAt time.Time       `json:"updated_at"`
 }
 
+// GeneratedAudio is a durable, searchable audio asset created through Studio.
+// Provider details are intentionally not stored in the public API model.
+type GeneratedAudio struct {
+	ID              string    `json:"id"`
+	UserID          string    `json:"-"`
+	Kind            string    `json:"kind"`
+	Prompt          string    `json:"prompt"`
+	Title           string    `json:"title"`
+	AudioURL        string    `json:"audio_url"`
+	DurationSeconds int       `json:"duration_seconds"`
+	Public          bool      `json:"public"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 // CryptoCheckoutIntent represents a pending deposit of $CUTE
 type CryptoCheckoutIntent struct {
 	ID              string               `json:"id"`

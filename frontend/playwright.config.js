@@ -40,6 +40,7 @@ module.exports = defineConfig({
         timeout: 120_000,
         env: {
           ...process.env,
+          NEXT_DIST_DIR: process.env.NEXT_DIST_DIR || '.next-playwright',
           MANIFOLDGEN_API_ORIGIN: process.env.MANIFOLDGEN_API_ORIGIN || 'http://127.0.0.1:8116',
         },
       },

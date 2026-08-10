@@ -258,7 +258,7 @@ func handleStudioAudioSearch(ctx *fasthttp.RequestCtx) {
 	}
 	ctx.Response.Header.Set("Cache-Control", "public, max-age=300")
 	jsonResponse(ctx, http.StatusOK, map[string]interface{}{
-		"kind": "audio", "results": clean, "count": len(clean), "source": "netwrck",
+		"kind": "audio", "results": clean, "count": len(clean),
 	})
 }
 
@@ -406,7 +406,10 @@ func studioMediaURL(body []byte) string {
 				return typed
 			}
 		case map[string]interface{}:
-			for _, key := range []string{"image_url", "url", "data_url", "image", "result", "output"} {
+			// Fal's music endpoint returns {"audio_file":{"url":"…"}}.
+			// Keep this list explicit so an arbitrary string in a provider response
+			// can never be mistaken for a media URL.
+			for _, key := range []string{"image_url", "audio_file", "video", "url", "data_url", "image", "result", "output"} {
 				if found := visit(typed[key]); found != "" {
 					return found
 				}
@@ -423,12 +426,15 @@ func studioMediaURL(body []byte) string {
 	return visit(payload)
 }
 
+const studioMusicEndpoint = "https://fal.run/CassetteAI/music-generator"
+const studioMusicMinDuration = 30
+
 func studioFalMusic(prompt string, duration int) (string, error) {
 	if falAPIKey == "" {
 		return "", fmt.Errorf("music generation is not configured")
 	}
 	body, _ := json.Marshal(map[string]interface{}{"prompt": prompt, "duration": duration})
-	req, err := http.NewRequest(http.MethodPost, "https://fal.run/cassetteai/music-generator", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, studioMusicEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -466,8 +472,8 @@ func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, http.StatusBadRequest, "a music prompt is required")
 		return
 	}
-	if input.Duration < 5 || input.Duration > 180 {
-		jsonError(ctx, http.StatusBadRequest, "music duration must be 5–180 seconds")
+	if input.Duration < studioMusicMinDuration || input.Duration > 180 {
+		jsonError(ctx, http.StatusBadRequest, "music duration must be 30–180 seconds")
 		return
 	}
 	balance, err := dbConn.DeductUserCredits(user.ID, studioMusicCredits)
@@ -477,14 +483,37 @@ func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 	}
 	audioURL, err := studioFalMusic(strings.TrimSpace(input.Prompt), input.Duration)
 	if err != nil {
+		log.Printf("studio music generation failed: %v", err)
 		_, _ = dbConn.AddUserCredits(user.ID, studioMusicCredits)
 		jsonError(ctx, http.StatusBadGateway, "music generation is temporarily unavailable")
 		return
 	}
 	price := getCUTEPriceUSD()
-	_ = dbConn.CreateBillingEvent(&BillingEvent{UserID: user.ID, EventType: "music_generation", Amount: -studioMusicCredits, CuteAmount: studioMusicCredits, USDAmount: studioMusicCredits * price, Description: "Fal music generation", CreditsAfter: balance})
+	_ = dbConn.CreateBillingEvent(&BillingEvent{UserID: user.ID, EventType: "music_generation", Amount: -studioMusicCredits, CuteAmount: studioMusicCredits, USDAmount: studioMusicCredits * price, Description: "music generation", CreditsAfter: balance})
 	maybeTriggerAutoTopup(user.ID)
-	jsonResponse(ctx, http.StatusOK, map[string]interface{}{"audio_url": audioURL, "credits_used": studioMusicCredits, "credits_remain": balance, "backend": "fal-cassetteai"})
+	asset := &GeneratedAudio{
+		ID: newUUID(), UserID: user.ID, Kind: "music", Prompt: strings.TrimSpace(input.Prompt),
+		Title: studioAudioTitle(input.Prompt), AudioURL: audioURL, DurationSeconds: input.Duration,
+		Public: true, CreatedAt: time.Now(),
+	}
+	indexed := true
+	if err := dbConn.InsertGeneratedAudio(asset); err != nil {
+		indexed = false
+		log.Printf("studio music persistence failed for user %s: %v", user.ID, err)
+	}
+	jsonResponse(ctx, http.StatusOK, map[string]interface{}{
+		"audio_id": asset.ID, "audio_url": audioURL, "kind": asset.Kind,
+		"prompt": asset.Prompt, "title": asset.Title, "duration_seconds": asset.DurationSeconds,
+		"indexed": indexed, "credits_used": studioMusicCredits, "credits_remain": balance,
+	})
+}
+
+func studioAudioTitle(prompt string) string {
+	runes := []rune(strings.TrimSpace(prompt))
+	if len(runes) <= 72 {
+		return string(runes)
+	}
+	return strings.TrimSpace(string(runes[:69])) + "…"
 }
 
 func handleStudioRemoveBackground(ctx *fasthttp.RequestCtx) {

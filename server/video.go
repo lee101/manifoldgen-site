@@ -27,6 +27,7 @@ const maxGeneratedVideoBytes = 256 << 20
 const h3DownstreamMarkupPercent = int64(50)
 const h3MinimumChargeMicros = int64(100_000) // $0.10; video should never cost less than an image.
 const h3NativeFiveSecondBaseline = 15 * time.Minute
+const h3RunpodQueueTimeoutDefault = 10 * time.Minute
 
 var appNZVideoClient = &http.Client{Timeout: 30 * time.Second}
 var localH3CogClient = &http.Client{Timeout: 60 * time.Second}
@@ -371,6 +372,15 @@ func h3RunpodBaseURL() string {
 	return strings.TrimRight(getEnv("H3_RUNPOD_BASE_URL", "https://api.runpod.ai/v2"), "/")
 }
 
+func h3RunpodQueueTimeout() time.Duration {
+	if configured := strings.TrimSpace(os.Getenv("H3_RUNPOD_QUEUE_TIMEOUT")); configured != "" {
+		if parsed, err := time.ParseDuration(configured); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return h3RunpodQueueTimeoutDefault
+}
+
 type h3RunpodQueuedJob struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
@@ -435,7 +445,10 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 video job")
 		return
 	}
-	persisted, _ := json.Marshal(map[string]interface{}{"_h3_variant": route.Variant})
+	// Persist the normalized request so a queue-starved RunPod job can be moved
+	// to the local worker without changing the user's requested settings.
+	input["_h3_variant"] = route.Variant
+	persisted, _ := json.Marshal(input)
 	if err := dbConn.UpdateVideoJob(job.ID, "queued", persisted, ""); err != nil {
 		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 route")
 		return
@@ -443,7 +456,7 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
-		"result":       map[string]interface{}{"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID, "backend": "runpod-serverless"},
+		"result":       map[string]interface{}{"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID},
 		"credits_used": 0, "settlement": "final price based on generation",
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
 		"estimated_generation_seconds": estimatedSeconds,
@@ -470,7 +483,7 @@ func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"result": map[string]interface{}{
-			"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID, "backend": "h3-cog",
+			"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID,
 		},
 		"credits_used": 0, "settlement": "final price based on generation",
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
@@ -517,7 +530,7 @@ func indexCompletedVideo(job *VideoJob, result []byte) {
 
 func processVideoJob(jobID string) {
 	job, err := dbConn.GetVideoJobInternal(jobID)
-	if err != nil || job.Status == "completed" || job.Status == "failed" {
+	if err != nil || job.Status == "completed" || job.Status == "failed" || job.Status == "payment_required" {
 		return
 	}
 	if job.Service == "h3_video" {
@@ -649,6 +662,27 @@ func h3Result(pred appNZH3Prediction) map[string]interface{} {
 	return result
 }
 
+// h3AudioJob reports whether a Studio sound request is being fulfilled through
+// the H3 worker. It is still represented as an h3_video job for provider
+// polling and settlement, but it is an audio asset in Studio—not a Gallery
+// video. Keep its initial request marker until the job is settled so every H3
+// backend can make the same indexing decision.
+func h3AudioJob(job *VideoJob) bool {
+	if job == nil || job.Service != "h3_video" || len(job.Result) == 0 {
+		return false
+	}
+	var stored struct {
+		Size    string `json:"size"`
+		Request struct {
+			Size string `json:"size"`
+		} `json:"_h3_request"`
+	}
+	if err := json.Unmarshal(job.Result, &stored); err != nil {
+		return false
+	}
+	return stored.Size == "audio" || stored.Request.Size == "audio"
+}
+
 func processH3VideoJob(job *VideoJob) {
 	if strings.HasPrefix(job.ProviderJobID, "runpod:") {
 		processRunpodH3VideoJob(job)
@@ -703,7 +737,9 @@ func processH3VideoJob(job *VideoJob) {
 				_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "settlement unavailable; retry status")
 				return
 			}
-			indexCompletedVideo(job, result)
+			if !h3AudioJob(job) {
+				indexCompletedVideo(job, result)
+			}
 			maybeTriggerAutoTopup(job.UserID)
 			return
 		case "failed", "cancelled", "canceled":
@@ -804,7 +840,13 @@ func processRunpodH3VideoJob(job *VideoJob) {
 			continue
 		}
 		consecutiveErrors = 0
-		switch strings.ToUpper(strings.TrimSpace(state.Status)) {
+		providerStatus := strings.ToUpper(strings.TrimSpace(state.Status))
+		if providerStatus == "IN_QUEUE" && time.Since(job.CreatedAt) >= h3RunpodQueueTimeout() {
+			if fallbackRunpodH3ToLocal(job, endpointID, providerJobID, variant) {
+				return
+			}
+		}
+		switch providerStatus {
 		case "COMPLETED":
 			if len(state.Output.Outputs) == 0 || state.Output.Outputs[0].Data == "" {
 				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 completed without a video artifact")
@@ -858,7 +900,9 @@ func processRunpodH3VideoJob(job *VideoJob) {
 				_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "settlement unavailable; retry status")
 				return
 			}
-			indexCompletedVideo(job, result)
+			if !h3AudioJob(job) {
+				indexCompletedVideo(job, result)
+			}
 			maybeTriggerAutoTopup(job.UserID)
 			return
 		case "FAILED", "CANCELLED", "TIMED_OUT":
@@ -872,6 +916,47 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		time.Sleep(2 * time.Second)
 	}
 	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 generation did not finish within 60 minutes")
+}
+
+func fallbackRunpodH3ToLocal(job *VideoJob, endpointID, providerJobID, variant string) bool {
+	route := h3RouteForPrompt(job.Prompt)
+	if strings.TrimSpace(route.CogURL) == "" {
+		return false
+	}
+	var cancelled h3RunpodQueuedJob
+	if _, err := callH3Runpod(endpointID, "/cancel/"+url.PathEscape(providerJobID), http.MethodPost, nil, &cancelled); err != nil {
+		log.Printf("[h3] queue fallback cancel failed job=%s: %v", job.ID, err)
+		return false
+	}
+	if status := strings.ToUpper(strings.TrimSpace(cancelled.Status)); status != "CANCELLED" && status != "CANCELED" {
+		log.Printf("[h3] queue fallback refused job=%s cancel_status=%s", job.ID, status)
+		return false
+	}
+
+	input := map[string]interface{}{}
+	if len(job.Result) > 0 {
+		_ = json.Unmarshal(job.Result, &input)
+	}
+	if _, ok := input["prompt"]; !ok {
+		input = map[string]interface{}{
+			"prompt": job.Prompt, "aspect_ratio": "16:9", "size": "balanced",
+			"duration": 5, "steps": 20, "structured_prompt": true, "include_audio": true,
+			"output_codec": "webm-av1", "encode_quality": 22, "quant": "int8_convrot",
+		}
+	}
+	input["_h3_cog_url"] = route.CogURL
+	input["_h3_variant"] = variant
+	payload, _ := json.Marshal(input)
+	if err := dbConn.UpdateVideoJobProvider(job.ID, "local:sync", "queued", payload); err != nil {
+		log.Printf("[h3] queue fallback persistence failed job=%s: %v", job.ID, err)
+		return false
+	}
+	job.ProviderJobID = "local:sync"
+	job.Status = "queued"
+	job.Result = payload
+	log.Printf("[h3] queue-starved job=%s moved to local worker", job.ID)
+	processLocalH3VideoJob(job)
+	return true
 }
 
 func processLocalH3VideoJob(job *VideoJob) {
@@ -994,7 +1079,9 @@ func processLocalH3VideoJob(job *VideoJob) {
 		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "settlement unavailable; retry status")
 		return
 	}
-	indexCompletedVideo(job, result)
+	if !h3AudioJob(job) {
+		indexCompletedVideo(job, result)
+	}
 	maybeTriggerAutoTopup(job.UserID)
 }
 
@@ -1035,8 +1122,16 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 		jsonError(ctx, http.StatusNotFound, "video job not found")
 		return
 	}
+	if job.Status == "payment_required" && len(job.Result) > 0 && job.ProviderCost > 0 && job.ChargedUSD > 0 {
+		if cutePrice := getCUTEPriceUSD(); cutePrice > 0 {
+			if _, _, settleErr := dbConn.SettleGeneratedVideoJob(job.ID, job.Result, job.ProviderCost, job.ChargedUSD, cutePrice); settleErr == nil {
+				job, _ = dbConn.GetVideoJob(job.ID, user.ID)
+				indexCompletedVideo(job, job.Result)
+			}
+		}
+	}
 	status := http.StatusOK
-	if job.Status == "queued" || job.Status == "processing" || job.Status == "payment_required" {
+	if job.Status == "queued" || job.Status == "processing" {
 		launchVideoJob(job.ID)
 		status = http.StatusAccepted
 	}
@@ -1044,7 +1139,7 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 		status = http.StatusPaymentRequired
 	}
 	jsonResponse(ctx, status, map[string]interface{}{
-		"job":        job,
+		"job":        publicVideoJob(job),
 		"status_url": "/api/video-jobs/" + job.ID,
 	})
 }
@@ -1068,7 +1163,45 @@ func handleListVideoJobs(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, http.StatusInternalServerError, "could not load video jobs")
 		return
 	}
-	jsonResponse(ctx, http.StatusOK, map[string]interface{}{"jobs": jobs})
+	// A provider job can outlive the process that originally polled it. Listing
+	// the durable queue is also a recovery point, so a signed-in client repairs
+	// stale queued/processing rows after a restart without creating a new job.
+	for i := range jobs {
+		status := strings.ToLower(strings.TrimSpace(jobs[i].Status))
+		providerJobID := strings.TrimSpace(jobs[i].ProviderJobID)
+		if (status == "queued" || status == "processing") && providerJobID != "" && !strings.HasPrefix(providerJobID, "local:") {
+			launchVideoJob(jobs[i].ID)
+		}
+	}
+	publicJobs := make([]*VideoJob, 0, len(jobs))
+	for i := range jobs {
+		publicJobs = append(publicJobs, publicVideoJob(&jobs[i]))
+	}
+	jsonResponse(ctx, http.StatusOK, map[string]interface{}{"jobs": publicJobs})
+}
+
+func publicVideoJob(job *VideoJob) *VideoJob {
+	if job == nil {
+		return nil
+	}
+	out := *job
+	if public := publicServiceName(job.Service); public != "" {
+		out.Service = public
+	} else if job.Service == "video_generate" || job.Service == "ltx_video" {
+		out.Service = "video"
+	}
+	if len(job.Result) > 0 {
+		var result map[string]interface{}
+		if json.Unmarshal(job.Result, &result) == nil {
+			for key := range result {
+				if strings.HasPrefix(key, "_") || key == "provider" || key == "provider_cost_usd" || key == "backend" || key == "backend_used" || key == "model_variant" {
+					delete(result, key)
+				}
+			}
+			out.Result, _ = json.Marshal(result)
+		}
+	}
+	return &out
 }
 
 func handleDeleteVideoJob(ctx *fasthttp.RequestCtx, jobID string) {

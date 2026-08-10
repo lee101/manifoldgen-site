@@ -1,6 +1,6 @@
 import type { StudioAdjustments } from './studio-renderer';
 
-export const STUDIO_PROJECT_VERSION = 2;
+export const STUDIO_PROJECT_VERSION = 3;
 const DB_NAME = 'manifold-studio';
 const DB_VERSION = 1;
 const LAST_PROJECT_KEY = 'mg_studio_project_id';
@@ -22,6 +22,10 @@ export type PortableStudioAsset = {
   fadeOut: number;
   stageX: number;
   stageY: number;
+  /** Uniform element scale. Optional so older projects remain readable. */
+  stageScale?: number;
+  /** Clockwise rotation in degrees. Optional so older projects remain readable. */
+  stageRotation?: number;
   attribution?: string;
   adjustments: StudioAdjustments;
   cloudURL?: string;
@@ -29,11 +33,34 @@ export type PortableStudioAsset = {
   contentType: string;
   size: number;
   lastModified: number;
+  text?: {
+    content: string;
+    fontSize: number;
+    fontFamily: 'Inter' | 'Arial' | 'Georgia' | 'Courier New';
+    fontWeight: 400 | 600 | 800;
+    color: string;
+    align: 'left' | 'center' | 'right';
+  };
 };
 
 export type PortableStudioDocument = {
   version: number;
   selectedID: string;
+  assets: PortableStudioAsset[];
+  /**
+   * Editor history is part of the project document so undoing an edit still
+   * works after reopening the project or moving to another device.
+   */
+  history?: {
+    undo: PortableStudioHistoryState[];
+    redo: PortableStudioHistoryState[];
+  };
+};
+
+export type PortableStudioHistoryState = {
+  selectedID: string;
+  selectedIDs: string[];
+  playhead: number;
   assets: PortableStudioAsset[];
 };
 
@@ -91,7 +118,14 @@ export async function saveLocalStudioProject(project: LocalStudioProject) {
     const assetStore = transaction.objectStore('assets');
     const index = assetStore.index('projectID');
     const existing = await requestResult(index.getAllKeys(IDBKeyRange.only(project.id)));
-    const wanted = new Set(project.document.assets.map((asset) => `${project.id}:${asset.id}`));
+    const projectAssets = [
+      ...project.document.assets,
+      ...(project.document.history?.undo.flatMap((state) => state.assets) || []),
+      ...(project.document.history?.redo.flatMap((state) => state.assets) || []),
+    ];
+    // Keep files referenced by undo/redo snapshots as well as the live
+    // timeline. This is what makes "delete, close, reopen, undo" possible.
+    const wanted = new Set(projectAssets.map((asset) => `${project.id}:${asset.id}`));
     for (const key of existing) {
       if (!wanted.has(String(key))) assetStore.delete(key);
     }

@@ -18,7 +18,10 @@ import (
 var ErrAPIKeyMismatch = errors.New("api key no longer matches")
 
 func newAPIKey() string {
-	return "sk-mg-" + strings.ReplaceAll(newUUID(), "-", "")
+	// UUIDs are normalized to a compact suffix so generated user keys never
+	// inherit a separator at the end of the credential.
+	suffix := strings.Trim(strings.ReplaceAll(newUUID(), "-", ""), "-")
+	return "sk-mg-" + suffix
 }
 
 // DB wraps the PostgreSQL connection
@@ -146,6 +149,21 @@ func (db *DB) migrate() error {
 		updated_at TIMESTAMPTZ DEFAULT NOW()
 	);
 	CREATE INDEX IF NOT EXISTS idx_studio_projects_user_updated ON studio_projects(user_id, updated_at DESC);
+
+	CREATE TABLE IF NOT EXISTS generated_audio (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		kind TEXT NOT NULL DEFAULT 'music',
+		prompt TEXT NOT NULL DEFAULT '',
+		title TEXT NOT NULL DEFAULT '',
+		audio_url TEXT NOT NULL UNIQUE,
+		duration_seconds INTEGER NOT NULL DEFAULT 0,
+		public BOOLEAN NOT NULL DEFAULT TRUE,
+		created_at TIMESTAMPTZ DEFAULT NOW()
+	);
+	CREATE INDEX IF NOT EXISTS idx_generated_audio_user_created ON generated_audio(user_id, created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_generated_audio_kind_created ON generated_audio(kind, created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_generated_audio_prompt ON generated_audio(prompt) WHERE prompt <> '';
 
 	CREATE TABLE IF NOT EXISTS crypto_checkout_intents (
 		id TEXT PRIMARY KEY,
@@ -655,9 +673,32 @@ func (db *DB) SettleGeneratedVideoJob(jobID string, result []byte, providerCostU
 		return balance, creditsUsed, nil
 	}
 	creditsUsed := chargedUSD / cutePrice
+	var currentBalance float64
+	var unlimitedAPI bool
+	if err := tx.QueryRow(`SELECT credits, COALESCE(unlimited_api, FALSE) FROM users WHERE id = $1`, userID).Scan(&currentBalance, &unlimitedAPI); err != nil {
+		return 0, creditsUsed, err
+	}
+	if unlimitedAPI {
+		if _, err := tx.Exec(`UPDATE video_jobs SET status = 'completed', result_json = $2::jsonb, error = '', provider_cost_usd = $3, charged_usd = 0, credits_used = 0, settled = TRUE, updated_at = NOW() WHERE id = $1`,
+			jobID, string(result), providerCostUSD); err != nil {
+			return 0, 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, 0, err
+		}
+		return currentBalance, 0, nil
+	}
 	var balance float64
 	if err := tx.QueryRow(`UPDATE users SET credits = credits - $1, updated_at = NOW() WHERE id = $2 AND credits >= $1 RETURNING credits`, creditsUsed, userID).Scan(&balance); err != nil {
 		if err == sql.ErrNoRows {
+			if _, updateErr := tx.Exec(`UPDATE video_jobs SET status = 'payment_required', result_json = $2::jsonb, error = $6, provider_cost_usd = $3, charged_usd = $4, credits_used = $5, settled = FALSE, updated_at = NOW() WHERE id = $1`,
+				jobID, string(result), providerCostUSD, chargedUSD, creditsUsed,
+				fmt.Sprintf("top up to release completed video; $%.6f required", chargedUSD)); updateErr != nil {
+				return 0, creditsUsed, updateErr
+			}
+			if commitErr := tx.Commit(); commitErr != nil {
+				return 0, creditsUsed, commitErr
+			}
 			return 0, creditsUsed, ErrVideoPaymentRequired
 		}
 		return 0, creditsUsed, err
@@ -1610,6 +1651,62 @@ func (db *DB) InsertGeneratedImage(img *GeneratedImage) error {
 		promptSearch.IndexIncremental(img.ID, img.Prompt)
 	}
 	return err
+}
+
+// InsertGeneratedAudio stores a generated audio asset and updates the live
+// semantic index after the database write succeeds.
+func (db *DB) InsertGeneratedAudio(asset *GeneratedAudio) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if asset.ID == "" {
+		asset.ID = newUUID()
+	}
+	if asset.CreatedAt.IsZero() {
+		asset.CreatedAt = time.Now()
+	}
+	if asset.Kind == "" {
+		asset.Kind = "music"
+	}
+	result, err := db.conn.Exec(
+		`INSERT INTO generated_audio (id, user_id, kind, prompt, title, audio_url, duration_seconds, public, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 ON CONFLICT (audio_url) DO NOTHING`,
+		asset.ID, asset.UserID, asset.Kind, asset.Prompt, asset.Title, asset.AudioURL,
+		asset.DurationSeconds, asset.Public, asset.CreatedAt,
+	)
+	if err != nil {
+		return err
+	}
+	inserted, _ := result.RowsAffected()
+	if inserted > 0 && audioSearch != nil && asset.Prompt != "" {
+		audioSearch.IndexIncremental(asset)
+	}
+	return nil
+}
+
+// StreamAllAudioPrompts feeds durable generated audio to the semantic index.
+func (db *DB) StreamAllAudioPrompts(cb func(*GeneratedAudio) error) error {
+	rows, err := db.conn.Query(`
+		SELECT id, user_id, kind, prompt, title, audio_url, duration_seconds, public, created_at
+		FROM generated_audio
+		WHERE prompt <> '' AND audio_url <> ''
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var asset GeneratedAudio
+		if err := rows.Scan(&asset.ID, &asset.UserID, &asset.Kind, &asset.Prompt, &asset.Title,
+			&asset.AudioURL, &asset.DurationSeconds, &asset.Public, &asset.CreatedAt); err != nil {
+			return err
+		}
+		if err := cb(&asset); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 // SearchImagesByUser returns gallery images generated by a specific user.

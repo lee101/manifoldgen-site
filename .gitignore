@@ -18,3 +18,4 @@ visualbench/*
 !visualbench/studio-mobile-workspace.png
 .local-gallery-images/
 visualbench/
+frontend/.next-playwright/

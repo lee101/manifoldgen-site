@@ -21,12 +21,12 @@ async function installStudioMocks(page, serviceHandler) {
     json: {
       credit_price_usd: 0.01,
       image_credits: 4,
-      h3_video_estimate: {
+      video_estimate: {
         duration_seconds: 5,
         estimated_cost_usd: 0.01,
         estimated_credits: 1,
       },
-      pricing: [{ service: 'h3_video', price_usd: 2.688 }],
+      pricing: [{ service: 'video', price_usd: 2.688 }],
     },
   }));
   await page.route('**/api/auth/session', (route) => route.fulfill({
@@ -79,7 +79,7 @@ test('loop toggle generates a native-sized anchor before H3 and reuses it', asyn
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('home-video-cost')).toContainText('~14 credits');
-  await page.getByRole('button', { name: /^Generate$/ }).click();
+  await page.getByRole('button', { name: /^Generate video$/ }).click();
   await expect(page.getByTestId('home-job-cost')).toContainText('completed');
 
   expect(requests).toHaveLength(2);
@@ -112,7 +112,7 @@ test('loop keyframe follows H3 balanced portrait dimensions', async ({ page }) =
   await page.locator('select').nth(0).selectOption('9:16');
   await page.locator('select').nth(1).selectOption('balanced');
   await page.getByTestId('home-loop-toggle').click();
-  await page.getByRole('button', { name: /^Generate$/ }).click();
+  await page.getByRole('button', { name: /^Generate video$/ }).click();
   await expect(page.getByTestId('home-job-cost')).toContainText('completed');
 
   expect(requests[0]).toMatchObject({ service: 'zimage', width: 672, height: 1184 });
@@ -128,10 +128,26 @@ test('ordinary H3 generation does not spend an image request', async ({ page }) 
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: /^Generate$/ }).click();
+  await page.getByRole('button', { name: /^Generate video$/ }).click();
   await expect(page.getByTestId('home-job-cost')).toContainText('completed');
 
   expect(requests).toHaveLength(1);
   expect(requests[0]).toMatchObject({ service: 'h3_video', loop: false });
   expect(requests[0]).not.toHaveProperty('first_frame');
+});
+
+test('image mode always requests a four-image batch', async ({ page }) => {
+  let requestBody;
+  await installStudioMocks(page, async (route) => {
+    requestBody = route.request().postDataJSON();
+    await route.fulfill({ status: 200, json: { saved_images: [{ id: 'one' }, { id: 'two' }, { id: 'three' }, { id: 'four' }] } });
+  });
+
+  await page.goto('/');
+  await page.getByTestId('home-generation-mode').getByRole('button', { name: '4 images' }).click();
+  const generateButton = page.getByRole('button', { name: 'Generate 4 images' });
+  await generateButton.click();
+  await expect(generateButton).toBeEnabled();
+
+  expect(requestBody).toMatchObject({ service: 'zimage', n: 4, num_images: 4, image_backend: 'auto' });
 });

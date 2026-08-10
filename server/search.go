@@ -34,6 +34,18 @@ type VideoSearchEngine struct {
 	indexedAt time.Time
 }
 
+// AudioSearchEngine indexes generated audio prompts while retaining enough
+// metadata to return useful, provider-neutral search results.
+type AudioSearchEngine struct {
+	engine    *gobed.SearchEngine
+	model     *gobed.EmbeddingModel
+	assets    []GeneratedAudio
+	mu        sync.RWMutex
+	ready     bool
+	indexing  bool
+	indexedAt time.Time
+}
+
 type SearchResult struct {
 	ImageID    string  `json:"image_id,omitempty"`
 	JobID      string  `json:"job_id,omitempty"`
@@ -43,18 +55,36 @@ type SearchResult struct {
 	Similarity float32 `json:"similarity"`
 }
 
+type AudioSearchResult struct {
+	ID              string    `json:"id"`
+	Kind            string    `json:"kind"`
+	Prompt          string    `json:"prompt"`
+	Title           string    `json:"title"`
+	AudioURL        string    `json:"audio_url"`
+	DurationSeconds int       `json:"duration_seconds"`
+	CreatedAt       time.Time `json:"created_at"`
+	Similarity      float32   `json:"similarity"`
+}
+
 var promptSearch *PromptSearchEngine
 var videoSearch *VideoSearchEngine
+var audioSearch *AudioSearchEngine
 
 func initPromptSearch() {
 	promptSearch = &PromptSearchEngine{}
 	videoSearch = &VideoSearchEngine{}
+	audioSearch = &AudioSearchEngine{}
 	go promptSearch.loadAndIndex()
 	go videoSearch.loadAndIndex()
+	go audioSearch.loadAndIndex()
 }
 
 func (ps *PromptSearchEngine) loadAndIndex() {
 	ps.mu.Lock()
+	if ps.indexing {
+		ps.mu.Unlock()
+		return
+	}
 	ps.indexing = true
 	ps.mu.Unlock()
 	defer func() {
@@ -173,6 +203,10 @@ func (ps *PromptSearchEngine) Search(query string, topK int) ([]SearchResult, er
 
 func (vs *VideoSearchEngine) loadAndIndex() {
 	vs.mu.Lock()
+	if vs.indexing {
+		vs.mu.Unlock()
+		return
+	}
 	vs.indexing = true
 	vs.mu.Unlock()
 	defer func() {
@@ -290,9 +324,152 @@ func (vs *VideoSearchEngine) Search(query string, topK int) ([]SearchResult, err
 			JobID:      vs.jobIDs[r.ID],
 			Prompt:     vs.prompts[r.ID],
 			VideoURL:   vs.videoURLs[r.ID],
-			Service:    vs.services[r.ID],
+			Service:    "video",
 			Similarity: r.Similarity,
 		})
+	}
+	return out, nil
+}
+
+func (as *AudioSearchEngine) loadAndIndex() {
+	as.mu.Lock()
+	if as.indexing {
+		as.mu.Unlock()
+		return
+	}
+	as.indexing = true
+	as.mu.Unlock()
+	defer func() {
+		as.mu.Lock()
+		as.indexing = false
+		as.mu.Unlock()
+	}()
+
+	t0 := time.Now()
+	log.Println("[audio-search] Loading gobed model…")
+	model, err := gobed.LoadModel()
+	if err != nil {
+		log.Printf("[audio-search] gobed model load failed: %v", err)
+		return
+	}
+
+	assets := make([]GeneratedAudio, 0)
+	if dbConn != nil {
+		err = dbConn.StreamAllAudioPrompts(func(asset *GeneratedAudio) error {
+			assets = append(assets, *asset)
+			return nil
+		})
+		if err != nil {
+			log.Printf("[audio-search] stream audio prompts: %v", err)
+			return
+		}
+	}
+	log.Printf("[audio-search] Loaded %d audio prompts in %v", len(assets), time.Since(t0))
+
+	engine := gobed.NewAutoSearchEngine(model)
+	if len(assets) > 0 {
+		ids := make([]int, len(assets))
+		prompts := make([]string, len(assets))
+		for i := range assets {
+			ids[i] = i
+			prompts[i] = assets[i].Prompt
+		}
+		if err := engine.IndexBatchWithIDs(ids, prompts); err != nil {
+			_ = engine.Close()
+			log.Printf("[audio-search] index build failed: %v", err)
+			return
+		}
+	}
+
+	as.mu.Lock()
+	old := as.engine
+	as.model = model
+	as.engine = engine
+	as.assets = assets
+	as.ready = true
+	as.indexedAt = time.Now()
+	as.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+	log.Printf("[audio-search] Ready: %d audio assets", len(assets))
+}
+
+func (as *AudioSearchEngine) IndexIncremental(asset *GeneratedAudio) {
+	if as == nil || asset == nil || asset.ID == "" || asset.Prompt == "" {
+		return
+	}
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	if as.engine == nil || !as.ready {
+		return
+	}
+	intID := len(as.assets)
+	if err := as.engine.IndexWithID(intID, asset.Prompt); err != nil {
+		log.Printf("[audio-search] IndexIncremental: %v", err)
+		return
+	}
+	as.assets = append(as.assets, *asset)
+}
+
+func (as *AudioSearchEngine) IsReady() bool {
+	as.mu.RLock()
+	defer as.mu.RUnlock()
+	return as.ready
+}
+
+func (as *AudioSearchEngine) Stats() map[string]any {
+	as.mu.RLock()
+	defer as.mu.RUnlock()
+	out := map[string]any{"ready": as.ready, "indexing": as.indexing, "total_prompts": len(as.assets), "kind": "audio"}
+	if !as.indexedAt.IsZero() {
+		out["indexed_at"] = as.indexedAt.Format(time.RFC3339)
+	}
+	return out
+}
+
+func (as *AudioSearchEngine) Search(query, kind, userID string, topK int) ([]AudioSearchResult, error) {
+	as.mu.RLock()
+	defer as.mu.RUnlock()
+	if !as.ready || as.engine == nil {
+		return nil, nil
+	}
+	// Ask for extra semantic candidates because visibility and kind filters are
+	// applied after nearest-neighbour lookup.
+	candidateK := topK * 5
+	if candidateK < 50 {
+		candidateK = 50
+	}
+	if candidateK > len(as.assets) {
+		candidateK = len(as.assets)
+	}
+	if candidateK == 0 {
+		return []AudioSearchResult{}, nil
+	}
+	hits, err := as.engine.Search(query, candidateK)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AudioSearchResult, 0, topK)
+	for _, hit := range hits {
+		if hit.ID < 0 || hit.ID >= len(as.assets) {
+			continue
+		}
+		asset := as.assets[hit.ID]
+		if kind != "" && asset.Kind != kind {
+			continue
+		}
+		if !asset.Public && (userID == "" || userID != asset.UserID) {
+			continue
+		}
+		out = append(out, AudioSearchResult{
+			ID: asset.ID, Kind: asset.Kind, Prompt: asset.Prompt, Title: asset.Title,
+			AudioURL: asset.AudioURL, DurationSeconds: asset.DurationSeconds,
+			CreatedAt: asset.CreatedAt, Similarity: hit.Similarity,
+		})
+		if len(out) == topK {
+			break
+		}
 	}
 	return out, nil
 }

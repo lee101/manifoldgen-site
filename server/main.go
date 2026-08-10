@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -73,9 +74,36 @@ func main() {
 	port := getPort()
 	log.Printf("ManifoldGen server starting on :%d (dev=%v)", port, devMode)
 
-	if err := fasthttp.ListenAndServe(fmt.Sprintf(":%d", port), requestHandler); err != nil {
+	listener, err := manifoldListener(port)
+	if err != nil {
+		log.Fatalf("Server listener error: %v", err)
+	}
+	defer listener.Close()
+	if err := fasthttp.Serve(listener, requestHandler); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
+}
+
+// manifoldListener accepts systemd socket activation in production and falls
+// back to a normal TCP listener for local development. The production unit has
+// always supplied fd 3, so binding the port again caused restart loops.
+func manifoldListener(port int) (net.Listener, error) {
+	listenPID, _ := strconv.Atoi(os.Getenv("LISTEN_PID"))
+	listenFDs, _ := strconv.Atoi(os.Getenv("LISTEN_FDS"))
+	if listenPID == os.Getpid() && listenFDs > 0 {
+		file := os.NewFile(uintptr(3), "manifoldgen.socket")
+		if file == nil {
+			return nil, fmt.Errorf("systemd listener fd 3 is unavailable")
+		}
+		listener, err := net.FileListener(file)
+		_ = file.Close()
+		if err != nil {
+			return nil, fmt.Errorf("open systemd listener: %w", err)
+		}
+		log.Printf("Using systemd-activated listener")
+		return listener, nil
+	}
+	return net.Listen("tcp", fmt.Sprintf(":%d", port))
 }
 
 func requestHandler(ctx *fasthttp.RequestCtx) {
@@ -211,6 +239,8 @@ func setCORSHeaders(ctx *fasthttp.RequestCtx) {
 	// Allow the frontend origin and common dev origins
 	allowedOrigins := []string{
 		frontendURL,
+		"https://manifoldgen.com",
+		"https://www.manifoldgen.com",
 		"https://manifoldgen.cc",
 		"https://www.manifoldgen.cc",
 		"https://manifoldgen.app.nz",
@@ -403,17 +433,30 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 
 	// Trigger a full search index rebuild (picks up images/videos added directly to DB)
 	case path == "/api/search/reindex" && method == "POST":
+		if _, err := studioUser(ctx); err != nil {
+			jsonError(ctx, fasthttp.StatusUnauthorized, err.Error())
+			return
+		}
 		if promptSearch != nil {
 			go promptSearch.loadAndIndex()
 		}
 		if videoSearch != nil {
 			go videoSearch.loadAndIndex()
 		}
-		jsonResponse(ctx, 202, map[string]string{"status": "reindexing"})
+		if audioSearch != nil {
+			go audioSearch.loadAndIndex()
+		}
+		jsonResponse(ctx, 202, map[string]interface{}{
+			"status":  "reindexing",
+			"indexes": []string{"images", "videos", "audio"},
+		})
 
 	// Semantic IMAGE search (gobed) — returns prompt matches for gallery
 	case path == "/api/images/semantic" && method == "GET":
 		handleSemanticImageSearch(ctx)
+
+	case path == "/api/audio/search" && method == "GET":
+		handleSemanticAudioSearch(ctx)
 
 	// Single prompt API: image + related
 	case strings.HasPrefix(path, "/api/prompt/") && method == "GET":
@@ -467,7 +510,7 @@ func isAllowedFrontendReportURL(rawURL string) bool {
 		return false
 	}
 	switch strings.ToLower(parsed.Hostname()) {
-	case "manifoldgen.cc", "www.manifoldgen.cc", "manifoldgen.app.nz", "appstatic.app.nz":
+	case "manifoldgen.com", "www.manifoldgen.com", "manifoldgen.cc", "www.manifoldgen.cc", "manifoldgen.app.nz", "appstatic.app.nz":
 		return true
 	case "localhost", "127.0.0.1", "manifoldgen.local":
 		return devMode
@@ -1338,7 +1381,48 @@ func handleSearchStats(ctx *fasthttp.RequestCtx) {
 	if promptSearch != nil {
 		out["images"] = promptSearch.Stats()
 	}
+	if audioSearch != nil {
+		out["audio"] = audioSearch.Stats()
+	}
 	jsonResponse(ctx, 200, out)
+}
+
+// handleSemanticAudioSearch handles GET /api/audio/search?q=…&kind=music.
+// Public assets are available without authentication; a valid bearer token also
+// makes that user's private generated audio searchable.
+func handleSemanticAudioSearch(ctx *fasthttp.RequestCtx) {
+	query := strings.TrimSpace(string(ctx.QueryArgs().Peek("q")))
+	if query == "" {
+		jsonError(ctx, 400, "q parameter required")
+		return
+	}
+	kind := strings.TrimSpace(string(ctx.QueryArgs().Peek("kind")))
+	if kind != "" && kind != "music" && kind != "sfx" && kind != "speech" {
+		jsonError(ctx, 400, "kind must be music, sfx, or speech")
+		return
+	}
+	topK, _ := strconv.Atoi(string(ctx.QueryArgs().Peek("top_k")))
+	if topK < 1 || topK > 100 {
+		topK = 20
+	}
+	if audioSearch == nil || !audioSearch.IsReady() {
+		jsonError(ctx, 503, "audio search engine not ready")
+		return
+	}
+	userID := ""
+	if len(ctx.Request.Header.Peek("Authorization")) > 0 {
+		if user, err := studioUser(ctx); err == nil {
+			userID = user.ID
+		}
+	}
+	results, err := audioSearch.Search(query, kind, userID, topK)
+	if err != nil {
+		jsonError(ctx, 500, "search failed")
+		return
+	}
+	jsonResponse(ctx, 200, map[string]interface{}{
+		"query": query, "results": results, "count": len(results), "kind": "audio",
+	})
 }
 
 // handleSemanticImageSearch handles GET /api/images/semantic?q=…&top_k=…

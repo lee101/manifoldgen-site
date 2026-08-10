@@ -9,7 +9,24 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+func TestStudioAudioTitle(t *testing.T) {
+	if got := studioAudioTitle("  warm analog sunrise  "); got != "warm analog sunrise" {
+		t.Fatalf("studioAudioTitle() = %q", got)
+	}
+	got := studioAudioTitle(strings.Repeat("a", 80))
+	if utf8.RuneCountInString(got) != 70 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("long title was not safely shortened: %q", got)
+	}
+}
+
+func TestStudioMusicEndpointMatchesPublishedModelID(t *testing.T) {
+	if studioMusicEndpoint != "https://fal.run/CassetteAI/music-generator" {
+		t.Fatalf("unexpected music endpoint: %s", studioMusicEndpoint)
+	}
+}
 
 func TestStudioProjectValidation(t *testing.T) {
 	id := "7cd844da-0b82-48c2-a8b2-2c20107b4cb0"
@@ -48,6 +65,10 @@ func TestStudioMediaURL(t *testing.T) {
 	body := []byte(`{"result":{"image":{"url":"https://cdn.example/cutout.webp"}}}`)
 	if got := studioMediaURL(body); got != "https://cdn.example/cutout.webp" {
 		t.Fatalf("studioMediaURL() = %q", got)
+	}
+	music := []byte(`{"audio_file":{"url":"https://v3.fal.media/files/panda/generated.wav"}}`)
+	if got := studioMediaURL(music); got != "https://v3.fal.media/files/panda/generated.wav" {
+		t.Fatalf("studioMediaURL() did not read Fal audio_file URL = %q", got)
 	}
 	if got := studioMediaURL([]byte(`{"status":"done"}`)); got != "" {
 		t.Fatalf("studioMediaURL() unexpected URL = %q", got)
