@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
@@ -120,6 +121,31 @@ func TestPaymentRequiredJobIsTerminalForInference(t *testing.T) {
 	job := &VideoJob{Status: "payment_required", Result: json.RawMessage(`{"video_url":"https://media.example/done.webm"}`)}
 	if job.Status == "queued" || job.Status == "processing" {
 		t.Fatal("payment-required result must never relaunch inference")
+	}
+}
+
+func TestDecodeVideoDataURL(t *testing.T) {
+	artifact, err := decodeVideoDataURL("data:video/webm;base64,AAEC")
+	if err != nil || !bytes.Equal(artifact, []byte{0, 1, 2}) {
+		t.Fatalf("decoded artifact = %v, err=%v", artifact, err)
+	}
+	if _, err := decodeVideoDataURL("https://media.example/video.webm"); err == nil {
+		t.Fatal("expected non-data URL to be rejected")
+	}
+}
+
+func TestShouldRelaunchVideoJobDoesNotReplayProcessingLocalCog(t *testing.T) {
+	processingLocal := &VideoJob{Status: "processing", ProviderJobID: "local:sync"}
+	if shouldRelaunchVideoJob(processingLocal) {
+		t.Fatal("processing local Cog job must not be replayed by status polling")
+	}
+	queuedLocal := &VideoJob{Status: "queued", ProviderJobID: "local:sync"}
+	if !shouldRelaunchVideoJob(queuedLocal) {
+		t.Fatal("queued local Cog job must remain recoverable")
+	}
+	processingRunPod := &VideoJob{Status: "processing", ProviderJobID: "runpod:endpoint:job"}
+	if !shouldRelaunchVideoJob(processingRunPod) {
+		t.Fatal("processing durable provider job must remain recoverable")
 	}
 }
 

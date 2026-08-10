@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
+  ArrowRight,
   AudioLines,
   BookOpen,
   ChevronDown,
@@ -112,6 +113,7 @@ type TimelineDrag = {
   originals: Map<string, Pick<StudioAsset, 'timelineStart' | 'trimStart' | 'trimEnd' | 'duration' | 'visualTrack' | 'kind'>>;
   baseSelection?: string[];
   marqueeIDs?: string[];
+  historySnapshot?: EditorHistoryState;
 };
 type StageDrag = {
   mode: 'move' | 'scale' | 'rotate';
@@ -199,6 +201,7 @@ const GALLERY_CDN = 'https://manifoldgenstatic.manifoldgen.com/gallery';
 
 type StudioAsset = {
   id: string;
+  mediaID: string;
   name: string;
   kind: MediaKind;
   file: File;
@@ -402,7 +405,7 @@ function perfDiagnostics(): StudioPerfDiagnostics {
 
 function portableAsset(asset: StudioAsset): PortableStudioAsset {
   return {
-    id: asset.id, name: asset.name, kind: asset.kind,
+    id: asset.id, mediaID: asset.mediaID, name: asset.name, kind: asset.kind,
     duration: asset.duration, width: asset.width, height: asset.height,
     trimStart: asset.trimStart, trimEnd: asset.trimEnd, timelineStart: asset.timelineStart,
     visualTrack: asset.visualTrack,
@@ -447,7 +450,8 @@ function projectDocument(assets: StudioAsset[], selectedID: string, history: Edi
 async function materializeProject(document: PortableStudioDocument, localFiles = new Map<string, File>()) {
   const assets: StudioAsset[] = [];
   for (const stored of document.assets || []) {
-    let file = localFiles.get(stored.id);
+    const mediaID = stored.mediaID || stored.id;
+    let file = localFiles.get(mediaID);
     if (!file && stored.cloudURL) {
       const response = await fetch(stored.cloudURL);
       if (!response.ok) throw new Error(`Could not download ${stored.name}`);
@@ -455,11 +459,12 @@ async function materializeProject(document: PortableStudioDocument, localFiles =
       file = new File([blob], stored.name, { type: stored.contentType || blob.type, lastModified: stored.lastModified });
       // History states often reference the same asset. Reuse the download for
       // the remaining snapshots instead of fetching the media repeatedly.
-      localFiles.set(stored.id, file);
+      localFiles.set(mediaID, file);
     }
     if (!file) continue;
     assets.push({
       ...stored,
+      mediaID,
       visualTrack: stored.kind === 'audio' ? 0 : Math.max(0, Math.floor(stored.visualTrack || 0)),
       stageScale: Math.max(0.1, Math.min(4, stored.stageScale ?? 1)),
       stageRotation: stored.stageRotation ?? 0,
@@ -786,6 +791,7 @@ export default function StudioPage() {
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [stageZoom, setStageZoom] = useState(1);
+  const [panelWidth, setPanelWidth] = useState(276);
   const [stageDragPosition, setStageDragPosition] = useState<{ assetID: string; x: number; y: number; scale: number; rotation: number } | null>(null);
   const [stageGuides, setStageGuides] = useState({ horizontal: false, vertical: false });
   const [timelineZoom, setTimelineZoom] = useState(1);
@@ -794,6 +800,7 @@ export default function StudioPage() {
   const [dragging, setDragging] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [videoGenerateOpen, setVideoGenerateOpen] = useState(false);
+  const [imageGenerateOpen, setImageGenerateOpen] = useState(false);
   const [videoGeneratePrompt, setVideoGeneratePrompt] = useState('');
   const [videoGenerateAspect, setVideoGenerateAspect] = useState<H3Aspect>('16:9');
   const [videoGenerateSize, setVideoGenerateSize] = useState<H3Size>('balanced');
@@ -828,7 +835,7 @@ export default function StudioPage() {
   const [restyleDuration, setRestyleDuration] = useState(10);
   const [restyleSeed, setRestyleSeed] = useState(0);
   const [restyleReferences, setRestyleReferences] = useState<RestyleReference[]>([]);
-  const [contextMenu, setContextMenu] = useState<{ assetID: string; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ assetID?: string; x: number; y: number } | null>(null);
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const [audioMode, setAudioMode] = useState<'music' | 'sfx' | 'speech'>('music');
   const [audioPrompt, setAudioPrompt] = useState('Dreamlike ambient score with glass harmonics, soft pulse, and a seamless ending');
@@ -861,12 +868,31 @@ export default function StudioPage() {
   const timelineClipboardRef = useRef<StudioAsset[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
   const stageDragRef = useRef<StageDrag | null>(null);
+  const panelResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const uploadInFlightRef = useRef(new Set<File>());
   const projectSaveSequenceRef = useRef(0);
   const editHistoryRef = useRef<EditorHistory>({ undo: [], redo: [] });
+  const historyMergeRef = useRef<{ key: string; at: number } | null>(null);
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
 
   const selected = assets.find((asset) => asset.id === selectedID) || null;
+
+  function beginPanelResize(event: ReactPointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    panelResizeRef.current = { startX: event.clientX, startWidth: panelWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function resizePanel(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = panelResizeRef.current;
+    if (!drag) return;
+    const maxWidth = Math.min(560, Math.max(360, window.innerWidth - 430));
+    setPanelWidth(Math.max(230, Math.min(maxWidth, drag.startWidth + event.clientX - drag.startX)));
+  }
+
+  function endPanelResize() {
+    panelResizeRef.current = null;
+  }
   const selectedAssets = useMemo(() => assets.filter((asset) => selectedIDs.includes(asset.id)), [assets, selectedIDs]);
   const stageVisualAssets = useMemo(() => assets
     .filter((asset) => asset.kind !== 'audio' && (asset.id === selectedID || (playhead >= asset.timelineStart && playhead < clipEnd(asset))))
@@ -927,10 +953,6 @@ export default function StudioPage() {
     return `${Math.round(user.credits).toLocaleString()} cr · $${usd.toFixed(2)}`;
   }, [user, creditPrice]);
 
-  const updateAsset = useCallback((id: string, update: Partial<StudioAsset>) => {
-    setAssets((current) => current.map((item) => (item.id === id ? { ...item, ...update } : item)));
-  }, []);
-
   const replaceEditHistory = useCallback((next: EditorHistory | ((current: EditorHistory) => EditorHistory)) => {
     const value = typeof next === 'function' ? next(editHistoryRef.current) : next;
     editHistoryRef.current = value;
@@ -944,15 +966,35 @@ export default function StudioPage() {
     playhead,
   }), [assets, playhead, selectedID, selectedIDs]);
 
-  const rememberEdit = useCallback(() => {
+  const rememberSnapshot = useCallback((snapshot: EditorHistoryState) => {
+    historyMergeRef.current = null;
+    replaceEditHistory((current) => ({
+      undo: [...current.undo, snapshot].slice(-HISTORY_LIMIT),
+      redo: [],
+    }));
+  }, [replaceEditHistory]);
+
+  const rememberEdit = useCallback((mergeKey?: string) => {
+    const now = Date.now();
+    if (mergeKey && historyMergeRef.current?.key === mergeKey && now - historyMergeRef.current.at < 700) {
+      historyMergeRef.current.at = now;
+      return;
+    }
     const snapshot = snapshotEditor();
     replaceEditHistory((current) => ({
       undo: [...current.undo, snapshot].slice(-HISTORY_LIMIT),
       redo: [],
     }));
+    historyMergeRef.current = mergeKey ? { key: mergeKey, at: now } : null;
   }, [replaceEditHistory, snapshotEditor]);
 
+  const updateAsset = useCallback((id: string, update: Partial<StudioAsset>) => {
+    rememberEdit(`asset:${id}:${Object.keys(update).sort().join(',')}`);
+    setAssets((current) => current.map((item) => (item.id === id ? { ...item, ...update } : item)));
+  }, [rememberEdit]);
+
   const restoreEditor = useCallback((state: EditorHistoryState) => {
+    historyMergeRef.current = null;
     setAssets(stackOverlappingVisuals(state.assets.map((asset) => ({ ...asset, adjustments: { ...asset.adjustments } }))));
     setSelectedID(state.selectedID);
     setSelectedIDs([...state.selectedIDs]);
@@ -1288,17 +1330,17 @@ export default function StudioPage() {
         try {
           const response = await fetch('/api/studio/assets/presign', {
             method: 'POST', headers: authHeaders(user.api_key),
-            body: JSON.stringify({ project_id: projectID, asset_id: asset.id, filename: asset.name, content_type: contentType, size: asset.file.size }),
+            body: JSON.stringify({ project_id: projectID, asset_id: asset.mediaID, filename: asset.name, content_type: contentType, size: asset.file.size }),
           });
           const prepared = await parseJSONResponse<{ upload_url: string; public_url: string; object_key: string }>(response, `Could not upload ${asset.name}`);
           const uploaded = await fetch(prepared.upload_url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: asset.file });
           if (!uploaded.ok) throw new Error(`Asset upload failed (${uploaded.status})`);
-          // Do not attach an upload URL to a newer file revision that reused
-          // the same asset ID (editable text can change while upload is live).
-          setAssets((current) => current.map((item) => item.id === asset.id && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item));
+          // Attach the URL to every snapshot sharing these immutable bytes,
+          // but never to a newer media revision of the same logical asset.
+          setAssets((current) => current.map((item) => item.mediaID === asset.mediaID && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item));
           replaceEditHistory((current) => ({
-            undo: current.undo.map((state) => ({ ...state, assets: state.assets.map((item) => item.id === asset.id && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
-            redo: current.redo.map((state) => ({ ...state, assets: state.assets.map((item) => item.id === asset.id && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
+            undo: current.undo.map((state) => ({ ...state, assets: state.assets.map((item) => item.mediaID === asset.mediaID && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
+            redo: current.redo.map((state) => ({ ...state, assets: state.assets.map((item) => item.mediaID === asset.mediaID && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
           }));
         } catch (reason) {
           setSaveStatus('Cloud upload will retry');
@@ -1332,7 +1374,7 @@ export default function StudioPage() {
         ...editHistory.undo.flatMap((state) => state.assets),
         ...editHistory.redo.flatMap((state) => state.assets),
       ];
-      const files = new Map(retainedAssets.map((asset) => [asset.id, asset.file]));
+      const files = new Map(retainedAssets.map((asset) => [asset.mediaID, asset.file]));
       const local: LocalStudioProject = { id: projectID, name: projectName, document, files, updatedAt: Date.now() };
       void saveLocalStudioProject(local).then(async () => {
         if (sequence !== projectSaveSequenceRef.current) return;
@@ -1505,8 +1547,9 @@ export default function StudioPage() {
       try {
         const metadata = await readDimensions(file, kind);
         const timelineStart = kind === 'audio' ? audioCursor : visualCursor;
+        const id = uid();
         next.push({
-          id: uid(), name: file.name, kind, file, url: URL.createObjectURL(file),
+          id, mediaID: id, name: file.name, kind, file, url: URL.createObjectURL(file),
           ...metadata, trimStart: 0, trimEnd: metadata.duration,
           timelineStart, visualTrack: kind === 'audio' ? 0 : visualTrackPlacement, volume: 1, fadeIn: 0, fadeOut: 0,
           stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0,
@@ -1521,6 +1564,7 @@ export default function StudioPage() {
         setError(reason instanceof Error ? reason.message : `Could not import ${file.name}`);
       }
     }
+    if (next.length) rememberEdit();
     setAssets((current) => [...current, ...next]);
     if (next[0]) {
       if (timelinePlacement === undefined) {
@@ -1694,13 +1738,15 @@ export default function StudioPage() {
   async function addGeneratedFile(file: File, kind: MediaKind, attribution?: string, text?: StudioTextStyle) {
     const metadata = await readDimensions(file, kind);
     const visualEnd = assets.filter((item) => item.kind !== 'audio').reduce((end, item) => Math.max(end, clipEnd(item)), 0);
+    const id = uid();
     const asset: StudioAsset = {
-      id: uid(), name: file.name, kind, file, url: URL.createObjectURL(file), ...metadata,
+      id, mediaID: id, name: file.name, kind, file, url: URL.createObjectURL(file), ...metadata,
       trimStart: 0, trimEnd: metadata.duration, timelineStart: kind === 'audio' ? playhead : visualEnd, volume: 1, fadeIn: 0, fadeOut: 0,
       visualTrack: 0,
       stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0,
       attribution, text, adjustments: { ...DEFAULT_ADJUSTMENTS },
     };
+    rememberEdit();
     setAssets((current) => [...current, asset]);
     selectOnly(asset.id);
     setPlayhead(asset.timelineStart);
@@ -1726,7 +1772,7 @@ export default function StudioPage() {
       rememberEdit();
       const url = URL.createObjectURL(file);
       setAssets((current) => current.map((asset) => asset.id === selected.id ? {
-        ...asset, name: file.name, file, url, width: 1920, height: 1080, text: { ...textDraft }, cloudURL: undefined, objectKey: undefined,
+        ...asset, mediaID: uid(), name: file.name, file, url, width: 1920, height: 1080, text: { ...textDraft }, cloudURL: undefined, objectKey: undefined,
       } : asset));
       setNotice('Text updated');
     } catch (reason) {
@@ -1755,6 +1801,7 @@ export default function StudioPage() {
       stageY: Math.min(0.48, asset.stageY + 0.02),
       adjustments: { ...asset.adjustments },
     }));
+    rememberEdit();
     setAssets((items) => stackOverlappingVisuals([...items, ...copies]));
     setSelectedIDs(copies.map((asset) => asset.id));
     setSelectedID(copies.at(-1)?.id || '');
@@ -1774,6 +1821,7 @@ export default function StudioPage() {
       setNotice(direction > 0 ? 'Selection is already on the top layer' : 'Selection is already on V1');
       return;
     }
+    rememberEdit();
     setAssets((current) => moveVisualLayersWithSwap(current, selectedSet, delta));
     const destination = direction > 0 ? `V${selectedMax + delta + 1}` : `V${selectedMin + delta + 1}`;
     setNotice(`${selectedVisuals.length === 1 ? selectedVisuals[0].name : `${selectedVisuals.length} elements`} moved to ${destination}`);
@@ -1802,6 +1850,7 @@ export default function StudioPage() {
       timelineStart: playhead + asset.timelineStart - groupStart,
       adjustments: { ...asset.adjustments },
     }));
+    rememberEdit();
     setAssets((current) => stackOverlappingVisuals([...current, ...pasted]));
     setSelectedIDs(pasted.map((asset) => asset.id));
     setSelectedID(pasted.at(-1)?.id || '');
@@ -1820,6 +1869,7 @@ export default function StudioPage() {
       return [asset.id, [{ ...asset, trimEnd: sourceSplit }, right] as StudioAsset[]] as const;
     }));
     const rightIDs = [...replacements.values()].map((pair) => pair[1].id);
+    rememberEdit();
     setAssets((current) => current.flatMap((asset) => replacements.get(asset.id) || [asset]));
     setSelectedIDs(rightIDs);
     setSelectedID(rightIDs.at(-1) || '');
@@ -1924,6 +1974,7 @@ export default function StudioPage() {
       trackDelta: 0,
       toggleOnClick: mode === 'move' && additive && selectedIDs.includes(asset.id),
       originals,
+      historySnapshot: snapshotEditor(),
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
@@ -2036,6 +2087,9 @@ export default function StudioPage() {
   function endTimelinePointer(event: ReactPointerEvent<HTMLElement>) {
     const drag = timelineDragRef.current;
     if (drag?.pointerID !== event.pointerId) return;
+    if (drag.didMove && drag.historySnapshot && ['move', 'trim-left', 'trim-right'].includes(drag.mode)) {
+      rememberSnapshot(drag.historySnapshot);
+    }
     if (drag.toggleOnClick && !drag.didMove && drag.targetID) selectClip(drag.targetID, true);
     if (drag.mode === 'move' && drag.didMove && drag.trackDelta) {
       setNotice(`Moved ${drag.originals.size === 1 ? 'clip' : `${drag.originals.size} clips`} ${Math.abs(drag.trackDelta)} layer${Math.abs(drag.trackDelta) === 1 ? '' : 's'} ${drag.trackDelta > 0 ? 'up' : 'down'}`);
@@ -2470,7 +2524,9 @@ export default function StudioPage() {
       const blob = await fetch(url).then((item) => item.blob());
       const file = new File([blob], `${selected.name.replace(/\.[^.]+$/, '')}-cutout.webp`, { type: blob.type || 'image/webp' });
       const metadata = await readDimensions(file, 'image');
-      const cutout: StudioAsset = { ...selected, id: uid(), name: file.name, file, url: URL.createObjectURL(file), ...metadata, trimStart: 0, trimEnd: 5 };
+      const id = uid();
+      const cutout: StudioAsset = { ...selected, id, mediaID: id, name: file.name, file, url: URL.createObjectURL(file), ...metadata, trimStart: 0, trimEnd: 5 };
+      rememberEdit();
       setAssets((items) => [...items, cutout]);
       selectOnly(cutout.id);
       if (user && typeof data.credits_remain === 'number') {
@@ -2694,14 +2750,14 @@ export default function StudioPage() {
 		  const response = await fetch('/api/studio/generate-music', {
 			method: 'POST', headers: authHeaders(user.api_key), body: JSON.stringify({ prompt: audioPrompt.trim(), duration: audioDuration }),
 		  });
-		  const data = await parseJSONResponse<{ audio_url?: string; credits_remain?: number }>(response, 'Music generation failed');
+		  const data = await parseJSONResponse<{ audio_url?: string; credits_used?: number; credits_remain?: number }>(response, 'Music generation failed');
 		  if (!data.audio_url) throw new Error('Music generation returned no audio');
 		  const media = await fetch(data.audio_url);
 		  if (!media.ok) throw new Error('Could not download generated music');
 		  const blob = await media.blob();
 		  await addGeneratedFile(new File([blob], `music-${Date.now()}.wav`, { type: blob.type || 'audio/wav' }), 'audio', 'Generated music');
 		  if (typeof data.credits_remain === 'number') { const next = { ...user, credits: data.credits_remain }; setUser(next); saveUser(next); }
-		  setNotice('Music added · 80 credits');
+		  setNotice(data.credits_used === 0 ? 'Music added · unlimited' : `Music added · ${data.credits_used ?? 80} credits`);
 		} else {
 		  setNotice('Starting sound generation…');
 		  const prompt = `Sound effect: ${audioPrompt.trim()}`;
@@ -3019,7 +3075,7 @@ export default function StudioPage() {
         </aside>
       </div>}
 
-      <div className={styles.workspace}>
+      <div className={styles.workspace} style={{ '--media-panel-width': `${panelWidth}px` } as CSSProperties}>
         <aside className={styles.rail}>
           {toolItems.map(({ id, label, icon: Icon }) => <button data-testid={`studio-tool-${id}`} key={id} className={tool === id ? styles.railActive : ''} onClick={() => { setTool(id); setMobilePanelOpen(tool !== id || !mobilePanelOpen); }}><Icon size={19} /><span>{label}</span></button>)}
           <div className={styles.railBottom}><button type="button" data-testid="studio-help" aria-haspopup="dialog" aria-expanded={helpOpen} onClick={() => setHelpOpen(true)}><CircleHelp size={18} /><span>Help</span></button></div>
@@ -3028,14 +3084,14 @@ export default function StudioPage() {
         <aside data-testid="studio-panel" className={`${styles.panel} ${mobilePanelOpen ? styles.panelOpen : ''}`}>
           <button className={styles.panelClose} aria-label="Close tools" onClick={() => setMobilePanelOpen(false)}><X size={16} /></button>
           {tool === 'media' && <>
-            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>CREATE + DISCOVER</span><h2>Media</h2></div>{mediaBrowserMode === 'project' && <button className={styles.smallIcon} onClick={() => fileInputRef.current?.click()}><Plus size={15} /></button>}</div>
+            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>CREATE + DISCOVER</span><h2>Media</h2></div></div>
             <div className={styles.mediaTabs} role="tablist" aria-label="Media library">
-              {([['project', 'Project'], ['videos', 'Videos'], ['images', 'Images'], ['music', 'Music']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={mediaBrowserMode === id} data-testid={`studio-media-${id}`} className={mediaBrowserMode === id ? styles.mediaTabActive : ''} onClick={() => setMediaBrowserMode(id)}>{label}</button>)}
+              {([['project', 'Project'], ['videos', 'Library'], ['images', 'Images'], ['music', 'Music']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={mediaBrowserMode === id} data-testid={`studio-media-${id}`} className={mediaBrowserMode === id ? styles.mediaTabActive : ''} onClick={() => setMediaBrowserMode(id)}>{label}</button>)}
             </div>
             <input ref={fileInputRef} type="file" multiple accept="video/*,image/*,audio/*" hidden onChange={(event) => event.target.files && void importFiles(event.target.files)} />
             {mediaBrowserMode === 'project' && <>
               <div className={styles.mediaActions}>
-                <button className={styles.importButton} onClick={() => fileInputRef.current?.click()}><Upload size={16} /> Import media</button>
+                <button className={styles.importButton} onClick={() => fileInputRef.current?.click()}><Upload size={16} /> Import</button>
                 <button data-testid="studio-generate-media" className={styles.generateMediaButton} onClick={() => { setMediaBrowserMode('videos'); setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><Sparkles size={16} /> Generate video</button>
               </div>
               <div className={styles.assetGrid}>
@@ -3060,18 +3116,18 @@ export default function StudioPage() {
                 }}>
                   <button className={styles.generationMain} disabled={!ready && !failed} onClick={() => failed ? void retryGeneration(generation.job_id) : void addGenerationToTimeline(generation)} title={ready ? 'Add to timeline' : failed ? 'Retry generation' : undefined}>
                     <span className={styles.generationPreview}>{ready && readyURL ? <video src={readyURL} muted playsInline preload="metadata" /> : <span className={styles.generationThumb}>{pending ? <Loader2 className={styles.spin} size={20} /> : failed ? <RotateCcw size={20} /> : <X size={20} />}</span>}{ready && <span className={styles.generationAdd}><Plus size={13} /> Add to timeline</span>}</span>
-                    <span className={styles.generationMeta}><b>{ready ? 'Ready to add' : pending ? 'Generating video…' : failed ? 'Retry generation' : 'Generation unavailable'}</b><small>{generation.prompt || generation.error || 'Manifold video generation'}</small></span>
+                    <span className={styles.generationMeta}>{!ready && <b>{pending ? 'Generating video…' : failed ? 'Retry generation' : 'Generation unavailable'}</b>}<small>{generation.prompt || generation.error || 'Manifold video generation'}</small></span>
                   </button>
                   <button className={styles.deleteGeneration} aria-label="Delete generation" onClick={() => void deleteGeneration(generation.job_id)}><Trash2 size={13} /></button>
                 </article>;
               })}
             </section>}
-              {!assets.length && <div className={styles.emptyLibrary}><Clapperboard size={24} /><p>{user ? 'Imports stay local while they upload securely in the background.' : 'Your imported files stay in this browser. Sign in for cloud sync.'}</p></div>}
+            {!assets.length && <div className={styles.emptyLibrary}><Clapperboard size={24} /><p>Upload or generate media to get started.</p></div>}
             </>}
 
             {mediaBrowserMode === 'videos' && <>
               <button data-testid="studio-video-create" className={styles.mediaCreateCard} onClick={() => { setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Sparkles size={18} /></span><span><b>Generate videos</b><small>H3 · batches, audio, loops, image guidance</small></span></button>
-              <div className={styles.discoveryLabel}><span>VIDEOS FROM THE COMMUNITY</span><small>Semantic search</small></div>
+              <div className={styles.discoveryLabel}><span>COMMUNITY LIBRARY</span><small>Search generated work</small></div>
               <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('videos')} placeholder="Search motion, subjects, styles…" /><button disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('videos')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
               <div className={styles.discoveryGrid}>{videoHits.map((hit) => <button data-testid={`studio-video-hit-${hit.job_id}`} className={styles.discoveryCard} key={hit.job_id} disabled={!hit.video_url || busy === 'import-discovery'} onClick={() => void addDiscoveredMedia(hit.video_url || '', hit.prompt, 'video')}>
                 <span className={styles.discoveryPreview}>{hit.video_url && <video src={hit.video_url} muted playsInline preload="metadata" />}<span><Plus size={13} /> Add</span></span>
@@ -3194,6 +3250,7 @@ export default function StudioPage() {
             <p className={styles.aiNote}>AI tools require a signed-in account. Local editing and export do not use credits.</p>
           </>}
         </aside>
+        <button className={styles.panelResize} aria-label="Resize media panel" title="Drag to resize media panel" onPointerDown={beginPanelResize} onPointerMove={resizePanel} onPointerUp={endPanelResize} onPointerCancel={endPanelResize}><span /></button>
 
         <section className={styles.stageArea}>
           <div className={styles.stageToolbar}>

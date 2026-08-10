@@ -28,6 +28,25 @@ func TestStudioMusicEndpointMatchesPublishedModelID(t *testing.T) {
 	}
 }
 
+func TestNormalizeMusicGenerationInput(t *testing.T) {
+	prompt, duration, err := normalizeMusicGenerationInput("  warm modular sunrise  ", 0)
+	if err != nil || prompt != "warm modular sunrise" || duration != 30 {
+		t.Fatalf("valid defaults rejected: prompt=%q duration=%d err=%v", prompt, duration, err)
+	}
+	for _, input := range []struct {
+		prompt   string
+		duration int
+	}{
+		{"", 30},
+		{"music", 29},
+		{"music", 181},
+	} {
+		if _, _, err := normalizeMusicGenerationInput(input.prompt, input.duration); err == nil {
+			t.Fatalf("expected invalid music input: %#v", input)
+		}
+	}
+}
+
 func TestStudioProjectValidation(t *testing.T) {
 	id := "7cd844da-0b82-48c2-a8b2-2c20107b4cb0"
 	got, err := validateStudioProjectWrite(id, studioProjectWrite{Document: json.RawMessage(`{"version":1,"assets":[]}`)})

@@ -468,32 +468,61 @@ func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 		Prompt   string `json:"prompt"`
 		Duration int    `json:"duration"`
 	}
-	if json.Unmarshal(ctx.PostBody(), &input) != nil || strings.TrimSpace(input.Prompt) == "" {
-		jsonError(ctx, http.StatusBadRequest, "a music prompt is required")
+	if json.Unmarshal(ctx.PostBody(), &input) != nil {
+		jsonError(ctx, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if input.Duration < studioMusicMinDuration || input.Duration > 180 {
-		jsonError(ctx, http.StatusBadRequest, "music duration must be 30–180 seconds")
-		return
+	handleMusicGeneration(ctx, user, input.Prompt, input.Duration)
+}
+
+func normalizeMusicGenerationInput(prompt string, duration int) (string, int, error) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return "", 0, fmt.Errorf("a music prompt is required")
 	}
-	balance, err := dbConn.DeductUserCredits(user.ID, studioMusicCredits)
+	if duration == 0 {
+		duration = studioMusicMinDuration
+	}
+	if duration < studioMusicMinDuration || duration > 180 {
+		return "", 0, fmt.Errorf("music duration must be 30–180 seconds")
+	}
+	return prompt, duration, nil
+}
+
+func handleMusicGeneration(ctx *fasthttp.RequestCtx, user *User, prompt string, duration int) {
+	prompt, duration, err := normalizeMusicGenerationInput(prompt, duration)
 	if err != nil {
-		jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: music generation costs 80 credits")
+		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
-	audioURL, err := studioFalMusic(strings.TrimSpace(input.Prompt), input.Duration)
+	balance := user.Credits
+	creditsUsed := studioMusicCredits
+	if user.UnlimitedAPI {
+		creditsUsed = 0
+	} else {
+		balance, err = dbConn.DeductUserCredits(user.ID, studioMusicCredits)
+		if err != nil {
+			jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: music generation costs 80 credits")
+			return
+		}
+	}
+	audioURL, err := studioFalMusic(prompt, duration)
 	if err != nil {
 		log.Printf("studio music generation failed: %v", err)
-		_, _ = dbConn.AddUserCredits(user.ID, studioMusicCredits)
+		if creditsUsed > 0 {
+			_, _ = dbConn.AddUserCredits(user.ID, creditsUsed)
+		}
 		jsonError(ctx, http.StatusBadGateway, "music generation is temporarily unavailable")
 		return
 	}
-	price := getCUTEPriceUSD()
-	_ = dbConn.CreateBillingEvent(&BillingEvent{UserID: user.ID, EventType: "music_generation", Amount: -studioMusicCredits, CuteAmount: studioMusicCredits, USDAmount: studioMusicCredits * price, Description: "music generation", CreditsAfter: balance})
-	maybeTriggerAutoTopup(user.ID)
+	if creditsUsed > 0 {
+		price := getCUTEPriceUSD()
+		_ = dbConn.CreateBillingEvent(&BillingEvent{UserID: user.ID, EventType: "music_generation", Amount: -creditsUsed, CuteAmount: creditsUsed, USDAmount: creditsUsed * price, Description: "music generation", CreditsAfter: balance})
+		maybeTriggerAutoTopup(user.ID)
+	}
 	asset := &GeneratedAudio{
-		ID: newUUID(), UserID: user.ID, Kind: "music", Prompt: strings.TrimSpace(input.Prompt),
-		Title: studioAudioTitle(input.Prompt), AudioURL: audioURL, DurationSeconds: input.Duration,
+		ID: newUUID(), UserID: user.ID, Kind: "music", Prompt: prompt,
+		Title: studioAudioTitle(prompt), AudioURL: audioURL, DurationSeconds: duration,
 		Public: true, CreatedAt: time.Now(),
 	}
 	indexed := true
@@ -502,9 +531,10 @@ func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 		log.Printf("studio music persistence failed for user %s: %v", user.ID, err)
 	}
 	jsonResponse(ctx, http.StatusOK, map[string]interface{}{
-		"audio_id": asset.ID, "audio_url": audioURL, "kind": asset.Kind,
+		"service": "audio", "audio_id": asset.ID, "audio_url": audioURL, "kind": asset.Kind,
 		"prompt": asset.Prompt, "title": asset.Title, "duration_seconds": asset.DurationSeconds,
-		"indexed": indexed, "credits_used": studioMusicCredits, "credits_remain": balance,
+		"indexed": indexed, "credits_used": creditsUsed, "credits_remain": balance,
+		"cost_usd": creditsUsed * getCUTEPriceUSD(),
 	})
 }
 

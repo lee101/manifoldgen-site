@@ -93,6 +93,9 @@ python scripts/publish_gallery_videos.py
 # Local accelerated H3 on the host 5090 (bypasses RunPod quota)
 # Temporarily frees VRAM if needed, then:
 python scripts/gen_gallery_local.py --count 3
+python scripts/gen_gallery_local.py \
+  --prompts scripts/prompts/manifold-gallery-100k.jsonl \
+  --count 5000 --shuffle-seed 20260810 --stop-when-done
 python scripts/gen_gallery_local.py --stop
 
 # Queue via API (app.nz, or H3_LOCAL_COG_URL when set)
@@ -125,6 +128,20 @@ Gallery CDN: `https://manifoldgenstatic.manifoldgen.com/gallery/videos/…`
 
 When RunPod `workersMax` quota is hit, set `H3_LOCAL_COG_URL=http://127.0.0.1:18089`
 after `gen_gallery_local.py` has started the cog.
+
+The two direct H3 endpoints follow `config/runpod-h3.json`: zero minimum
+workers, five-second idle shutdown, FlashBoot, a bounded one-hour execution
+window, and `/src/rp_handler.py` as the native queue handler. Do not run the Cog
+HTTP command on a queue endpoint; provider cancellation can mark that wrapper
+canceled while its inner prediction continues consuming a GPU.
+
+`gen_gallery_local.py --prompts` accepts JSONL rows with `prompt`, optional
+`slug`, and optional `seed`, or one plain prompt per line. Catalog IDs are
+deterministic, completed rows are skipped on resume, temporary WebMs are removed
+after R2 upload, and `--stop-when-done` releases the local GPU worker. Keep large
+batches on the local generator unless their RunPod budget has been explicitly
+approved; at the current measured H3 runtime, 5,000 serverless clips would cost
+roughly thousands of US dollars before storage and egress.
 
 ## Video restyle
 

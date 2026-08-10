@@ -31,6 +31,7 @@ const h3RunpodQueueTimeoutDefault = 10 * time.Minute
 
 var appNZVideoClient = &http.Client{Timeout: 30 * time.Second}
 var localH3CogClient = &http.Client{Timeout: 60 * time.Second}
+var activeCompletedVideoRepairs sync.Map
 
 func h3LocalCogURL() string {
 	return strings.TrimRight(strings.TrimSpace(os.Getenv("H3_LOCAL_COG_URL")), "/")
@@ -1099,6 +1100,24 @@ func extractLocalH3OutputURL(output interface{}) string {
 	return ""
 }
 
+// shouldRelaunchVideoJob reports whether status polling may recover a job whose
+// in-memory runner disappeared. A local:sync processing job is not durable: its
+// synchronous Cog request may still be running, so replaying it can submit the
+// same expensive GPU workload more than once. Queued local work has not started
+// yet and remains safe to recover.
+func shouldRelaunchVideoJob(job *VideoJob) bool {
+	if job == nil {
+		return false
+	}
+	if job.Status == "queued" {
+		return true
+	}
+	if job.Status != "processing" {
+		return false
+	}
+	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(job.ProviderJobID)), "local:")
+}
+
 // handleVideoJobStatus lets a caller recover a paid result after the original
 // request disconnects. Pending jobs are relaunched after a process restart.
 func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
@@ -1122,6 +1141,9 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 		jsonError(ctx, http.StatusNotFound, "video job not found")
 		return
 	}
+	if job.Status == "completed" && completedVideoNeedsPublishing(job) {
+		launchCompletedVideoRepair(job)
+	}
 	if job.Status == "payment_required" && len(job.Result) > 0 && job.ProviderCost > 0 && job.ChargedUSD > 0 {
 		if cutePrice := getCUTEPriceUSD(); cutePrice > 0 {
 			if _, _, settleErr := dbConn.SettleGeneratedVideoJob(job.ID, job.Result, job.ProviderCost, job.ChargedUSD, cutePrice); settleErr == nil {
@@ -1131,8 +1153,10 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 		}
 	}
 	status := http.StatusOK
-	if job.Status == "queued" || job.Status == "processing" {
+	if shouldRelaunchVideoJob(job) {
 		launchVideoJob(job.ID)
+		status = http.StatusAccepted
+	} else if job.Status == "queued" || job.Status == "processing" {
 		status = http.StatusAccepted
 	}
 	if job.Status == "payment_required" {
@@ -1198,10 +1222,89 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 					delete(result, key)
 				}
 			}
+			if videoURL, _ := result["video_url"].(string); strings.HasPrefix(videoURL, "data:") {
+				delete(result, "video_url")
+				result["artifact_status"] = "publishing"
+			}
 			out.Result, _ = json.Marshal(result)
 		}
 	}
 	return &out
+}
+
+func completedVideoNeedsPublishing(job *VideoJob) bool {
+	if job == nil || len(job.Result) == 0 {
+		return false
+	}
+	var result map[string]interface{}
+	if json.Unmarshal(job.Result, &result) != nil {
+		return false
+	}
+	videoURL, _ := result["video_url"].(string)
+	return strings.HasPrefix(videoURL, "data:video/")
+}
+
+func launchCompletedVideoRepair(job *VideoJob) {
+	if job == nil {
+		return
+	}
+	if _, loaded := activeCompletedVideoRepairs.LoadOrStore(job.ID, struct{}{}); loaded {
+		return
+	}
+	jobCopy := *job
+	jobCopy.Result = append(json.RawMessage(nil), job.Result...)
+	go func() {
+		defer activeCompletedVideoRepairs.Delete(jobCopy.ID)
+		if err := publishCompletedVideoArtifact(&jobCopy); err != nil {
+			log.Printf("completed video artifact publishing failed job=%s: %v", jobCopy.ID, err)
+		}
+	}()
+}
+
+func publishCompletedVideoArtifact(job *VideoJob) error {
+	var result map[string]interface{}
+	if err := json.Unmarshal(job.Result, &result); err != nil {
+		return err
+	}
+	dataURL, _ := result["video_url"].(string)
+	artifact, err := decodeVideoDataURL(dataURL)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	publicURL, err := uploadH3RunpodWebM(ctx, artifact, job.UserID)
+	if err != nil {
+		return err
+	}
+	result["video_url"] = publicURL
+	result["bytes"] = len(artifact)
+	delete(result, "optimization_warning")
+	updated, _ := json.Marshal(result)
+	if err := dbConn.UpdateCompletedVideoResult(job.ID, updated); err != nil {
+		return err
+	}
+	log.Printf("completed video artifact published job=%s bytes=%d", job.ID, len(artifact))
+	return nil
+}
+
+func decodeVideoDataURL(raw string) ([]byte, error) {
+	comma := strings.IndexByte(raw, ',')
+	if comma < 0 || !strings.HasPrefix(raw[:comma], "data:video/") || !strings.Contains(raw[:comma], ";base64") {
+		return nil, fmt.Errorf("video artifact is not a base64 data URL")
+	}
+	encoded := raw[comma+1:]
+	if int64(len(encoded)) > int64(maxGeneratedVideoBytes)*4/3+16 {
+		return nil, fmt.Errorf("generated video exceeds 256 MiB")
+	}
+	artifact, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("decode generated video: %w", err)
+	}
+	if len(artifact) == 0 || len(artifact) > maxGeneratedVideoBytes {
+		return nil, fmt.Errorf("generated video artifact size is invalid")
+	}
+	return artifact, nil
 }
 
 func handleDeleteVideoJob(ctx *fasthttp.RequestCtx, jobID string) {

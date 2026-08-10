@@ -95,7 +95,7 @@
 .menuLink b { color: #e0e2e7; font-size: 11px; }
 .menuLink small { overflow: hidden; color: #737b86; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 
-.workspace { display: grid; grid-template-columns: 64px 276px minmax(0, 1fr); min-height: 0; }
+.workspace { display: grid; grid-template-columns: 64px var(--media-panel-width, 276px) 10px minmax(0, 1fr); min-height: 0; }
 .rail { background: #0d0f12; border-right: 1px solid var(--line); padding: 8px 5px; display: flex; flex-direction: column; gap: 4px; }
 .rail button { min-height: 51px; border: 0; border-radius: 9px; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: #737a84; cursor: pointer; }
 .rail button span { font-size: 9px; font-weight: 600; }
@@ -104,6 +104,9 @@
 .railBottom { margin-top: auto; }
 
 .panel { background: var(--panel); border-right: 1px solid var(--line); min-width: 0; overflow: auto; padding: 16px 14px; scrollbar-width: thin; scrollbar-color: #343840 transparent; }
+.panelResize { position: relative; z-index: 3; width: 10px; margin: 0; padding: 0; border: 0; border-right: 1px solid var(--line); background: #0d0f12; cursor: col-resize; touch-action: none; }
+.panelResize span { display: block; width: 2px; height: 42px; margin: auto; border-radius: 99px; background: #3a3d46; transition: height .15s ease, background .15s ease; }
+.panelResize:hover span, .panelResize:focus-visible span { height: 64px; background: var(--accent); }
 .panelClose { display: none; }
 .panelHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 .panelHeader h2, .modalHeader h2 { font-family: var(--font-display); font-size: 17px; margin: 2px 0 0; letter-spacing: -.025em; }
@@ -170,21 +173,22 @@
 .assetGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
 .assetCard { position: relative; overflow: hidden; border: 1px solid #252930; background: #181b20; padding: 0; border-radius: 8px; cursor: pointer; text-align: left; aspect-ratio: 1.2; }
 .assetCard img, .assetCard video { width: 100%; height: calc(100% - 24px); object-fit: cover; display: block; background: #08090b; }
-.generationLibrary { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
-.generationHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: #777f8a; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
+.generationLibrary { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.generationHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; color: #777f8a; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
 .generationHeader small { color: #5e6873; font-size: 8px; font-weight: 600; letter-spacing: 0; }
 .generationEmpty { margin: 0; color: #66707b; font-size: 10px; line-height: 1.45; }
-.generationCard { position: relative; overflow: hidden; margin-top: 8px; border: 1px solid #2d323b; border-radius: 10px; background: #171a1f; transition: border-color .18s ease, transform .18s ease; }
+.generationCard { position: relative; overflow: hidden; margin-top: 5px; border: 1px solid #2d323b; border-radius: 8px; background: #171a1f; transition: border-color .18s ease, transform .18s ease; }
 .generationCard:hover { border-color: #49435f; transform: translateY(-1px); }
 .generationMain { width: 100%; min-width: 0; display: block; border: 0; padding: 0; background: transparent; cursor: pointer; text-align: left; }
 .generationMain:disabled { cursor: default; }
-.generationPreview { position: relative; min-height: 92px; aspect-ratio: 16 / 9; display: grid; place-items: center; overflow: hidden; color: #b5a9ff; background: radial-gradient(circle at 35% 20%, rgba(136, 111, 255, .2), transparent 52%), #0c0e12; }
+.generationPreview { position: relative; min-height: 108px; aspect-ratio: 16 / 9; display: grid; place-items: center; overflow: hidden; color: #b5a9ff; background: radial-gradient(circle at 35% 20%, rgba(136, 111, 255, .2), transparent 52%), #0c0e12; }
 .generationPreview video { width: 100%; height: 100%; display: block; object-fit: cover; background: #08090b; }
 .generationThumb { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; color: #b5a9ff; background: rgba(40, 34, 61, .92); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
 .generationAdd { position: absolute; right: 7px; bottom: 7px; display: flex; align-items: center; gap: 4px; padding: 5px 7px; border: 1px solid rgba(203, 193, 255, .2); border-radius: 6px; background: rgba(11, 12, 16, .82); color: #ddd6ff; font-size: 8px; font-weight: 800; backdrop-filter: blur(8px); }
-.generationMeta { min-width: 0; display: grid; gap: 3px; padding: 8px 34px 9px 9px; }
+.generationMeta { min-width: 0; display: grid; gap: 2px; padding: 6px 34px 7px 9px; }
 .generationMain:not(:disabled):hover .generationMeta b { color: #c9beff; }
-.generationMeta b, .generationMeta small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.generationMeta b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.generationMeta small { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; line-height: 1.35; }
 .generationMeta b { color: #d8dbe0; font-size: 10px; }
 .generationMeta small { color: #707883; font-size: 9px; }
 .deleteGeneration { position: absolute; right: 5px; bottom: 6px; width: 27px; height: 27px; display: grid; place-items: center; border: 0; border-radius: 6px; background: #171a1f; color: #68707a; cursor: pointer; }
@@ -470,7 +474,7 @@
 
 @media (max-width: 1050px) {
   .studio { min-width: 720px; grid-template-rows: 48px minmax(0, 1fr) calc(var(--timeline-toolbar-height) + var(--ruler-height) + var(--visible-visual-track-count) * var(--video-track-height) + var(--audio-track-height)); }
-  .workspace { grid-template-columns: 56px 230px minmax(0, 1fr); }
+  .workspace { grid-template-columns: 56px 230px 8px minmax(0, 1fr); }
   .saved, .creditDot, .projectName { display: none; }
   .panel { padding: 13px 11px; }
 }
@@ -488,6 +492,7 @@
   .creditCompact { display: inline; }
   .exportButton { padding: 0 10px; }
   .workspace { position: relative; display: block; min-height: 0; }
+  .panelResize { display: none; }
   .stageArea { height: 100%; padding-bottom: 62px; }
   .rail { position: absolute; z-index: 30; left: 7px; right: 7px; bottom: 7px; height: 51px; padding: 4px; flex-direction: row; gap: 2px; overflow-x: auto; border: 1px solid rgba(69,73,84,.8); border-radius: 13px; background: rgba(15,17,21,.9); box-shadow: 0 12px 35px rgba(0,0,0,.45); backdrop-filter: blur(16px); }
   .rail button { flex: 1 0 48px; min-height: 42px; gap: 2px; }
