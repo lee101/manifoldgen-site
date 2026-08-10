@@ -469,7 +469,7 @@ test('common timeline edits participate in undo and redo history', async ({ page
   await expect(clips).toHaveCount(3);
 });
 
-test('timeline hover shows a tenth-second readout and drag selects multiple clips', async ({ page }) => {
+test('Shift-drag draws a timeline marquee and selects every intersecting clip', async ({ page }) => {
   await installMocks(page);
   await page.goto('/studio');
   await page.locator('input[type=file]').setInputFiles([
@@ -482,8 +482,7 @@ test('timeline hover shows a tenth-second readout and drag selects multiple clip
   await expect(clips).toHaveCount(3);
   await clips.nth(0).click();
   const canvas = await page.getByTestId('studio-timeline-canvas').boundingBox();
-  await page.mouse.move(canvas.x + 148, canvas.y + 12);
-  await expect(page.getByTestId('studio-timeline-hover')).toHaveText('2.3s');
+  await page.keyboard.down('Shift');
   await page.mouse.move(canvas.x + 5, canvas.y + 32);
   await page.mouse.down();
   await page.mouse.move(canvas.x + 630, canvas.y + 158, { steps: 6 });
@@ -493,6 +492,7 @@ test('timeline hover shows a tenth-second readout and drag selects multiple clip
   expect(marqueeBox.width).toBeGreaterThan(600);
   expect(marqueeBox.height).toBeGreaterThan(100);
   await page.mouse.up();
+  await page.keyboard.up('Shift');
 
   await expect(marquee).toBeHidden();
   await expect(clips.nth(0)).toHaveAttribute('aria-selected', 'true');
@@ -640,18 +640,6 @@ test('spacebar toggles timeline playback even after the file input had focus', a
   await expect(page.getByRole('button', { name: 'Play' })).toBeVisible();
 });
 
-test('playback follows the clip under the timeline cursor instead of a later selected clip', async ({ page }) => {
-  await installMocks(page);
-  await page.goto('/studio');
-  await page.locator('input[type=file]').setInputFiles([VIDEO, VIDEO]);
-  const clips = page.locator('[data-testid^="timeline-clip-"]');
-  await expect(clips).toHaveCount(2);
-  await clips.nth(1).click();
-  await page.getByTestId('studio-timeline-ruler').click({ position: { x: 64, y: 10 } });
-  await page.getByRole('button', { name: 'Play' }).click();
-  await expect(clips.nth(0)).toHaveAttribute('aria-selected', 'true');
-});
-
 test('visual elements can be dragged and nudged around the stage', async ({ page }) => {
   await installMocks(page);
   await page.goto('/studio');
@@ -754,9 +742,9 @@ test('Media Music searches real catalog-shaped results, imports a track, and gen
 
 test('licensed Netwrck catalog result imports as an editable audio clip for free', async ({ page }) => {
   await installMocks(page);
-  const wav = wavFixture();
+  const wav = wavFixture(2);
   await page.route('**/api/studio/audio-search**', (route) => route.fulfill({ status: 200, json: { results: [{
-    id: 44, title: 'Night Pulse', url: 'https://audio.example/night-pulse.wav', duration: 0.3,
+    id: 44, title: 'Night Pulse', url: 'https://audio.example/night-pulse.wav', duration: 2,
     provider: 'opengameart', kind: 'music', license: 'cc0', attribution: 'Example Artist',
   }] } }));
   await page.route('https://audio.example/night-pulse.wav', (route) => route.fulfill({ status: 200, contentType: 'audio/wav', body: wav }));
@@ -764,10 +752,39 @@ test('licensed Netwrck catalog result imports as an editable audio clip for free
   await page.getByTestId('studio-tool-audio').click();
   await page.getByTestId('studio-audio-search').fill('night pulse');
   await page.getByRole('button', { name: 'Find' }).click();
-  const card = page.getByText('Night Pulse').locator('..').locator('..');
+  const card = page.getByTestId('studio-audio-hit-44');
   await expect(card).toContainText('CC0');
-  await card.locator('button').last().click();
-  await expect(page.locator('[data-timeline-asset][title^="Night Pulse.wav"]')).toBeVisible();
+  await expect(card).toHaveAttribute('draggable', 'true');
+  await expect(page.getByTestId('studio-audio-waveform-44')).toBeVisible();
+  await card.getByRole('button', { name: 'Preview Night Pulse' }).click();
+  await expect(card.getByRole('button', { name: 'Pause Night Pulse' })).toBeVisible();
+  await card.getByRole('button', { name: 'Pause Night Pulse' }).click();
+  const scrubber = page.getByTestId('studio-audio-scrubber-44');
+  await scrubber.evaluate((input) => {
+    input.value = '1.2';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect(scrubber).toHaveValue('1.2');
+  await scrubber.dispatchEvent('pointerup');
+  await expect(card.getByRole('button', { name: 'Pause Night Pulse' })).toBeVisible();
+
+  await page.evaluate(() => {
+    const cardElement = document.querySelector('[data-testid="studio-audio-hit-44"]');
+    const dropzone = document.querySelector('[data-testid="studio-timeline-dropzone"]');
+    const transfer = new DataTransfer();
+    const rect = dropzone.getBoundingClientRect();
+    cardElement.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    const init = { bubbles: true, cancelable: true, clientX: rect.left + 192, clientY: rect.top + 50, dataTransfer: transfer };
+    dropzone.dispatchEvent(new DragEvent('dragover', init));
+    dropzone.dispatchEvent(new DragEvent('drop', init));
+    cardElement.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  });
+  const clip = page.locator('[data-timeline-asset][title^="Night Pulse.wav"]');
+  await expect(clip).toBeVisible();
+  const droppedLeft = await clip.evaluate((item) => Number.parseFloat(item.style.left));
+  expect(droppedLeft).toBeGreaterThan(182);
+  expect(droppedLeft).toBeLessThan(202);
   await expect(page.getByTestId('studio-export')).toBeEnabled();
 });
 

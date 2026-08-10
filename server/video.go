@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,10 +31,7 @@ const h3RunpodQueueTimeoutDefault = 10 * time.Minute
 
 var appNZVideoClient = &http.Client{Timeout: 30 * time.Second}
 var localH3CogClient = &http.Client{Timeout: 60 * time.Second}
-var h3RunpodControlClient = &http.Client{Timeout: 30 * time.Second}
 var activeCompletedVideoRepairs sync.Map
-var activeH3EndpointReapers sync.Map
-var h3EndpointScaleMu sync.Mutex
 
 func h3LocalCogURL() string {
 	return strings.TrimRight(strings.TrimSpace(os.Getenv("H3_LOCAL_COG_URL")), "/")
@@ -338,6 +334,13 @@ func h3PublicRequestService(req ServiceUsageRequest) string {
 	return "video"
 }
 
+func h3StatusURL(req ServiceUsageRequest, jobID string) string {
+	if h3JobService(req) == "sfx_generation" {
+		return "/api/audio-jobs/" + jobID
+	}
+	return "/api/video-jobs/" + jobID
+}
+
 func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User) {
 	if err := normalizeH3VideoRequest(&req); err != nil {
 		jsonError(ctx, http.StatusBadRequest, err.Error())
@@ -389,7 +392,7 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"service":      h3PublicRequestService(req),
-		"result":       map[string]interface{}{"job_id": job.ID, "status": job.Status, "status_url": "/api/video-jobs/" + job.ID},
+		"result":       map[string]interface{}{"job_id": job.ID, "status": job.Status, "status_url": h3StatusURL(req, job.ID)},
 		"credits_used": 0, "settlement": "final price based on generation",
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
 		"estimated_generation_seconds": estimatedSeconds,
@@ -456,185 +459,10 @@ func callH3Runpod(endpointID, suffix string, method string, input interface{}, o
 	return response.StatusCode, nil
 }
 
-type h3RunpodEndpointConfig struct {
-	WorkersMax int `json:"workersMax"`
-}
-
-type h3RunpodHealth struct {
-	Jobs struct {
-		InProgress int `json:"inProgress"`
-		InQueue    int `json:"inQueue"`
-	} `json:"jobs"`
-	Workers map[string]int `json:"workers"`
-}
-
-func h3RunpodDesiredWorkersMax(route h3WorkerRoute) int {
-	defaultMax := 2
-	envName := "H3_NORMAL_RUNPOD_MAX_WORKERS"
-	if route.Variant == h3PinkCherryVariant {
-		defaultMax = 1
-		envName = "H3_PINKCHERRY_RUNPOD_MAX_WORKERS"
-	}
-	if raw := strings.TrimSpace(os.Getenv(envName)); raw != "" {
-		if configured, err := strconv.Atoi(raw); err == nil && configured > 0 {
-			return configured
-		}
-	}
-	return defaultMax
-}
-
-func h3RunpodControl(method, endpointID string, payload interface{}, output interface{}) error {
-	key := h3RunpodAPIKey()
-	if key == "" {
-		return fmt.Errorf("H3_RUNPOD_API_KEY is not configured")
-	}
-	var body io.Reader
-	if payload != nil {
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(encoded)
-	}
-	controlBase := strings.TrimRight(getEnv("H3_RUNPOD_CONTROL_URL", "https://rest.runpod.io/v1"), "/")
-	req, err := http.NewRequest(method, controlBase+"/endpoints/"+url.PathEscape(endpointID), body)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "manifoldgen-control/1.0")
-	response, err := h3RunpodControlClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return err
-	}
-	if response.StatusCode >= 300 {
-		return fmt.Errorf("RunPod endpoint control returned %d: %s", response.StatusCode, tailOutput(raw))
-	}
-	if output != nil && json.Unmarshal(raw, output) != nil {
-		return fmt.Errorf("RunPod endpoint control returned invalid JSON")
-	}
-	return nil
-}
-
-func setH3RunpodWorkersMax(endpointID string, workersMax int) error {
-	payload := map[string]interface{}{
-		"workersMin": 0, "workersMax": workersMax, "idleTimeout": 5,
-		"executionTimeoutMs": 60 * 60 * 1000, "flashboot": true,
-		"scalerType": "REQUEST_COUNT", "scalerValue": 1,
-	}
-	key := h3RunpodAPIKey()
-	if key == "" {
-		return fmt.Errorf("H3_RUNPOD_API_KEY is not configured")
-	}
-	encoded, _ := json.Marshal(payload)
-	controlBase := strings.TrimRight(getEnv("H3_RUNPOD_CONTROL_URL", "https://rest.runpod.io/v1"), "/")
-	req, err := http.NewRequest(
-		http.MethodPost,
-		controlBase+"/endpoints/"+url.PathEscape(endpointID)+"/update",
-		bytes.NewReader(encoded),
-	)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "manifoldgen-control/1.0")
-	response, err := h3RunpodControlClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if response.StatusCode >= 300 {
-		return fmt.Errorf("RunPod endpoint scale returned %d: %s", response.StatusCode, tailOutput(raw))
-	}
-	return nil
-}
-
-func ensureH3RunpodActive(endpointID string, desiredMax int) error {
-	var config h3RunpodEndpointConfig
-	if err := h3RunpodControl(http.MethodGet, endpointID, nil, &config); err != nil {
-		return err
-	}
-	if config.WorkersMax == desiredMax {
-		return nil
-	}
-	return setH3RunpodWorkersMax(endpointID, desiredMax)
-}
-
-func submitH3RunpodJob(route h3WorkerRoute, input map[string]interface{}, queued *h3RunpodQueuedJob) (int, error) {
-	h3EndpointScaleMu.Lock()
-	defer h3EndpointScaleMu.Unlock()
-	if err := ensureH3RunpodActive(route.RunpodEndpointID, h3RunpodDesiredWorkersMax(route)); err != nil {
-		return 0, err
-	}
-	var status int
-	var err error
-	for attempt := 0; attempt < 7; attempt++ {
-		status, err = callH3Runpod(route.RunpodEndpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, queued)
-		if err == nil || status != http.StatusConflict || !strings.Contains(err.Error(), "ENDPOINT_PAUSED") {
-			return status, err
-		}
-		time.Sleep(5 * time.Second)
-	}
-	return status, err
-}
-
-func scheduleH3RunpodScaleToZero(endpointID string) {
-	if strings.TrimSpace(endpointID) == "" {
-		return
-	}
-	if _, loaded := activeH3EndpointReapers.LoadOrStore(endpointID, struct{}{}); loaded {
-		return
-	}
-	go func() {
-		defer activeH3EndpointReapers.Delete(endpointID)
-		deadline := time.Now().Add(65 * time.Minute)
-		for time.Now().Before(deadline) {
-			h3EndpointScaleMu.Lock()
-			var health h3RunpodHealth
-			_, err := callH3Runpod(endpointID, "/health", http.MethodGet, nil, &health)
-			if err == nil && health.Jobs.InProgress == 0 && health.Jobs.InQueue == 0 {
-				err = setH3RunpodWorkersMax(endpointID, 0)
-				if err == nil {
-					drainDeadline := time.Now().Add(30 * time.Second)
-					for time.Now().Before(drainDeadline) {
-						var drained h3RunpodHealth
-						if _, healthErr := callH3Runpod(endpointID, "/health", http.MethodGet, nil, &drained); healthErr == nil {
-							live := 0
-							for _, count := range drained.Workers {
-								live += count
-							}
-							if live == 0 {
-								log.Printf("[h3] endpoint=%s scaled to zero", endpointID)
-								h3EndpointScaleMu.Unlock()
-								return
-							}
-						}
-						time.Sleep(3 * time.Second)
-					}
-					log.Printf("[h3] endpoint=%s scale-to-zero still draining after 30s", endpointID)
-				}
-			}
-			h3EndpointScaleMu.Unlock()
-			if err != nil {
-				log.Printf("[h3] endpoint=%s scale-to-zero check failed: %v", endpointID, err)
-			}
-			time.Sleep(5 * time.Second)
-		}
-	}()
-}
-
 func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, route h3WorkerRoute) {
 	input := appNZH3Input(req)
 	var queued h3RunpodQueuedJob
-	status, err := submitH3RunpodJob(route, input, &queued)
+	status, err := submitScaledH3RunpodJob(route, input, &queued)
 	if err != nil {
 		code := http.StatusBadGateway
 		if status == 0 {
@@ -664,7 +492,7 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"service":      h3PublicRequestService(req),
-		"result":       map[string]interface{}{"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID},
+		"result":       map[string]interface{}{"job_id": job.ID, "status": "queued", "status_url": h3StatusURL(req, job.ID)},
 		"credits_used": 0, "settlement": "final price based on generation",
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
 		"estimated_generation_seconds": estimatedSeconds,
@@ -692,7 +520,7 @@ func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"service": h3PublicRequestService(req),
 		"result": map[string]interface{}{
-			"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID,
+			"job_id": job.ID, "status": "queued", "status_url": h3StatusURL(req, job.ID),
 		},
 		"credits_used": 0, "settlement": "final price based on generation",
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
@@ -1106,7 +934,7 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "invalid RunPod H3 job reference")
 		return
 	}
-	defer scheduleH3RunpodScaleToZero(endpointID)
+	defer scheduleH3ScaleToZero(endpointID)
 	variant := h3NormalVariant
 	if len(job.Result) > 0 {
 		var persisted map[string]interface{}
@@ -1117,7 +945,10 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		}
 	}
 	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
-	deadline := time.Now().Add(60 * time.Minute)
+	// A 60-second H3 request may chain twelve GPU generations. Keep the
+	// application watcher aligned with the endpoint's four-hour execution cap;
+	// shorter jobs still finish and release their worker immediately.
+	deadline := time.Now().Add(4 * time.Hour)
 	consecutiveErrors := 0
 	for time.Now().Before(deadline) {
 		var state h3RunpodStatus
@@ -1206,7 +1037,7 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 generation did not finish within 60 minutes")
+	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 generation did not finish within 4 hours")
 }
 
 func fallbackRunpodH3ToLocal(job *VideoJob, endpointID, providerJobID, variant string) bool {
@@ -1453,8 +1284,15 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 	}
 	jsonResponse(ctx, status, map[string]interface{}{
 		"job":        publicVideoJob(job),
-		"status_url": "/api/video-jobs/" + job.ID,
+		"status_url": publicJobStatusURL(job),
 	})
+}
+
+func publicJobStatusURL(job *VideoJob) string {
+	if h3AudioJob(job) {
+		return "/api/audio-jobs/" + job.ID
+	}
+	return "/api/video-jobs/" + job.ID
 }
 
 func videoJobUser(ctx *fasthttp.RequestCtx) (*User, error) {
@@ -1493,11 +1331,39 @@ func handleListVideoJobs(ctx *fasthttp.RequestCtx) {
 	jsonResponse(ctx, http.StatusOK, map[string]interface{}{"jobs": publicJobs})
 }
 
+func handleListAudioJobs(ctx *fasthttp.RequestCtx) {
+	user, err := videoJobUser(ctx)
+	if err != nil {
+		jsonError(ctx, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	jobs, err := dbConn.ListVideoJobs(user.ID, 100)
+	if err != nil {
+		jsonError(ctx, http.StatusInternalServerError, "could not load audio jobs")
+		return
+	}
+	publicJobs := make([]*VideoJob, 0)
+	for i := range jobs {
+		if !h3AudioJob(&jobs[i]) {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(jobs[i].Status))
+		if (status == "queued" || status == "processing") && strings.TrimSpace(jobs[i].ProviderJobID) != "" {
+			launchVideoJob(jobs[i].ID)
+		}
+		publicJobs = append(publicJobs, publicVideoJob(&jobs[i]))
+	}
+	jsonResponse(ctx, http.StatusOK, map[string]interface{}{"jobs": publicJobs})
+}
+
 func publicVideoJob(job *VideoJob) *VideoJob {
 	if job == nil {
 		return nil
 	}
 	out := *job
+	// Provider settlement inputs stay server-side. Public callers only see the
+	// amount actually charged to their account.
+	out.ProviderCost = 0
 	if public := publicServiceName(job.Service); public != "" {
 		out.Service = public
 	} else if job.Service == "video_generate" || job.Service == "ltx_video" {
@@ -1507,10 +1373,12 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 		var result map[string]interface{}
 		if json.Unmarshal(job.Result, &result) == nil {
 			for key := range result {
-				if strings.HasPrefix(key, "_") || key == "provider" || key == "provider_cost_usd" || key == "backend" || key == "backend_used" || key == "model_variant" {
+				if strings.HasPrefix(key, "_") || key == "provider" || key == "provider_cost_usd" || key == "backend" || key == "backend_used" || key == "model_variant" || key == "metrics" || key == "predict_seconds" {
 					delete(result, key)
 				}
 			}
+			result["charged_usd"] = out.ChargedUSD
+			result["credits_used"] = out.CreditsUsed
 			if videoURL, _ := result["video_url"].(string); strings.HasPrefix(videoURL, "data:") {
 				delete(result, "video_url")
 				result["artifact_status"] = "publishing"

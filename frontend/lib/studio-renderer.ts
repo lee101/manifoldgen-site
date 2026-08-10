@@ -136,11 +136,14 @@ export class StudioRenderer {
   private textureWidth = 0;
   private textureHeight = 0;
 
-  constructor(public readonly canvas: HTMLCanvasElement) {
+  constructor(public readonly canvas: HTMLCanvasElement, options: { preserveDrawingBuffer?: boolean } = {}) {
     const gl = canvas.getContext('webgl2', {
       alpha: true,
       antialias: false,
-      preserveDrawingBuffer: false,
+      // Export draws this WebGL canvas into a separate 2D encoder canvas. In
+      // that path the default transient framebuffer can be discarded before
+      // drawImage reads it, producing a valid but entirely black video.
+      preserveDrawingBuffer: options.preserveDrawingBuffer ?? false,
       premultipliedAlpha: false,
       powerPreference: 'high-performance',
     });

@@ -832,7 +832,10 @@ func (db *DB) StreamCompletedVideoPrompts(cb func(jobID, prompt, videoURL, servi
 	rows, err := db.conn.Query(`
 		SELECT id, COALESCE(prompt, ''), COALESCE(service, ''), COALESCE(result_json::text, '')
 		FROM video_jobs
-		WHERE status = 'completed' AND COALESCE(prompt, '') <> ''
+		WHERE status = 'completed'
+		  AND COALESCE(prompt, '') <> ''
+		  AND COALESCE(service, '') <> 'sfx_generation'
+		  AND COALESCE(result_json->>'kind', '') <> 'sfx'
 	`)
 	if err != nil {
 		return err

@@ -125,6 +125,12 @@ func TestH3AudioRequestsUseSFXJobService(t *testing.T) {
 	if got := h3JobService(ServiceUsageRequest{Service: "h3_video", Size: "balanced"}); got != "h3_video" {
 		t.Fatalf("video job service = %q", got)
 	}
+	if got := h3StatusURL(ServiceUsageRequest{Service: "sfx_generation", Size: "audio"}, "video_123"); got != "/api/audio-jobs/video_123" {
+		t.Fatalf("SFX status URL = %q", got)
+	}
+	if got := publicJobStatusURL(&VideoJob{ID: "video_123", Service: "sfx_generation"}); got != "/api/audio-jobs/video_123" {
+		t.Fatalf("public SFX status URL = %q", got)
+	}
 }
 
 func TestH3RunpodQueueTimeout(t *testing.T) {
@@ -138,27 +144,8 @@ func TestH3RunpodQueueTimeout(t *testing.T) {
 	}
 }
 
-func TestH3RunpodDesiredWorkersMax(t *testing.T) {
-	t.Setenv("H3_NORMAL_RUNPOD_MAX_WORKERS", "3")
-	t.Setenv("H3_PINKCHERRY_RUNPOD_MAX_WORKERS", "2")
-	if got := h3RunpodDesiredWorkersMax(h3WorkerRoute{Variant: h3NormalVariant}); got != 3 {
-		t.Fatalf("normal workers max = %d, want 3", got)
-	}
-	if got := h3RunpodDesiredWorkersMax(h3WorkerRoute{Variant: h3PinkCherryVariant}); got != 2 {
-		t.Fatalf("pinkcherry workers max = %d, want 2", got)
-	}
-	t.Setenv("H3_NORMAL_RUNPOD_MAX_WORKERS", "0")
-	t.Setenv("H3_PINKCHERRY_RUNPOD_MAX_WORKERS", "invalid")
-	if got := h3RunpodDesiredWorkersMax(h3WorkerRoute{Variant: h3NormalVariant}); got != 2 {
-		t.Fatalf("normal invalid fallback = %d, want 2", got)
-	}
-	if got := h3RunpodDesiredWorkersMax(h3WorkerRoute{Variant: h3PinkCherryVariant}); got != 1 {
-		t.Fatalf("pinkcherry invalid fallback = %d, want 1", got)
-	}
-}
-
 func TestPublicVideoJobRemovesProviderDetails(t *testing.T) {
-	job := &VideoJob{Service: "h3_video", Result: json.RawMessage(`{"_h3_variant":"normal-h3","provider":"runpod","provider_cost_usd":1.2,"video_url":"https://media.example/video.webm"}`)}
+	job := &VideoJob{Service: "h3_video", ProviderCost: 1.2, ChargedUSD: 1.8, CreditsUsed: 180, Result: json.RawMessage(`{"_h3_variant":"normal-h3","provider":"runpod","provider_cost_usd":1.2,"metrics":{"quant":"internal"},"video_url":"https://media.example/video.webm"}`)}
 	public := publicVideoJob(job)
 	if public.Service != "video" {
 		t.Fatalf("public service = %q", public.Service)
@@ -172,6 +159,12 @@ func TestPublicVideoJobRemovesProviderDetails(t *testing.T) {
 	}
 	if _, ok := result["provider"]; ok {
 		t.Fatal("provider leaked")
+	}
+	if public.ProviderCost != 0 || result["metrics"] != nil {
+		t.Fatalf("provider diagnostics leaked: job=%#v result=%#v", public, result)
+	}
+	if result["charged_usd"] != 1.8 || result["credits_used"] != float64(180) {
+		t.Fatalf("customer settlement missing: %#v", result)
 	}
 	if result["video_url"] == nil {
 		t.Fatal("public video URL was removed")

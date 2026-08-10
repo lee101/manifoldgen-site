@@ -16,6 +16,7 @@ import {
   Crop,
   Download,
   Film,
+  GripVertical,
   Image as ImageIcon,
   KeyRound,
   Library,
@@ -100,7 +101,7 @@ type ExportSettings = {
 };
 type SpeechVoice = 'M1' | 'F1' | 'M2' | 'F2';
 type TimelineDrag = {
-  mode: 'move' | 'trim-left' | 'trim-right' | 'pending-scrub' | 'marquee';
+  mode: 'move' | 'trim-left' | 'trim-right' | 'scrub' | 'marquee';
   pointerID: number;
   startX: number;
   startY: number;
@@ -138,7 +139,7 @@ type StageDrag = {
 };
 
 type AudioCatalogAsset = {
-  id: number;
+  id: number | string;
   title: string;
   url: string;
   preview_url?: string;
@@ -151,6 +152,133 @@ type AudioCatalogAsset = {
   attribution?: string;
   source_url?: string;
 };
+
+const CATALOG_AUDIO_DRAG_TYPE = 'application/x-manifold-audio';
+
+function catalogWaveform(seedValue: string, count = 44) {
+  let seed = 2166136261;
+  for (const character of seedValue) seed = Math.imul(seed ^ character.charCodeAt(0), 16777619);
+  return Array.from({ length: count }, (_, index) => {
+    seed = Math.imul(seed ^ (index + 1), 2246822519);
+    const noise = ((seed >>> 8) & 255) / 255;
+    const envelope = .55 + Math.sin((index / Math.max(1, count - 1)) * Math.PI) * .45;
+    return Math.round(18 + noise * 72 * envelope);
+  });
+}
+
+function catalogAudioFromTransfer(dataTransfer: DataTransfer) {
+  const encoded = dataTransfer.getData(CATALOG_AUDIO_DRAG_TYPE);
+  if (!encoded) return null;
+  try {
+    const asset = JSON.parse(encoded) as Partial<AudioCatalogAsset>;
+    if ((typeof asset.id !== 'number' && typeof asset.id !== 'string') || typeof asset.title !== 'string' || typeof asset.url !== 'string') return null;
+    return asset as AudioCatalogAsset;
+  } catch {
+    return null;
+  }
+}
+
+function CatalogAudioCard({
+  asset,
+  loading,
+  onAdd,
+  onDragStart,
+  onPromptContext,
+  testID,
+}: {
+  asset: AudioCatalogAsset;
+  loading: boolean;
+  onAdd: (asset: AudioCatalogAsset) => void;
+  onDragStart: (event: ReactDragEvent<HTMLElement>, asset: AudioCatalogAsset) => void;
+  onPromptContext?: (event: ReactMouseEvent<HTMLElement>, asset: AudioCatalogAsset) => void;
+  testID?: string;
+}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const duration = Math.max(.01, asset.duration || audioRef.current?.duration || 0);
+  const waveform = useMemo(() => catalogWaveform(`${asset.id}:${asset.title}`), [asset.id, asset.title]);
+  const progress = Math.max(0, Math.min(1, currentTime / duration));
+  const previewURL = asset.preview_url || asset.url;
+
+  useEffect(() => {
+    const stopOtherPreview = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === String(asset.id)) return;
+      audioRef.current?.pause();
+    };
+    window.addEventListener('manifold:audio-preview', stopOtherPreview);
+    return () => {
+      window.removeEventListener('manifold:audio-preview', stopOtherPreview);
+      audioRef.current?.pause();
+    };
+  }, [asset.id]);
+
+  const play = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    window.dispatchEvent(new CustomEvent('manifold:audio-preview', { detail: String(asset.id) }));
+    void audio.play().catch(() => setPlaying(false));
+  };
+
+  const toggle = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) play();
+    else audio.pause();
+  };
+
+  const seek = (value: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const next = Math.max(0, Math.min(Number.isFinite(audio.duration) ? audio.duration : duration, value));
+    audio.currentTime = next;
+    setCurrentTime(next);
+  };
+
+  return <article
+    key={asset.id}
+    data-testid={testID || `studio-audio-hit-${asset.id}`}
+    className={styles.catalogAudioCard}
+    draggable
+    onDragStart={(event) => onDragStart(event, asset)}
+    onContextMenu={(event) => onPromptContext?.(event, asset)}
+  >
+    <audio
+      ref={audioRef}
+      src={previewURL}
+      preload="metadata"
+      onLoadedMetadata={(event) => setCurrentTime(Math.min(currentTime, event.currentTarget.duration || duration))}
+      onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+      onPlay={() => setPlaying(true)}
+      onPause={() => setPlaying(false)}
+      onEnded={(event) => { event.currentTarget.currentTime = 0; setCurrentTime(0); setPlaying(false); }}
+    />
+    <button className={styles.catalogPlay} onClick={toggle} aria-label={`${playing ? 'Pause' : 'Preview'} ${asset.title}`}>
+      {playing ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
+    </button>
+    <div className={styles.catalogAudioBody}>
+      <div className={styles.catalogAudioTitle}><b>{asset.title}</b><span>{formatTime(currentTime).slice(3)} / {formatTime(duration).slice(3)}</span></div>
+      <div data-testid={`studio-audio-waveform-${asset.id}`} className={styles.catalogWaveform} title="Drag the handle to preview any part">
+        <div className={styles.catalogWaveformBars} aria-hidden="true">{waveform.map((height, index) => <i key={index} style={{ height: `${height}%`, opacity: index / waveform.length <= progress ? 1 : .32 }} />)}</div>
+        <input
+          data-testid={`studio-audio-scrubber-${asset.id}`}
+          aria-label={`Preview position for ${asset.title}`}
+          type="range"
+          min="0"
+          max={duration}
+          step="0.01"
+          value={Math.min(currentTime, duration)}
+          onChange={(event) => seek(Number(event.target.value))}
+          onPointerUp={play}
+          onKeyUp={play}
+        />
+      </div>
+      <small>{formatTime(asset.duration).slice(3)} · {asset.license.toUpperCase()} · {asset.attribution || asset.provider}</small>
+    </div>
+    <span className={styles.catalogDragHandle} title="Drag to the timeline" aria-hidden="true"><GripVertical size={14} /></span>
+    <button className={styles.catalogAdd} aria-label={`Add ${asset.title} to timeline at playhead`} disabled={loading} onClick={() => onAdd(asset)}>{loading ? <Loader2 className={styles.spin} size={13} /> : <Plus size={13} />}</button>
+  </article>;
+}
 
 type RestyleReference = {
   id: string;
@@ -317,10 +445,6 @@ function formatTime(value: number) {
   const minutes = Math.floor(value / 60);
   const seconds = value - minutes * 60;
   return `${String(minutes).padStart(2, '0')}:${seconds.toFixed(2).padStart(5, '0')}`;
-}
-
-function formatTimelineHoverTime(value: number) {
-  return `${(Math.round(value * 10) / 10).toFixed(1)}s`;
 }
 
 function compactCredits(value: number) {
@@ -799,7 +923,6 @@ export default function StudioPage() {
   const [stageGuides, setStageGuides] = useState({ horizontal: false, vertical: false });
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [timelineDropTime, setTimelineDropTime] = useState<number | null>(null);
-  const [timelineHoverTime, setTimelineHoverTime] = useState<number | null>(null);
   const [timelineMarquee, setTimelineMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -878,7 +1001,6 @@ export default function StudioPage() {
   const editHistoryRef = useRef<EditorHistory>({ undo: [], redo: [] });
   const historyMergeRef = useRef<{ key: string; at: number } | null>(null);
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
-  const playbackIntentRef = useRef<{ assetID: string; timelineTime: number } | null>(null);
 
   const selected = assets.find((asset) => asset.id === selectedID) || null;
   const selectedAssets = useMemo(() => assets.filter((asset) => selectedIDs.includes(asset.id)), [assets, selectedIDs]);
@@ -1483,24 +1605,6 @@ export default function StudioPage() {
   }, [selected?.id, selected?.url, selected?.kind, selected?.trimStart, selected?.trimEnd, selected?.timelineStart, drawCurrent]);
 
   useEffect(() => {
-    const intent = playbackIntentRef.current;
-    if (!intent || !selected || intent.assetID !== selected.id || selected.kind === 'image') return;
-    const media = selected.kind === 'video' ? videoRef.current : audioRef.current;
-    if (!media) return;
-    const sourceTime = selected.trimStart + Math.max(0, Math.min(clipDuration(selected), intent.timelineTime - selected.timelineStart));
-    const start = () => {
-      if (playbackIntentRef.current !== intent) return;
-      media.currentTime = sourceTime;
-      void media.play();
-      setPlaying(true);
-      playbackIntentRef.current = null;
-    };
-    if (media.readyState >= 1) start();
-    else media.addEventListener('loadedmetadata', start, { once: true });
-    return () => media.removeEventListener('loadedmetadata', start);
-  }, [selected?.id, selected?.url, selected?.kind, selected?.trimStart, selected?.trimEnd, selected?.timelineStart]);
-
-  useEffect(() => {
     const video = videoRef.current;
     if (!video || selected?.kind !== 'video') return;
     let videoFrame = 0;
@@ -1826,13 +1930,13 @@ export default function StudioPage() {
     setContextMenu(null);
   }
 
-  async function addGeneratedFile(file: File, kind: MediaKind, attribution?: string, text?: StudioTextStyle) {
+  async function addGeneratedFile(file: File, kind: MediaKind, attribution?: string, text?: StudioTextStyle, timelinePlacement?: number) {
     const metadata = await readDimensions(file, kind);
     const visualEnd = assets.filter((item) => item.kind !== 'audio').reduce((end, item) => Math.max(end, clipEnd(item)), 0);
     const id = uid();
     const asset: StudioAsset = {
       id, mediaID: id, name: file.name, kind, file, url: URL.createObjectURL(file), ...metadata,
-      trimStart: 0, trimEnd: metadata.duration, timelineStart: kind === 'audio' ? playhead : visualEnd, volume: 1, fadeIn: 0, fadeOut: 0,
+      trimStart: 0, trimEnd: metadata.duration, timelineStart: kind === 'audio' ? (timelinePlacement ?? playhead) : visualEnd, volume: 1, fadeIn: 0, fadeOut: 0,
       visualTrack: 0,
       stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0,
       attribution, text, adjustments: { ...DEFAULT_ADJUSTMENTS },
@@ -2007,6 +2111,11 @@ export default function StudioPage() {
       await importFiles(event.dataTransfer.files, dropTime, dropTrack);
       return;
     }
+    const catalogAudio = catalogAudioFromTransfer(event.dataTransfer);
+    if (catalogAudio) {
+      await importCatalogAudio(catalogAudio, dropTime);
+      return;
+    }
     const uri = event.dataTransfer.getData('text/uri-list').split(/\r?\n/).find((line) => line && !line.startsWith('#')) || '';
     if (!uri) {
       setError('Drop an image, video, or audio file on the timeline');
@@ -2070,28 +2179,28 @@ export default function StudioPage() {
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
-  function beginTimelineMarquee(event: ReactPointerEvent<HTMLElement>) {
-    const rect = timelineCanvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const additive = event.metaKey || event.ctrlKey || event.shiftKey;
-    const baseSelection = additive ? [...selectedIDs] : [];
-    timelineDragRef.current = {
-      mode: 'marquee', pointerID: event.pointerId,
-      startX: event.clientX, startY: event.clientY,
-      pixelsPerSecond, trackHeight: 1, didMove: false, trackDelta: 0,
-      originals: new Map(), baseSelection, marqueeIDs: baseSelection,
-    };
-    setTimelineMarquee({
-      left: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
-      top: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
-      width: 0, height: 0,
-    });
-  }
-
   function beginScrub(event: ReactPointerEvent<HTMLElement>) {
     if (event.button !== 0) return;
+    if (event.shiftKey) {
+      const rect = timelineCanvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      event.preventDefault();
+      timelineDragRef.current = {
+        mode: 'marquee', pointerID: event.pointerId,
+        startX: event.clientX, startY: event.clientY,
+        pixelsPerSecond, trackHeight: 1, didMove: false, trackDelta: 0,
+        originals: new Map(), baseSelection: [...selectedIDs], marqueeIDs: [...selectedIDs],
+      };
+      setTimelineMarquee({
+        left: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+        top: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+        width: 0, height: 0,
+      });
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      return;
+    }
     timelineDragRef.current = {
-      mode: 'pending-scrub',
+      mode: 'scrub',
       pointerID: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
@@ -2101,6 +2210,7 @@ export default function StudioPage() {
       trackDelta: 0,
       originals: new Map(),
     };
+    seekTimeline(timelineTimeAt(event.clientX));
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
@@ -2132,9 +2242,8 @@ export default function StudioPage() {
       setSelectedID(hitIDs.at(-1) || next.at(-1) || '');
       return;
     }
-    if (drag.mode === 'pending-scrub') {
-      if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) <= 2) return;
-      beginTimelineMarquee(event);
+    if (drag.mode === 'scrub') {
+      seekTimeline(timelineTimeAt(event.clientX, drag.pixelsPerSecond));
       return;
     }
     let delta = Math.round(((event.clientX - drag.startX) / drag.pixelsPerSecond) * 20) / 20;
@@ -2178,7 +2287,6 @@ export default function StudioPage() {
   function endTimelinePointer(event: ReactPointerEvent<HTMLElement>) {
     const drag = timelineDragRef.current;
     if (drag?.pointerID !== event.pointerId) return;
-    if (drag.mode === 'pending-scrub') seekTimeline(timelineTimeAt(event.clientX, drag.pixelsPerSecond));
     if (drag.didMove && drag.historySnapshot && ['move', 'trim-left', 'trim-right'].includes(drag.mode)) {
       rememberSnapshot(drag.historySnapshot);
     }
@@ -2201,14 +2309,6 @@ export default function StudioPage() {
       setTimelineMarquee(null);
     }
     timelineDragRef.current = null;
-  }
-
-  function previewTimelineTime(event: ReactPointerEvent<HTMLElement>) {
-    if (timelineDragRef.current) {
-      setTimelineHoverTime(null);
-      return;
-    }
-    setTimelineHoverTime(timelineTimeAt(event.clientX, pixelsPerSecond, timelineWidth / pixelsPerSecond));
   }
 
   function beginStageDrag(event: ReactPointerEvent<HTMLElement>, asset: StudioAsset) {
@@ -2329,17 +2429,6 @@ export default function StudioPage() {
 
   function togglePlayback() {
     if (!selected) return;
-    const selectedContainsPlayhead = selected.kind !== 'image' && playhead >= selected.timelineStart && playhead < clipEnd(selected);
-    if (!selectedContainsPlayhead) {
-      const active = assets
-        .filter((asset) => asset.kind !== 'image' && playhead >= asset.timelineStart && playhead < clipEnd(asset))
-        .sort((left, right) => right.visualTrack - left.visualTrack)[0];
-      if (active) {
-        playbackIntentRef.current = { assetID: active.id, timelineTime: playhead };
-        selectOnly(active.id);
-        return;
-      }
-    }
     if (selected.kind === 'audio' && audioRef.current) {
       if (audioRef.current.paused) {
         const sourceTime = selected.trimStart + Math.max(0, Math.min(clipDuration(selected), playhead - selected.timelineStart));
@@ -2762,14 +2851,21 @@ export default function StudioPage() {
     }
   }
 
-  async function importCatalogAudio(asset: AudioCatalogAsset) {
+  function startCatalogAudioDrag(event: ReactDragEvent<HTMLElement>, asset: AudioCatalogAsset) {
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData(CATALOG_AUDIO_DRAG_TYPE, JSON.stringify(asset));
+    event.dataTransfer.setData('text/uri-list', asset.url);
+    event.dataTransfer.setData('text/plain', asset.title);
+  }
+
+  async function importCatalogAudio(asset: AudioCatalogAsset, timelinePlacement = playhead) {
     setBusy(`catalog-${asset.id}`); setError(''); setNotice(`Importing ${asset.title}…`);
     try {
       const response = await fetch(asset.url);
       if (!response.ok) throw new Error('Could not download this catalog track');
       const blob = await response.blob();
-      const extension = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('wav') ? 'wav' : blob.type.includes('mpeg') ? 'mp3' : 'opus';
-      await addGeneratedFile(new File([blob], `${asset.title}.${extension}`, { type: blob.type || 'audio/ogg' }), 'audio', asset.attribution || asset.provider);
+      const extension = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('wav') ? 'wav' : blob.type.includes('mpeg') ? 'mp3' : blob.type.includes('webm') ? 'webm' : 'opus';
+      await addGeneratedFile(new File([blob], `${asset.title}.${extension}`, { type: blob.type || 'audio/ogg' }), 'audio', asset.attribution || asset.provider, undefined, timelinePlacement);
       setNotice(`${asset.title} added · ${asset.license.toUpperCase()}`);
       setMobilePanelOpen(false);
     } catch (reason) {
@@ -2987,7 +3083,10 @@ export default function StudioPage() {
 
       for (const asset of visualAssets) {
         const filteredCanvas = document.createElement('canvas');
-        const renderer = new StudioRenderer(filteredCanvas);
+        // The export compositor copies this WebGL canvas into a 2D canvas for
+        // WebCodecs. Retain its framebuffer so the encoded frames are not
+        // blank after WebGL presents the draw call.
+        const renderer = new StudioRenderer(filteredCanvas, { preserveDrawingBuffer: true });
         renderer.resize(asset.width, asset.height);
         const state: ExportVisualState = { asset, canvas: filteredCanvas, renderer, image: null, input: null, iterator: null, current: null, next: null };
         if (asset.kind === 'image') {
@@ -3132,7 +3231,13 @@ export default function StudioPage() {
       style={{ '--visual-track-count': visualTrackCount, '--visible-visual-track-count': visibleVisualTrackCount } as CSSProperties}
       onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
       onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }}
-      onDrop={(event) => { event.preventDefault(); setDragging(false); void importFiles(event.dataTransfer.files); }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        const catalogAudio = catalogAudioFromTransfer(event.dataTransfer);
+        if (catalogAudio) void importCatalogAudio(catalogAudio, playhead);
+        else void importFiles(event.dataTransfer.files);
+      }}
       onContextMenu={(event) => {
         if (event.defaultPrevented || (event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"]')) return;
         openStudioContextMenu(event);
@@ -3246,7 +3351,7 @@ export default function StudioPage() {
               <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('videos')} placeholder="Search motion, subjects, styles…" /><button disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('videos')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
               <div className={styles.discoveryGrid}>{videoHits.map((hit) => <button data-testid={`studio-video-hit-${hit.job_id}`} className={styles.discoveryCard} key={hit.job_id} disabled={!hit.video_url || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'video', hit.prompt)} onClick={() => void addDiscoveredMedia(hit.video_url || '', hit.prompt, 'video')}>
                 <span className={styles.discoveryPreview}>{hit.video_url && <video src={hit.video_url} muted playsInline preload="metadata" />}<span><Plus size={13} /> Add</span></span>
-                <b>{hit.prompt || 'Community video'}</b><small>{typeof hit.similarity === 'number' ? `${Math.round(hit.similarity * 100)}% match` : 'Community video'}</small>
+                <b>{hit.prompt || 'Community video'}</b><small>{hit.service || 'H3'}{typeof hit.similarity === 'number' ? ` · ${Math.round(hit.similarity * 100)}% match` : ''}</small>
               </button>)}</div>
               {!mediaSearchBusy && !videoHits.length && <p className={styles.discoveryEmpty}>No videos found yet. Try a broader visual description.</p>}
             </>}
@@ -3281,8 +3386,16 @@ export default function StudioPage() {
             {mediaBrowserMode === 'music' && <>
               <button data-testid="studio-music-create" className={styles.mediaCreateCard} onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Music2 size={18} /></span><span><b>Generate music</b><small>Describe a soundtrack and add it directly to the timeline</small></span></button>
               <div className={styles.discoveryLabel}><span>LICENSED MUSIC</span><small>Netwrck catalog</small></div>
-              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('music')} placeholder="Search mood, genre, instruments…" /><button disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('music')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
-              <div className={styles.catalogList}>{audioResults.map((asset) => <article key={asset.id} data-testid={`studio-music-hit-${asset.id}`} className={styles.catalogCard} onContextMenu={(event) => openPromptContextMenu(event, 'music', asset.description || asset.title)}><button className={styles.catalogPlay} onClick={() => { const audio = new Audio(asset.preview_url || asset.url); void audio.play(); }} aria-label={`Preview ${asset.title}`}><Play size={12} fill="currentColor" /></button><span><b>{asset.title}</b><small>{formatTime(asset.duration).slice(3)} · {asset.license.toUpperCase()} · {asset.attribution || asset.provider}</small></span><button aria-label={`Add ${asset.title} to timeline`} disabled={!!busy} onClick={() => void importCatalogAudio(asset)}>{busy === `catalog-${asset.id}` ? <Loader2 className={styles.spin} size={13} /> : <Plus size={13} />}</button></article>)}</div>
+              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('music')} placeholder="Search mood, genre, instruments…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('music')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
+              <div className={styles.catalogList}>{audioResults.map((asset) => <CatalogAudioCard
+                key={asset.id}
+                testID={`studio-music-hit-${asset.id}`}
+                asset={asset}
+                loading={busy === `catalog-${asset.id}`}
+                onAdd={(item) => void importCatalogAudio(item)}
+                onDragStart={startCatalogAudioDrag}
+                onPromptContext={(event, item) => openPromptContextMenu(event, 'music', item.description || item.title)}
+              />)}</div>
               {!mediaSearchBusy && !audioResults.length && <p className={styles.discoveryEmpty}>No music found yet. Try a mood, genre, or instrument.</p>}
             </>}
           </>}
@@ -3349,9 +3462,16 @@ export default function StudioPage() {
               <label className={styles.sliderRow}><span><b>Fade out</b><output>{selected.fadeOut.toFixed(1)}s</output></span><input type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeOut} onChange={(event) => updateAsset(selected.id, { fadeOut: Number(event.target.value) })} /></label>
             </div>}
             <div className={styles.catalogHeader}><span className={styles.sectionLabel}>LICENSED CATALOG</span><Library size={14} /></div>
-            <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-audio-search" value={audioSearch} onChange={(event) => setAudioSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchAudioCatalog()} placeholder="Search music and sounds" /><button disabled={audioSearching} onClick={() => void searchAudioCatalog()}>{audioSearching ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
+            <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-audio-search" value={audioSearch} onChange={(event) => setAudioSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchAudioCatalog()} placeholder="Search music and sounds" /><button title="Search (Enter)" disabled={audioSearching} onClick={() => void searchAudioCatalog()}>{audioSearching ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
             <div className={styles.kindChips}>{(['music', 'sfx', 'voice'] as const).map((kind) => <button key={kind} className={audioKind === kind ? styles.kindActive : ''} onClick={() => setAudioKind(kind)}>{kind === 'sfx' ? 'SFX' : kind}</button>)}</div>
-            <div className={styles.catalogList}>{audioResults.map((asset) => <article key={asset.id} className={styles.catalogCard}><button className={styles.catalogPlay} onClick={() => { const audio = new Audio(asset.preview_url || asset.url); void audio.play(); }} aria-label={`Preview ${asset.title}`}><Play size={12} fill="currentColor" /></button><span><b>{asset.title}</b><small>{formatTime(asset.duration).slice(3)} · {asset.license.toUpperCase()} · {asset.provider}</small></span><button disabled={!!busy} onClick={() => void importCatalogAudio(asset)}>{busy === `catalog-${asset.id}` ? <Loader2 className={styles.spin} size={13} /> : <Plus size={13} />}</button></article>)}</div>
+            <div className={styles.catalogList}>{audioResults.map((asset) => <CatalogAudioCard
+              key={asset.id}
+              asset={asset}
+              loading={busy === `catalog-${asset.id}`}
+              onAdd={(item) => void importCatalogAudio(item)}
+              onDragStart={startCatalogAudioDrag}
+              onPromptContext={(event, item) => openPromptContextMenu(event, item.kind === 'sfx' ? 'sfx' : 'music', item.description || item.title)}
+            />)}</div>
           </>}
 
           {tool === 'ai' && <>
@@ -3429,11 +3549,11 @@ export default function StudioPage() {
         <div className={styles.timelineToolbar}>
           <div className={styles.timelineTools}><button onClick={() => fileInputRef.current?.click()}><Plus size={14} /> Add</button><button onClick={splitAtPlayhead} disabled={!selectedAssets.length} title="Split at playhead (S)"><Scissors size={14} /> Split</button><button data-testid="studio-layer-up" onClick={() => moveSelectionBetweenLayers(1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move up a layer (Ctrl/Cmd + ])"><ChevronUp size={14} /> Layer</button><button data-testid="studio-layer-down" onClick={() => moveSelectionBetweenLayers(-1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move down a layer (Ctrl/Cmd + [)"><ChevronDown size={14} /> Layer</button><button onClick={duplicateSelected} disabled={!selectedAssets.length} title="Duplicate selected clips"><Copy size={14} /></button><button onClick={removeSelected} disabled={!selectedAssets.length} title="Delete selected clips"><Trash2 size={14} /></button>{selectedAssets.length > 1 && <span className={styles.selectionCount}>{selectedAssets.length} selected</span>}</div>
           <div className={styles.transport}><button aria-label={playing ? 'Pause' : 'Play'} title="Play/pause (Space)" className={styles.playButton} onClick={togglePlayback} disabled={!selected || selected.kind === 'image'}>{playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}</button><span>{formatTime(playhead)} <i>/</i> {formatTime(timelineDuration)}</span></div>
-          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Drag empty space to select · Ctrl/Cmd [ ] to layer</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
+          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Shift-drag to select · Ctrl/Cmd [ ] to layer</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
         </div>
         <div className={styles.timelineBody}>
           <div ref={timelineLabelsRef} className={styles.trackLabels} onWheel={(event) => { if (timelineContentRef.current) timelineContentRef.current.scrollTop += event.deltaY; }}><span>VIDEO</span>{Array.from({ length: visualTrackCount }, (_, index) => visualTrackCount - index - 1).map((track) => <div data-testid={`timeline-track-label-v${track + 1}`} key={track}>V{track + 1}</div>)}<div className={styles.audioLabel}>A1</div></div>
-          <div ref={timelineContentRef} data-testid="studio-timeline-dropzone" className={`${styles.trackContent} ${timelineDropTime !== null ? styles.timelineDropActive : ''}`} onScroll={(event) => { if (timelineLabelsRef.current) timelineLabelsRef.current.scrollTop = event.currentTarget.scrollTop; }} onDragOver={dragMediaOverTimeline} onDragLeave={leaveTimelineDrop} onDrop={(event) => void dropMediaOnTimeline(event)} onPointerMove={(event) => { moveTimelinePointer(event); previewTimelineTime(event); }} onPointerLeave={() => setTimelineHoverTime(null)} onPointerUp={endTimelinePointer} onPointerCancel={endTimelinePointer}>
+          <div ref={timelineContentRef} data-testid="studio-timeline-dropzone" className={`${styles.trackContent} ${timelineDropTime !== null ? styles.timelineDropActive : ''}`} onScroll={(event) => { if (timelineLabelsRef.current) timelineLabelsRef.current.scrollTop = event.currentTarget.scrollTop; }} onDragOver={dragMediaOverTimeline} onDragLeave={leaveTimelineDrop} onDrop={(event) => void dropMediaOnTimeline(event)} onPointerMove={moveTimelinePointer} onPointerUp={endTimelinePointer} onPointerCancel={endTimelinePointer}>
             <div data-testid="studio-timeline-canvas" ref={timelineCanvasRef} className={styles.timelineCanvas} style={{ width: timelineWidth, minWidth: '100%' }}>
               <div data-testid="studio-timeline-ruler" className={styles.ruler} onPointerDown={beginScrub}>{Array.from({ length: Math.floor(rulerDuration / rulerStep) + 1 }, (_, index) => { const time = index * rulerStep; return <span key={time} style={{ left: time * pixelsPerSecond }}>{formatTime(time).slice(3)}</span>; })}</div>
               <div className={styles.videoTracks} onPointerDown={beginScrub}>
@@ -3452,7 +3572,6 @@ export default function StudioPage() {
                 </div>)}
               </div>
               {timelineDropTime !== null && <div className={styles.timelineDropMarker} style={{ left: timelineDropTime * pixelsPerSecond }}><span>Drop at {formatTime(timelineDropTime)}</span></div>}
-              {timelineHoverTime !== null && <div data-testid="studio-timeline-hover" className={styles.timelineHover} style={{ left: timelineHoverTime * pixelsPerSecond }}><span>{formatTimelineHoverTime(timelineHoverTime)}</span></div>}
               {timelineMarquee && <div data-testid="studio-timeline-marquee" className={styles.timelineMarquee} style={timelineMarquee} />}
               <div className={styles.playhead} style={{ left: playhead * pixelsPerSecond }} />
             </div>
@@ -3469,15 +3588,16 @@ export default function StudioPage() {
         <div className={styles.generateSettings}>
           <label><span>Aspect</span><select data-testid="studio-video-generate-aspect" value={videoGenerateAspect} onChange={(event) => setVideoGenerateAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
           <label><span>Canvas</span><select data-testid="studio-video-generate-size" value={videoGenerateSize} onChange={(event) => setVideoGenerateSize(event.target.value as H3Size)}><option value="preview">Preview</option><option value="balanced">Balanced</option><option value="native">Native</option></select></label>
-          <label><span>Duration</span><select data-testid="studio-video-generate-duration" value={videoGenerateDuration} onChange={(event) => setVideoGenerateDuration(Number(event.target.value))}><option value="5">5 seconds</option><option value="10">10 seconds</option></select></label>
+          <label><span>Duration</span><select data-testid="studio-video-generate-duration" value={videoGenerateDuration} onChange={(event) => { const duration = Number(event.target.value); setVideoGenerateDuration(duration); if (duration > 15) setVideoGenerateLoop(false); }}><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds · single shot</option><option value="30">30 seconds · chained</option><option value="45">45 seconds · chained</option><option value="60">60 seconds · chained</option></select></label>
           <label><span>Steps</span><select data-testid="studio-video-generate-steps" value={videoGenerateSteps} onChange={(event) => setVideoGenerateSteps(Number(event.target.value))}><option value="12">12 · Fast</option><option value="20">20 · Standard</option><option value="28">28 · Detailed</option></select></label>
           <label><span>Output</span><select data-testid="studio-video-generate-format" value={videoGenerateFormat} onChange={(event) => setVideoGenerateFormat(event.target.value as H3Format)}><option value="webm-av1">WebM · AV1</option><option value="webm-vp9">WebM · VP9</option><option value="mp4-h264">MP4 · H.264</option></select></label>
         </div>
         <div className={styles.generateToggles}>
           <label><input data-testid="studio-video-generate-audio" type="checkbox" checked={videoGenerateAudio} onChange={(event) => setVideoGenerateAudio(event.target.checked)} /><span><b>Native audio</b><small>Generate synchronized sound with the video</small></span></label>
-          <label><input data-testid="studio-video-generate-loop" type="checkbox" checked={videoGenerateLoop} onChange={(event) => setVideoGenerateLoop(event.target.checked)} /><span><b>Seamless loop</b><small>Create and reuse a matching start/end keyframe</small></span></label>
+          <label className={videoGenerateDuration > 15 ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-loop" type="checkbox" disabled={videoGenerateDuration > 15} checked={videoGenerateLoop} onChange={(event) => setVideoGenerateLoop(event.target.checked)} /><span><b>Match start + end</b><small>{videoGenerateDuration > 15 ? 'Available for single shots up to 15 seconds' : 'Create and reuse one keyframe for a seamless loop'}</small></span></label>
           <label className={selected?.kind !== 'image' ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-selected-image" type="checkbox" disabled={selected?.kind !== 'image' || videoGenerateLoop} checked={videoGenerateUseSelected && selected?.kind === 'image' && !videoGenerateLoop} onChange={(event) => setVideoGenerateUseSelected(event.target.checked)} /><span><b>Use selected image</b><small>{selected?.kind === 'image' ? selected.name : 'Select an image on the timeline first'}</small></span></label>
         </div>
+        {videoGenerateDuration > 15 && <p className={styles.generateHint}>Long video uses conditioned chained shots: each ending guides the next segment. For the strongest music or dialogue continuity, generate one soundtrack in Audio and mix it across the finished clip.</p>}
         <div className={styles.priceLine}><span>Estimated batch · {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</span><b>~${videoGenerateBatchUSD.toFixed(2)} · ~{videoGenerateBatchCredits.toLocaleString()} credits</b></div>
         {videoGenerateQueueStatus && <p data-testid="studio-video-generate-status" className={styles.queueStatus} role="status">{videoGenerateQueueStatus}</p>}
         <button data-testid="studio-video-generate-submit" className={styles.modalPrimary} disabled={busy === 'generate-videos' || !videoGeneratePrompts.length} onClick={() => void queueVideoGenerations()}>{busy === 'generate-videos' ? <><Loader2 className={styles.spin} size={16} /> Queueing creations…</> : <><Sparkles size={16} /> Queue {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</>}</button>
@@ -3537,7 +3657,7 @@ export default function StudioPage() {
           <label><span>Quality</span><select data-testid="export-quality" value={exportSettings.quality} disabled={!!busy} onChange={(event) => setExportSettings((current) => ({ ...current, quality: event.target.value as ExportQuality }))}><option value="draft">Draft</option><option value="balanced">Balanced</option><option value="high">High</option></select></label>
         </div>
         <p className={styles.exportRemembered}>Complete {formatTime(timelineDuration)} timeline · settings saved on this device.</p>
-        <div className={styles.exportSummary}><span>Output <b>{selectedExportSize ? `${selectedExportSize.width} × ${selectedExportSize.height}` : '—'}</b></span><span>Frame rate <b>{exportSettings.frameRate === 'source' ? '30 fps timeline' : `${exportSettings.frameRate} fps`}</b></span><span>Audio <b>{assets.some((asset) => asset.kind !== 'image') ? 'Mixed · AAC/Opus' : 'None'}</b></span><span>Processing <b>Local GPU · hardware codec preferred</b></span></div>
+        <div className={styles.exportSummary}><span>Output <b>{selectedExportSize ? `${selectedExportSize.width} × ${selectedExportSize.height}` : '—'}</b></span><span>Frame rate <b>{exportSettings.frameRate === 'source' ? '30 fps timeline' : `${exportSettings.frameRate} fps`}</b></span><span>Audio <b>{assets.some((asset) => asset.kind !== 'image') ? 'Mixed · AAC/Opus' : 'None'}</b></span></div>
         {exportProgress > 0 && <div className={styles.progress}><i style={{ width: `${exportProgress * 100}%` }} /></div>}
         <button className={styles.modalPrimary} disabled={!!busy} onClick={() => void exportVideo()}>{busy === 'export' ? <><Loader2 className={styles.spin} size={16} /> Exporting {Math.round(exportProgress * 100)}%</> : <><Download size={16} /> Export</>}</button>
       </Modal>}
@@ -3683,5 +3803,5 @@ function PanelEmpty() {
 }
 
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return <div className={styles.modalBackdrop} onMouseDown={(event) => event.currentTarget === event.target && onClose()}><div className={styles.modal} role="dialog" aria-modal="true" aria-label={title}><div className={styles.modalHeader}><div><span className={styles.eyebrow}>STUDIO</span><h2>{title}</h2></div><button aria-label={`Close ${title}`} onClick={onClose}><X size={17} /></button></div><div className={styles.modalBody}>{children}</div></div></div>;
+  return <div className={styles.modalBackdrop} onMouseDown={(event) => event.currentTarget === event.target && onClose()}><div className={styles.modal} role="dialog" aria-modal="true" aria-label={title}><div className={styles.modalHeader}><h2>{title}</h2><button aria-label={`Close ${title}`} onClick={onClose}><X size={18} /></button></div><div className={styles.modalBody}>{children}</div></div></div>;
 }
