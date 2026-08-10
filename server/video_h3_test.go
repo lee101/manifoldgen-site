@@ -139,7 +139,7 @@ func TestH3RunpodQueueTimeout(t *testing.T) {
 }
 
 func TestPublicVideoJobRemovesProviderDetails(t *testing.T) {
-	job := &VideoJob{Service: "h3_video", Result: json.RawMessage(`{"_h3_variant":"normal-h3","provider":"runpod","provider_cost_usd":1.2,"video_url":"https://media.example/video.webm"}`)}
+	job := &VideoJob{Service: "h3_video", ProviderCost: 1.2, ChargedUSD: 1.8, CreditsUsed: 180, Result: json.RawMessage(`{"_h3_variant":"normal-h3","provider":"runpod","provider_cost_usd":1.2,"metrics":{"quant":"internal"},"video_url":"https://media.example/video.webm"}`)}
 	public := publicVideoJob(job)
 	if public.Service != "video" {
 		t.Fatalf("public service = %q", public.Service)
@@ -153,6 +153,12 @@ func TestPublicVideoJobRemovesProviderDetails(t *testing.T) {
 	}
 	if _, ok := result["provider"]; ok {
 		t.Fatal("provider leaked")
+	}
+	if public.ProviderCost != 0 || result["metrics"] != nil {
+		t.Fatalf("provider diagnostics leaked: job=%#v result=%#v", public, result)
+	}
+	if result["charged_usd"] != 1.8 || result["credits_used"] != float64(180) {
+		t.Fatalf("customer settlement missing: %#v", result)
 	}
 	if result["video_url"] == nil {
 		t.Fatal("public video URL was removed")

@@ -1318,6 +1318,9 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 		return nil
 	}
 	out := *job
+	// Provider settlement inputs stay server-side. Public callers only see the
+	// amount actually charged to their account.
+	out.ProviderCost = 0
 	if public := publicServiceName(job.Service); public != "" {
 		out.Service = public
 	} else if job.Service == "video_generate" || job.Service == "ltx_video" {
@@ -1327,10 +1330,12 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 		var result map[string]interface{}
 		if json.Unmarshal(job.Result, &result) == nil {
 			for key := range result {
-				if strings.HasPrefix(key, "_") || key == "provider" || key == "provider_cost_usd" || key == "backend" || key == "backend_used" || key == "model_variant" {
+				if strings.HasPrefix(key, "_") || key == "provider" || key == "provider_cost_usd" || key == "backend" || key == "backend_used" || key == "model_variant" || key == "metrics" || key == "predict_seconds" {
 					delete(result, key)
 				}
 			}
+			result["charged_usd"] = out.ChargedUSD
+			result["credits_used"] = out.CreditsUsed
 			if videoURL, _ := result["video_url"].(string); strings.HasPrefix(videoURL, "data:") {
 				delete(result, "video_url")
 				result["artifact_status"] = "publishing"
