@@ -177,6 +177,7 @@ type ServiceUsageRequest struct {
 	OutputFormat       string   `json:"output_format,omitempty"`
 	FirstFrame         string   `json:"first_frame,omitempty"`
 	LastFrame          string   `json:"last_frame,omitempty"`
+	Keyframes          []string `json:"keyframes,omitempty"`
 	Size               string   `json:"size,omitempty"`
 	Loop               bool     `json:"loop,omitempty"`
 	IncludeAudio       *bool    `json:"include_audio,omitempty"`

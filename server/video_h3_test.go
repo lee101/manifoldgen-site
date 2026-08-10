@@ -218,6 +218,51 @@ func TestNormalizeH3DrivingAudioRequiresImage(t *testing.T) {
 	}
 }
 
+func TestNormalizeH3OrderedKeyframesPreservesSequence(t *testing.T) {
+	req := ServiceUsageRequest{
+		Service: "h3_video", Prompt: "move through all three moments", Duration: 5,
+		Keyframes: []string{
+			" https://cdn.example/start.png ",
+			"https://cdn.example/middle.png",
+			"https://cdn.example/stop.png",
+		},
+	}
+	if err := normalizeH3VideoRequest(&req); err != nil {
+		t.Fatalf("normalize ordered keyframes: %v", err)
+	}
+	if req.FirstFrame != "https://cdn.example/start.png" || req.LastFrame != "https://cdn.example/stop.png" {
+		t.Fatalf("first/last = %q/%q", req.FirstFrame, req.LastFrame)
+	}
+	input := appNZH3Input(req)
+	frames, ok := input["keyframes"].([]string)
+	if !ok || len(frames) != 3 || frames[1] != "https://cdn.example/middle.png" {
+		t.Fatalf("keyframes = %#v", input["keyframes"])
+	}
+}
+
+func TestNormalizeH3OrderedKeyframesRejectsIncompatibleModes(t *testing.T) {
+	base := ServiceUsageRequest{
+		Service: "h3_video", Prompt: "transition", Duration: 5,
+		Keyframes: []string{"https://cdn.example/start.png", "https://cdn.example/stop.png"},
+	}
+	withLoop := base
+	withLoop.Loop = true
+	if err := normalizeH3VideoRequest(&withLoop); err == nil {
+		t.Fatal("multiple keyframes with loop should fail")
+	}
+	withAudio := base
+	withAudio.AudioURL = "https://cdn.example/drive.wav"
+	if err := normalizeH3VideoRequest(&withAudio); err == nil {
+		t.Fatal("multiple keyframes with driving audio should fail")
+	}
+	tooLong := base
+	tooLong.Keyframes = append(tooLong.Keyframes, "https://cdn.example/third.png")
+	tooLong.Duration = 16
+	if err := normalizeH3VideoRequest(&tooLong); err == nil {
+		t.Fatal("ordered keyframes over 15 seconds per transition should fail")
+	}
+}
+
 func TestIsRunPodWorkersQuotaErr(t *testing.T) {
 	if !isRunPodWorkersQuotaErr(fmtError("serverless: Max workers across all endpoints must not exceed your workers quota (5)")) {
 		t.Fatal("expected quota match")

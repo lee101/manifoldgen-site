@@ -205,8 +205,32 @@ func normalizeH3VideoRequest(req *ServiceUsageRequest) error {
 	if req.Prompt == "" {
 		return fmt.Errorf("prompt is required")
 	}
+	if len(req.Keyframes) > 8 {
+		return fmt.Errorf("keyframes must contain at most 8 images")
+	}
+	keyframes := make([]string, 0, len(req.Keyframes))
+	for _, frame := range req.Keyframes {
+		frame = strings.TrimSpace(frame)
+		if frame == "" {
+			return fmt.Errorf("keyframes cannot contain empty URLs")
+		}
+		keyframes = append(keyframes, frame)
+	}
+	req.Keyframes = keyframes
+	if len(req.Keyframes) > 0 {
+		req.FirstFrame = req.Keyframes[0]
+		if len(req.Keyframes) > 1 {
+			req.LastFrame = req.Keyframes[len(req.Keyframes)-1]
+		}
+	}
 	if req.FirstFrame == "" {
 		req.FirstFrame = strings.TrimSpace(req.ImageURL)
+	}
+	if len(req.Keyframes) > 1 && req.AudioURL != "" {
+		return fmt.Errorf("multiple keyframes cannot be combined with audio_url")
+	}
+	if len(req.Keyframes) > 1 && req.Loop {
+		return fmt.Errorf("multiple keyframes cannot be combined with loop")
 	}
 	if req.AudioURL != "" && req.FirstFrame == "" {
 		return fmt.Errorf("audio_url requires first_frame or image_url")
@@ -241,6 +265,9 @@ func normalizeH3VideoRequest(req *ServiceUsageRequest) error {
 	}
 	if req.Duration < 4 || req.Duration > maxDuration {
 		return fmt.Errorf("duration must be between 4 and %d seconds for size=%s", maxDuration, req.Size)
+	}
+	if len(req.Keyframes) > 2 && req.Duration > 15 {
+		return fmt.Errorf("ordered keyframe duration must be between 4 and 15 seconds per transition")
 	}
 	if req.Size == "audio" && (req.FirstFrame != "" || req.LastFrame != "" || req.Loop) {
 		return fmt.Errorf("size=audio is text-to-audio/video only; omit first_frame, last_frame, and loop")
@@ -294,6 +321,9 @@ func appNZH3Input(req ServiceUsageRequest) map[string]interface{} {
 	}
 	if req.LastFrame != "" {
 		input["last_frame"] = req.LastFrame
+	}
+	if len(req.Keyframes) > 2 {
+		input["keyframes"] = req.Keyframes
 	}
 	if req.AudioURL != "" {
 		input["audio"] = req.AudioURL

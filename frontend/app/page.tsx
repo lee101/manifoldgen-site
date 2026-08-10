@@ -3,12 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clapperboard,
+  ClipboardPaste,
   CreditCard,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
   KeyRound,
   Loader2,
   LogIn,
   LogOut,
   Repeat2,
+  GripVertical,
+  Image as ImageIcon,
   Maximize2,
   Music2,
   Paperclip,
@@ -235,6 +241,9 @@ export default function HomePage() {
   const [assets, setAssets] = useState<PromptAsset[]>([]);
   const [assetBusy, setAssetBusy] = useState(false);
   const [draggingAsset, setDraggingAsset] = useState(false);
+  const [framesOpen, setFramesOpen] = useState(false);
+  const [frameDropIndex, setFrameDropIndex] = useState<number | null>(null);
+  const pendingAssetFilesRef = useRef<File[]>([]);
   const heroVideoRef = useRef<HTMLVideoElement>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
 
@@ -460,6 +469,9 @@ export default function HomePage() {
       const next = userFromAuthResponse(data);
       if (!next) throw new Error('No API key returned');
       applyUser(next);
+      const pendingFiles = pendingAssetFilesRef.current;
+      pendingAssetFilesRef.current = [];
+      if (pendingFiles.length) window.setTimeout(() => void uploadAssets(pendingFiles), 0);
       if (data.created || authMode === 'signup') {
         setCheckoutStep(true);
       } else {
@@ -470,6 +482,36 @@ export default function HomePage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function reorderFrames(fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= imageFrames.length || toIndex >= imageFrames.length) return;
+    setAssets((current) => {
+      const frames = current.filter((asset) => asset.kind === 'image');
+      const moved = frames[fromIndex];
+      if (!moved) return current;
+      const nextFrames = [...frames];
+      nextFrames.splice(fromIndex, 1);
+      nextFrames.splice(toIndex, 0, moved);
+      return [...nextFrames, ...current.filter((asset) => asset.kind !== 'image')];
+    });
+  }
+
+  function removeAsset(asset: PromptAsset) {
+    setAssets((current) => current.filter((row) => row.url !== asset.url));
+  }
+
+  function handleAssetPaste(event: React.ClipboardEvent<HTMLElement>) {
+    const clipboardImages = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+    const imageFiles = clipboardImages.length > 0
+      ? clipboardImages
+      : Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
+    if (imageFiles.length === 0) return;
+    event.preventDefault();
+    void uploadAssets(imageFiles);
   }
 
   async function generate(overrides?: { prompt?: string; image?: string; audio?: string }) {
@@ -510,28 +552,44 @@ export default function HomePage() {
         await softRefresh(apiKey);
         return;
       }
+      const steeringFrameURLs = overrides?.image
+        ? [overrides.image]
+        : imageFrames.map((asset) => asset.url);
+      const renderedDuration = duration * Math.max(1, steeringFrameURLs.length - 1);
       let firstFrame = '';
       if (loopMode) {
-        updateGenerationTask(taskID, { label: 'Making loop frame' });
-        const [width, height] = h3Dimensions(aspect, size);
-        const imageRes = await fetch(`${API}/service`, {
-          method: 'POST',
-          headers: authHeaders(apiKey),
-          body: JSON.stringify({
-            service: 'zimage',
-            prompt: taskPrompt,
-            width,
-            height,
-            n: 1,
-          }),
-        });
-        const imageData = await parseJSONResponse<Parameters<typeof loopAnchorURL>[0]>(
-          imageRes,
-          'Loop keyframe generation failed',
-        );
-        firstFrame = loopAnchorURL(imageData, window.location.origin);
-        updateGenerationTask(taskID, { label: 'Starting loop video' });
+        if (steeringFrameURLs.length > 0) {
+          firstFrame = steeringFrameURLs[0];
+          updateGenerationTask(taskID, { label: 'Starting loop video from frame 1' });
+        } else {
+          updateGenerationTask(taskID, { label: 'Making loop frame' });
+          const [width, height] = h3Dimensions(aspect, size);
+          const imageRes = await fetch(`${API}/service`, {
+            method: 'POST',
+            headers: authHeaders(apiKey),
+            body: JSON.stringify({
+              service: 'zimage',
+              prompt: taskPrompt,
+              width,
+              height,
+              n: 1,
+            }),
+          });
+          const imageData = await parseJSONResponse<Parameters<typeof loopAnchorURL>[0]>(
+            imageRes,
+            'Loop keyframe generation failed',
+          );
+          firstFrame = loopAnchorURL(imageData, window.location.origin);
+          updateGenerationTask(taskID, { label: 'Starting loop video' });
+        }
       }
+      if (!firstFrame) firstFrame = steeringFrameURLs[0] || '';
+      const lastFrame = !loopMode && steeringFrameURLs.length > 1
+        ? steeringFrameURLs[steeringFrameURLs.length - 1]
+        : '';
+      const orderedKeyframes = !loopMode && steeringFrameURLs.length > 2
+        ? steeringFrameURLs
+        : undefined;
       const res = await fetch(`${API}/service`, {
         method: 'POST',
         headers: authHeaders(apiKey),
@@ -546,9 +604,10 @@ export default function HomePage() {
           include_audio: includeAudio,
           loop: loopMode,
           ...(firstFrame ? { first_frame: firstFrame } : {}),
+          ...(lastFrame ? { last_frame: lastFrame } : {}),
+          ...(orderedKeyframes ? { keyframes: orderedKeyframes } : {}),
           structured_prompt: true,
-          ...(!firstFrame ? { first_frame: overrides?.image ?? assets.find((asset) => asset.kind === 'image')?.url } : {}),
-          audio_url: overrides?.audio ?? assets.find((asset) => asset.kind === 'audio')?.url,
+          audio_url: steeringFrameURLs.length > 1 ? undefined : (overrides?.audio ?? audioAsset?.url),
         }),
       });
       const data = await parseJSONResponse<Record<string, unknown> & {
@@ -576,7 +635,7 @@ export default function HomePage() {
         updateGenerationTask(taskID, { status: 'upscaling', label: `Upscaling ${upscaleScale}×` });
         const upscaleResponse = await fetch(`${API}/studio/upscale-video`, {
           method: 'POST', headers: authHeaders(apiKey),
-          body: JSON.stringify({ video_url: videoURL, width, height, duration, scale: upscaleScale }),
+          body: JSON.stringify({ video_url: videoURL, width, height, duration: renderedDuration, scale: upscaleScale }),
         });
         const upscale = await parseJSONResponse<{ job_id?: string }>(upscaleResponse, 'Could not start post-upscale');
         if (!upscale.job_id) throw new Error('Post-upscale returned no job');
@@ -608,10 +667,9 @@ export default function HomePage() {
     const src = img.image_url || img.thumb_url;
     if (!src) return;
     setPrompt(img.prompt);
-    setAssets((current) => [
-      { kind: 'image', url: src, name: img.prompt.slice(0, 48) || 'Gallery image' },
-      ...current.filter((asset) => asset.kind !== 'image'),
-    ]);
+    setAssets((current) => current.some((asset) => asset.url === src)
+      ? current
+      : [...current, { kind: 'image', url: src, name: img.prompt.slice(0, 48) || 'Gallery image' }]);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -660,6 +718,8 @@ export default function HomePage() {
       return;
     }
     if (!apiKey) {
+      pendingAssetFilesRef.current = [...pendingAssetFilesRef.current, ...accepted];
+      setError('Sign in to add pasted frames. Your images are ready when you return.');
       openAuth('signup');
       return;
     }
@@ -691,8 +751,16 @@ export default function HomePage() {
         });
       }
       setAssets((current) => {
-        const kinds = new Set(uploaded.map((asset) => asset.kind));
-        return [...uploaded, ...current.filter((asset) => !kinds.has(asset.kind))];
+        const images = uploaded.filter((asset) => asset.kind === 'image');
+        const audio = uploaded.find((asset) => asset.kind === 'audio');
+        const existingURLs = new Set(current.map((asset) => asset.url));
+        const nextImages = images.filter((asset) => !existingURLs.has(asset.url));
+        return [
+          ...current.filter((asset) => asset.kind === 'image'),
+          ...nextImages,
+          ...(audio ? [audio] : []),
+          ...current.filter((asset) => asset.kind === 'audio' && !audio),
+        ];
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Asset upload failed');
@@ -763,6 +831,15 @@ export default function HomePage() {
   // A local, cacheable poster protects LCP from slow API/gallery responses.
   const heroImage = '/brand/manifoldgen-og.webp';
   const displayVideos = videoHits.length > 0 ? videoHits : featuredVideos;
+  const imageFrames = useMemo(() => assets.filter((asset) => asset.kind === 'image'), [assets]);
+  const audioAsset = useMemo(() => assets.find((asset) => asset.kind === 'audio'), [assets]);
+  const transitionCount = Math.max(1, imageFrames.length - 1);
+  const loopAnchorUSD = loopMode && imageFrames.length === 0 ? imageCredits * creditPrice : 0;
+  const estimatedSequenceUSD = (estVideoUSD + estUpscaleUSD) * transitionCount + loopAnchorUSD;
+
+  useEffect(() => {
+    if (imageFrames.length > 1 && loopMode) setLoopMode(false);
+  }, [imageFrames.length, loopMode]);
 
   return (
     <main className="relative min-h-screen bg-[var(--color-ink)]">
@@ -906,30 +983,85 @@ export default function HomePage() {
                 setDraggingAsset(false);
                 void uploadAssets(e.dataTransfer.files);
               }}
+              onPaste={handleAssetPaste}
             >
-              {assets.length > 0 ? (
-                <div className="mb-2 flex flex-wrap gap-2 px-1">
-                  {assets.map((asset) => (
-                    <div key={`${asset.kind}-${asset.url}`} className="flex max-w-full items-center gap-2 rounded-xl bg-black/35 p-1.5 pr-2 text-xs">
-                      {asset.kind === 'image' ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={asset.url} alt="" className="h-10 w-10 rounded-lg object-cover" />
-                      ) : (
-                        <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10"><Music2 size={17} /></span>
-                      )}
-                      <span className="max-w-40 truncate text-white/75">{asset.name}</span>
-                      <button type="button" onClick={() => setAssets((rows) => rows.filter((row) => row.url !== asset.url))} aria-label={`Remove ${asset.name}`} className="rounded-full p-1 text-white/45 hover:text-white"><X size={13} /></button>
+              {imageFrames.length > 0 ? (
+                <div className="mb-3 rounded-2xl border border-white/10 bg-black/20 p-2.5" data-testid="home-frame-tray">
+                  <div className="mb-2 flex items-center justify-between gap-3 px-1">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-white/75">
+                        <span>Steering frames</span>
+                        <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] tracking-normal text-white/50">{imageFrames.length}</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-white/40">{imageFrames.length > 1 ? `${transitionCount} locked transition${transitionCount === 1 ? '' : 's'} · ${duration}s each` : 'Frame 1 anchors the shot'}</p>
                     </div>
-                  ))}
+                    <button type="button" onClick={() => setFramesOpen(true)} className="shrink-0 rounded-full px-2.5 py-1.5 text-[11px] font-medium text-white/55 transition hover:bg-white/10 hover:text-white">
+                      Manage frames
+                    </button>
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {imageFrames.map((asset, index) => (
+                      <div
+                        key={`frame-${asset.url}`}
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = 'move';
+                          event.dataTransfer.setData('text/plain', String(index));
+                        }}
+                        onDragOver={(event) => { event.preventDefault(); setFrameDropIndex(index); }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          const fromIndex = Number(event.dataTransfer.getData('text/plain'));
+                          if (Number.isInteger(fromIndex)) reorderFrames(fromIndex, index);
+                          setFrameDropIndex(null);
+                        }}
+                        onDragEnd={() => setFrameDropIndex(null)}
+                        className={`group relative w-24 shrink-0 overflow-hidden rounded-xl border bg-black/40 p-1 transition sm:w-28 ${frameDropIndex === index ? 'border-[var(--color-accent-2)] ring-1 ring-[var(--color-accent-2)]/50' : 'border-white/10 hover:border-white/25'}`}
+                      >
+                        <div className="relative aspect-[4/3] overflow-hidden rounded-lg bg-white/5">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={asset.url} alt={`Steering frame ${index + 1}`} className="h-full w-full object-cover" />
+                          <span className="absolute left-1.5 top-1.5 rounded-md bg-black/75 px-1.5 py-1 text-[10px] font-bold text-white">{index + 1}</span>
+                          <button type="button" onClick={() => removeAsset(asset)} aria-label={`Remove frame ${index + 1}`} className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white/70 opacity-100 transition hover:text-white sm:opacity-0 sm:group-hover:opacity-100"><X size={12} /></button>
+                        </div>
+                        <div className="flex items-center justify-between gap-1 px-0.5 pt-1 text-[10px] text-white/45">
+                          <GripVertical size={12} className="shrink-0" />
+                          <span className="truncate">{index === 0 ? 'First frame' : index === imageFrames.length - 1 ? 'Last frame' : `Frame ${index + 1}`}</span>
+                          <div className="flex shrink-0">
+                            <button type="button" disabled={index === 0} onClick={() => reorderFrames(index, index - 1)} aria-label={`Move frame ${index + 1} left`} className="rounded p-0.5 hover:bg-white/10 disabled:opacity-20"><ChevronLeft size={12} /></button>
+                            <button type="button" disabled={index === imageFrames.length - 1} onClick={() => reorderFrames(index, index + 1)} aria-label={`Move frame ${index + 1} right`} className="rounded p-0.5 hover:bg-white/10 disabled:opacity-20"><ChevronRight size={12} /></button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => assetInputRef.current?.click()} className="flex min-h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-white/15 bg-white/[.03] text-[11px] text-white/45 transition hover:border-white/35 hover:bg-white/[.06] hover:text-white sm:w-28">
+                      <ClipboardPaste size={16} />
+                      Add frame
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {audioAsset ? (
+                <div className="mb-2 flex items-center gap-2 rounded-xl bg-black/35 p-1.5 pr-2 text-xs">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10"><Music2 size={16} /></span>
+                  <span className="min-w-0 flex-1 truncate text-white/70">{audioAsset.name}</span>
+                  <button type="button" onClick={() => removeAsset(audioAsset)} aria-label={`Remove ${audioAsset.name}`} className="rounded-full p-1 text-white/45 hover:text-white"><X size={13} /></button>
                 </div>
               ) : null}
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 rows={2}
-                placeholder="Describe the shot, camera, light, motion…"
+                placeholder="Describe the shot, camera, light, motion… Paste an image to set frame 1"
                 className="w-full resize-none bg-transparent px-2 py-1 text-base outline-none placeholder:text-white/35 md:text-lg"
               />
+              {imageFrames.length === 0 ? (
+                <div className="flex items-center gap-2 px-2 pb-1 text-[11px] text-white/35">
+                  <ClipboardPaste size={13} className="text-[var(--color-accent-2)]/80" />
+                  Paste an image here to use it as the first video frame
+                </div>
+              ) : null}
               <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
                 <select
                   value={aspect}
@@ -971,14 +1103,14 @@ export default function HomePage() {
                   type="button"
                   data-testid="home-loop-toggle"
                   aria-pressed={loopMode}
-                  disabled={generationMode === 'images'}
+                  disabled={generationMode === 'images' || imageFrames.length > 1}
                   onClick={() => setLoopMode((enabled) => !enabled)}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
                     loopMode
                       ? 'bg-[var(--color-accent)] text-white'
                       : 'bg-white/5 text-[var(--color-mute)] hover:text-white'
                   }`}
-                  title="Generate a looping video" 
+                  title={imageFrames.length > 1 ? 'Loops use one matching start/end frame' : 'Generate a looping video'}
                 >
                   <Repeat2 size={14} />
                   Loop
@@ -999,17 +1131,29 @@ export default function HomePage() {
                   <Maximize2 size={14} />
                   {upscaleMode ? `${upscaleScale}× upscale` : 'Upscale'}
                 </button>
-                <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] sm:inline" data-testid="home-video-cost">
-                  {duration}s · ~${(estVideoUSD + estUpscaleUSD).toFixed(2)}
-                </span>
+                {generationMode === 'video' ? (
+                  <span data-testid="home-video-cost">
+                    <button
+                      type="button"
+                      data-testid="home-duration-control"
+                      onClick={() => setSettingsOpen(true)}
+                      className="group inline-flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] transition hover:bg-white/10 hover:text-white"
+                      aria-label={`Video duration ${duration} seconds per transition. Change duration`}
+                    >
+                      <Clock3 size={14} className="text-white/50 transition group-hover:text-[var(--color-accent-2)]" />
+                      <span>{imageFrames.length > 2 ? `${duration}s × ${transitionCount}` : `${duration}s`}</span>
+                      <span className="hidden text-white/35 sm:inline">· ~${estimatedSequenceUSD.toFixed(2)}</span>
+                    </button>
+                  </span>
+                ) : null}
                 <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] md:inline" data-testid="home-image-cost">
                   4 images · ${(imageCredits * 4 * creditPrice).toFixed(2)}
                 </span>
                 <div className="ml-auto flex items-center gap-2">
                   <input ref={assetInputRef} type="file" accept="image/*,audio/*" multiple className="hidden" onChange={(e) => { if (e.target.files) void uploadAssets(e.target.files); e.currentTarget.value = ''; }} />
-                  <button type="button" disabled={assetBusy} onClick={() => assetInputRef.current?.click()} className="glass inline-flex items-center gap-2 rounded-full px-3 py-2.5 text-sm text-white/75 disabled:opacity-50" aria-label="Attach image or audio">
+                  <button type="button" data-testid="home-add-asset" disabled={assetBusy} onClick={() => assetInputRef.current?.click()} className="glass inline-flex items-center gap-2 rounded-full px-3 py-2.5 text-sm text-white/75 disabled:opacity-50" aria-label="Add image or audio">
                     {assetBusy ? <Loader2 className="animate-spin" size={16} /> : <Paperclip size={16} />}
-                    <span className="hidden sm:inline">Add asset</span>
+                    <span className="hidden sm:inline">{imageFrames.length > 0 ? 'Add frame' : 'Add asset'}</span>
                   </button>
                   <button
                     type="button"
@@ -1018,7 +1162,7 @@ export default function HomePage() {
                     className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
                   >
                     <Sparkles size={16} />
-                    {user ? (generationMode === 'images' ? 'Generate 4 images' : 'Generate video') : 'Sign up to generate'}
+                    {user ? (generationMode === 'images' ? 'Generate 4 images' : imageFrames.length > 2 ? `Generate ${transitionCount} transitions` : 'Generate video') : 'Sign up to generate'}
                   </button>
                 </div>
               </div>
@@ -1165,38 +1309,60 @@ export default function HomePage() {
       </section>
 
       {settingsOpen && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-4 md:items-center">
-          <div className="glass w-full max-w-md rounded-3xl p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="font-display text-xl font-700">Settings</h2>
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm md:items-center">
+          <div className="glass w-full max-w-md rounded-3xl border border-white/10 p-5 shadow-2xl shadow-black/40">
+            <div className="mb-5 flex items-start justify-between">
+              <div>
+                <div className="flex items-center gap-2 font-display text-xl font-700">
+                  <span className="grid h-8 w-8 place-items-center rounded-xl bg-[var(--color-accent)]/20 text-[var(--color-accent-2)]"><Clock3 size={17} /></span>
+                  Video settings
+                </div>
+                <p className="mt-1 text-sm text-[var(--color-mute)]">Choose how much of the moment to create.</p>
+              </div>
               <button type="button" onClick={() => setSettingsOpen(false)} aria-label="Close">
                 <X size={18} />
               </button>
             </div>
-            <label className="mb-3 block text-sm text-[var(--color-mute)]">
-              Duration (4–60s; &gt;15s chains segments)
+            <div className="mb-5 rounded-2xl bg-black/20 p-4">
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Duration</div>
+                  <p className="mt-1 text-sm text-white/55">Longer generations continue the shot across chained segments.</p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-display text-3xl font-700 text-white">{duration}<span className="ml-1 text-base font-normal text-white/45">sec</span></div>
+                  <div className="text-xs text-white/40">~${estimatedSequenceUSD.toFixed(2)}</div>
+                </div>
+              </div>
               <input
+                aria-label="Video duration in seconds"
                 type="range"
                 min={4}
                 max={60}
                 step={1}
                 value={duration}
                 onChange={(e) => setDuration(Number(e.target.value))}
-                className="mt-2 w-full"
+                className="mt-5 w-full accent-[var(--color-accent)]"
               />
-              <span className="text-white">
-                {duration}s{duration > 15 ? ' · multi-seg chain' : ''}
-              </span>
-            </label>
+              <div className="mt-1 flex justify-between text-[11px] text-white/30"><span>4 sec</span><span>60 sec</span></div>
+              <div className="mt-4 grid grid-cols-5 gap-1.5">
+                {[5, 10, 15, 30, 60].map((seconds) => (
+                  <button
+                    key={seconds}
+                    type="button"
+                    onClick={() => setDuration(seconds)}
+                    aria-pressed={duration === seconds}
+                    className={`rounded-xl px-2 py-2 text-xs font-medium transition ${duration === seconds ? 'bg-[var(--color-accent)] text-white' : 'bg-white/5 text-white/55 hover:bg-white/10 hover:text-white'}`}
+                  >{seconds}s</button>
+                ))}
+              </div>
+              {duration > 15 ? <p className="mt-3 text-xs text-[var(--color-accent-2)]">Multi-segment generation enabled for this length.</p> : null}
+            </div>
             <label className="mb-3 block text-sm text-[var(--color-mute)]">
-              Steps (8–30)
+              Quality steps (8–30)
               <input
-                type="range"
-                min={8}
-                max={30}
-                value={steps}
-                onChange={(e) => setSteps(Number(e.target.value))}
-                className="mt-2 w-full"
+                type="range" min={8} max={30} value={steps}
+                onChange={(e) => setSteps(Number(e.target.value))} className="mt-2 w-full accent-[var(--color-accent)]"
               />
               <span className="text-white">{steps}</span>
             </label>
@@ -1252,6 +1418,104 @@ export default function HomePage() {
               </span>
             </label>
             <p className="mt-4 text-xs text-[var(--color-mute)]">Final video cost follows render time. Images are $0.04 each.</p>
+          </div>
+        </div>
+      )}
+
+      {framesOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 p-0 backdrop-blur-sm md:items-center md:p-6"
+          onPaste={handleAssetPaste}
+          onClick={() => setFramesOpen(false)}
+        >
+          <div
+            className="auth-panel flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[2rem] border border-white/10 bg-[#0b0b12] md:rounded-[2rem]"
+            onClick={(event) => event.stopPropagation()}
+            tabIndex={-1}
+            autoFocus
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 md:px-6">
+              <div>
+                <div className="flex items-center gap-2 font-display text-xl font-700">
+                  <span className="grid h-8 w-8 place-items-center rounded-xl bg-[var(--color-accent)]/20 text-[var(--color-accent-2)]"><Clapperboard size={17} /></span>
+                  Steering frames
+                </div>
+                <p className="mt-1 max-w-lg text-sm leading-5 text-white/45">Paste, drop, or add images. Drag to reorder the sequence before you generate.</p>
+              </div>
+              <button type="button" onClick={() => setFramesOpen(false)} aria-label="Close frame manager" className="rounded-full p-2 text-white/55 transition hover:bg-white/10 hover:text-white"><X size={18} /></button>
+            </div>
+            <div
+              className="min-h-0 flex-1 overflow-y-auto p-5 md:p-6"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                void uploadAssets(event.dataTransfer.files);
+              }}
+            >
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-[var(--color-accent-2)]/20 bg-[var(--color-accent-2)]/[.06] px-4 py-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <ClipboardPaste size={18} className="shrink-0 text-[var(--color-accent-2)]" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-white/85">Paste an image to add a frame</div>
+                    <div className="mt-0.5 text-xs text-white/45">With this window open, paste a screenshot directly from your clipboard.</div>
+                  </div>
+                </div>
+                <button type="button" onClick={() => assetInputRef.current?.click()} className="shrink-0 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/15">Browse</button>
+              </div>
+              {imageFrames.length > 0 ? (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                  {imageFrames.map((asset, index) => (
+                    <div
+                      key={`modal-frame-${asset.url}`}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = 'move';
+                        event.dataTransfer.setData('text/plain', String(index));
+                      }}
+                      onDragOver={(event) => { event.preventDefault(); setFrameDropIndex(index); }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const fromIndex = Number(event.dataTransfer.getData('text/plain'));
+                        if (Number.isInteger(fromIndex)) reorderFrames(fromIndex, index);
+                        setFrameDropIndex(null);
+                      }}
+                      onDragEnd={() => setFrameDropIndex(null)}
+                      className={`group overflow-hidden rounded-2xl border bg-black/30 p-1.5 transition ${frameDropIndex === index ? 'border-[var(--color-accent-2)] ring-1 ring-[var(--color-accent-2)]/50' : 'border-white/10 hover:border-white/25'}`}
+                    >
+                      <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-white/5">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={asset.url} alt={`Steering frame ${index + 1}`} className="h-full w-full object-cover" />
+                        <div className="absolute inset-x-2 top-2 flex items-center justify-between">
+                          <span className="rounded-md bg-black/75 px-2 py-1 text-[11px] font-bold text-white">Frame {index + 1}</span>
+                          <button type="button" onClick={() => removeAsset(asset)} aria-label={`Remove frame ${index + 1}`} className="rounded-full bg-black/70 p-1.5 text-white/70 transition hover:text-white"><X size={13} /></button>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 px-1 pt-2 text-xs text-white/45">
+                        <span className="flex min-w-0 items-center gap-1.5 truncate"><GripVertical size={14} />{index === 0 ? 'First frame' : index === imageFrames.length - 1 ? 'Last frame' : 'In sequence'}</span>
+                        <div className="flex shrink-0">
+                          <button type="button" disabled={index === 0} onClick={() => reorderFrames(index, index - 1)} aria-label={`Move frame ${index + 1} earlier`} className="rounded-md p-1 hover:bg-white/10 disabled:opacity-20"><ChevronLeft size={14} /></button>
+                          <button type="button" disabled={index === imageFrames.length - 1} onClick={() => reorderFrames(index, index + 1)} aria-label={`Move frame ${index + 1} later`} className="rounded-md p-1 hover:bg-white/10 disabled:opacity-20"><ChevronRight size={14} /></button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => assetInputRef.current?.click()} className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-white/15 bg-white/[.02] text-sm text-white/45 transition hover:border-white/30 hover:bg-white/[.05] hover:text-white">
+                    <Paperclip size={19} />
+                    Add another frame
+                  </button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => assetInputRef.current?.click()} className="flex min-h-48 w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[.02] text-center text-sm text-white/50 transition hover:border-white/30 hover:bg-white/[.05] hover:text-white">
+                  <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white/10"><ImageIcon size={22} /></span>
+                  <span><b className="block text-white/80">Drop your first frame here</b><small className="mt-1 block text-white/40">or paste an image into the prompt</small></span>
+                </button>
+              )}
+            </div>
+            <div className="flex flex-col gap-3 border-t border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6">
+              <p className="text-xs leading-5 text-white/40">Every adjacent pair becomes a {duration}s transition. Each segment stops on its next frame; the final segment ends on frame {imageFrames.length}.</p>
+              <button type="button" onClick={() => setFramesOpen(false)} className="rounded-full bg-[var(--color-accent)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110">Done</button>
+            </div>
           </div>
         </div>
       )}
