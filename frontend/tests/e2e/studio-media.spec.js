@@ -36,6 +36,160 @@ function wavFixture(seconds = 0.3, sampleRate = 8000) {
 
 const PNG_FIXTURE = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP4z8DAwMDAxMDAwMAAAAwBAQDJ/pLvAAAAAElFTkSuQmCC', 'base64');
 
+async function installExportBlobCapture(page) {
+  await page.addInitScript(() => {
+    const createObjectURL = URL.createObjectURL.bind(URL);
+    window.__MANIFOLD_EXPORTED_VIDEO_BLOBS__ = [];
+    URL.createObjectURL = (blob) => {
+      if (blob.type.startsWith('video/')) window.__MANIFOLD_EXPORTED_VIDEO_BLOBS__.push(blob);
+      return createObjectURL(blob);
+    };
+  });
+}
+
+async function captureEditorFrame(page, timestamp) {
+  await page.evaluate(async (time) => {
+    const video = document.querySelector('[data-testid="studio-stage-element"] video');
+    if (!(video instanceof HTMLVideoElement)) throw new Error('The editor video preview is not mounted');
+    video.pause();
+    await new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error(`Editor seek to ${time}s timed out`)), 10_000);
+      const complete = () => {
+        window.clearTimeout(timeout);
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      };
+      if (typeof video.requestVideoFrameCallback === 'function') {
+        video.requestVideoFrameCallback(complete);
+      } else {
+        video.addEventListener('seeked', complete, { once: true });
+      }
+      video.currentTime = time;
+    });
+  }, timestamp);
+  return page.getByTestId('studio-stage-element').locator('canvas').screenshot({ animations: 'disabled' });
+}
+
+async function compareLatestExportWithEditorFrames(page, editorFrames) {
+  return page.evaluate(async ({ frames }) => {
+    const blobs = window.__MANIFOLD_EXPORTED_VIDEO_BLOBS__ || [];
+    const blob = blobs.at(-1);
+    if (!blob) throw new Error('The export did not create a video blob');
+    const url = URL.createObjectURL(blob);
+    try {
+      const video = document.createElement('video');
+      video.muted = true;
+      video.preload = 'auto';
+      video.src = url;
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = resolve;
+        video.onerror = () => reject(new Error('The exported video could not be decoded'));
+      });
+
+      const decodeImage = (source) => new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error('An editor reference frame could not be decoded'));
+        image.src = source;
+      });
+      const seek = (time) => new Promise((resolve, reject) => {
+        const timeout = window.setTimeout(() => reject(new Error(`Export seek to ${time}s timed out`)), 10_000);
+        video.onseeked = () => {
+          window.clearTimeout(timeout);
+          requestAnimationFrame(resolve);
+        };
+        video.onerror = () => reject(new Error('An exported video frame could not be decoded'));
+        video.currentTime = time;
+      });
+
+      const width = 192;
+      const height = 108;
+      const exportedCanvas = document.createElement('canvas');
+      const editorCanvas = document.createElement('canvas');
+      exportedCanvas.width = editorCanvas.width = width;
+      exportedCanvas.height = editorCanvas.height = height;
+      const exportedContext = exportedCanvas.getContext('2d', { willReadFrequently: true });
+      const editorContext = editorCanvas.getContext('2d', { willReadFrequently: true });
+      const metrics = [];
+      const exportedImages = [];
+      const exportedPixelSets = [];
+
+      for (const frame of frames) {
+        await seek(frame.timestamp);
+        exportedContext.drawImage(video, 0, 0, width, height);
+        const editorImage = await decodeImage(frame.image);
+        editorContext.clearRect(0, 0, width, height);
+        editorContext.drawImage(editorImage, 0, 0, width, height);
+        const exportedPixels = exportedContext.getImageData(0, 0, width, height).data;
+        const editorPixels = editorContext.getImageData(0, 0, width, height).data;
+        let absoluteError = 0;
+        let squaredError = 0;
+        let editorLumaSum = 0;
+        let exportedLumaSum = 0;
+        let editorLumaSquared = 0;
+        let exportedLumaSquared = 0;
+        let lumaProduct = 0;
+        let maximum = 0;
+        const pixelCount = width * height;
+        for (let index = 0; index < exportedPixels.length; index += 4) {
+          for (let channel = 0; channel < 3; channel += 1) {
+            const difference = exportedPixels[index + channel] - editorPixels[index + channel];
+            absoluteError += Math.abs(difference);
+            squaredError += difference * difference;
+          }
+          const editorLuma = 0.2126 * editorPixels[index] + 0.7152 * editorPixels[index + 1] + 0.0722 * editorPixels[index + 2];
+          const exportedLuma = 0.2126 * exportedPixels[index] + 0.7152 * exportedPixels[index + 1] + 0.0722 * exportedPixels[index + 2];
+          editorLumaSum += editorLuma;
+          exportedLumaSum += exportedLuma;
+          editorLumaSquared += editorLuma * editorLuma;
+          exportedLumaSquared += exportedLuma * exportedLuma;
+          lumaProduct += editorLuma * exportedLuma;
+          maximum = Math.max(maximum, exportedLuma);
+        }
+        const channels = pixelCount * 3;
+        const meanAbsoluteError = absoluteError / channels;
+        const meanSquaredError = squaredError / channels;
+        const covariance = lumaProduct - editorLumaSum * exportedLumaSum / pixelCount;
+        const editorVariance = editorLumaSquared - editorLumaSum * editorLumaSum / pixelCount;
+        const exportedVariance = exportedLumaSquared - exportedLumaSum * exportedLumaSum / pixelCount;
+        metrics.push({
+          timestamp: frame.timestamp,
+          similarity: 1 - meanAbsoluteError / 255,
+          meanAbsoluteError,
+          psnr: meanSquaredError === 0 ? 99 : 10 * Math.log10(255 * 255 / meanSquaredError),
+          lumaCorrelation: covariance / Math.sqrt(Math.max(1e-9, editorVariance * exportedVariance)),
+          maximumLuma: maximum,
+        });
+        exportedImages.push(exportedCanvas.toDataURL('image/png'));
+        exportedPixelSets.push(new Uint8ClampedArray(exportedPixels));
+      }
+
+      const temporalDifferences = [];
+      for (let frame = 1; frame < exportedPixelSets.length; frame += 1) {
+        let difference = 0;
+        const previous = exportedPixelSets[frame - 1];
+        const current = exportedPixelSets[frame];
+        for (let index = 0; index < current.length; index += 4) {
+          difference += Math.abs(current[index] - previous[index]);
+          difference += Math.abs(current[index + 1] - previous[index + 1]);
+          difference += Math.abs(current[index + 2] - previous[index + 2]);
+        }
+        temporalDifferences.push(difference / (width * height * 3 * 255));
+      }
+      return {
+        byteLength: blob.size,
+        duration: video.duration,
+        width: video.videoWidth,
+        height: video.videoHeight,
+        metrics,
+        temporalDifferences,
+        exportedImages,
+      };
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }, { frames: editorFrames.map((frame) => ({ timestamp: frame.timestamp, image: `data:image/png;base64,${frame.image.toString('base64')}` })) });
+}
+
 async function installMocks(page, hooks = {}) {
   await page.addInitScript(({ apiKey }) => {
     localStorage.setItem('mg_api_key', apiKey);
@@ -106,6 +260,23 @@ test('signed-in projects autosave locally while assets upload and save to the ac
   expect(presigns).toHaveLength(1);
 });
 
+test('homepage gallery art imports through the same-origin gallery endpoint', async ({ page }) => {
+  await installMocks(page);
+  const assetPath = 'originals/homepage-art.webp';
+  const assetURL = `https://manifoldgenstatic.manifoldgen.com/gallery/${assetPath}`;
+  let proxyRequest = false;
+  await page.route(`**/api/gallery-assets/${assetPath}?v=1`, async (route) => {
+    proxyRequest = true;
+    await route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE });
+  });
+  await page.route(`https://manifoldgenstatic.manifoldgen.com/gallery/${assetPath}`, (route) => route.abort());
+
+  await page.goto(`/studio?image_url=${encodeURIComponent(assetURL)}&name=Homepage%20art`);
+
+  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /Homepage art\.png/ })).toBeVisible();
+  expect(proxyRequest).toBe(true);
+});
+
 test('an account project restores its R2 media on a device without a local copy', async ({ page }) => {
   const projectID = '7cd844da-0b82-48c2-a8b2-2c20107b4cb0';
   const assetID = '923ef911-cf5f-446f-9a21-da355553b5fc';
@@ -161,6 +332,31 @@ test('a stale queued generation reconciles into a video tile and reuses its prom
   await page.getByTestId('studio-generation-similar').click();
   await expect(page.getByRole('heading', { name: 'Generate videos' })).toBeVisible();
   await expect(page.getByTestId('studio-video-generate-prompt')).toHaveValue(prompt);
+});
+
+test('video generation exposes native and chained timings through one request', async ({ page }) => {
+  const videoRequests = [];
+  await installMocks(page);
+  await page.route('**/api/images?**', (route) => route.fulfill({ status: 200, json: { images: [] } }));
+  await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route('**/api/search?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route('**/api/service', async (route) => {
+    videoRequests.push(route.request().postDataJSON());
+    await route.fulfill({ status: 202, json: { result: { job_id: 'long-video-job', status: 'queued' } } });
+  });
+
+  await page.goto('/studio');
+  await page.getByTestId('studio-generate-media').click();
+  await page.getByTestId('studio-video-generate-prompt').fill('A continuous minute-long orbit around a lighthouse in a storm');
+  await expect(page.getByTestId('studio-video-generate-duration').locator('option')).toHaveCount(6);
+  await page.getByTestId('studio-video-generate-duration').selectOption('15');
+  await page.getByTestId('studio-video-generate-loop').check();
+  await page.getByTestId('studio-video-generate-duration').selectOption('60');
+  await expect(page.getByTestId('studio-video-generate-loop')).toBeDisabled();
+  await expect(page.getByText(/Long video uses conditioned chained shots/)).toBeVisible();
+  await page.getByTestId('studio-video-generate-submit').click();
+  await expect.poll(() => videoRequests.length).toBe(1);
+  expect(videoRequests[0]).toMatchObject({ service: 'h3_video', duration: 60, loop: false });
 });
 
 test('Studio searches community video and image libraries while generating with the selected image engine', async ({ page }) => {
@@ -629,6 +825,35 @@ test('timeline copy paste aligns groups to the playhead and accepts dropped medi
   expect(droppedLeft).toBeLessThan(266);
 });
 
+test('drop import indicators clear when a drag exits or is canceled', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+
+  await page.evaluate(() => {
+    const target = document.querySelector('[data-testid="studio-empty"]');
+    target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }));
+  });
+  await expect(page.getByTestId('studio-drop-overlay')).toBeVisible();
+
+  await page.evaluate(() => {
+    const target = document.querySelector('[data-testid="studio-empty"]');
+    target.dispatchEvent(new DragEvent('dragleave', { bubbles: true, cancelable: true, relatedTarget: null, dataTransfer: new DataTransfer() }));
+  });
+  await expect(page.getByTestId('studio-drop-overlay')).toBeHidden();
+
+  await page.evaluate(() => {
+    const dropzone = document.querySelector('[data-testid="studio-timeline-dropzone"]');
+    const rect = dropzone.getBoundingClientRect();
+    dropzone.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, clientX: rect.left + 96, clientY: rect.top + 40, dataTransfer: new DataTransfer() }));
+  });
+  await expect(page.getByTestId('studio-timeline-drop-marker')).toBeVisible();
+  await expect(page.getByTestId('studio-drop-overlay')).toBeHidden();
+
+  await page.evaluate(() => window.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true })));
+  await expect(page.getByTestId('studio-timeline-drop-marker')).toBeHidden();
+  await expect(page.getByTestId('studio-drop-overlay')).toBeHidden();
+});
+
 test('spacebar toggles timeline playback even after the file input had focus', async ({ page }) => {
   await installMocks(page);
   await page.goto('/studio');
@@ -647,7 +872,14 @@ test('visual elements can be dragged and nudged around the stage', async ({ page
   const element = page.getByTestId('studio-stage-element');
   await expect(element).toBeVisible();
   await expect(element).toHaveAttribute('data-position-x', '0.0000');
+  const stageBox = await page.getByTestId('studio-stage').boundingBox();
   const box = await element.boundingBox();
+  // The preview should fill the stage as far as its aspect ratio permits. This
+  // catches a regression where the canvas used its 300px default size instead.
+  const expectedHeight = Math.min(stageBox.height - 24, (stageBox.width - 24) / (1024 / 690));
+  expect(box.height).toBeGreaterThan(expectedHeight - 3);
+  expect(Math.abs((box.x + box.width / 2) - (stageBox.x + stageBox.width / 2))).toBeLessThan(2);
+  expect(Math.abs((box.y + box.height / 2) - (stageBox.y + stageBox.height / 2))).toBeLessThan(2);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + 70, box.y + box.height / 2 + 35, { steps: 5 });
@@ -670,6 +902,27 @@ test('visual elements can be dragged and nudged around the stage', async ({ page
   await page.getByTestId('studio-transform-reset').click();
   await expect(element).toHaveAttribute('data-scale', '1.0000');
   await expect(element).toHaveAttribute('data-rotation', '0.00');
+});
+
+test('a gallery image handoff loads through the same-origin proxy and fills the Studio stage', async ({ page }) => {
+  await installMocks(page);
+  let proxyRequest = '';
+  await page.route('**/api/gallery-assets/originals/gallery-fixture.webp?**', (route) => {
+    proxyRequest = route.request().url();
+    return route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE });
+  });
+  const sourceURL = 'https://manifoldgenstatic.manifoldgen.com/gallery/originals/gallery-fixture.webp';
+  await page.goto(`/studio?image_url=${encodeURIComponent(sourceURL)}&name=${encodeURIComponent('Gallery fixture')}`);
+  const element = page.getByTestId('studio-stage-element');
+  await expect(element).toBeVisible();
+  await expect(page.getByText('Gallery image added to the studio')).toBeVisible();
+  expect(proxyRequest).toContain('/api/gallery-assets/originals/gallery-fixture.webp?v=1');
+
+  const stageBox = await page.getByTestId('studio-stage').boundingBox();
+  const box = await element.boundingBox();
+  const expectedSize = Math.min(stageBox.width - 24, stageBox.height - 24);
+  expect(box.width).toBeGreaterThan(expectedSize - 3);
+  expect(box.height).toBeGreaterThan(expectedSize - 3);
 });
 
 test('multiple PNGs export the complete slideshow as a local WebM video', async ({ page }) => {
@@ -698,6 +951,79 @@ test('multiple PNGs export the complete slideshow as a local WebM video', async 
   expect(probe.streams).toContainEqual(expect.objectContaining({ codec_type: 'video', codec_name: 'vp9' }));
   expect(Number(probe.format.duration)).toBeGreaterThan(9.8);
 });
+
+for (const { format, codec, extension } of [
+  { format: 'mp4-h264', codec: 'h264', extension: 'mp4' },
+  { format: 'webm-vp9', codec: 'vp9', extension: 'webm' },
+  { format: 'webm-av1', codec: 'av1', extension: 'webm' },
+]) {
+  test(`${format} visual fidelity benchmark matches the real editor video`, async ({ page }, testInfo) => {
+    test.setTimeout(180_000);
+    await installExportBlobCapture(page);
+    await installMocks(page);
+    await page.goto('/studio');
+    await page.locator('input[type=file]').setInputFiles(VIDEO);
+    await expect(page.getByTestId('studio-render-status')).toContainText('1184 × 672 · GPU preview');
+    const timestamps = [0.5, 1.8, 3.6];
+    const editorFrames = [];
+    for (const timestamp of timestamps) {
+      const image = await captureEditorFrame(page, timestamp);
+      editorFrames.push({ timestamp, image });
+      await testInfo.attach(`editor-${timestamp.toFixed(1)}s.png`, { body: image, contentType: 'image/png' });
+    }
+    await page.getByTestId('studio-export').click();
+    await page.getByTestId(`export-format-${format}`).click();
+    await page.getByTestId('export-resolution').selectOption('720p');
+    await page.getByTestId('export-frame-rate').selectOption('24');
+    await page.getByTestId('export-quality').selectOption('draft');
+    const startedAt = Date.now();
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('dialog', { name: 'Export' }).getByRole('button', { name: 'Export', exact: true }).click();
+    const download = await downloadPromise;
+    const elapsedSeconds = (Date.now() - startedAt) / 1000;
+    expect(download.suggestedFilename()).toMatch(new RegExp(`-studio\\.${extension}$`));
+    const outputPath = await download.path();
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration,size', '-show_entries', 'stream=codec_name,codec_type,width,height', '-of', 'json', outputPath], { encoding: 'utf8' }));
+    expect(probe.streams).toContainEqual(expect.objectContaining({ codec_type: 'video', codec_name: codec }));
+    expect(Number(probe.format.duration)).toBeGreaterThan(4.3);
+    expect(Number(probe.format.size)).toBeGreaterThan(10_000);
+
+    const visual = await compareLatestExportWithEditorFrames(page, editorFrames);
+    expect(visual.width).toBe(1184);
+    expect(visual.height).toBe(672);
+    expect(visual.duration).toBeGreaterThan(4.3);
+    expect(visual.byteLength).toBeGreaterThan(10_000);
+    for (const metric of visual.metrics) {
+      expect(metric.maximumLuma, `exported frame at ${metric.timestamp}s must be visible`).toBeGreaterThan(24);
+      expect(metric.similarity, `exported frame at ${metric.timestamp}s must resemble the editor`).toBeGreaterThan(0.88);
+      expect(metric.lumaCorrelation, `exported structure at ${metric.timestamp}s must resemble the editor`).toBeGreaterThan(0.75);
+      expect(metric.psnr, `exported frame at ${metric.timestamp}s must retain visual fidelity`).toBeGreaterThan(18);
+    }
+    for (const difference of visual.temporalDifferences) {
+      expect(difference, 'exported samples must contain changing motion frames').toBeGreaterThan(0.001);
+    }
+    expect(elapsedSeconds).toBeLessThan(45);
+
+    for (let index = 0; index < visual.exportedImages.length; index += 1) {
+      await testInfo.attach(`export-${timestamps[index].toFixed(1)}s.png`, {
+        body: Buffer.from(visual.exportedImages[index].split(',')[1], 'base64'),
+        contentType: 'image/png',
+      });
+    }
+    const benchmark = {
+      format, codec, elapsedSeconds,
+      realtimeFactor: elapsedSeconds / visual.duration,
+      byteLength: visual.byteLength,
+      width: visual.width,
+      height: visual.height,
+      duration: visual.duration,
+      frames: visual.metrics,
+      temporalDifferences: visual.temporalDifferences,
+    };
+    await testInfo.attach('visual-benchmark.json', { body: Buffer.from(JSON.stringify(benchmark, null, 2)), contentType: 'application/json' });
+    console.log(`[visualbench] ${format}: ${elapsedSeconds.toFixed(2)}s, ${(elapsedSeconds / visual.duration).toFixed(2)}x realtime, min similarity ${Math.min(...visual.metrics.map((metric) => metric.similarity)).toFixed(4)}`);
+  });
+}
 
 test('Media Music searches real catalog-shaped results, imports a track, and generates music', async ({ page }) => {
   await installMocks(page);

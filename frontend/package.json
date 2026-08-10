@@ -8,6 +8,7 @@
     "build": "NEXT_OUTPUT=export next build",
     "start": "next start",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "build:standalone": "next build",
     "test:e2e": "playwright test",
     "test:e2e:perf": "PLAYWRIGHT_GPU=1 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-/usr/bin/google-chrome} playwright test tests/e2e/studio-media.spec.js --grep '2K preview'"
@@ -26,6 +27,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.5.4",
+    "eslint": "^9",
+    "eslint-config-next": "^15",
     "postcss": "^8.5.26",
     "tailwindcss": "4.1.11",
     "typescript": "5.9.3"

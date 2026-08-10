@@ -218,7 +218,9 @@ export class StudioRenderer {
       ? [source.videoWidth, source.videoHeight]
       : source instanceof HTMLImageElement
         ? [source.naturalWidth, source.naturalHeight]
-        : ['width' in source && 'height' in source ? Number(source.width) : 0, 'width' in source && 'height' in source ? Number(source.height) : 0];
+        : 'displayWidth' in source && 'displayHeight' in source
+          ? [Number(source.displayWidth), Number(source.displayHeight)]
+          : ['width' in source && 'height' in source ? Number(source.width) : 0, 'width' in source && 'height' in source ? Number(source.height) : 0];
     if (dimensions[0] !== this.textureWidth || dimensions[1] !== this.textureHeight) {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
       this.textureWidth = dimensions[0];

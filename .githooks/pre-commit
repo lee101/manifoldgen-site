@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CHECK_STAGED=1 "$(git rev-parse --show-toplevel)/scripts/check-fast.sh"

@@ -3,7 +3,7 @@
   "dockerStartCmd": ["python", "-u", "/src/rp_handler.py"],
   "workersMin": 0,
   "idleTimeout": 5,
-  "executionTimeoutMs": 3600000,
+  "executionTimeoutMs": 14400000,
   "flashboot": true,
   "scalerType": "QUEUE_DELAY",
   "scalerValue": 4,

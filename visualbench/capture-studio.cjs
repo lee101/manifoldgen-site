@@ -4,6 +4,8 @@ const { chromium } = require('../frontend/node_modules/@playwright/test');
 
 const baseURL = (process.env.VISUALBENCH_BASE_URL || 'http://127.0.0.1:3219').replace(/\/$/, '');
 const catalogOrigin = (process.env.VISUALBENCH_CATALOG_ORIGIN || 'https://manifoldgen.com').replace(/\/$/, '');
+const galleryImageURL = process.env.VISUALBENCH_STUDIO_IMAGE_URL || 'https://manifoldgenstatic.manifoldgen.com/gallery/originals/6d8e21e1b77e32bd_af6cc51c.webp';
+const galleryImageName = process.env.VISUALBENCH_STUDIO_IMAGE_NAME || 'Surreal desert cathedral of bone-white arches, lone dancer silhouette, golden hour';
 const outputDir = __dirname;
 
 const catalogPaths = [
@@ -63,14 +65,49 @@ async function capture(browser, viewport, device, mode) {
   await page.close();
 }
 
+// Exercise the exact gallery-to-Studio handoff used by the gallery’s “edit in
+// Studio” link. The image is fulfilled from its public source at the local
+// proxy URL, so this remains useful even when the local Go API is not running.
+async function captureGalleryImage(browser, viewport, device) {
+  const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
+  await page.route('**/api/gallery-assets/**', async (route) => {
+    try {
+      const response = await fetch(galleryImageURL);
+      await route.fulfill({
+        status: response.status,
+        contentType: response.headers.get('content-type') || 'image/webp',
+        body: Buffer.from(await response.arrayBuffer()),
+      });
+    } catch (error) {
+      await route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: String(error) }) });
+    }
+  });
+  const studioURL = new URL(`${baseURL}/studio`);
+  studioURL.searchParams.set('image_url', galleryImageURL);
+  studioURL.searchParams.set('name', galleryImageName);
+  await page.goto(studioURL.toString(), { waitUntil: 'domcontentloaded' });
+  const stageElement = page.getByTestId('studio-stage-element');
+  await stageElement.waitFor({ state: 'visible', timeout: 20_000 });
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector('[data-testid="studio-stage-element"] canvas');
+    return canvas instanceof HTMLCanvasElement && canvas.width > 16 && canvas.height > 16;
+  }, { timeout: 10_000 });
+  await page.screenshot({ path: path.join(outputDir, `studio-${device}-gallery-image.png`), fullPage: false });
+  await page.close();
+}
+
 (async () => {
   const requestedExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
   const systemChrome = requestedExecutable || (fs.existsSync('/usr/bin/google-chrome') ? '/usr/bin/google-chrome' : undefined);
   const browser = await chromium.launch({ headless: true, ...(systemChrome ? { executablePath: systemChrome } : {}) });
   try {
-    for (const mode of ['videos', 'images', 'music']) {
-      await capture(browser, { width: 1440, height: 1000 }, 'desktop', mode);
-      await capture(browser, { width: 390, height: 844 }, 'mobile', mode);
+    await captureGalleryImage(browser, { width: 1440, height: 1000 }, 'desktop');
+    await captureGalleryImage(browser, { width: 390, height: 844 }, 'mobile');
+    if (process.env.VISUALBENCH_GALLERY_ONLY !== '1') {
+      for (const mode of ['videos', 'images', 'music']) {
+        await capture(browser, { width: 1440, height: 1000 }, 'desktop', mode);
+        await capture(browser, { width: 390, height: 844 }, 'mobile', mode);
+      }
     }
   } finally {
     await browser.close();

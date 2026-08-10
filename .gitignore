@@ -21,3 +21,4 @@ visualbench/
 frontend/.next-playwright/
 monitoring
 scripts/prompts/manifold-gallery-100k.jsonl
+.trash/

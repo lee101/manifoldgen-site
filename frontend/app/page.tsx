@@ -422,7 +422,7 @@ export default function HomePage() {
         window.location.href = data.url;
         return;
       }
-      if (!data.client_secret || !data.publishable_key) throw new Error('Stripe checkout is unavailable');
+      if (!data.client_secret || !data.publishable_key) throw new Error('checkout is unavailable');
       setCheckoutLabel(kind === 'credits' ? `$${amountUSD} credits` : `${kind} subscription`);
       setCheckoutPublishableKey(data.publishable_key);
       setCheckoutClientSecret(data.client_secret);
@@ -470,7 +470,6 @@ export default function HomePage() {
     }
     setError('');
     setBusy(true);
-    setGenerationStage(generationMode === 'images' ? 'Creating 4 image variations…' : loopMode ? 'Creating loop keyframe…' : 'Starting H3 render…');
     try {
       if (generationMode === 'images') {
         const [width, height] = h3Dimensions(aspect, size);
@@ -539,11 +538,11 @@ export default function HomePage() {
       }>(res, 'Generation failed');
       const jobId = data.result?.job_id || data.job_id || data.id;
       if (!jobId) throw new Error('No job id returned');
-      setGenerationStage('Rendering H3 video…');
+      setGenerationStage('')
       const generated = await pollJob(jobId);
       if (upscaleMode) {
         const videoURL = generated.result_url || generated.video_url || generated.result?.video_url;
-        if (!videoURL) throw new Error('H3 completed without a video to upscale');
+        if (!videoURL) throw new Error('completed without a video to upscale');
         const [width, height] = h3Dimensions(aspect, size);
         setGenerationStage(`Starting Real-ESRGAN ${upscaleScale}× upscale…`);
         const upscaleResponse = await fetch(`${API}/studio/upscale-video`, {
@@ -733,33 +732,28 @@ export default function HomePage() {
     <main className="relative min-h-screen bg-[var(--color-ink)]">
       {/* Full-bleed hero */}
       <section className="relative h-[100dvh] w-full overflow-hidden">
-        <div className="absolute inset-0">
-          {resultUrl ? (
-            <video
-              ref={heroVideoRef}
-              key={resultUrl}
-              className="hero-motion h-full w-full object-cover"
-              src={resultUrl}
-              autoPlay
-              muted={heroMuted}
-              loop
-              playsInline
-            />
-          ) : heroImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={heroImage}
-              src={heroImage}
-              alt=""
-              className="hero-motion h-full w-full object-cover opacity-90"
-            />
-          ) : (
-            <div className="hero-motion h-full w-full bg-[radial-gradient(ellipse_at_20%_20%,#2a1f66_0%,transparent_45%),radial-gradient(ellipse_at_80%_10%,#123a45_0%,transparent_40%),linear-gradient(160deg,#07070a,#12101c_55%,#0a0a10)]" />
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/25" />
-          <div className="absolute inset-0 bg-gradient-to-r from-black/55 via-transparent to-transparent" />
-          <div className="hero-grain pointer-events-none absolute inset-0 opacity-[0.35]" />
-        </div>
+        {resultUrl ? (
+          <video
+            ref={heroVideoRef}
+            key={resultUrl}
+            className="hero-motion absolute inset-0 h-full w-full object-cover"
+            src={resultUrl}
+            autoPlay
+            muted={heroMuted}
+            loop
+            playsInline
+          />
+        ) : heroImage ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={heroImage}
+            src={heroImage}
+            alt=""
+            className="hero-motion absolute inset-0 h-full w-full object-cover"
+          />
+        ) : (
+          <div className="hero-motion absolute inset-0 h-full w-full bg-[radial-gradient(ellipse_at_20%_20%,#2a1f66_0%,transparent_45%),radial-gradient(ellipse_at_80%_10%,#123a45_0%,transparent_40%),linear-gradient(160deg,#07070a,#12101c_55%,#0a0a10)]" />
+        )}
 
         <header className="relative z-20 flex items-center justify-between px-4 py-4 md:px-8">
           <div className="flex items-center gap-3">
@@ -770,7 +764,7 @@ export default function HomePage() {
                 alt=""
                 width={54}
                 height={36}
-                className="h-8 w-auto object-contain brightness-125 drop-shadow md:h-9"
+                className="h-8 w-auto scale-[1.7] object-contain brightness-125 drop-shadow md:h-9"
                 onError={() => setLogoOk(false)}
               />
             ) : (
@@ -1265,13 +1259,13 @@ export default function HomePage() {
                   <img src="/brand/logo-nobg.webp" alt="" className="h-10 w-auto object-contain brightness-125" />
                   <div className="font-display text-3xl font-800 tracking-tight">ManifoldGen</div>
                 </div>
-                <p className="mt-1 text-sm text-white/70">
-                  {checkoutStep
-                    ? 'Pick a plan.'
-                    : authMode === 'signup'
+                {!checkoutStep && (
+                  <p className="mt-1 text-sm text-white/70">
+                    {authMode === 'signup'
                       ? 'Create your account.'
                       : 'Welcome back. Pick up where you left off.'}
-                </p>
+                  </p>
+                )}
               </div>
             </div>
 
@@ -1404,11 +1398,6 @@ export default function HomePage() {
                     </p>
                   )}
 
-                  {authMode === 'signup' && (
-                    <p className="mb-4 text-xs leading-relaxed text-white/45">
-                      Creates an API key and Stripe-ready wallet. Video pricing is estimated before rendering.
-                    </p>
-                  )}
 
                   <button
                     type="submit"

@@ -27,6 +27,16 @@ var (
 	frontendURL string
 )
 
+// corsOrigins contains the fixed browser origins that may make credentialed
+// API requests. Keeping this at package scope avoids allocating and scanning a
+// slice on every request.
+var corsOrigins = map[string]struct{}{
+	"https://manifoldgen.com":     {},
+	"https://www.manifoldgen.com": {},
+	"http://localhost:3000":       {},
+	"http://localhost:8080":       {},
+}
+
 var cefSharpObjectNotFoundRe = regexp.MustCompile(`^Object Not Found Matching Id:\d+, MethodName:update, ParamCount:4$`)
 
 func getEnv(key, fallback string) string {
@@ -88,18 +98,11 @@ func main() {
 // back to a normal TCP listener for local development. The production unit has
 // always supplied fd 3, so binding the port again caused restart loops.
 func manifoldListener(port int) (net.Listener, error) {
-	listenPID, _ := strconv.Atoi(os.Getenv("LISTEN_PID"))
-	listenFDs, _ := strconv.Atoi(os.Getenv("LISTEN_FDS"))
-	if listenPID == os.Getpid() && listenFDs > 0 {
-		file := os.NewFile(uintptr(3), "manifoldgen.socket")
-		if file == nil {
-			return nil, fmt.Errorf("systemd listener fd 3 is unavailable")
-		}
-		listener, err := net.FileListener(file)
-		_ = file.Close()
-		if err != nil {
-			return nil, fmt.Errorf("open systemd listener: %w", err)
-		}
+	listener, inherited, err := inheritedSystemdListener(os.Getenv, os.Getpid(), listenerFromSystemdFD)
+	if err != nil {
+		return nil, err
+	}
+	if inherited {
 		log.Printf("Using systemd-activated listener")
 		return listener, nil
 	}
@@ -236,30 +239,8 @@ func setCORSHeaders(ctx *fasthttp.RequestCtx) {
 		origin = "*"
 	}
 
-	// Allow the frontend origin and common dev origins
-	allowedOrigins := []string{
-		frontendURL,
-		"https://manifoldgen.com",
-		"https://www.manifoldgen.com",
-		"https://manifoldgen.cc",
-		"https://www.manifoldgen.cc",
-		"https://manifoldgen.app.nz",
-		"https://appstatic.app.nz",
-		"http://localhost:3000",
-		"http://localhost:8080",
-	}
-	allowed := false
-	for _, o := range allowedOrigins {
-		if origin == o {
-			allowed = true
-			break
-		}
-	}
-	if !allowed && devMode {
-		allowed = true // Allow all in dev mode
-	}
-
-	if allowed {
+	_, configuredOrigin := corsOrigins[origin]
+	if configuredOrigin || origin == frontendURL || devMode {
 		ctx.Response.Header.Set("Access-Control-Allow-Origin", origin)
 	}
 	ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -413,6 +394,9 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	// Image gallery / search
 	case path == "/api/images" && method == "GET":
 		handleImageSearch(ctx)
+
+	case strings.HasPrefix(path, "/api/gallery-assets/") && method == "GET":
+		handleGalleryAsset(ctx)
 
 	case path == "/api/images/count" && method == "GET":
 		handleImageCount(ctx)

@@ -944,7 +944,10 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		}
 	}
 	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
-	deadline := time.Now().Add(60 * time.Minute)
+	// A 60-second H3 request may chain twelve GPU generations. Keep the
+	// application watcher aligned with the endpoint's four-hour execution cap;
+	// shorter jobs still finish and release their worker immediately.
+	deadline := time.Now().Add(4 * time.Hour)
 	consecutiveErrors := 0
 	for time.Now().Before(deadline) {
 		var state h3RunpodStatus
@@ -1033,7 +1036,7 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 generation did not finish within 60 minutes")
+	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 generation did not finish within 4 hours")
 }
 
 func fallbackRunpodH3ToLocal(job *VideoJob, endpointID, providerJobID, variant string) bool {

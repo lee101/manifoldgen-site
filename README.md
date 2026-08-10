@@ -22,6 +22,13 @@ The rotate endpoint returns the replacement once and immediately invalidates the
 
 Dark-mode AI video studio at [manifoldgen.com](https://manifoldgen.com).
 
+## Local checks
+
+Install the tracked Git hooks once with `make hooks`. Commits run fast Go
+format/tests and frontend type checks; pushes additionally run the mocked Studio
+browser suite. Use `make check-fast` or `make verify` to run the same gates
+manually.
+
 Built on the same Go fasthttp + Postgres + Stripe stack as CuteDSL / app.nz,
 focused on H3 video (app.nz cogs) with optional omniserve-native LTX.
 
@@ -176,4 +183,19 @@ Desktop + mobile screenshots live in `visualbench/`.
 cd frontend && bun run dev -- --port 3219
 # other terminal
 VISUALBENCH_BASE_URL=http://127.0.0.1:3219 node visualbench/capture-studio.cjs
+
+# Capture only the gallery-to-Studio handoff at desktop and mobile sizes.
+VISUALBENCH_BASE_URL=http://127.0.0.1:3219 VISUALBENCH_GALLERY_ONLY=1 \
+  node visualbench/capture-studio.cjs
+```
+
+## CI
+
+Every pull request and push to `main` runs secret scanning, Go module/format/vet/race/build checks, a production frontend build (including TypeScript validation), and mocked Playwright coverage for the Studio and API docs. Browser traces and reports are retained for seven days on failure.
+
+Run the closest checks locally with:
+
+```bash
+(cd server && go vet ./... && go test -race ./... && go build ./...)
+(cd frontend && bun run build && bunx playwright test tests/e2e/studio-media.spec.js tests/e2e/api-pricing.spec.js)
 ```
