@@ -143,6 +143,13 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
+	// The video-generator documentation is a static Next.js route nested under
+	// /api. Serve its HTML and RSC payloads before the JSON API router, which
+	// otherwise turns Link prefetches such as /api/video-generators.txt into 404s.
+	if (method == "GET" || method == "HEAD") && isStaticAPIDocsPath(path) && serveStaticFile(ctx, path) {
+		return
+	}
+
 	// API routes
 	if strings.HasPrefix(path, "/api/") {
 		routeAPI(ctx, path, method)
@@ -235,6 +242,12 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 
 	// Static files / frontend
 	serveStatic(ctx, path)
+}
+
+func isStaticAPIDocsPath(path string) bool {
+	return path == "/api/video-generators" ||
+		path == "/api/video-generators.txt" ||
+		strings.HasPrefix(path, "/api/video-generators/")
 }
 
 func setCORSHeaders(ctx *fasthttp.RequestCtx) {
