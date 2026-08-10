@@ -169,6 +169,20 @@
 .textPresets button:nth-child(3) b { font-family: Georgia, serif; font-size: 11px; font-weight: 400; }
 .textPresets small { color: #686f79; font-size: 8px; }
 .textEditor { display: grid; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid #292d35; }
+.fontPicker { overflow: hidden; border: 1px solid #30343c; border-radius: 9px; background: #101217; }
+.fontSearch { height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 8px; border-bottom: 1px solid #292d35; color: #747d89; }
+.fontSearch input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: #d8dbe1; font: inherit; font-size: 10px; }
+.fontSearch input::placeholder { color: #626a75; }
+.fontSearch button { width: 22px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #737b86; cursor: pointer; }
+.fontSearch button:hover { background: #20232a; color: #d5d8dd; }
+.fontResults { max-height: 190px; overflow-y: auto; padding: 4px; }
+.fontResults > button { position: relative; width: 100%; min-height: 43px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; padding: 6px 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #d6d9df; text-align: left; cursor: pointer; }
+.fontResults > button:hover { background: #1b1e25; }
+.fontResults > button > span { overflow: hidden; font-size: 16px; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
+.fontResults > button > small { grid-column: 1; color: #666f7a; font-size: 8px; }
+.fontResults > button > i { grid-column: 2; grid-row: 1 / span 2; color: #aa9cff; font-size: 7px; font-style: normal; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.fontResults > .fontOptionActive { border-color: #5f5489; background: #242033; }
+.fontResults > p { margin: 14px 8px; color: #666f7a; font-size: 9px; text-align: center; }
 .textAlignChoices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
 .textAlignChoices button { padding: 6px; border: 1px solid #2e323a; border-radius: 6px; background: #171a1f; color: #747c87; text-transform: capitalize; cursor: pointer; }
 .textAlignChoices .textAlignActive { border-color: #6b5e9a; background: #272238; color: #d6ceff; }

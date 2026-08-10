@@ -456,12 +456,15 @@ test('text layers stay editable and are persisted in the project document', asyn
   await page.getByTestId('studio-add-title').click();
   await expect(page.getByTestId('studio-text-content')).toHaveValue('Add a title');
   await page.getByTestId('studio-text-content').fill('Launch night');
+  await page.getByTestId('studio-font-search').fill('Playfair');
+  await page.getByRole('option', { name: /Playfair Display/ }).click();
+  await expect(page.getByTestId('studio-stage-text-editor')).toHaveCSS('font-family', /Playfair/i);
   await page.getByTestId('studio-text-apply').click();
   await expect(page.getByText('Text updated')).toBeVisible();
   await expect(page.getByTestId('studio-save-status')).toHaveText('Saved to cloud', { timeout: 20_000 });
   const latest = saves.at(-1);
   expect(latest.document.assets).toHaveLength(1);
-  expect(latest.document.assets[0].text).toMatchObject({ content: 'Launch night', fontSize: 132, fontWeight: 800, align: 'center' });
+  expect(latest.document.assets[0].text).toMatchObject({ content: 'Launch night', fontFamily: 'Playfair Display', fontSize: 132, fontWeight: 800, align: 'center' });
   expect(latest.document.assets[0].contentType).toBe('image/png');
   await page.reload();
   await page.getByTestId('studio-tool-text').click();
@@ -1253,7 +1256,7 @@ test('licensed Netwrck catalog result imports as an editable audio clip for free
   await expect(page.getByTestId('studio-export')).toBeEnabled();
 });
 
-test('text to speech is credit priced, calls TTS, and adds the returned clip', async ({ page }) => {
+test('text to speech shows its price, calls TTS, and adds the returned clip', async ({ page }) => {
   await installMocks(page);
   const wav = wavFixture();
   let request;
@@ -1272,13 +1275,13 @@ test('text to speech is credit priced, calls TTS, and adds the returned clip', a
   await page.goto('/studio');
   await page.getByTestId('studio-tool-audio').click();
   await page.getByRole('button', { name: /Speech/ }).click();
-  await expect(page.getByText('Exact text charge')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Text to speech' }).getByText('Price', { exact: true })).toBeVisible();
   await page.getByTestId('studio-voice-preview-F1').click();
   await expect(page.getByRole('radio', { name: /Clear/ })).toHaveAttribute('aria-checked', 'true');
   await expect.poll(() => previewRequested).toBe(true);
   await page.getByTestId('studio-speech-text').fill('A short line for the timeline.');
   await page.getByTestId('studio-audio-generate').click();
-  await expect(page.getByRole('heading', { name: /voice-f1-\d+\.wav/ })).toBeVisible();
+  await expect(page.locator('[data-timeline-asset][title^="voice-f1-"]')).toBeVisible();
   expect(request).toMatchObject({ service: 'tts', text: 'A short line for the timeline.', voice: 'F1', language: 'en' });
 });
 
@@ -1304,7 +1307,8 @@ test('insufficient credits opens the shared payment chooser without leaving Stud
 
   await page.getByRole('button', { name: /Top up/ }).click();
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('without leaving the Studio');
+  await expect(dialog).toContainText('Choose a plan or add funds.');
+  await expect(page).toHaveURL(/\/studio$/);
 });
 
 test('video import exposes local MP4 export and priced Grok extension', async ({ page }) => {
@@ -1342,7 +1346,7 @@ test('video import exposes local MP4 export and priced Grok extension', async ({
   await page.getByTestId('studio-tool-ai').click();
   await page.getByRole('button', { name: /Extend video/ }).click();
   await expect(page.getByRole('heading', { name: 'Extend video' })).toBeVisible();
-  await expect(page.getByText(/credits/).last()).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Extend video' }).getByText('Price', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Extend video', exact: true }).click();
   await expect(page.getByText('Extension ready')).toBeVisible({ timeout: 90_000 });
   expect(uploadContentType).toBe('video/mp4');
@@ -1409,7 +1413,7 @@ test('video upscale previews price, queues Real-ESRGAN, and adds the result', as
   await page.getByTestId('studio-upscale-open').click();
   await expect(page.getByRole('heading', { name: 'Upscale video' })).toBeVisible();
   await page.getByTestId('studio-upscale-scales').getByRole('button', { name: '4×' }).click();
-  await expect(page.getByText(/credits/).last()).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Upscale video' }).getByText('Price', { exact: true })).toBeVisible();
   await page.getByTestId('studio-upscale-submit').click();
   await expect(page.getByText('Real-ESRGAN 4× clip added to the timeline')).toBeVisible({ timeout: 90_000 });
   expect(upscaleRequest).toMatchObject({ video_url: 'https://media.example/upscale-source.mp4', scale: 4 });

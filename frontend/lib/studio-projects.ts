@@ -42,7 +42,7 @@ export type PortableStudioAsset = {
   text?: {
     content: string;
     fontSize: number;
-    fontFamily: 'Inter' | 'Arial' | 'Georgia' | 'Courier New';
+    fontFamily: string;
     fontWeight: 400 | 600 | 800;
     color: string;
     align: 'left' | 'center' | 'right';

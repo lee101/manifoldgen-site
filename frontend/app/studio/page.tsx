@@ -293,11 +293,37 @@ type RestyleReference = {
 type StudioTextStyle = {
   content: string;
   fontSize: number;
-  fontFamily: 'Inter' | 'Arial' | 'Georgia' | 'Courier New';
+  fontFamily: string;
   fontWeight: 400 | 600 | 800;
   color: string;
   align: 'left' | 'center' | 'right';
 };
+
+const STUDIO_FONTS = [
+  { name: 'DM Sans', category: 'Clean sans', stack: 'var(--font-body), sans-serif' },
+  { name: 'Space Grotesk', category: 'Modern sans', stack: 'var(--font-space-grotesk), sans-serif' },
+  { name: 'Syne', category: 'Display', stack: 'var(--font-display), sans-serif' },
+  { name: 'Bebas Neue', category: 'Condensed display', stack: 'var(--font-bebas), Impact, sans-serif' },
+  { name: 'Playfair Display', category: 'Editorial serif', stack: 'var(--font-playfair), Georgia, serif' },
+  { name: 'Cormorant Garamond', category: 'Elegant serif', stack: 'var(--font-cormorant), Georgia, serif' },
+  { name: 'IBM Plex Mono', category: 'Modern mono', stack: 'var(--font-ibm-plex-mono), monospace' },
+  { name: 'Inter', category: 'Modern sans', stack: 'Inter, var(--font-body), sans-serif' },
+  { name: 'Arial', category: 'Clean sans', stack: 'Arial, Helvetica, sans-serif' },
+  { name: 'Trebuchet MS', category: 'Humanist sans', stack: '"Trebuchet MS", Arial, sans-serif' },
+  { name: 'Verdana', category: 'Clean sans', stack: 'Verdana, Geneva, sans-serif' },
+  { name: 'Impact', category: 'Bold display', stack: 'Impact, Haettenschweiler, sans-serif' },
+  { name: 'Georgia', category: 'Editorial serif', stack: 'Georgia, "Times New Roman", serif' },
+  { name: 'Times New Roman', category: 'Classic serif', stack: '"Times New Roman", Times, serif' },
+  { name: 'Courier New', category: 'Monospace', stack: '"Courier New", Courier, monospace' },
+] as const;
+
+function studioFontStack(name: string) {
+  const configured = STUDIO_FONTS.find((font) => font.name === name)?.stack;
+  if (!configured) return `${JSON.stringify(name)}, sans-serif`;
+  if (typeof window === 'undefined' || !configured.includes('var(')) return configured;
+  return configured.replace(/var\((--[^)]+)\)/g, (_, variable: string) =>
+    getComputedStyle(document.documentElement).getPropertyValue(variable).trim() || 'sans-serif');
+}
 
 type StudioImageHit = {
   id: string;
@@ -812,7 +838,9 @@ async function renderTextFile(style: StudioTextStyle) {
   context.fillStyle = style.color;
   context.textAlign = style.align;
   context.textBaseline = 'middle';
-  context.font = `${style.fontWeight} ${style.fontSize}px ${JSON.stringify(style.fontFamily)}, sans-serif`;
+  const fontStack = studioFontStack(style.fontFamily);
+  await document.fonts?.load(`${style.fontWeight} ${style.fontSize}px ${fontStack}`).catch(() => undefined);
+  context.font = `${style.fontWeight} ${style.fontSize}px ${fontStack}`;
   const maxWidth = 1600;
   const words = style.content.trim().split(/\s+/).filter(Boolean);
   const lines: string[] = [];
@@ -942,8 +970,9 @@ export default function StudioPage() {
   const [imageEngine, setImageEngine] = useState<ImageGenerationEngine>('images3');
   const [imageAspect, setImageAspect] = useState<H3Aspect>('1:1');
   const [imageCount, setImageCount] = useState<1 | 4>(4);
-  const [textDraft, setTextDraft] = useState<StudioTextStyle>({ content: 'Your story starts here', fontSize: 112, fontFamily: 'Inter', fontWeight: 800, color: '#ffffff', align: 'center' });
+  const [textDraft, setTextDraft] = useState<StudioTextStyle>({ content: 'Your story starts here', fontSize: 112, fontFamily: 'DM Sans', fontWeight: 800, color: '#ffffff', align: 'center' });
   const [editingTextID, setEditingTextID] = useState('');
+  const [fontSearch, setFontSearch] = useState('');
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [extendRates, setExtendRates] = useState({ input: 0.012, output: 0.084 });
   const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
@@ -1039,6 +1068,7 @@ export default function StudioPage() {
   const projectPickerRef = useRef<HTMLDivElement>(null);
   const editHistoryRef = useRef<EditorHistory>({ undo: [], redo: [] });
   const historyMergeRef = useRef<{ key: string; at: number } | null>(null);
+  const textRenderRevisionRef = useRef(new Map<string, number>());
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
 
   const startBackgroundActivity = useCallback((label: string) => {
@@ -2074,13 +2104,18 @@ export default function StudioPage() {
 
   async function updateSelectedText() {
     if (!selected?.text || !textDraft.content.trim()) return;
+    const assetID = selected.id;
+    const draft = { ...textDraft };
+    const revision = (textRenderRevisionRef.current.get(assetID) || 0) + 1;
+    textRenderRevisionRef.current.set(assetID, revision);
     setError('');
     try {
-      const file = await renderTextFile(textDraft);
+      const file = await renderTextFile(draft);
+      if (textRenderRevisionRef.current.get(assetID) !== revision) return;
       rememberEdit();
       const url = URL.createObjectURL(file);
-      setAssets((current) => current.map((asset) => asset.id === selected.id ? {
-        ...asset, mediaID: uid(), name: file.name, file, url, width: 1920, height: 1080, text: { ...textDraft }, cloudURL: undefined, objectKey: undefined,
+      setAssets((current) => current.map((asset) => asset.id === assetID ? {
+        ...asset, mediaID: uid(), name: file.name, file, url, width: 1920, height: 1080, text: draft, cloudURL: undefined, objectKey: undefined,
       } : asset));
       setNotice('Text updated');
     } catch (reason) {
@@ -3544,15 +3579,28 @@ export default function StudioPage() {
           {tool === 'text' && <>
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>TYPOGRAPHY</span><h2>Text</h2></div></div>
             <div className={styles.textPresets}>
-              <button data-testid="studio-add-title" onClick={() => void addText({ content: 'Add a title', fontSize: 132, fontFamily: 'Inter', fontWeight: 800, color: '#ffffff', align: 'center' })}><b>Add a title</b><small>Bold display text</small></button>
-              <button onClick={() => void addText({ content: 'Add a subtitle', fontSize: 76, fontFamily: 'Inter', fontWeight: 600, color: '#ffffff', align: 'center' })}><b>Add a subtitle</b><small>Supporting line</small></button>
+              <button data-testid="studio-add-title" onClick={() => void addText({ content: 'Add a title', fontSize: 132, fontFamily: 'Syne', fontWeight: 800, color: '#ffffff', align: 'center' })}><b>Add a title</b><small>Bold display text</small></button>
+              <button onClick={() => void addText({ content: 'Add a subtitle', fontSize: 76, fontFamily: 'DM Sans', fontWeight: 600, color: '#ffffff', align: 'center' })}><b>Add a subtitle</b><small>Supporting line</small></button>
               <button onClick={() => void addText({ content: 'Add body text', fontSize: 48, fontFamily: 'Inter', fontWeight: 400, color: '#ffffff', align: 'left' })}><b>Add body text</b><small>Paragraph or caption</small></button>
             </div>
             {selected?.text ? <section className={styles.textEditor}>
               <span className={styles.sectionLabel}>SELECTED TEXT</span>
               <textarea data-testid="studio-text-content" rows={5} maxLength={800} value={textDraft.content} onChange={(event) => setTextDraft((current) => ({ ...current, content: event.target.value }))} />
+              <div className={styles.fontPicker}>
+                <div className={styles.fontSearch}><Search size={13} /><input data-testid="studio-font-search" value={fontSearch} onChange={(event) => setFontSearch(event.target.value)} placeholder="Find a font" aria-label="Find a font" />{fontSearch && <button aria-label="Clear font search" onClick={() => setFontSearch('')}><X size={12} /></button>}</div>
+                <div className={styles.fontResults} role="listbox" aria-label="Fonts">
+                  {STUDIO_FONTS.filter((font) => `${font.name} ${font.category}`.toLowerCase().includes(fontSearch.trim().toLowerCase())).map((font) => <button
+                    key={font.name}
+                    type="button"
+                    role="option"
+                    aria-selected={textDraft.fontFamily === font.name}
+                    className={textDraft.fontFamily === font.name ? styles.fontOptionActive : ''}
+                    onClick={() => setTextDraft((current) => ({ ...current, fontFamily: font.name }))}
+                  ><span style={{ fontFamily: font.stack }}>{font.name}</span><small>{font.category}</small>{textDraft.fontFamily === font.name && <i>Selected</i>}</button>)}
+                  {!STUDIO_FONTS.some((font) => `${font.name} ${font.category}`.toLowerCase().includes(fontSearch.trim().toLowerCase())) && <p>No matching fonts</p>}
+                </div>
+              </div>
               <div className={styles.textEditorGrid}>
-                <label><span>Typeface</span><select value={textDraft.fontFamily} onChange={(event) => setTextDraft((current) => ({ ...current, fontFamily: event.target.value as StudioTextStyle['fontFamily'] }))}>{(['Inter', 'Arial', 'Georgia', 'Courier New'] as const).map((font) => <option key={font}>{font}</option>)}</select></label>
                 <label><span>Weight</span><select value={textDraft.fontWeight} onChange={(event) => setTextDraft((current) => ({ ...current, fontWeight: Number(event.target.value) as StudioTextStyle['fontWeight'] }))}><option value="400">Regular</option><option value="600">Semibold</option><option value="800">Bold</option></select></label>
                 <label><span>Size</span><input type="number" min="20" max="240" value={textDraft.fontSize} onChange={(event) => setTextDraft((current) => ({ ...current, fontSize: Math.max(20, Math.min(240, Number(event.target.value))) }))} /></label>
                 <label><span>Color</span><input aria-label="Text color" type="color" value={textDraft.color} onChange={(event) => setTextDraft((current) => ({ ...current, color: event.target.value }))} /></label>
@@ -3692,13 +3740,18 @@ export default function StudioPage() {
                     aria-label="Edit text on canvas"
                     style={{
                       color: textDraft.color,
-                      fontFamily: `${JSON.stringify(textDraft.fontFamily)}, sans-serif`,
+                      fontFamily: studioFontStack(textDraft.fontFamily),
                       fontSize: `${Math.max(12, textDraft.fontSize * (previewSize?.width || 1920) / 1920)}px`,
                       fontWeight: textDraft.fontWeight,
                       textAlign: textDraft.align,
                     }}
                     onChange={(event) => setTextDraft((current) => ({ ...current, content: event.target.value }))}
-                    onBlur={() => { if (editingTextID === asset.id) void updateSelectedText(); setEditingTextID(''); }}
+                    onBlur={(event) => {
+                      const nextTarget = event.relatedTarget as HTMLElement | null;
+                      const movingToTextControls = !!nextTarget?.closest('[data-testid="studio-panel"]');
+                      if (editingTextID === asset.id && !movingToTextControls) void updateSelectedText();
+                      setEditingTextID('');
+                    }}
                     onPointerDown={(event) => { if (editingTextID === asset.id) event.stopPropagation(); }}
                     onPointerMove={(event) => { if (editingTextID === asset.id) event.stopPropagation(); }}
                     onPointerUp={(event) => { if (editingTextID === asset.id) event.stopPropagation(); }}

@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Syne, DM_Sans } from 'next/font/google';
+import { Bebas_Neue, Cormorant_Garamond, DM_Sans, IBM_Plex_Mono, Playfair_Display, Space_Grotesk, Syne } from 'next/font/google';
 import './globals.css';
 import PaymentProvider from '../components/payment-provider';
 
@@ -16,6 +16,12 @@ const dmSans = DM_Sans({
   weight: ['400', '500', '600', '700'],
   display: 'swap',
 });
+
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space-grotesk', weight: ['400', '500', '600', '700'], display: 'swap' });
+const playfair = Playfair_Display({ subsets: ['latin'], variable: '--font-playfair', weight: ['400', '600', '800'], display: 'swap' });
+const cormorant = Cormorant_Garamond({ subsets: ['latin'], variable: '--font-cormorant', weight: ['400', '600', '700'], display: 'swap' });
+const bebas = Bebas_Neue({ subsets: ['latin'], variable: '--font-bebas', weight: '400', display: 'swap' });
+const ibmPlexMono = IBM_Plex_Mono({ subsets: ['latin'], variable: '--font-ibm-plex-mono', weight: ['400', '600'], display: 'swap' });
 
 const siteUrl = 'https://manifoldgen.com';
 const socialImage = '/brand/manifoldgen-og.webp';
@@ -97,7 +103,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   };
 
   return (
-    <html lang="en" className={`${syne.variable} ${dmSans.variable} dark`}>
+    <html lang="en" className={`${syne.variable} ${dmSans.variable} ${spaceGrotesk.variable} ${playfair.variable} ${cormorant.variable} ${bebas.variable} ${ibmPlexMono.variable} dark`}>
       <body className="min-h-screen antialiased">
         <PaymentProvider>{children}</PaymentProvider>
         <script
