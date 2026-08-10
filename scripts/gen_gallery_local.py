@@ -253,6 +253,8 @@ def ensure_container() -> None:
         "all",
         "--name",
         CONTAINER,
+        "--restart",
+        "unless-stopped",
         "-p",
         f"{PORT}:5000",
         "-e",
