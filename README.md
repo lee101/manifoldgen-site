@@ -25,8 +25,9 @@ Dark-mode AI video studio at [manifoldgen.com](https://manifoldgen.com).
 ## Local checks
 
 Install the tracked Git hooks once with `make hooks`. Commits run fast Go
-format/tests and frontend type checks; pushes additionally run the mocked Studio
-browser suite. Use `make check-fast` or `make verify` to run the same gates
+format/tests and frontend type checks; pushes additionally run the fast mocked
+Studio browser suite. The GPU/WebGL export benchmarks remain in the full browser
+suite run by CI. Use `make check-fast` or `make verify` to run the same gates
 manually.
 
 Built on the same Go fasthttp + Postgres + Stripe stack as CuteDSL / app.nz,

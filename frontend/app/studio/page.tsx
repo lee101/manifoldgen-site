@@ -394,6 +394,7 @@ type StudioPerfDiagnostics = {
   previewFrames: number;
   previewStartedAt: number;
   previewLastAt: number;
+  previewMediaTime?: number;
   export?: {
     sourceWidth: number;
     sourceHeight: number;
@@ -1609,7 +1610,10 @@ export default function StudioPage() {
     renderer.resize(previewSize.width, previewSize.height);
     if (selected.kind === 'video') {
       const video = videoRef.current;
-      if (video && video.readyState >= 2) renderer.draw(video, selected.adjustments, video.currentTime * 24);
+      if (video && video.readyState >= 2) {
+        renderer.draw(video, selected.adjustments, video.currentTime * 24);
+        perfDiagnostics().previewMediaTime = video.currentTime;
+      }
     } else if (imageRef.current) {
       renderer.draw(imageRef.current, selected.adjustments, 0);
     }
@@ -3667,12 +3671,12 @@ export default function StudioPage() {
         <div className={styles.generateSettings}>
           <label><span>Aspect</span><select data-testid="studio-video-generate-aspect" value={videoGenerateAspect} onChange={(event) => setVideoGenerateAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
           <label><span>Canvas</span><select data-testid="studio-video-generate-size" value={videoGenerateSize} onChange={(event) => setVideoGenerateSize(event.target.value as H3Size)}><option value="preview">Preview</option><option value="balanced">Balanced</option><option value="native">Native</option></select></label>
-          <label><span>Duration</span><select data-testid="studio-video-generate-duration" value={videoGenerateDuration} onChange={(event) => { const duration = Number(event.target.value); setVideoGenerateDuration(duration); if (duration > 15) setVideoGenerateLoop(false); }}><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds · single shot</option><option value="30">30 seconds · chained</option><option value="45">45 seconds · chained</option><option value="60">60 seconds · chained</option></select></label>
+          <label><span>Duration</span><select data-testid="studio-video-generate-duration" value={videoGenerateDuration} onChange={(event) => { const duration = Number(event.target.value); setVideoGenerateDuration(duration); if (duration > 15) { setVideoGenerateLoop(false); setVideoGenerateAudio(false); } }}><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds · single shot</option><option value="30">30 seconds · chained</option><option value="45">45 seconds · chained</option><option value="60">60 seconds · chained</option></select></label>
           <label><span>Steps</span><select data-testid="studio-video-generate-steps" value={videoGenerateSteps} onChange={(event) => setVideoGenerateSteps(Number(event.target.value))}><option value="12">12 · Fast</option><option value="20">20 · Standard</option><option value="28">28 · Detailed</option></select></label>
           <label><span>Output</span><select data-testid="studio-video-generate-format" value={videoGenerateFormat} onChange={(event) => setVideoGenerateFormat(event.target.value as H3Format)}><option value="webm-av1">WebM · AV1</option><option value="webm-vp9">WebM · VP9</option><option value="mp4-h264">MP4 · H.264</option></select></label>
         </div>
         <div className={styles.generateToggles}>
-          <label><input data-testid="studio-video-generate-audio" type="checkbox" checked={videoGenerateAudio} onChange={(event) => setVideoGenerateAudio(event.target.checked)} /><span><b>Native audio</b><small>Generate synchronized sound with the video</small></span></label>
+          <label className={videoGenerateDuration > 15 ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-audio" type="checkbox" disabled={videoGenerateDuration > 15} checked={videoGenerateAudio} onChange={(event) => setVideoGenerateAudio(event.target.checked)} /><span><b>Native audio</b><small>{videoGenerateDuration > 15 ? 'Add one continuous soundtrack in Audio after generation' : 'Generate synchronized sound with the video'}</small></span></label>
           <label className={videoGenerateDuration > 15 ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-loop" type="checkbox" disabled={videoGenerateDuration > 15} checked={videoGenerateLoop} onChange={(event) => setVideoGenerateLoop(event.target.checked)} /><span><b>Match start + end</b><small>{videoGenerateDuration > 15 ? 'Available for single shots up to 15 seconds' : 'Create and reuse one keyframe for a seamless loop'}</small></span></label>
           <label className={selected?.kind !== 'image' ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-selected-image" type="checkbox" disabled={selected?.kind !== 'image' || videoGenerateLoop} checked={videoGenerateUseSelected && selected?.kind === 'image' && !videoGenerateLoop} onChange={(event) => setVideoGenerateUseSelected(event.target.checked)} /><span><b>Use selected image</b><small>{selected?.kind === 'image' ? selected.name : 'Select an image on the timeline first'}</small></span></label>
         </div>

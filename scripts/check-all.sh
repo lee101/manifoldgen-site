@@ -4,4 +4,4 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 "$root/scripts/check-fast.sh"
-(cd "$root/frontend" && npx playwright test tests/e2e/studio-media.spec.js tests/e2e/api-pricing.spec.js)
+(cd "$root/frontend" && bun run test:e2e:hook)

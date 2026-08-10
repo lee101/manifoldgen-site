@@ -12,6 +12,8 @@ module.exports = defineConfig({
   expect: {
     timeout: 15_000,
   },
+  // Video encoding and WebGL fidelity checks need exclusive access to the
+  // software renderer on most developer machines.
   fullyParallel: false,
   reporter: [['list']],
   use: {

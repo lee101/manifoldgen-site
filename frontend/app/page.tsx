@@ -30,6 +30,7 @@ import {
   type StoredUser,
 } from '../lib/auth';
 import { parseJSONResponse } from '../lib/http';
+import { ManifoldLoader } from '../components/manifold-loader';
 import {
   h3Dimensions,
   loopAnchorURL,
@@ -112,6 +113,16 @@ interface VideoJobState {
   charged_usd?: number;
   cost_usd?: number;
 }
+
+type HomeGenerationTask = {
+  id: string;
+  mode: GenerationMode;
+  label: string;
+  status: 'starting' | 'queued' | 'processing' | 'upscaling' | 'completed' | 'failed';
+  result_url?: string;
+  error?: string;
+  cost_usd?: number;
+};
 
 interface GalleryImage {
   id: string;
@@ -205,11 +216,11 @@ export default function HomePage() {
   const [loopMode, setLoopMode] = useState(false);
   const [upscaleMode, setUpscaleMode] = useState(false);
   const [upscaleScale, setUpscaleScale] = useState<2 | 4>(2);
-  const [generationStage, setGenerationStage] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [authError, setAuthError] = useState('');
   const [job, setJob] = useState<VideoJob | null>(null);
+  const [generationTasks, setGenerationTasks] = useState<HomeGenerationTask[]>([]);
   const [h3BaseEstimateUSD, setH3BaseEstimateUSD] = useState(1.01);
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [imageCredits, setImageCredits] = useState(4);
@@ -226,6 +237,10 @@ export default function HomePage() {
   const [draggingAsset, setDraggingAsset] = useState(false);
   const heroVideoRef = useRef<HTMLVideoElement>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
+
+  const updateGenerationTask = useCallback((id: string, update: Partial<HomeGenerationTask>) => {
+    setGenerationTasks((current) => current.map((task) => task.id === id ? { ...task, ...update } : task));
+  }, []);
 
   const creditsLabel = useMemo(() => {
     if (!user) return 'Sign in';
