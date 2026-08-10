@@ -83,6 +83,48 @@ func TestH3AudioJobIsNotGalleryEligible(t *testing.T) {
 	if !h3AudioJob(&VideoJob{Service: "h3_video", Result: []byte(`{"size":"audio"}`)}) {
 		t.Fatal("normalized direct audio request must be detected")
 	}
+	if !h3AudioJob(&VideoJob{Service: "sfx_generation"}) {
+		t.Fatal("public SFX jobs must always be treated as audio")
+	}
+}
+
+func TestPrepareH3AudioResultUsesPublicAudioShape(t *testing.T) {
+	job := &VideoJob{
+		ID: "video_123", UserID: "user_1", Service: "sfx_generation", Prompt: "crackling campfire",
+		Result: json.RawMessage(`{"size":"audio","duration":10}`),
+	}
+	prepared := prepareH3AudioResult(job, []byte(`{"video_url":"https://media.example/sound.webm","provider":"internal"}`))
+	var result map[string]interface{}
+	if err := json.Unmarshal(prepared, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["audio_id"] != "audio_123" || result["audio_url"] != "https://media.example/sound.webm" || result["kind"] != "sfx" {
+		t.Fatalf("unexpected audio result: %#v", result)
+	}
+	if result["duration_seconds"] != float64(10) {
+		t.Fatalf("duration = %#v", result["duration_seconds"])
+	}
+	job.Result = prepared
+	public := publicVideoJob(job)
+	if public.Service != "sfx" {
+		t.Fatalf("public service = %q", public.Service)
+	}
+	result = nil
+	if err := json.Unmarshal(public.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["audio_url"] == nil || result["video_url"] != nil || result["provider"] != nil {
+		t.Fatalf("public SFX result leaked video/provider shape: %#v", result)
+	}
+}
+
+func TestH3AudioRequestsUseSFXJobService(t *testing.T) {
+	if got := h3JobService(ServiceUsageRequest{Service: "h3_video", Size: "audio"}); got != "sfx_generation" {
+		t.Fatalf("audio job service = %q", got)
+	}
+	if got := h3JobService(ServiceUsageRequest{Service: "h3_video", Size: "balanced"}); got != "h3_video" {
+		t.Fatalf("video job service = %q", got)
+	}
 }
 
 func TestH3RunpodQueueTimeout(t *testing.T) {
@@ -93,6 +135,25 @@ func TestH3RunpodQueueTimeout(t *testing.T) {
 	t.Setenv("H3_RUNPOD_QUEUE_TIMEOUT", "invalid")
 	if got := h3RunpodQueueTimeout(); got != h3RunpodQueueTimeoutDefault {
 		t.Fatalf("invalid queue timeout fallback = %s", got)
+	}
+}
+
+func TestH3RunpodDesiredWorkersMax(t *testing.T) {
+	t.Setenv("H3_NORMAL_RUNPOD_MAX_WORKERS", "3")
+	t.Setenv("H3_PINKCHERRY_RUNPOD_MAX_WORKERS", "2")
+	if got := h3RunpodDesiredWorkersMax(h3WorkerRoute{Variant: h3NormalVariant}); got != 3 {
+		t.Fatalf("normal workers max = %d, want 3", got)
+	}
+	if got := h3RunpodDesiredWorkersMax(h3WorkerRoute{Variant: h3PinkCherryVariant}); got != 2 {
+		t.Fatalf("pinkcherry workers max = %d, want 2", got)
+	}
+	t.Setenv("H3_NORMAL_RUNPOD_MAX_WORKERS", "0")
+	t.Setenv("H3_PINKCHERRY_RUNPOD_MAX_WORKERS", "invalid")
+	if got := h3RunpodDesiredWorkersMax(h3WorkerRoute{Variant: h3NormalVariant}); got != 2 {
+		t.Fatalf("normal invalid fallback = %d, want 2", got)
+	}
+	if got := h3RunpodDesiredWorkersMax(h3WorkerRoute{Variant: h3PinkCherryVariant}); got != 1 {
+		t.Fatalf("pinkcherry invalid fallback = %d, want 1", got)
 	}
 }
 

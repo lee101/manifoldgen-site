@@ -34,7 +34,9 @@ var servicePricesUSD = map[string]float64{
 	"video_generate":   0.15,  // OpenPaths auto-video base price; model overrides below
 	"h3_video":         2.688, // per GPU-hour reference rate; exact execution is settled asynchronously
 	"video_restyle":    0.48,  // estimated five-second 720p ceiling; async settlement uses the selected backend
+	"audio_generation": 0.80,  // umbrella audio API; music is the default kind
 	"music_generation": 0.80,  // per generated music track (30–180 seconds)
+	"sfx_generation":   2.688, // per GPU-hour reference; exact SFX execution is settled asynchronously
 	"flux_image":       0.04,  // per image via fal.ai or netwrck
 	"nsfw_detect":      0.001, // per image classification
 }
@@ -270,7 +272,9 @@ type publicServiceAlias struct {
 var publicServiceAliases = []publicServiceAlias{
 	{Public: "image", Internal: "zimage"},
 	{Public: "video", Internal: "h3_video"},
-	{Public: "audio", Internal: "music_generation"},
+	{Public: "audio", Internal: "audio_generation"},
+	{Public: "music", Internal: "music_generation"},
+	{Public: "sfx", Internal: "sfx_generation"},
 	{Public: "speech", Internal: "tts"},
 	{Public: "transcription", Internal: "stt"},
 	{Public: "caption", Internal: "caption"},
@@ -322,7 +326,9 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"video_generate":   "per generated video (model dependent)",
 		"h3_video":         "per video; final price follows measured generation time",
 		"video_restyle":    "estimated default clip; final price follows length and quality",
+		"audio_generation": "per music track by default; set kind to music or sfx",
 		"music_generation": "per generated music track (30–180 seconds)",
+		"sfx_generation":   "estimated 5-second sound effect; final price follows measured generation time",
 		"flux_image":       "per image",
 	}
 
@@ -336,6 +342,9 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		if alias.Internal == "h3_video" {
 			usdPrice = h3EstimateUSD
 			cuteCost = h3EstimateCredits
+		}
+		if alias.Internal == "sfx_generation" {
+			usdPrice, cuteCost, _ = h3Estimate(ServiceUsageRequest{Service: "sfx_generation", Size: "audio", Duration: 5, NumSteps: 20})
 		}
 		pricing = append(pricing, ServicePricing{
 			Service:   alias.Public,
@@ -430,8 +439,23 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		handleVideoRestyleService(ctx, req, user)
 		return
 	}
+	if req.Service == "audio_generation" {
+		switch strings.ToLower(strings.TrimSpace(req.Kind)) {
+		case "", "music":
+			handleMusicGenerationAs(ctx, user, req.Prompt, req.Duration, "audio")
+		case "sfx", "sound", "sound_effect":
+			handleSFXGeneration(ctx, req, user)
+		default:
+			jsonError(ctx, http.StatusBadRequest, "audio kind must be music or sfx")
+		}
+		return
+	}
 	if req.Service == "music_generation" {
 		handleMusicGeneration(ctx, user, req.Prompt, req.Duration)
+		return
+	}
+	if req.Service == "sfx_generation" {
+		handleSFXGeneration(ctx, req, user)
 		return
 	}
 

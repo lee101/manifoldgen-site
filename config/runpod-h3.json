@@ -5,8 +5,8 @@
   "idleTimeout": 5,
   "executionTimeoutMs": 3600000,
   "flashboot": true,
-  "scalerType": "QUEUE_DELAY",
-  "scalerValue": 4,
+  "scalerType": "REQUEST_COUNT",
+  "scalerValue": 1,
   "endpoints": [
     {
       "name": "cog-manifold-h3-normal",
@@ -31,5 +31,5 @@
       ]
     }
   ],
-  "notes": "Both variants must use the native RunPod handler, never the Cog HTTP command. The native handler lets RunPod cancellation terminate active work so canceled jobs do not leave billed orphan workers. Five-second idle shutdown is below the 30-second cost ceiling."
+  "notes": "Both variants must use the native RunPod handler, never the Cog HTTP command. The native handler lets RunPod cancellation terminate active work so canceled jobs do not leave billed orphan workers. Request-count scaling prevents a single slow cold start from provisioning duplicate workers. Five-second idle shutdown is below the 30-second cost ceiling."
 }

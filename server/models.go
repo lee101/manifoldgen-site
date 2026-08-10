@@ -157,6 +157,7 @@ type ServiceUsageRequest struct {
 	Service       string `json:"service"` // defaults to zimage; other values: chronos2, tts, stt, gemma4, caption
 	// Common fields
 	Prompt   string `json:"prompt,omitempty"`
+	Kind     string `json:"kind,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
 	Text     string `json:"text,omitempty"`
 	Input    string `json:"input,omitempty"`

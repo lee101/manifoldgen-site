@@ -47,6 +47,20 @@ func TestNormalizeMusicGenerationInput(t *testing.T) {
 	}
 }
 
+func TestStudioGeneratedAudioFormat(t *testing.T) {
+	contentType, extension, err := studioGeneratedAudioFormat("audio/wav; charset=binary", "https://cdn.example/output")
+	if err != nil || contentType != "audio/wav" || extension != ".wav" {
+		t.Fatalf("content type format rejected: type=%q extension=%q err=%v", contentType, extension, err)
+	}
+	contentType, extension, err = studioGeneratedAudioFormat("application/octet-stream", "https://cdn.example/output.mp3?token=ok")
+	if err != nil || contentType != "audio/mpeg" || extension != ".mp3" {
+		t.Fatalf("URL format rejected: type=%q extension=%q err=%v", contentType, extension, err)
+	}
+	if _, _, err := studioGeneratedAudioFormat("text/html", "https://cdn.example/output.bin"); err == nil {
+		t.Fatal("expected unsupported generated audio format")
+	}
+}
+
 func TestStudioProjectValidation(t *testing.T) {
 	id := "7cd844da-0b82-48c2-a8b2-2c20107b4cb0"
 	got, err := validateStudioProjectWrite(id, studioProjectWrite{Document: json.RawMessage(`{"version":1,"assets":[]}`)})
