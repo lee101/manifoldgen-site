@@ -1,4 +1,4 @@
-.PHONY: install server frontend dev dev-https build visualbench hooks check-fast test-go test-studio verify
+.PHONY: install server frontend dev dev-https build visualbench hooks check-fast test-go test-studio test-studio-full verify
 
 install:
 	cd frontend && bun install
@@ -34,7 +34,10 @@ test-go:
 	cd server && go test ./...
 
 test-studio:
-	cd frontend && bunx playwright test tests/e2e/studio-media.spec.js tests/e2e/api-pricing.spec.js
+	cd frontend && bun run test:e2e:hook
+
+test-studio-full:
+	cd frontend && bun run test:e2e
 
 verify: check-fast test-studio
 

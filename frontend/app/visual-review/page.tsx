@@ -12,7 +12,6 @@ export default function ManifoldLoaderReviewPage() {
       <h1 style={{ margin: '0 0 10px', fontSize: 30, letterSpacing: '-.04em' }}>Manifold in motion.</h1>
       <p style={{ margin: '0 0 24px', color: '#aaa', fontSize: 14 }}>Twin peaks. Quiet motion. Always in the background.</p>
       <div style={{ display: 'grid', gridTemplateColumns: '88px minmax(0, 1fr)', alignItems: 'center', gap: 18 }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/brand/logo-mark.webp" alt="Brand reference" style={{ width: 88, height: 88, borderRadius: 14 }} />
         <ManifoldLoader progress={progress} label="Exporting" />
       </div>

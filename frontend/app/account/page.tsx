@@ -71,8 +71,6 @@ export default function AccountPage() {
   const [authMode, setAuthMode] = useState<AuthMode>('signup');
   const [resetToken, setResetToken] = useState('');
   const [creditsUsd, setCreditsUsd] = useState(0);
-  const [credits, setCredits] = useState(0);
-  const [creditPrice, setCreditPrice] = useState(0.01);
   const [amount, setAmount] = useState('50');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -89,9 +87,7 @@ export default function AccountPage() {
     setApiKey(next.api_key);
     setEmail(next.email || '');
     const price = next.credit_price_usd || 0.01;
-    setCreditPrice(price);
     setCreditsUsd(next.credits_usd ?? next.credits * price);
-    setCredits(next.credits);
     return next;
   }, []);
 
@@ -111,9 +107,7 @@ export default function AccountPage() {
     setApiKey(stored.api_key);
     setEmail(stored.email || '');
     const price = stored.credit_price_usd || 0.01;
-    setCreditPrice(price);
     setCreditsUsd(stored.credits_usd ?? stored.credits * price);
-    setCredits(stored.credits);
     void refreshSession(stored.api_key);
   }, [refreshSession]);
 
@@ -195,9 +189,7 @@ export default function AccountPage() {
         setApiKey(next.api_key);
         setEmail(next.email || email);
         const price = next.credit_price_usd || 0.01;
-        setCreditPrice(price);
         setCreditsUsd(next.credits_usd ?? 0);
-        setCredits(next.credits);
         setPassword('');
         setResetToken('');
         setAuthMode('signin');
@@ -223,9 +215,7 @@ export default function AccountPage() {
       setApiKey(next.api_key);
       setEmail(next.email || email);
       const price = next.credit_price_usd || 0.01;
-      setCreditPrice(price);
       setCreditsUsd(next.credits_usd ?? 0);
-      setCredits(next.credits);
       setMessage(data.created ? 'Account created.' : 'Signed in.');
       setPassword('');
     } catch (err) {
@@ -240,7 +230,6 @@ export default function AccountPage() {
     setApiKey('');
     setEmail('');
     setCreditsUsd(0);
-    setCredits(0);
     setClientSecret('');
     setPublishableKey('');
     setCheckoutMeta('');
@@ -323,9 +312,7 @@ export default function AccountPage() {
           <ArrowLeft size={16} /> Back to studio
         </Link>
         <h1 className="font-display text-3xl font-700">Account</h1>
-        <p className="mt-2 text-[var(--color-mute)]">
-          Pay-as-you-go credits and subscriptions. Video shows an estimate before it runs.
-        </p>
+        <p className="mt-2 text-[var(--color-mute)]">Balance, billing, and API access.</p>
 
         {!apiKey ? (
           <form onSubmit={submitAuth} className="glass mt-6 rounded-3xl p-5" data-testid="account-auth-form">
@@ -455,9 +442,6 @@ export default function AccountPage() {
                 <div className="mt-1 text-3xl font-semibold" data-testid="account-balance">
                   ${creditsUsd.toFixed(2)}
                 </div>
-                <div className="mt-1 text-sm text-white/55" data-testid="account-credits">
-                  {Math.round(credits).toLocaleString()} credits · ${creditPrice.toFixed(2)}/credit
-                </div>
               </div>
               <button
                 type="button"
@@ -486,9 +470,9 @@ export default function AccountPage() {
             </div>
 
             <section id="credits" className="scroll-mt-24">
-              <h2 className="mt-6 text-lg font-semibold">Top up credits</h2>
+              <h2 className="mt-6 text-lg font-semibold">Add funds</h2>
               <p className="mt-1 text-sm text-[var(--color-mute)]">
-                1 credit = ${creditPrice.toFixed(2)}. Images are 4 credits ($0.04). Min top-up $5.
+                $5 minimum. Images are $0.04 each.
               </p>
               <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {['25', '50', '100', '200'].map((v) => (
@@ -506,7 +490,7 @@ export default function AccountPage() {
                 ))}
               </div>
               <label className="mt-3 block text-sm text-white/70">
-                Custom amount (USD)
+                Custom amount
                 <input
                   data-testid="account-topup-custom"
                   type="number"
@@ -518,9 +502,6 @@ export default function AccountPage() {
                   className="mt-1.5 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-[var(--color-accent)]"
                 />
               </label>
-              <p className="mt-2 text-xs text-white/45" data-testid="account-topup-credits-preview">
-                ≈ {Math.round((Number(amount) || 0) / creditPrice).toLocaleString()} credits
-              </p>
               <button
                 type="button"
                 disabled={busy}
@@ -529,12 +510,12 @@ export default function AccountPage() {
                 className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2.5 font-semibold disabled:opacity-50"
               >
                 {busy ? <Loader2 className="animate-spin" size={16} /> : <CreditCard size={16} />}
-                Buy ${Number(amount) || 0} credits
+                Add ${Number(amount) || 0}
               </button>
             </section>
             <h2 className="mt-6 text-lg font-semibold">Checkout</h2>
             <p className="mt-1 text-sm text-[var(--color-mute)]">
-              Monthly includes unlimited images + $25 H3 video credits; annual is 12× ($300).
+              Unlimited images, plus $25/month or $300/year for video.
             </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <button

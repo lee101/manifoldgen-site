@@ -37,6 +37,14 @@ async function proxyProductionCatalog(page) {
   });
 }
 
+async function captureLoaderReview(browser) {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 760 }, deviceScaleFactor: 1 });
+  await page.goto(`${baseURL}/visual-review`, { waitUntil: 'networkidle' });
+  await page.getByRole('img', { name: 'Brand reference' }).waitFor({ state: 'visible' });
+  await page.screenshot({ path: path.join(outputDir, 'manifold-loader-review.png'), fullPage: true });
+  await page.close();
+}
+
 async function capture(browser, viewport, device, mode) {
   const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
   await proxyProductionCatalog(page);
@@ -101,6 +109,8 @@ async function captureGalleryImage(browser, viewport, device) {
   const systemChrome = requestedExecutable || (fs.existsSync('/usr/bin/google-chrome') ? '/usr/bin/google-chrome' : undefined);
   const browser = await chromium.launch({ headless: true, ...(systemChrome ? { executablePath: systemChrome } : {}) });
   try {
+    await captureLoaderReview(browser);
+    if (process.env.VISUALBENCH_LOADER_ONLY === '1') return;
     await captureGalleryImage(browser, { width: 1440, height: 1000 }, 'desktop');
     await captureGalleryImage(browser, { width: 390, height: 844 }, 'mobile');
     if (process.env.VISUALBENCH_GALLERY_ONLY !== '1') {

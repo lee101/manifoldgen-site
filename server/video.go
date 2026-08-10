@@ -1294,6 +1294,80 @@ func publicJobStatusURL(job *VideoJob) string {
 	return "/api/video-jobs/" + job.ID
 }
 
+// handleRetryVideoJob submits a fresh provider job from the durable input kept
+// on a failed generation. The existing public job ID is retained so clients do
+// not create duplicate library entries.
+func handleRetryVideoJob(ctx *fasthttp.RequestCtx, jobID string) {
+	user, err := videoJobUser(ctx)
+	if err != nil {
+		jsonError(ctx, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	job, err := dbConn.GetVideoJob(strings.TrimSpace(jobID), user.ID)
+	if err != nil {
+		jsonError(ctx, http.StatusNotFound, "video job not found")
+		return
+	}
+	if job.Status != "failed" || job.Settled {
+		jsonError(ctx, http.StatusConflict, "only failed, unsettled generations can be retried")
+		return
+	}
+	if len(job.Result) == 0 {
+		jsonError(ctx, http.StatusConflict, "generation input is unavailable")
+		return
+	}
+
+	providerID := strings.TrimSpace(job.ProviderJobID)
+	nextProviderID := providerID
+	if strings.HasPrefix(providerID, "runpod:") {
+		parts := strings.SplitN(providerID, ":", 3)
+		if len(parts) != 3 || parts[1] == "" {
+			jsonError(ctx, http.StatusConflict, "generation provider is unavailable")
+			return
+		}
+		var input map[string]interface{}
+		if json.Unmarshal(job.Result, &input) != nil {
+			jsonError(ctx, http.StatusConflict, "generation input is invalid")
+			return
+		}
+		delete(input, "_h3_variant")
+		delete(input, "_h3_cog_url")
+		var queued h3RunpodQueuedJob
+		status, retryErr := callH3Runpod(parts[1], "/run", http.MethodPost, map[string]interface{}{"input": input}, &queued)
+		if retryErr != nil || queued.ID == "" {
+			code := http.StatusBadGateway
+			if status == 0 {
+				code = http.StatusServiceUnavailable
+			}
+			jsonError(ctx, code, "video retry could not be queued")
+			return
+		}
+		nextProviderID = "runpod:" + parts[1] + ":" + queued.ID
+	} else if !strings.HasPrefix(strings.ToLower(providerID), "local:") {
+		var input map[string]interface{}
+		if json.Unmarshal(job.Result, &input) != nil {
+			jsonError(ctx, http.StatusConflict, "generation input is invalid")
+			return
+		}
+		// Keep the same normalized input and request a fresh upstream prediction.
+		response, _, retryErr := callAppNZH3(http.MethodPost, "/api/cogs/run", map[string]interface{}{
+			"template": "minimax-h3", "name": "minimax-h3-shared", "input": input,
+		})
+		if retryErr != nil || response.Prediction.ID == "" {
+			jsonError(ctx, http.StatusServiceUnavailable, "video retry could not be queued")
+			return
+		}
+		nextProviderID = response.Prediction.ID
+	}
+	if err := dbConn.UpdateVideoJobProvider(job.ID, nextProviderID, "queued", job.Result); err != nil {
+		jsonError(ctx, http.StatusInternalServerError, "video retry could not be saved")
+		return
+	}
+	launchVideoJob(job.ID)
+	job, _ = dbConn.GetVideoJob(job.ID, user.ID)
+	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{"job": publicVideoJob(job)})
+}
+
 func videoJobUser(ctx *fasthttp.RequestCtx) (*User, error) {
 	authHeader := string(ctx.Request.Header.Peek("Authorization"))
 	if !strings.HasPrefix(authHeader, "Bearer ") {

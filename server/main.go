@@ -330,6 +330,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleListVideoJobs(ctx)
 	case path == "/api/audio-jobs" && method == "GET":
 		handleListAudioJobs(ctx)
+	case strings.HasPrefix(path, "/api/video-jobs/") && strings.HasSuffix(path, "/retry") && method == "POST":
+		handleRetryVideoJob(ctx, strings.TrimSuffix(strings.TrimPrefix(path, "/api/video-jobs/"), "/retry"))
 	case strings.HasPrefix(path, "/api/audio-jobs/") && method == "DELETE":
 		handleDeleteVideoJob(ctx, strings.TrimPrefix(path, "/api/audio-jobs/"))
 	case strings.HasPrefix(path, "/api/audio-jobs/") && method == "GET":

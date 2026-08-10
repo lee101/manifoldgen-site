@@ -22,3 +22,9 @@ frontend/.next-playwright/
 monitoring
 scripts/prompts/manifold-gallery-100k.jsonl
 .trash/
+frontend/.next
+frontend/.next-codex-coverage
+frontend/.next-codex-editor-3241
+frontend/.next-dev
+frontend/.next-export-visual
+frontend/.next-playwright

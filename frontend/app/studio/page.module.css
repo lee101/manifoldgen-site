@@ -41,6 +41,7 @@
 .brandGroup { gap: 10px; position: relative; }
 .historyActions { gap: 2px; }
 .activityIndicator { width: 176px; margin-left: 12px; }
+.mobileActivity { display: none; }
 .accountActions { justify-content: flex-end; gap: 7px; }
 
 .iconButton, .smallIcon {
@@ -84,7 +85,8 @@
 .menuBackdrop { position: fixed; inset: 0; z-index: 90; padding: 58px 10px 10px; background: rgba(0, 0, 0, .42); backdrop-filter: blur(4px); }
 .menuDrawer { width: min(326px, calc(100vw - 20px)); max-height: calc(100dvh - 68px); overflow-y: auto; border: 1px solid #343842; border-radius: 12px; background: rgba(20, 23, 29, .98); box-shadow: 0 24px 80px rgba(0, 0, 0, .62); }
 .menuHeader { display: flex; align-items: center; justify-content: space-between; padding: 16px 16px 13px; border-bottom: 1px solid var(--line); }
-.menuHeader h2 { margin: 3px 0 0; font: 700 18px var(--font-display); letter-spacing: -.03em; }
+.menuHome { color: #e0e2e7; font: 800 11px var(--font-display); letter-spacing: .14em; text-decoration: none; }
+.menuHome:hover, .menuHome:focus-visible { color: white; outline: 0; }
 .menuClose { width: 29px; height: 29px; display: grid; place-items: center; border: 1px solid #30343c; border-radius: 7px; background: #1a1d22; color: #adb2bb; cursor: pointer; }
 .menuClose:hover { color: white; background: #252932; }
 .menuNav { display: grid; gap: 3px; padding: 9px; }
@@ -97,7 +99,7 @@
 .menuLink small { overflow: hidden; color: #737b86; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 
 .workspace { display: grid; grid-template-columns: 64px var(--media-panel-width, 276px) 10px minmax(0, 1fr); min-height: 0; }
-.rail { background: #0d0f12; border-right: 1px solid var(--line); padding: 8px 5px; display: flex; flex-direction: column; gap: 4px; }
+.rail { min-height: 0; overflow-y: auto; background: #0d0f12; border-right: 1px solid var(--line); padding: 8px 5px; display: flex; flex-direction: column; gap: 4px; scrollbar-width: thin; scrollbar-color: #343840 transparent; }
 .rail button { min-height: 51px; border: 0; border-radius: 9px; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: #737a84; cursor: pointer; }
 .rail button span { font-size: 9px; font-weight: 600; }
 .rail button:hover { background: #181b20; color: #c7cbd1; }
@@ -300,7 +302,7 @@
 .stageStatus { color: #5f6670; font-size: 10px; }
 .toolChip { border: 0; background: transparent; display: flex; gap: 5px; align-items: center; padding: 6px 8px; color: #9299a3 !important; border-radius: 6px; }
 .toolChip:hover:not(:disabled) { background: #1a1d22; }
-.stage { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; background-color: #0a0b0e; background-image: linear-gradient(45deg, #0e1013 25%, transparent 25%), linear-gradient(-45deg, #0e1013 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #0e1013 75%), linear-gradient(-45deg, transparent 75%, #0e1013 75%); background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0; }
+.stage { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; justify-content: center; background-color: #0a0b0e; background-image: linear-gradient(45deg, #0e1013 25%, transparent 25%), linear-gradient(-45deg, #0e1013 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #0e1013 75%), linear-gradient(-45deg, transparent 75%, #0e1013 75%); background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0; }
 /* Keep the composition inside a small editing gutter, but let “Fit & center”
    actually use the available stage instead of reserving a quarter of it. */
 .stageElement { position: absolute; width: calc(100% - 24px); max-width: calc(100% - 24px); max-height: calc(100% - 24px); min-width: 300px; min-height: 160px; cursor: grab; touch-action: none; user-select: none; transition: transform .15s ease, left .15s ease, top .15s ease; }
@@ -311,6 +313,11 @@
 .stageLayerMedia { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .sourceVideo { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .previewCanvas { display: block; width: 100%; height: 100%; object-fit: contain; background: black; pointer-events: none; }
+.stageTextEditor { position: absolute; z-index: 1; left: 8%; right: 8%; top: 50%; width: 84%; min-height: 1.25em; max-height: 80%; box-sizing: border-box; padding: .12em .2em; transform: translateY(-50%); overflow: hidden; resize: none; border: 1px dashed rgba(255,255,255,.38); border-radius: 3px; outline: 0; color: white; background: transparent; line-height: 1.18; caret-color: white; text-shadow: 0 1px 2px rgba(0,0,0,.45); touch-action: none; }
+.stageTextEditor:focus { border-color: #b4a7ff; box-shadow: 0 0 0 1px rgba(142,126,243,.42); }
+.stageTextEditorMove { cursor: grab; user-select: none; }
+.stageTextEditorMove:active { cursor: grabbing; }
+.stageTextEditorEditing { cursor: text; user-select: text; touch-action: manipulation; }
 .stageHandle { position: absolute; z-index: 2; width: 9px; height: 9px; border: 1px solid #6757cf; border-radius: 2px; background: white; cursor: nwse-resize; touch-action: none; }
 .stageHandleNW { left: -4px; top: -4px; }
 .stageHandleNE { right: -4px; top: -4px; cursor: nesw-resize; }
@@ -526,6 +533,7 @@
   .studio { min-width: 0; width: 100%; grid-template-rows: 48px minmax(0, 1fr) 176px; }
   .topbar { grid-template-columns: minmax(0, 1fr) auto; padding: 0 7px; }
   .historyActions, .projectName, .divider, .topupButton, .avatar, .brand > span:last-child { display: none; }
+  .mobileActivity { position: fixed; z-index: 35; top: 55px; right: 8px; display: block; padding: 5px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(10,11,14,.88); box-shadow: 0 8px 30px rgba(0,0,0,.3); backdrop-filter: blur(10px); }
   .brandGroup { gap: 4px; }
   .accountActions { gap: 5px; }
   .menuBackdrop { padding: 53px 7px 7px; }

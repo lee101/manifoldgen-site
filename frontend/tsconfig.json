@@ -32,10 +32,13 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
+    ".next-codex-coverage/types/**/*.ts",
     ".next-dev/types/**/*.ts",
+    ".next-export-visual/types/**/*.ts",
+    ".next-playwright/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-playwright/types/**/*.ts"
+    ".next-codex-editor-3241/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

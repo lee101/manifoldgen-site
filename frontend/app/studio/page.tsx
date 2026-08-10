@@ -389,12 +389,19 @@ type GenerationJob = {
   updated_at?: string;
 };
 
+type BackgroundActivity = {
+  id: string;
+  label: string;
+  progress?: number;
+};
+
 type StudioPerfDiagnostics = {
   renderer?: ReturnType<StudioRenderer['diagnostics']>;
   previewFrames: number;
   previewStartedAt: number;
   previewLastAt: number;
   previewMediaTime?: number;
+  redrawPreview?: () => void;
   export?: {
     sourceWidth: number;
     sourceHeight: number;
@@ -917,7 +924,8 @@ export default function StudioPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([]);
   const [saveStatus, setSaveStatus] = useState('Loading project…');
-  const [syncRetry, setSyncRetry] = useState(0);
+  const [uploadRetry, setUploadRetry] = useState(0);
+  const [saveRetry, setSaveRetry] = useState(0);
   const [selectedID, setSelectedID] = useState('');
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
   const [editHistory, setEditHistory] = useState<EditorHistory>({ undo: [], redo: [] });
@@ -935,6 +943,7 @@ export default function StudioPage() {
   const [imageAspect, setImageAspect] = useState<H3Aspect>('1:1');
   const [imageCount, setImageCount] = useState<1 | 4>(4);
   const [textDraft, setTextDraft] = useState<StudioTextStyle>({ content: 'Your story starts here', fontSize: 112, fontFamily: 'Inter', fontWeight: 800, color: '#ffffff', align: 'center' });
+  const [editingTextID, setEditingTextID] = useState('');
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [extendRates, setExtendRates] = useState({ input: 0.012, output: 0.084 });
   const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
@@ -966,6 +975,7 @@ export default function StudioPage() {
   const [exportSettings, setExportSettings] = useState<ExportSettings>(loadExportSettings);
   const [exportProgress, setExportProgress] = useState(0);
   const [busy, setBusy] = useState('');
+  const [backgroundActivities, setBackgroundActivities] = useState<BackgroundActivity[]>([]);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [extendOpen, setExtendOpen] = useState(false);
@@ -1021,10 +1031,29 @@ export default function StudioPage() {
   const stageRef = useRef<HTMLDivElement>(null);
   const stageDragRef = useRef<StageDrag | null>(null);
   const uploadInFlightRef = useRef(new Set<File>());
+  const uploadFailuresRef = useRef(0);
+  const saveFailuresRef = useRef(0);
+  const uploadRetryTimerRef = useRef(0);
+  const saveRetryTimerRef = useRef(0);
   const projectSaveSequenceRef = useRef(0);
+  const projectPickerRef = useRef<HTMLDivElement>(null);
   const editHistoryRef = useRef<EditorHistory>({ undo: [], redo: [] });
   const historyMergeRef = useRef<{ key: string; at: number } | null>(null);
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
+
+  const startBackgroundActivity = useCallback((label: string) => {
+    const id = uid();
+    setBackgroundActivities((current) => [{ id, label }, ...current].slice(0, 12));
+    return id;
+  }, []);
+
+  const updateBackgroundActivity = useCallback((id: string, label: string, progress?: number) => {
+    setBackgroundActivities((current) => current.map((activity) => activity.id === id ? { ...activity, label, progress } : activity));
+  }, []);
+
+  const finishBackgroundActivity = useCallback((id: string) => {
+    setBackgroundActivities((current) => current.filter((activity) => activity.id !== id));
+  }, []);
 
   const clearMediaDragUI = useCallback(() => {
     setDragging(false);
@@ -1078,13 +1107,11 @@ export default function StudioPage() {
   const rulerDuration = Math.max(rulerStep, Math.ceil(timelineDuration / rulerStep) * rulerStep);
   const timelineWidth = Math.max(320, rulerDuration * pixelsPerSecond + 48);
   const customerExtendUSD = useMemo(() => Math.ceil(((selected?.duration || 0) * extendRates.input + extendDuration * extendRates.output) * 100 - 1e-8) / 100, [selected?.duration, extendDuration, extendRates]);
-  const extendCredits = Math.ceil(customerExtendUSD / creditPrice);
   const customerUpscaleUSD = useMemo(() => {
     if (!selected || selected.kind !== 'video') return upscaleRates.base;
     const outputMP = selected.width * selected.height * upscaleScale * upscaleScale / 1_000_000;
     return Math.ceil((upscaleRates.base + outputMP * selected.duration * upscaleRates.outputMPSecond) * 100 - 1e-8) / 100;
   }, [selected, upscaleRates, upscaleScale]);
-  const upscaleCredits = Math.ceil(customerUpscaleUSD / creditPrice);
   const videoGeneratePrompts = useMemo(() => videoGeneratePrompt
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -1098,7 +1125,6 @@ export default function StudioPage() {
   const videoGenerateBatchUSD = videoGenerateUnitUSD * videoGenerateBatchCount;
   const videoGenerateBatchCredits = Math.ceil(videoGenerateBatchUSD / creditPrice);
   const audioEstimateUSD = Math.max(0.1, Math.ceil(sfxFiveSecondEstimateUSD * audioDuration / 5 * 100) / 100);
-  const audioEstimateCredits = Math.ceil(audioEstimateUSD / creditPrice);
   const speechUSD = Math.max(ttsPer100USD * 0.1, Math.ceil(Math.max(1, speechText.trim().length) / 100 * ttsPer100USD * 10000) / 10000);
   const speechCredits = speechUSD / creditPrice;
   const restyleEstimateUSD = useMemo(() => {
@@ -1110,11 +1136,10 @@ export default function StudioPage() {
     const rate = restyleResolution === '480p' ? 0.04 : restyleResolution === '580p' ? 0.06 : 0.08;
     return Math.ceil(rate * restyleFrames / 16 * 1.2 * 100) / 100;
   }, [restyleDuration, restyleFrames, restyleModel, restyleReferences, restyleResolution]);
-  const restyleEstimateCredits = Math.ceil(restyleEstimateUSD / creditPrice);
   const creditsLabel = useMemo(() => {
     if (!user) return 'Sign in';
     const usd = user.credits_usd ?? user.credits * creditPrice;
-    return `${Math.round(user.credits).toLocaleString()} cr · $${usd.toFixed(2)}`;
+    return `$${usd.toFixed(2)}`;
   }, [user, creditPrice]);
 
   const replaceEditHistory = useCallback((next: EditorHistory | ((current: EditorHistory) => EditorHistory)) => {
@@ -1336,26 +1361,25 @@ export default function StudioPage() {
       try {
         const response = await fetch('/api/video-jobs', { headers: authHeaders(user.api_key, false), signal: controller.signal });
         const data = await parseJSONResponse<{ jobs?: GenerationJob[] }>(response, 'Could not load generations');
+        // The list endpoint is the durable source of truth and also resumes
+        // stale provider jobs. Refresh at most four active rows per pass so a
+        // large history cannot fan out into an unbounded request burst.
         const listed = data.jobs || [];
-        const refreshed = new Map<string, GenerationJob>();
-        for (let index = 0; index < listed.length; index += 4) {
-          const batch = listed.slice(index, index + 4);
-          const statuses = await Promise.allSettled(batch.map(async (job) => {
-            if (!isActiveGeneration(job)) return job;
-            const statusResponse = await fetch(`/api/video-jobs/${encodeURIComponent(job.job_id)}`, {
-              headers: authHeaders(user.api_key, false),
-              signal: controller.signal,
-            });
-            const statusData = await parseJSONResponse<{ job?: GenerationJob }>(statusResponse, 'Could not refresh generation');
-            return statusData.job || job;
-          }));
-          statuses.forEach((status, offset) => refreshed.set(batch[offset].job_id, status.status === 'fulfilled' ? status.value : batch[offset]));
-        }
-        const next = listed.map((job) => refreshed.get(job.job_id) || job);
+        const active = listed.filter(isActiveGeneration).slice(0, 4);
+        const refreshed = await Promise.allSettled(active.map(async (job) => {
+          const statusResponse = await fetch(`/api/video-jobs/${encodeURIComponent(job.job_id)}`, {
+            headers: authHeaders(user.api_key, false),
+            signal: controller.signal,
+          });
+          const statusData = await parseJSONResponse<{ job?: GenerationJob }>(statusResponse, 'Could not refresh generation');
+          return statusData.job || job;
+        }));
+        const byID = new Map(active.map((job, index) => [job.job_id, refreshed[index].status === 'fulfilled' ? refreshed[index].value : job]));
+        const next = listed.map((job) => byID.get(job.job_id) || job);
         failures = 0;
         if (!cancelled) setGenerationJobs((current) => mergeGenerationJobs(current, next));
         const hasActive = next.some(isActiveGeneration);
-        schedule(document.hidden ? 30_000 : hasActive ? 2_500 : 12_000);
+        schedule(document.hidden ? 30_000 : hasActive ? 5_000 : 15_000);
       } catch (reason) {
         if (!cancelled && !(reason instanceof DOMException && reason.name === 'AbortError')) {
           failures += 1;
@@ -1410,6 +1434,15 @@ export default function StudioPage() {
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!projectPickerRef.current?.contains(event.target as Node)) setProjectMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    return () => document.removeEventListener('pointerdown', closeOnOutsideClick);
+  }, [projectMenuOpen]);
 
   useEffect(() => {
     window.localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify(exportSettings));
@@ -1508,17 +1541,26 @@ export default function StudioPage() {
             undo: current.undo.map((state) => ({ ...state, assets: state.assets.map((item) => item.mediaID === asset.mediaID && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
             redo: current.redo.map((state) => ({ ...state, assets: state.assets.map((item) => item.mediaID === asset.mediaID && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
           }));
+          return true;
         } catch (reason) {
-          setSaveStatus('Cloud upload will retry');
           setError(reason instanceof Error ? reason.message : `Could not upload ${asset.name}`);
-          window.setTimeout(() => setSyncRetry((value) => value + 1), 5000);
+          return false;
         } finally {
           uploadInFlightRef.current.delete(asset.file);
-          // If a newer revision was skipped while this ID was in flight, give
-          // the uploader another pass even when no other state changed.
-          setSyncRetry((value) => value + 1);
         }
-      }));
+      })).then((results) => {
+        if (results.every(Boolean)) {
+          uploadFailuresRef.current = 0;
+          window.clearTimeout(uploadRetryTimerRef.current);
+          // Successful state updates naturally schedule the next pending batch.
+          return;
+        }
+        uploadFailuresRef.current += 1;
+        const delay = Math.min(60_000, 5_000 * (2 ** (uploadFailuresRef.current - 1)));
+        setSaveStatus(`Cloud upload will retry in ${Math.round(delay / 1000)}s`);
+        window.clearTimeout(uploadRetryTimerRef.current);
+        uploadRetryTimerRef.current = window.setTimeout(() => setUploadRetry((value) => value + 1), delay);
+      });
     };
     const idleWindow = window as typeof window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
     const idleID = idleWindow.requestIdleCallback?.(start, { timeout: 1000 });
@@ -1527,10 +1569,11 @@ export default function StudioPage() {
       if (!started && idleID !== undefined) idleWindow.cancelIdleCallback?.(idleID);
       if (!started && timerID !== undefined) window.clearTimeout(timerID);
     };
-  }, [assets, editHistory, projectID, projectReady, replaceEditHistory, syncRetry, user]);
+  }, [assets, editHistory, projectID, projectReady, replaceEditHistory, uploadRetry, user]);
 
   useEffect(() => {
     if (!projectReady || !projectID) return;
+    window.clearTimeout(saveRetryTimerRef.current);
     const sequence = ++projectSaveSequenceRef.current;
     setSaveStatus(user ? (assets.some((asset) => !asset.cloudURL) ? 'Uploading assets…' : 'Saving to cloud…') : 'Saving locally…');
     const timer = window.setTimeout(() => {
@@ -1554,17 +1597,21 @@ export default function StudioPage() {
         const data = await parseJSONResponse<{ project: CloudProject }>(response, 'Could not save project to the cloud');
         if (sequence !== projectSaveSequenceRef.current) return;
         setCloudProjects((current) => [data.project, ...current.filter((project) => project.id !== data.project.id)]);
+        saveFailuresRef.current = 0;
+        window.clearTimeout(saveRetryTimerRef.current);
         setSaveStatus(assets.some((asset) => !asset.cloudURL) ? 'Uploading assets…' : 'Saved to cloud');
       }).catch((reason) => {
         if (sequence === projectSaveSequenceRef.current) {
-          setSaveStatus(user ? 'Cloud save will retry' : 'Local save failed');
+          saveFailuresRef.current += 1;
+          const delay = Math.min(60_000, 5_000 * (2 ** (saveFailuresRef.current - 1)));
+          setSaveStatus(user ? `Cloud save will retry in ${Math.round(delay / 1000)}s` : 'Local save failed');
           setError(reason instanceof Error ? reason.message : 'Could not save project');
-          window.setTimeout(() => setSyncRetry((value) => value + 1), 5000);
+          if (user) saveRetryTimerRef.current = window.setTimeout(() => setSaveRetry((value) => value + 1), delay);
         }
       });
     }, 650);
     return () => window.clearTimeout(timer);
-  }, [assets, editHistory, projectID, projectName, projectReady, selectedID, syncRetry, user]);
+  }, [assets, editHistory, projectID, projectName, projectReady, saveRetry, selectedID, user]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1618,6 +1665,14 @@ export default function StudioPage() {
       renderer.draw(imageRef.current, selected.adjustments, 0);
     }
   }, [selected]);
+
+  useEffect(() => {
+    const diagnostics = perfDiagnostics();
+    diagnostics.redrawPreview = drawCurrent;
+    return () => {
+      if (diagnostics.redrawPreview === drawCurrent) delete diagnostics.redrawPreview;
+    };
+  }, [drawCurrent]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1819,9 +1874,9 @@ export default function StudioPage() {
     if (!user) { setError('Sign in to generate images'); return; }
     const prompt = imagePrompt.trim();
     if (!prompt) return;
-    setBusy('generate-images');
+    const activityID = startBackgroundActivity(`Creating ${imageCount} image${imageCount === 1 ? '' : 's'}`);
     setError('');
-    setNotice('Finding related work while your images render…');
+    setNotice('Images started');
     setMediaBrowserMode('images');
     setMediaSearch(prompt);
     const discovery = searchStudioMedia('images', prompt);
@@ -1846,12 +1901,12 @@ export default function StudioPage() {
       if (!imported.length) throw new Error('Generated images could not be imported');
       const refreshed = await refreshUser(user.api_key).catch(() => null);
       if (refreshed) { setUser(refreshed); saveUser(refreshed); }
-      setNotice(`${imported.length} generated image${imported.length === 1 ? '' : 's'} added · similar work shown below`);
+      setNotice(`${imported.length} image${imported.length === 1 ? '' : 's'} added`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Image generation failed');
     } finally {
       await discovery;
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
@@ -1993,13 +2048,13 @@ export default function StudioPage() {
     const id = uid();
     const asset: StudioAsset = {
       id, mediaID: id, name: file.name, kind, file, url: URL.createObjectURL(file), ...metadata,
-      trimStart: 0, trimEnd: metadata.duration, timelineStart: kind === 'audio' ? (timelinePlacement ?? playhead) : visualEnd, volume: 1, fadeIn: 0, fadeOut: 0,
+      trimStart: 0, trimEnd: metadata.duration, timelineStart: timelinePlacement ?? (kind === 'audio' ? playhead : visualEnd), volume: 1, fadeIn: 0, fadeOut: 0,
       visualTrack: 0,
       stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0,
       attribution, text, adjustments: { ...DEFAULT_ADJUSTMENTS },
     };
     rememberEdit();
-    setAssets((current) => [...current, asset]);
+    setAssets((current) => stackOverlappingVisuals([...current, asset]));
     selectOnly(asset.id);
     setPlayhead(asset.timelineStart);
     return asset;
@@ -2009,7 +2064,8 @@ export default function StudioPage() {
     setError('');
     try {
       const file = await renderTextFile(style);
-      await addGeneratedFile(file, 'image', 'Editable text', { ...style });
+      const asset = await addGeneratedFile(file, 'image', 'Editable text', { ...style }, playhead);
+      setEditingTextID(asset.id);
       setNotice('Text added to the timeline');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not add text');
@@ -2621,19 +2677,19 @@ export default function StudioPage() {
 
   async function queueVideoGenerations() {
     if (!user) {
-      setVideoGenerateQueueStatus('Sign in before queueing a video creation.');
+      setVideoGenerateQueueStatus('Sign in to queue videos.');
       return;
     }
     if (!videoGeneratePrompts.length) {
-      setVideoGenerateQueueStatus('Enter at least one video prompt.');
+      setVideoGenerateQueueStatus('Add a prompt.');
       return;
     }
     setMediaBrowserMode('videos');
     setMediaSearch(videoGeneratePrompts[0]);
     void searchStudioMedia('videos', videoGeneratePrompts[0]);
-    setBusy('generate-videos');
+    const activityID = startBackgroundActivity(`Queueing ${videoGeneratePrompts.length} video${videoGeneratePrompts.length === 1 ? '' : 's'}`);
     setError('');
-    setVideoGenerateQueueStatus(`Queueing ${videoGeneratePrompts.length} video creation${videoGeneratePrompts.length === 1 ? '' : 's'}…`);
+    setVideoGenerateQueueStatus(`Queueing ${videoGeneratePrompts.length}…`);
     try {
       let selectedImageURL = '';
       if (videoGenerateUseSelected) {
@@ -2657,11 +2713,11 @@ export default function StudioPage() {
         ...current.filter((job) => !queued.some(({ jobID }) => jobID === job.job_id)),
       ]);
       const failedCount = submissions.length - queued.length;
-      setVideoGenerateQueueStatus(`${queued.length} video creation${queued.length === 1 ? '' : 's'} queued.${failedCount ? ` ${failedCount} could not be queued.` : ''} You can launch more now.`);
+      setVideoGenerateQueueStatus(`${queued.length} queued${failedCount ? ` · ${failedCount} failed` : ''}. Keep creating.`);
     } catch (reason) {
       setVideoGenerateQueueStatus(reason instanceof Error ? reason.message : 'Could not queue video creation');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
@@ -2713,14 +2769,15 @@ export default function StudioPage() {
       setError('Sign in to restyle video');
       return;
     }
-    setBusy('restyle'); setError(''); setNotice('Uploading source and references…');
+    const activityID = startBackgroundActivity('Preparing restyle');
+    setError(''); setNotice('Restyle started');
     try {
       const videoURL = source.cloudURL || await uploadPublic(source.file);
       const uploadedReferences = await Promise.all(restyleReferences.map(async (reference) => ({
         ...reference,
         publicURL: reference.cloudURL || await uploadPublic(reference.file),
       })));
-      setNotice('Starting video transformation…');
+      updateBackgroundActivity(activityID, 'Restyling video');
       const response = await fetch('/api/service', {
         method: 'POST', headers: authHeaders(user.api_key),
         body: JSON.stringify({
@@ -2748,7 +2805,7 @@ export default function StudioPage() {
         if (status === 'completed') {
           const outputURL = resultURL(payload.job?.result);
           if (!outputURL) throw new Error('Video transformation completed without a video');
-          setNotice('Downloading transformed video…');
+          updateBackgroundActivity(activityID, 'Adding restyled video');
           const result = await fetch(outputURL);
           if (!result.ok) throw new Error('Could not download transformed video');
           const blob = await result.blob();
@@ -2765,13 +2822,14 @@ export default function StudioPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Video transformation failed');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
   async function removeBackground() {
     if (!selected || selected.kind !== 'image') return;
-    setBusy('background'); setError(''); setNotice('Uploading image…');
+    const activityID = startBackgroundActivity('Removing background');
+    setError(''); setNotice('Background removal started');
     try {
       const imageURL = await uploadPublic(selected.file);
       setNotice('Removing background…');
@@ -2797,21 +2855,22 @@ export default function StudioPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Background removal failed');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
   async function extendVideo() {
     if (!selected || selected.kind !== 'video') return;
-    setBusy('extend'); setError(''); setNotice('Preparing H.264 source for Grok…');
+    const activityID = startBackgroundActivity('Preparing extension');
+    setError(''); setNotice('Extension started');
     try {
       const sourceBlob = await renderTimelineVideo({
         format: 'mp4-h264', resolution: '720p', frameRate: 'source', quality: 'balanced',
       }, selected);
       const sourceFile = new File([sourceBlob], `${selected.name.replace(/\.[^.]+$/, '')}-grok-source.mp4`, { type: 'video/mp4' });
-      setNotice('Uploading source video…');
+      updateBackgroundActivity(activityID, 'Uploading extension');
       const videoURL = await uploadPublic(sourceFile);
-      setNotice('Starting extension…');
+      updateBackgroundActivity(activityID, 'Extending video');
       const response = await fetch('/api/studio/extend-video', {
         method: 'POST', headers: authHeaders(user?.api_key || ''),
         body: JSON.stringify({ video_url: videoURL, prompt: extendPrompt, duration: extendDuration, source_duration: clipDuration(selected) }),
@@ -2843,17 +2902,18 @@ export default function StudioPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Video extension failed');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
   async function upscaleVideo() {
     if (!selected || selected.kind !== 'video' || !canUpscaleSelected) return;
     const sourceName = selected.name.replace(/\.[^.]+$/, '');
-    setBusy('upscale'); setError(''); setNotice('Uploading source video…');
+    const activityID = startBackgroundActivity(`Upscaling ${upscaleScale}×`);
+    setError(''); setNotice('Upscale started');
     try {
       const videoURL = await uploadPublic(selected.file);
-      setNotice(`Starting Real-ESRGAN ${upscaleScale}× upscale…`);
+      updateBackgroundActivity(activityID, `Upscaling ${upscaleScale}×`);
       const response = await fetch('/api/studio/upscale-video', {
         method: 'POST', headers: authHeaders(user?.api_key || ''),
         body: JSON.stringify({
@@ -2877,7 +2937,7 @@ export default function StudioPage() {
         if (status === 'completed') {
           const url = resultURL(payload.job?.result);
           if (!url) throw new Error('Upscale completed without a video');
-          setNotice('Downloading the upscaled clip…');
+          updateBackgroundActivity(activityID, 'Adding upscaled video');
           const videoResponse = await fetch(url);
           if (!videoResponse.ok) throw new Error('Could not download the upscaled clip');
           const blob = await videoResponse.blob();
@@ -2892,7 +2952,7 @@ export default function StudioPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Video upscale failed');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
@@ -2994,7 +3054,8 @@ export default function StudioPage() {
 
   async function generateAudio() {
     if (!user) { setError('Sign in to generate audio'); return; }
-    setBusy(`generate-${audioMode}`); setError('');
+    const activityID = startBackgroundActivity(audioMode === 'speech' ? 'Creating voice' : audioMode === 'music' ? 'Creating music' : 'Creating sound');
+    setError('');
     try {
       if (audioMode === 'speech') {
         setNotice('Generating speech…');
@@ -3051,7 +3112,7 @@ export default function StudioPage() {
       }
       setError(reason instanceof Error ? reason.message : 'Audio generation failed');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
@@ -3284,13 +3345,20 @@ export default function StudioPage() {
     { id: 'audio', label: 'Audio', icon: AudioLines },
     { id: 'ai', label: 'AI tools', icon: Sparkles },
   ];
-  const activityLabel = busy === 'export' ? 'Exporting timeline'
+  const foregroundActivityLabel = busy === 'export' ? 'Exporting timeline'
     : busy === 'export-audio' ? 'Exporting audio'
       : busy === 'extend' ? 'Extending video'
         : busy === 'upscale' ? 'Upscaling video'
           : busy === 'restyle' ? 'Restyling video'
-            : busy.startsWith('generate-') ? 'Generating media'
-              : busy ? 'Working' : '';
+            : busy ? 'Working' : '';
+  const activeVideoGenerationCount = generationJobs.filter(isActiveGeneration).length;
+  const runningActivityCount = backgroundActivities.length + activeVideoGenerationCount;
+  const activityLabel = runningActivityCount > 1
+    ? `${runningActivityCount} tasks running`
+    : backgroundActivities[0]?.label || (activeVideoGenerationCount ? 'Generating video' : foregroundActivityLabel);
+  const activityProgress = runningActivityCount === 1 && backgroundActivities.length === 1
+    ? backgroundActivities[0].progress
+    : busy === 'export' ? exportProgress : null;
 
   return (
     <main
@@ -3318,36 +3386,38 @@ export default function StudioPage() {
           <button type="button" className={styles.iconButton} aria-label="Menu" aria-expanded={menuOpen} aria-controls="studio-navigation" onClick={() => setMenuOpen((open) => !open)}><Menu size={17} /></button>
           <Link href="/" className={styles.brand} aria-label="Manifold home"><img className={styles.brandMark} src="/brand/logo-mark.webp" alt="" /><span>MANIFOLD</span></Link>
           <span className={styles.divider} />
-          <div className={styles.projectPicker}>
+          <div ref={projectPickerRef} className={styles.projectPicker}>
             <button data-testid="studio-project-menu" className={styles.projectName} aria-expanded={projectMenuOpen} onClick={() => setProjectMenuOpen((open) => !open)}>{projectName} <ChevronDown size={13} /></button>
             {projectMenuOpen && <div className={styles.projectMenu}>
               <label>Project name<input aria-label="Project name" value={projectName} maxLength={120} onChange={(event) => setProjectName(event.target.value)} onBlur={() => !projectName.trim() && setProjectName('Untitled project')} /></label>
               <button className={styles.newProjectButton} onClick={newProject}><Plus size={13} /> New project</button>
               {user && <span className={styles.projectMenuLabel}>YOUR CLOUD PROJECTS</span>}
               {cloudProjects.map((project) => <button key={project.id} className={project.id === projectID ? styles.currentProject : ''} onClick={() => void openProject(project.id)}><span>{project.name}</span><small>{new Date(project.updated_at).toLocaleDateString()}</small></button>)}
-              {user && !cloudProjects.length && <small className={styles.noProjects}>This project will appear here after its first save.</small>}
-              {!user && <small className={styles.noProjects}>Sign in to sync projects and media across devices.</small>}
+              {user && !cloudProjects.length && <small className={styles.noProjects}>Projects appear after saving.</small>}
+              {!user && <small className={styles.noProjects}>Sign in to sync.</small>}
             </div>}
           </div>
         </div>
         <div className={styles.historyActions}>
           <button className={styles.iconButton} aria-label="Undo" title="Undo (Ctrl/Cmd + Z)" onClick={undo} disabled={!editHistory.undo.length}><Undo2 size={16} /></button>
           <button className={styles.iconButton} aria-label="Redo" title="Redo (Ctrl/Cmd + Shift + Z)" onClick={redo} disabled={!editHistory.redo.length}><Redo2 size={16} /></button>
-          <span data-testid="studio-save-status" className={styles.saved}>{saveStatus}</span>
-          {busy && <div className={styles.activityIndicator}><ManifoldLoader compact label={activityLabel} progress={busy === 'export' ? exportProgress : null} /></div>}
+          <span data-testid="studio-save-status" className={styles.saved}>{saveStatus.startsWith('Uploading ') ? '' : saveStatus}</span>
+          {activityLabel && <div className={styles.activityIndicator} data-testid="studio-background-activity"><ManifoldLoader compact label={activityLabel} progress={activityProgress} /></div>}
         </div>
         <div className={styles.accountActions}>
-          <Link href="/account" className={styles.creditPill}><span className={styles.creditDot} /><span className={styles.creditFull}>{creditsLabel}</span><span className={styles.creditCompact}>{user ? compactCredits(user.credits) : 'Sign in'}</span></Link>
-          <button type="button" className={styles.topupButton} onClick={() => openPaymentDialog({ message: 'Choose a plan or add credits without leaving the Studio.' })}><Plus size={14} /> Top up</button>
+          <Link href="/account" className={styles.creditPill}><span className={styles.creditDot} /><span className={styles.creditFull}>{creditsLabel}</span><span className={styles.creditCompact}>{creditsLabel}</span></Link>
+          <button type="button" className={styles.topupButton} onClick={() => openPaymentDialog({ message: 'Choose a plan or add funds.' })}><Plus size={14} /> Top up</button>
           <Link href="/account" className={styles.avatar} aria-label="Account"><UserRound size={16} /></Link>
           <button data-testid="studio-export" className={styles.exportButton} disabled={!assets.length || !!busy} onClick={() => timelineVisuals.length ? setExportOpen(true) : void exportAudio()}><Download size={15} /> Export</button>
         </div>
       </header>
 
+      {activityLabel && <div className={styles.mobileActivity} data-testid="studio-mobile-background-activity"><ManifoldLoader compact label={activityLabel} progress={activityProgress} /></div>}
+
       {menuOpen && <div className={styles.menuBackdrop} onMouseDown={(event) => { if (event.currentTarget === event.target) setMenuOpen(false); }}>
         <aside id="studio-navigation" className={styles.menuDrawer} aria-label="Manifold navigation" onMouseDown={(event) => event.stopPropagation()}>
           <div className={styles.menuHeader}>
-            <div><span className={styles.eyebrow}>MANIFOLDGEN</span><h2>Navigate</h2></div>
+            <Link href="/" className={styles.menuHome} onClick={() => setMenuOpen(false)}>MANIFOLDGEN</Link>
             <button type="button" className={styles.menuClose} aria-label="Close menu" onClick={() => setMenuOpen(false)}><X size={16} /></button>
           </div>
           <nav className={styles.menuNav}>
@@ -3358,7 +3428,7 @@ export default function StudioPage() {
             <span className={styles.menuLabel}>ACCOUNT</span>
             <Link href="/api" className={styles.menuLink} onClick={() => setMenuOpen(false)}><KeyRound size={17} /><span><b>API</b><small>Build with ManifoldGen</small></span></Link>
             <Link href="/account" className={styles.menuLink} onClick={() => setMenuOpen(false)}><UserRound size={17} /><span><b>Account</b><small>Keys, sign-in, and billing</small></span></Link>
-            <Link href="/account#credits" className={styles.menuLink} onClick={() => setMenuOpen(false)}><CreditCard size={17} /><span><b>Credits</b><small>Top up or manage your balance</small></span></Link>
+            <Link href="/account#credits" className={styles.menuLink} onClick={() => setMenuOpen(false)}><CreditCard size={17} /><span><b>Billing</b><small>Balance and plans</small></span></Link>
 
             <span className={styles.menuLabel}>LEARN</span>
             <Link href="/blog" className={styles.menuLink} onClick={() => setMenuOpen(false)}><BookOpen size={17} /><span><b>Blog</b><small>Prompt craft and faster AI systems</small></span></Link>
@@ -3393,8 +3463,8 @@ export default function StudioPage() {
                 </button>)}
               </div>
             {user && <section className={styles.generationLibrary}>
-              <div className={styles.generationHeader}><span>YOUR GENERATIONS</span><small>Saved automatically</small></div>
-              {!generationJobs.length ? <p className={styles.generationEmpty}>New videos started from Generate appear here. Finished videos can be added to this timeline.</p> : generationJobs.map((generation) => {
+              <div className={styles.generationHeader}><span>YOUR GENERATIONS</span><small>Auto-saved</small></div>
+              {!generationJobs.length ? <p className={styles.generationEmpty}>Queued videos appear here. Tap a finished video to add it.</p> : generationJobs.map((generation) => {
                 const readyURL = resultURL(generation.result);
                 const status = generationStatus(generation);
                 const ready = READY_GENERATION_STATUSES.has(status) && Boolean(readyURL);
@@ -3405,31 +3475,31 @@ export default function StudioPage() {
                   event.preventDefault();
                   setGenerationContextMenu({ jobID: generation.job_id, x: event.clientX, y: event.clientY });
                 }}>
-                  <button className={styles.generationMain} disabled={!ready && !failed} onClick={() => failed ? void retryGeneration(generation.job_id) : void addGenerationToTimeline(generation)} title={ready ? 'Add to timeline' : failed ? 'Retry generation' : undefined}>
-                    <span className={styles.generationPreview}>{ready && readyURL ? <video src={readyURL} muted playsInline preload="metadata" /> : <span className={styles.generationThumb}>{pending ? <Loader2 className={styles.spin} size={20} /> : failed ? <RotateCcw size={20} /> : <X size={20} />}</span>}{ready && <span className={styles.generationAdd}><Plus size={13} /> Add to timeline</span>}</span>
-                    <span className={styles.generationMeta}><b>{ready ? 'Ready to add' : pending ? 'Generating video…' : failed ? 'Retry generation' : 'Generation unavailable'}</b><small>{generation.prompt || generation.error || 'Manifold video generation'}</small></span>
+                  <button className={styles.generationMain} aria-disabled={!ready && !failed} onClick={() => failed ? void retryGeneration(generation.job_id) : ready ? void addGenerationToTimeline(generation) : undefined} title={ready ? 'Add to timeline' : failed ? 'Retry generation' : undefined}>
+                    <span className={styles.generationPreview}>{ready && readyURL ? <video src={readyURL} muted playsInline preload="metadata" /> : pending ? <ManifoldLoader compact label="Generating" /> : <span className={styles.generationThumb}>{failed ? <RotateCcw size={20} /> : <X size={20} />}</span>}{ready && <span className={styles.generationAdd}><Plus size={13} /> Add</span>}</span>
+                    <span className={styles.generationMeta}><b>{ready ? 'Ready' : pending ? 'Generating' : failed ? 'Retry' : 'Unavailable'}</b><small>{generation.prompt || generation.error || 'Manifold video'}</small></span>
                   </button>
                   <button className={styles.deleteGeneration} aria-label="Delete generation" onClick={() => void deleteGeneration(generation.job_id)}><Trash2 size={13} /></button>
                 </article>;
               })}
             </section>}
-              {!assets.length && <div className={styles.emptyLibrary}><Clapperboard size={24} /><p>{user ? 'Imports stay local while they upload securely in the background.' : 'Your imported files stay in this browser. Sign in for cloud sync.'}</p></div>}
+              {!assets.length && <div className={styles.emptyLibrary}><Clapperboard size={24} /><p>{user ? 'Imports upload in the background.' : 'Imports stay in this browser.'}</p></div>}
             </>}
 
             {mediaBrowserMode === 'videos' && <>
-              <button data-testid="studio-video-create" className={styles.mediaCreateCard} onClick={() => { setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Sparkles size={18} /></span><span><b>Generate videos</b><small>H3 · batches, audio, loops, image guidance</small></span></button>
+              <button data-testid="studio-video-create" className={styles.mediaCreateCard} onClick={() => { setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Sparkles size={18} /></span><span><b>Generate videos</b><small>H3 · batch · audio · loop</small></span></button>
               <div className={styles.discoveryLabel}><span>VIDEOS FROM THE COMMUNITY</span><small>Semantic search</small></div>
               <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('videos')} placeholder="Search motion, subjects, styles…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('videos')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
               <div className={styles.discoveryGrid}>{videoHits.map((hit) => <button data-testid={`studio-video-hit-${hit.job_id}`} className={styles.discoveryCard} key={hit.job_id} disabled={!hit.video_url || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'video', hit.prompt)} onClick={() => void addDiscoveredMedia(hit.video_url || '', hit.prompt, 'video')}>
                 <span className={styles.discoveryPreview}>{hit.video_url && <video src={hit.video_url} muted playsInline preload="metadata" />}<span><Plus size={13} /> Add</span></span>
                 <b>{hit.prompt || 'Community video'}</b><small>{hit.service || 'H3'}{typeof hit.similarity === 'number' ? ` · ${Math.round(hit.similarity * 100)}% match` : ''}</small>
               </button>)}</div>
-              {!mediaSearchBusy && !videoHits.length && <p className={styles.discoveryEmpty}>No videos found yet. Try a broader visual description.</p>}
+              {!mediaSearchBusy && !videoHits.length && <p className={styles.discoveryEmpty}>No matches. Try fewer words.</p>}
             </>}
 
             {mediaBrowserMode === 'images' && <>
               <section className={styles.imageComposer}>
-                <div className={styles.imageComposerTitle}><span><Sparkles size={15} /></span><div><b>Generate images</b><small>Related community work appears while rendering</small></div></div>
+                <div className={styles.imageComposerTitle}><span><Sparkles size={15} /></span><div><b>Generate images</b><small>Related work loads alongside</small></div></div>
                 <textarea data-testid="studio-image-prompt" value={imagePrompt} maxLength={2000} rows={4} onChange={(event) => setImagePrompt(event.target.value)} placeholder="Describe the image you want…" />
                 <div className={styles.engineChoices}>
                   <button data-testid="studio-image-engine-images3" className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
@@ -3439,7 +3509,7 @@ export default function StudioPage() {
                   <label><span>Aspect</span><select data-testid="studio-image-aspect" value={imageAspect} onChange={(event) => setImageAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
                   <label><span>Outputs</span><select data-testid="studio-image-count" value={imageCount} onChange={(event) => setImageCount(Number(event.target.value) as 1 | 4)}><option value="1">1 image</option><option value="4">4 images</option></select></label>
                 </div>
-                <button data-testid="studio-image-generate" className={styles.imageGenerateButton} disabled={busy === 'generate-images' || !imagePrompt.trim()} onClick={() => void generateStudioImages()}>{busy === 'generate-images' ? <><Loader2 className={styles.spin} size={15} /> Generating + searching…</> : <><Sparkles size={15} /> Generate {imageCount} image{imageCount === 1 ? '' : 's'}</>}</button>
+                <button data-testid="studio-image-generate" className={styles.imageGenerateButton} disabled={!imagePrompt.trim()} onClick={() => void generateStudioImages()}><Sparkles size={15} /> Generate {imageCount}</button>
               </section>
               <div className={styles.discoveryLabel}><span>SIMILAR IMAGES</span><small>From everyone</small></div>
               <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('images')} placeholder="Search subjects, lighting, composition…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('images')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
@@ -3451,11 +3521,11 @@ export default function StudioPage() {
                   <b>{hit.prompt || 'Community image'}</b><small>{hit.model || 'Generated'}{typeof hit.similarity === 'number' ? ` · ${Math.round(hit.similarity * 100)}% match` : ''}</small>
                 </button>;
               })}</div>
-              {!mediaSearchBusy && !imageHits.length && <p className={styles.discoveryEmpty}>No related images found yet. Generation still works independently.</p>}
+              {!mediaSearchBusy && !imageHits.length && <p className={styles.discoveryEmpty}>No matches. Generation still works.</p>}
             </>}
 
             {mediaBrowserMode === 'music' && <>
-              <button data-testid="studio-music-create" className={styles.mediaCreateCard} onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Music2 size={18} /></span><span><b>Generate music</b><small>Describe a soundtrack and add it directly to the timeline</small></span></button>
+              <button data-testid="studio-music-create" className={styles.mediaCreateCard} onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Music2 size={18} /></span><span><b>Generate music</b><small>Create a soundtrack</small></span></button>
               <div className={styles.discoveryLabel}><span>LICENSED MUSIC</span><small>Netwrck catalog</small></div>
               <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('music')} placeholder="Search mood, genre, instruments…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('music')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
               <div className={styles.catalogList}>{audioResults.map((asset) => <CatalogAudioCard
@@ -3489,7 +3559,7 @@ export default function StudioPage() {
               </div>
               <div className={styles.textAlignChoices}>{(['left', 'center', 'right'] as const).map((align) => <button key={align} className={textDraft.align === align ? styles.textAlignActive : ''} onClick={() => setTextDraft((current) => ({ ...current, align }))}>{align}</button>)}</div>
               <button data-testid="studio-text-apply" className={styles.imageGenerateButton} disabled={!textDraft.content.trim()} onClick={() => void updateSelectedText()}><Type size={15} /> Update text</button>
-              <p className={styles.textHint}>Text remains editable after reopening the project and uses the same stage scale, rotation, layering, and export path as other visual elements.</p>
+              <p className={styles.textHint}>Text stays editable.</p>
             </section> : <div className={styles.panelEmpty}><Type size={22} /><p>Add a text style above, or select existing text on the stage.</p></div>}
           </>}
 
@@ -3528,9 +3598,9 @@ export default function StudioPage() {
             </div>
             {selected?.kind === 'audio' && <div className={styles.audioControls}>
               <span className={styles.sectionLabel}>SELECTED CLIP</span>
-              <label className={styles.sliderRow}><span><b>Volume</b><output>{Math.round(selected.volume * 100)}%</output></span><input type="range" min="0" max="2" step="0.01" value={selected.volume} onChange={(event) => updateAsset(selected.id, { volume: Number(event.target.value) })} /></label>
-              <label className={styles.sliderRow}><span><b>Fade in</b><output>{selected.fadeIn.toFixed(1)}s</output></span><input type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeIn} onChange={(event) => updateAsset(selected.id, { fadeIn: Number(event.target.value) })} /></label>
-              <label className={styles.sliderRow}><span><b>Fade out</b><output>{selected.fadeOut.toFixed(1)}s</output></span><input type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeOut} onChange={(event) => updateAsset(selected.id, { fadeOut: Number(event.target.value) })} /></label>
+              <label className={styles.sliderRow}><span><b>Volume</b><output>{Math.round(selected.volume * 100)}%</output></span><input data-testid="studio-audio-volume" type="range" min="0" max="2" step="0.01" value={selected.volume} onChange={(event) => updateAsset(selected.id, { volume: Number(event.target.value) })} /></label>
+              <label className={styles.sliderRow}><span><b>Fade in</b><output>{selected.fadeIn.toFixed(1)}s</output></span><input data-testid="studio-audio-fade-in" type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeIn} onChange={(event) => updateAsset(selected.id, { fadeIn: Number(event.target.value) })} /></label>
+              <label className={styles.sliderRow}><span><b>Fade out</b><output>{selected.fadeOut.toFixed(1)}s</output></span><input data-testid="studio-audio-fade-out" type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeOut} onChange={(event) => updateAsset(selected.id, { fadeOut: Number(event.target.value) })} /></label>
             </div>}
             <div className={styles.catalogHeader}><span className={styles.sectionLabel}>LICENSED CATALOG</span><Library size={14} /></div>
             <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-audio-search" value={audioSearch} onChange={(event) => setAudioSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchAudioCatalog()} placeholder="Search music and sounds" /><button title="Search (Enter)" disabled={audioSearching} onClick={() => void searchAudioCatalog()}>{audioSearching ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
@@ -3548,12 +3618,12 @@ export default function StudioPage() {
           {tool === 'ai' && <>
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>ASSIST</span><h2>AI tools</h2></div></div>
             <div className={styles.aiStack}>
-              <button className={styles.aiCard} disabled={selected?.kind !== 'image' || !!busy} onClick={() => void removeBackground()}><span className={styles.aiIcon}><ImageIcon size={19} /></span><span><b>Remove background</b><small>Transparent WebP · 1 credit</small></span>{busy === 'background' ? <Loader2 className={styles.spin} size={16} /> : <ArrowLeft className={styles.arrowRight} size={14} />}</button>
-              <button data-testid="studio-upscale-open" className={styles.aiCard} disabled={!canOpenUpscale || !!busy} onClick={() => setUpscaleOpen(true)}><span className={styles.aiIcon}><Maximize size={19} /></span><span><b>Upscale video</b><small>{selected?.kind === 'video' && !canOpenUpscale ? 'Select a clip up to 60 seconds' : 'Real-ESRGAN · 2× or 4× detail'}</small></span>{busy === 'upscale' ? <Loader2 className={styles.spin} size={16} /> : <ArrowLeft className={styles.arrowRight} size={14} />}</button>
-              <button data-testid="studio-restyle-open" className={styles.aiCard} disabled={selected?.kind !== 'video' || !!busy} onClick={() => selected?.kind === 'video' && openRestyle(selected)}><span className={styles.aiIcon}><WandSparkles size={19} /></span><span><b>Restyle video</b><small>Preserve motion · transform the look</small></span>{busy === 'restyle' ? <Loader2 className={styles.spin} size={16} /> : <ArrowLeft className={styles.arrowRight} size={14} />}</button>
-              <button className={styles.aiCard} disabled={!canExtendSelected || !!busy} onClick={() => setExtendOpen(true)}><span className={styles.aiIcon}><Sparkles size={19} /></span><span><b>Extend video</b><small>{selected?.kind === 'video' && !canExtendSelected ? 'Select a 2–15 second clip' : 'Grok · auto-converts to MP4'}</small></span>{busy === 'extend' ? <Loader2 className={styles.spin} size={16} /> : <ArrowLeft className={styles.arrowRight} size={14} />}</button>
+              <button className={styles.aiCard} disabled={selected?.kind !== 'image'} onClick={() => void removeBackground()}><span className={styles.aiIcon}><ImageIcon size={19} /></span><span><b>Remove background</b><small>WebP · 1 credit</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
+              <button data-testid="studio-upscale-open" className={styles.aiCard} disabled={!canOpenUpscale} onClick={() => setUpscaleOpen(true)}><span className={styles.aiIcon}><Maximize size={19} /></span><span><b>Upscale video</b><small>{selected?.kind === 'video' && !canOpenUpscale ? 'Use a clip under 60s' : 'Real-ESRGAN · 2× or 4×'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
+              <button data-testid="studio-restyle-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openRestyle(selected)}><span className={styles.aiIcon}><WandSparkles size={19} /></span><span><b>Restyle video</b><small>Keep motion · change look</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
+              <button className={styles.aiCard} disabled={!canExtendSelected} onClick={() => setExtendOpen(true)}><span className={styles.aiIcon}><Sparkles size={19} /></span><span><b>Extend video</b><small>{selected?.kind === 'video' && !canExtendSelected ? 'Use a 2–15s clip' : 'Grok · MP4'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
             </div>
-            <p className={styles.aiNote}>AI tools require a signed-in account. Local editing and export do not use credits.</p>
+            <p className={styles.aiNote}>AI needs sign-in. Editing and export are free.</p>
           </>}
         </aside>
 
@@ -3610,8 +3680,36 @@ export default function StudioPage() {
                 onDoubleClick={() => updateAsset(asset.id, { stageX: 0, stageY: 0 })}
               >
                 {isSelected ? <>
-                  {asset.kind === 'video' && <video ref={videoRef} className={styles.sourceVideo} src={asset.url} muted={false} playsInline preload="auto" onLoadedData={() => { if (videoRef.current) videoRef.current.currentTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart)); drawCurrent(); }} />}
-                  <canvas ref={canvasRef} className={styles.previewCanvas} />
+                  {asset.kind === 'video' && <video ref={videoRef} className={styles.sourceVideo} src={asset.url} muted={false} playsInline preload="auto" onLoadedData={() => { if (videoRef.current) videoRef.current.currentTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart)); drawCurrent(); }} onSeeked={drawCurrent} />}
+                  {asset.text ? <textarea
+                    data-testid="studio-stage-text-editor"
+                    className={`${styles.stageTextEditor} ${editingTextID === asset.id ? styles.stageTextEditorEditing : styles.stageTextEditorMove}`}
+                    rows={Math.max(1, Math.min(8, textDraft.content.split('\n').length))}
+                    maxLength={800}
+                    value={textDraft.content}
+                    readOnly={editingTextID !== asset.id}
+                    autoFocus={editingTextID === asset.id}
+                    aria-label="Edit text on canvas"
+                    style={{
+                      color: textDraft.color,
+                      fontFamily: `${JSON.stringify(textDraft.fontFamily)}, sans-serif`,
+                      fontSize: `${Math.max(12, textDraft.fontSize * (previewSize?.width || 1920) / 1920)}px`,
+                      fontWeight: textDraft.fontWeight,
+                      textAlign: textDraft.align,
+                    }}
+                    onChange={(event) => setTextDraft((current) => ({ ...current, content: event.target.value }))}
+                    onBlur={() => { if (editingTextID === asset.id) void updateSelectedText(); setEditingTextID(''); }}
+                    onPointerDown={(event) => { if (editingTextID === asset.id) event.stopPropagation(); }}
+                    onPointerMove={(event) => { if (editingTextID === asset.id) event.stopPropagation(); }}
+                    onPointerUp={(event) => { if (editingTextID === asset.id) event.stopPropagation(); }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setEditingTextID(asset.id);
+                      event.currentTarget.focus();
+                    }}
+                  /> : <canvas ref={canvasRef} className={styles.previewCanvas} />}
                   <i className={`${styles.stageHandle} ${styles.stageHandleNW}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleNE}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleSW}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
@@ -3667,7 +3765,7 @@ export default function StudioPage() {
           <span>Video prompts · one per line</span>
           <textarea data-testid="studio-video-generate-prompt" value={videoGeneratePrompt} onChange={(event) => setVideoGeneratePrompt(event.target.value)} rows={5} maxLength={6000} placeholder={'A cinematic macro shot of glass flowers blooming\nA slow aerial move above a bioluminescent coast'} />
         </label>
-        <p className={styles.generateHint}>Queue up to 12 videos at once. This window stays open after every launch so you can keep creating.</p>
+        <p className={styles.generateHint}>Up to 12 prompts per launch. Keep launching.</p>
         <div className={styles.generateSettings}>
           <label><span>Aspect</span><select data-testid="studio-video-generate-aspect" value={videoGenerateAspect} onChange={(event) => setVideoGenerateAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
           <label><span>Canvas</span><select data-testid="studio-video-generate-size" value={videoGenerateSize} onChange={(event) => setVideoGenerateSize(event.target.value as H3Size)}><option value="preview">Preview</option><option value="balanced">Balanced</option><option value="native">Native</option></select></label>
@@ -3680,10 +3778,10 @@ export default function StudioPage() {
           <label className={videoGenerateDuration > 15 ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-loop" type="checkbox" disabled={videoGenerateDuration > 15} checked={videoGenerateLoop} onChange={(event) => setVideoGenerateLoop(event.target.checked)} /><span><b>Match start + end</b><small>{videoGenerateDuration > 15 ? 'Available for single shots up to 15 seconds' : 'Create and reuse one keyframe for a seamless loop'}</small></span></label>
           <label className={selected?.kind !== 'image' ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-selected-image" type="checkbox" disabled={selected?.kind !== 'image' || videoGenerateLoop} checked={videoGenerateUseSelected && selected?.kind === 'image' && !videoGenerateLoop} onChange={(event) => setVideoGenerateUseSelected(event.target.checked)} /><span><b>Use selected image</b><small>{selected?.kind === 'image' ? selected.name : 'Select an image on the timeline first'}</small></span></label>
         </div>
-        {videoGenerateDuration > 15 && <p className={styles.generateHint}>Long video uses conditioned chained shots: each ending guides the next segment. For the strongest music or dialogue continuity, generate one soundtrack in Audio and mix it across the finished clip.</p>}
+        {videoGenerateDuration > 15 && <p className={styles.generateHint}>Long videos chain shots. Add one soundtrack across the result.</p>}
         <div className={styles.priceLine}><span>Estimated batch · {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</span><b>~${videoGenerateBatchUSD.toFixed(2)} · ~{videoGenerateBatchCredits.toLocaleString()} credits</b></div>
         {videoGenerateQueueStatus && <p data-testid="studio-video-generate-status" className={styles.queueStatus} role="status">{videoGenerateQueueStatus}</p>}
-        <button data-testid="studio-video-generate-submit" className={styles.modalPrimary} disabled={busy === 'generate-videos' || !videoGeneratePrompts.length} onClick={() => void queueVideoGenerations()}>{busy === 'generate-videos' ? <><Loader2 className={styles.spin} size={16} /> Queueing creations…</> : <><Sparkles size={16} /> Queue {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</>}</button>
+        <button data-testid="studio-video-generate-submit" className={styles.modalPrimary} disabled={!videoGeneratePrompts.length} onClick={() => void queueVideoGenerations()}><Sparkles size={16} /> Queue {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</button>
       </Modal>}
 
       {imageGenerateOpen && <Modal title="Generate images" onClose={() => setImageGenerateOpen(false)}>
@@ -3696,8 +3794,8 @@ export default function StudioPage() {
           <label><span>Aspect</span><select value={imageAspect} onChange={(event) => setImageAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
           <label><span>Outputs</span><select value={imageCount} onChange={(event) => setImageCount(Number(event.target.value) as 1 | 4)}><option value="1">1 image</option><option value="4">4 images</option></select></label>
         </div>
-        <p className={styles.generateHint}>Related community work appears in the Images panel while your creation renders.</p>
-        <button data-testid="studio-image-modal-generate" className={styles.modalPrimary} disabled={busy === 'generate-images' || !imagePrompt.trim()} onClick={() => void generateStudioImages()}>{busy === 'generate-images' ? <><Loader2 className={styles.spin} size={15} /> Generating + searching…</> : <><Sparkles size={15} /> Generate {imageCount} image{imageCount === 1 ? '' : 's'}</>}</button>
+        <p className={styles.generateHint}>Related work appears while yours renders.</p>
+        <button data-testid="studio-image-modal-generate" className={styles.modalPrimary} disabled={!imagePrompt.trim()} onClick={() => void generateStudioImages()}><Sparkles size={15} /> Generate {imageCount}</button>
       </Modal>}
 
       {helpOpen && <Modal title="Keyboard shortcuts" onClose={() => setHelpOpen(false)}>
@@ -3748,9 +3846,9 @@ export default function StudioPage() {
       {extendOpen && <Modal title="Extend video" onClose={() => setExtendOpen(false)}>
         <label className={styles.field}><span>What happens next?</span><textarea value={extendPrompt} onChange={(event) => setExtendPrompt(event.target.value)} rows={4} /></label>
         <div className={styles.durationChoices}>{[2, 4, 6, 8, 10].map((duration) => <button key={duration} className={extendDuration === duration ? styles.durationActive : ''} onClick={() => setExtendDuration(duration)}>{duration}s</button>)}</div>
-        <div className={styles.priceLine}><span>Price</span><b>${customerExtendUSD.toFixed(2)} · {extendCredits.toLocaleString()} credits</b></div>
-        <p className={styles.billingNote}>Your selected 2–15 second clip is rendered to H.264 MP4 before upload. Grok adds 2–10 seconds and preserves the input shape, capped at 720p.</p>
-        <button className={styles.modalPrimary} disabled={!extendPrompt.trim() || !!busy} onClick={() => void extendVideo()}><Sparkles size={16} /> Extend video</button>
+        <div className={styles.priceLine}><span>Price</span><b>${customerExtendUSD.toFixed(2)}</b></div>
+        <p className={styles.billingNote}>2–15s clip · adds 2–10s · up to 720p.</p>
+        <button className={styles.modalPrimary} disabled={!extendPrompt.trim()} onClick={() => void extendVideo()}><Sparkles size={16} /> Extend video</button>
       </Modal>}
 
       {upscaleOpen && <Modal title="Upscale video" onClose={() => setUpscaleOpen(false)}>
@@ -3760,9 +3858,9 @@ export default function StudioPage() {
             return <button key={scale} disabled={!supported} className={upscaleScale === scale ? styles.durationActive : ''} onClick={() => setUpscaleScale(scale)}>{scale}×</button>;
           })}
         </div>
-        <div className={styles.priceLine}><span>Price</span><b>${customerUpscaleUSD.toFixed(2)} · {upscaleCredits.toLocaleString()} credits</b></div>
-        <p className={styles.billingNote}>Real-ESRGAN restores each frame with tiled GPU inference, preserves audio, and adds the durable upscaled result to your timeline. Output: {selected ? `${selected.width * upscaleScale} × ${selected.height * upscaleScale}` : '—'}.</p>
-        <button data-testid="studio-upscale-submit" className={styles.modalPrimary} disabled={!canUpscaleSelected || !!busy} onClick={() => void upscaleVideo()}>{busy === 'upscale' ? <><Loader2 className={styles.spin} size={16} /> Upscaling…</> : <><Maximize size={16} /> Upscale {upscaleScale}×</>}</button>
+        <div className={styles.priceLine}><span>Price</span><b>${customerUpscaleUSD.toFixed(2)}</b></div>
+        <p className={styles.billingNote}>Keeps audio · output {selected ? `${selected.width * upscaleScale} × ${selected.height * upscaleScale}` : '—'}.</p>
+        <button data-testid="studio-upscale-submit" className={styles.modalPrimary} disabled={!canUpscaleSelected} onClick={() => void upscaleVideo()}><Maximize size={16} /> Upscale {upscaleScale}×</button>
       </Modal>}
 
       {restyleOpen && <Modal title="Restyle video" onClose={() => setRestyleOpen(false)}>
@@ -3807,9 +3905,9 @@ export default function StudioPage() {
             <button aria-label="Remove reference" onClick={() => setRestyleReferences((current) => current.filter((item) => item.id !== reference.id))}><X size={13} /></button>
           </div>)}
         </div>
-        <p className={styles.billingNote}>{restyleModel === 'wan-2.2' ? `About ${(restyleFrames / restyleFPS).toFixed(1)}s output. Higher strength follows the prompt more; lower strength preserves more of the source.` : 'The selected source is Video 1. References stay in the order above and can be cited by number in your prompt.'}</p>
-        <div className={styles.priceLine}><span>Estimated charge</span><b>~${restyleEstimateUSD.toFixed(2)} · ~{restyleEstimateCredits.toLocaleString()} credits</b></div>
-        <button data-testid="studio-restyle-submit" className={styles.modalPrimary} disabled={!restylePrompt.trim() || !!busy} onClick={() => void generateRestyle()}>{busy === 'restyle' ? <><Loader2 className={styles.spin} size={16} /> Transforming…</> : <><WandSparkles size={16} /> Transform video</>}</button>
+        <p className={styles.billingNote}>{restyleModel === 'wan-2.2' ? `~${(restyleFrames / restyleFPS).toFixed(1)}s · higher strength follows the prompt.` : 'Source is Video 1. Cite references by number.'}</p>
+        <div className={styles.priceLine}><span>Estimate</span><b>~${restyleEstimateUSD.toFixed(2)}</b></div>
+        <button data-testid="studio-restyle-submit" className={styles.modalPrimary} disabled={!restylePrompt.trim()} onClick={() => void generateRestyle()}><WandSparkles size={16} /> Transform video</button>
       </Modal>}
 
       {audioGenerateOpen && <Modal title={audioMode === 'music' ? 'Generate music' : audioMode === 'sfx' ? 'Generate sound' : 'Text to speech'} onClose={() => { stopVoicePreview(); setAudioGenerateOpen(false); }}>
@@ -3827,14 +3925,14 @@ export default function StudioPage() {
           </div>
           <div className={styles.voiceSampleNote}><span>Pre-rendered Opus previews · free to play</span>{voicePreviewError && <b role="alert">{voicePreviewError}</b>}</div>
           <label className={styles.field}><span>Speed · {speechSpeed.toFixed(1)}×</span><input type="range" min="0.7" max="1.4" step="0.1" value={speechSpeed} onChange={(event) => setSpeechSpeed(Number(event.target.value))} /></label>
-          <div className={styles.priceLine}><span>Exact text charge</span><b>${speechUSD.toFixed(4)} · {speechCredits.toFixed(2)} credits</b></div>
+          <div className={styles.priceLine}><span>Price</span><b>${speechUSD.toFixed(4)}</b></div>
         </> : <>
           <label className={styles.field}><span>{audioMode === 'music' ? 'Describe the track' : 'Describe the sound'}</span><textarea data-testid="studio-audio-prompt" value={audioPrompt} onChange={(event) => setAudioPrompt(event.target.value)} rows={4} maxLength={2000} /></label>
           <div className={styles.durationChoices}>{(audioMode === 'music' ? [30, 45, 60, 90, 180] : [5, 10, 20, 30, 45]).map((duration) => <button key={duration} className={audioDuration === duration ? styles.durationActive : ''} onClick={() => setAudioDuration(duration)}>{duration}s</button>)}</div>
-          <div className={styles.priceLine}><span>{audioMode === 'music' ? 'music charge' : 'Estimated charge'}</span><b>{audioMode === 'music' ? '80 credits' : `~$${audioEstimateUSD.toFixed(2)} · ~${audioEstimateCredits.toLocaleString()} credits`}</b></div>
+          <div className={styles.priceLine}><span>{audioMode === 'music' ? 'Price' : 'Estimate'}</span><b>{audioMode === 'music' ? '$0.80' : `~$${audioEstimateUSD.toFixed(2)}`}</b></div>
         </>}
-        <p className={styles.billingNote}>Catalog search and editing are free. Generation is charged only through your Manifold credits.</p>
-        <button data-testid="studio-audio-generate" className={styles.modalPrimary} disabled={!!busy || (audioMode === 'speech' ? !speechText.trim() : !audioPrompt.trim())} onClick={() => void generateAudio()}>{busy.startsWith('generate-') ? <><Loader2 className={styles.spin} size={16} /> Generating…</> : <><Sparkles size={16} /> Generate and add to timeline</>}</button>
+        <p className={styles.billingNote}>Search and editing are free. You only pay for generation.</p>
+        <button data-testid="studio-audio-generate" className={styles.modalPrimary} disabled={audioMode === 'speech' ? !speechText.trim() : !audioPrompt.trim()} onClick={() => void generateAudio()}><Sparkles size={16} /> Generate</button>
       </Modal>}
 
       {contextMenu && <div className={styles.contextMenuBackdrop} onPointerDown={() => setContextMenu(null)} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); }}><div data-testid="studio-context-menu" className={styles.contextMenu} style={{ left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 248)), top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 480)) }} onPointerDown={(event) => event.stopPropagation()}>{(() => {
@@ -3886,5 +3984,48 @@ function PanelEmpty() {
 }
 
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return <div className={styles.modalBackdrop} onMouseDown={(event) => event.currentTarget === event.target && onClose()}><div className={styles.modal} role="dialog" aria-modal="true" aria-label={title}><div className={styles.modalHeader}><h2>{title}</h2><button aria-label={`Close ${title}`} onClick={onClose}><X size={18} /></button></div><div className={styles.modalBody}>{children}</div></div></div>;
+  const modalRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableElements = () => Array.from(modalRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    ) || []).filter((element) => !element.hidden && element.getAttribute('aria-hidden') !== 'true');
+    const focusFrame = window.requestAnimationFrame(() => (focusableElements()[0] || modalRef.current)?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = focusableElements();
+      if (!focusable.length) {
+        event.preventDefault();
+        modalRef.current?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !modalRef.current?.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', handleKeyDown, true);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, []);
+
+  return <div className={styles.modalBackdrop} onMouseDown={(event) => event.currentTarget === event.target && closeRef.current()}><div ref={modalRef} className={styles.modal} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}><div className={styles.modalHeader}><h2>{title}</h2><button aria-label={`Close ${title}`} onClick={() => closeRef.current()}><X size={18} /></button></div><div className={styles.modalBody}>{children}</div></div></div>;
 }
