@@ -4,6 +4,7 @@ const isExport = process.env.NEXT_OUTPUT === 'export';
 const apiOrigin = process.env.MANIFOLDGEN_API_ORIGIN || 'http://localhost:8116';
 
 const nextConfig: NextConfig = {
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   reactStrictMode: true,
   poweredByHeader: false,
   eslint: { ignoreDuringBuilds: true },

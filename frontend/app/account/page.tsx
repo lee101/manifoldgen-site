@@ -485,51 +485,53 @@ export default function AccountPage() {
               </button>
             </div>
 
-            <h2 className="mt-6 text-lg font-semibold">Top up credits</h2>
-            <p className="mt-1 text-sm text-[var(--color-mute)]">
-              1 credit = ${creditPrice.toFixed(2)}. Images are 4 credits ($0.04). Min top-up $5.
-            </p>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {['25', '50', '100', '200'].map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  data-testid={`account-topup-${v}`}
-                  onClick={() => setAmount(v)}
-                  className={`rounded-xl border px-3 py-2 text-sm ${
-                    amount === v ? 'border-[var(--color-accent)] bg-white/10' : 'border-white/10'
-                  }`}
-                >
-                  ${v}
-                </button>
-              ))}
-            </div>
-            <label className="mt-3 block text-sm text-white/70">
-              Custom amount (USD)
-              <input
-                data-testid="account-topup-custom"
-                type="number"
-                min={5}
-                max={500}
-                step={1}
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="mt-1.5 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-[var(--color-accent)]"
-              />
-            </label>
-            <p className="mt-2 text-xs text-white/45" data-testid="account-topup-credits-preview">
-              ≈ {Math.round((Number(amount) || 0) / creditPrice).toLocaleString()} credits
-            </p>
-            <button
-              type="button"
-              disabled={busy}
-              data-testid="account-buy-credits"
-              onClick={() => buyCredits('credits')}
-              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2.5 font-semibold disabled:opacity-50"
-            >
-              {busy ? <Loader2 className="animate-spin" size={16} /> : <CreditCard size={16} />}
-              Buy ${Number(amount) || 0} credits
-            </button>
+            <section id="credits" className="scroll-mt-24">
+              <h2 className="mt-6 text-lg font-semibold">Top up credits</h2>
+              <p className="mt-1 text-sm text-[var(--color-mute)]">
+                1 credit = ${creditPrice.toFixed(2)}. Images are 4 credits ($0.04). Min top-up $5.
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {['25', '50', '100', '200'].map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    data-testid={`account-topup-${v}`}
+                    onClick={() => setAmount(v)}
+                    className={`rounded-xl border px-3 py-2 text-sm ${
+                      amount === v ? 'border-[var(--color-accent)] bg-white/10' : 'border-white/10'
+                    }`}
+                  >
+                    ${v}
+                  </button>
+                ))}
+              </div>
+              <label className="mt-3 block text-sm text-white/70">
+                Custom amount (USD)
+                <input
+                  data-testid="account-topup-custom"
+                  type="number"
+                  min={5}
+                  max={500}
+                  step={1}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="mt-1.5 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-[var(--color-accent)]"
+                />
+              </label>
+              <p className="mt-2 text-xs text-white/45" data-testid="account-topup-credits-preview">
+                ≈ {Math.round((Number(amount) || 0) / creditPrice).toLocaleString()} credits
+              </p>
+              <button
+                type="button"
+                disabled={busy}
+                data-testid="account-buy-credits"
+                onClick={() => buyCredits('credits')}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2.5 font-semibold disabled:opacity-50"
+              >
+                {busy ? <Loader2 className="animate-spin" size={16} /> : <CreditCard size={16} />}
+                Buy ${Number(amount) || 0} credits
+              </button>
+            </section>
             <h2 className="mt-6 text-lg font-semibold">Checkout</h2>
             <p className="mt-1 text-sm text-[var(--color-mute)]">
               Monthly includes unlimited images + $25 H3 video credits; annual is 12× ($300).
