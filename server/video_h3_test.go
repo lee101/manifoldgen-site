@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -144,8 +147,48 @@ func TestH3RunpodQueueTimeout(t *testing.T) {
 	}
 }
 
+func TestLocalH3WorkerReadyRequiresSuccessfulHealthCheck(t *testing.T) {
+	ready := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health-check" {
+			t.Fatalf("health path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"READY"}`))
+	}))
+	defer ready.Close()
+	if !localH3WorkerReady(ready.URL + "/") {
+		t.Fatal("healthy local worker was not detected")
+	}
+
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "starting", http.StatusServiceUnavailable)
+	}))
+	defer unavailable.Close()
+	if localH3WorkerReady(unavailable.URL) {
+		t.Fatal("unavailable local worker must not receive a fallback job")
+	}
+	if localH3WorkerReady("") {
+		t.Fatal("empty local worker URL must not be ready")
+	}
+}
+
+func TestPublicVideoGenerationErrorsHideProviderDetails(t *testing.T) {
+	for _, message := range []string{
+		videoGenerationFailedMessage,
+		videoGenerationUnavailableMessage,
+		videoGenerationTimedOutMessage,
+	} {
+		lower := strings.ToLower(message)
+		for _, internal := range []string{"h3", "runpod", "cog", "local"} {
+			if strings.Contains(lower, internal) {
+				t.Fatalf("public error %q leaked %q", message, internal)
+			}
+		}
+	}
+}
+
 func TestPublicVideoJobRemovesProviderDetails(t *testing.T) {
-	job := &VideoJob{Service: "h3_video", ProviderCost: 1.2, ChargedUSD: 1.8, CreditsUsed: 180, Result: json.RawMessage(`{"_h3_variant":"normal-h3","provider":"runpod","provider_cost_usd":1.2,"metrics":{"quant":"internal"},"video_url":"https://media.example/video.webm"}`)}
+	job := &VideoJob{Service: "h3_video", Status: "failed", Error: `local H3 sync predict: connection refused`, ProviderCost: 1.2, ChargedUSD: 1.8, CreditsUsed: 180, Result: json.RawMessage(`{"_h3_variant":"normal-h3","provider":"runpod","provider_cost_usd":1.2,"metrics":{"quant":"internal"},"video_url":"https://media.example/video.webm"}`)}
 	public := publicVideoJob(job)
 	if public.Service != "video" {
 		t.Fatalf("public service = %q", public.Service)
@@ -162,6 +205,13 @@ func TestPublicVideoJobRemovesProviderDetails(t *testing.T) {
 	}
 	if public.ProviderCost != 0 || result["metrics"] != nil {
 		t.Fatalf("provider diagnostics leaked: job=%#v result=%#v", public, result)
+	}
+	if public.Error != videoGenerationFailedMessage {
+		t.Fatalf("provider error leaked: %q", public.Error)
+	}
+	payment := publicVideoJob(&VideoJob{Service: "h3_video", Status: "payment_required", Error: "top up to release completed video"})
+	if payment.Error != "top up to release completed video" {
+		t.Fatalf("payment guidance was hidden: %q", payment.Error)
 	}
 	if result["charged_usd"] != 1.8 || result["credits_used"] != float64(180) {
 		t.Fatalf("customer settlement missing: %#v", result)

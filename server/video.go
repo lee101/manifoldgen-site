@@ -24,13 +24,19 @@ import (
 
 const maxGeneratedVideoBytes = 256 << 20
 
+const (
+	videoGenerationFailedMessage      = "video generation failed"
+	videoGenerationUnavailableMessage = "video generation service is temporarily unavailable"
+	videoGenerationTimedOutMessage    = "video generation timed out"
+)
+
 const h3DownstreamMarkupPercent = int64(50)
 const h3MinimumChargeMicros = int64(100_000) // $0.10; video should never cost less than an image.
 const h3NativeFiveSecondBaseline = 15 * time.Minute
 const h3RunpodQueueTimeoutDefault = 10 * time.Minute
 
 var appNZVideoClient = &http.Client{Timeout: 30 * time.Second}
-var localH3CogClient = &http.Client{Timeout: 60 * time.Second}
+var localH3CogClient = &http.Client{Timeout: 2 * time.Second}
 var activeCompletedVideoRepairs sync.Map
 
 func h3LocalCogURL() string {
@@ -372,7 +378,8 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		} else if upstreamStatus >= 400 && upstreamStatus < 500 {
 			status = upstreamStatus
 		}
-		jsonError(ctx, status, "video service: "+err.Error())
+		log.Printf("[video] shared generation submission failed: %v", err)
+		jsonError(ctx, status, videoGenerationUnavailableMessage)
 		return
 	}
 	if envelope.Prediction.ID == "" {
@@ -381,7 +388,8 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 	}
 	job, err := dbConn.CreateVideoJobForService(user.ID, envelope.Prediction.ID, h3JobService(req), req.Prompt)
 	if err != nil {
-		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 video job")
+		log.Printf("[video] persist submitted generation job failed: %v", err)
+		jsonError(ctx, http.StatusInternalServerError, "failed to create video job")
 		return
 	}
 	persisted, _ := json.Marshal(appNZH3Input(req))
@@ -462,22 +470,26 @@ func callH3Runpod(endpointID, suffix string, method string, input interface{}, o
 func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, route h3WorkerRoute) {
 	input := appNZH3Input(req)
 	var queued h3RunpodQueuedJob
-	status, err := callH3Runpod(route.RunpodEndpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, &queued)
+	status, err := submitScaledH3RunpodJob(route, input, &queued)
 	if err != nil {
 		code := http.StatusBadGateway
 		if status == 0 {
 			code = http.StatusServiceUnavailable
 		}
-		jsonError(ctx, code, "video service: "+err.Error())
+		log.Printf("[video] hosted generation submission failed: %v", err)
+		jsonError(ctx, code, videoGenerationUnavailableMessage)
 		return
 	}
 	if queued.ID == "" {
+		log.Printf("[video] hosted generation submission returned no job ID")
 		jsonError(ctx, http.StatusBadGateway, "video service did not return a job")
 		return
 	}
+	scheduleH3ScaleToZero(route.RunpodEndpointID)
 	job, err := dbConn.CreateVideoJobForService(user.ID, "runpod:"+route.RunpodEndpointID+":"+queued.ID, h3JobService(req), req.Prompt)
 	if err != nil {
-		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 video job")
+		log.Printf("[video] persist hosted generation job failed: %v", err)
+		jsonError(ctx, http.StatusInternalServerError, "failed to create video job")
 		return
 	}
 	// Persist the normalized request so a queue-starved RunPod job can be moved
@@ -485,7 +497,8 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 	input["_h3_variant"] = route.Variant
 	persisted, _ := json.Marshal(input)
 	if err := dbConn.UpdateVideoJob(job.ID, "queued", persisted, ""); err != nil {
-		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 route")
+		log.Printf("[video] persist generation input failed job=%s: %v", job.ID, err)
+		jsonError(ctx, http.StatusInternalServerError, "failed to create video job")
 		return
 	}
 	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
@@ -508,11 +521,13 @@ func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 	payload, _ := json.Marshal(input)
 	job, err := dbConn.CreateVideoJobForService(user.ID, "local:sync", h3JobService(req), req.Prompt)
 	if err != nil {
-		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 video job")
+		log.Printf("[video] persist local generation job failed: %v", err)
+		jsonError(ctx, http.StatusInternalServerError, "failed to create video job")
 		return
 	}
 	if err := dbConn.UpdateVideoJob(job.ID, "queued", payload, ""); err != nil {
-		jsonError(ctx, http.StatusInternalServerError, "failed to persist H3 input")
+		log.Printf("[video] persist local generation input failed job=%s: %v", job.ID, err)
+		jsonError(ctx, http.StatusInternalServerError, "failed to create video job")
 		return
 	}
 	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
@@ -820,7 +835,8 @@ func processH3VideoJob(job *VideoJob) {
 		if err != nil {
 			consecutiveErrors++
 			if consecutiveErrors >= 10 {
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "video status unavailable: "+err.Error())
+				log.Printf("[video] shared generation status unavailable job=%s: %v", job.ID, err)
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationUnavailableMessage)
 				return
 			}
 			time.Sleep(2 * time.Second)
@@ -862,16 +878,15 @@ func processH3VideoJob(job *VideoJob) {
 			maybeTriggerAutoTopup(job.UserID)
 			return
 		case "failed", "cancelled", "canceled":
-			message := strings.TrimSpace(envelope.Prediction.Error)
-			if message == "" {
-				message = "video generation failed"
+			if message := strings.TrimSpace(envelope.Prediction.Error); message != "" {
+				log.Printf("[video] shared generation failed job=%s: %s", job.ID, message)
 			}
-			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, message)
+			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 			return
 		}
 		time.Sleep(2 * time.Second)
 	}
-	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "video generation did not finish within 45 minutes")
+	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationTimedOutMessage)
 }
 
 type h3RunpodStatus struct {
@@ -931,7 +946,8 @@ func uploadH3RunpodWebM(ctx context.Context, video []byte, userID string) (strin
 func processRunpodH3VideoJob(job *VideoJob) {
 	endpointID, providerJobID, ok := parseRunpodH3ProviderJob(job.ProviderJobID)
 	if !ok {
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "invalid RunPod H3 job reference")
+		log.Printf("[video] invalid hosted generation reference job=%s", job.ID)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 		return
 	}
 	variant := h3NormalVariant
@@ -955,7 +971,8 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		if err != nil {
 			consecutiveErrors++
 			if consecutiveErrors >= 10 {
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 status unavailable: "+err.Error())
+				log.Printf("[video] hosted generation status unavailable job=%s: %v", job.ID, err)
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationUnavailableMessage)
 				return
 			}
 			time.Sleep(2 * time.Second)
@@ -971,12 +988,14 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		switch providerStatus {
 		case "COMPLETED":
 			if len(state.Output.Outputs) == 0 || state.Output.Outputs[0].Data == "" {
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 completed without a video artifact")
+				log.Printf("[video] hosted generation completed without an artifact job=%s", job.ID)
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 				return
 			}
 			artifact, err := base64.StdEncoding.DecodeString(state.Output.Outputs[0].Data)
 			if err != nil {
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 returned malformed video data")
+				log.Printf("[video] hosted generation returned malformed artifact job=%s: %v", job.ID, err)
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 				return
 			}
 			user, err := dbConn.GetUserByID(job.UserID)
@@ -988,7 +1007,8 @@ func processRunpodH3VideoJob(job *VideoJob) {
 			videoURL, err := uploadH3RunpodWebM(ctx, artifact, user.ID)
 			cancel()
 			if err != nil {
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "failed to store RunPod H3 output: "+err.Error())
+				log.Printf("[video] store hosted generation output failed job=%s: %v", job.ID, err)
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 				return
 			}
 			predictSeconds := float64(state.ExecutionTime) / 1000
@@ -1027,21 +1047,20 @@ func processRunpodH3VideoJob(job *VideoJob) {
 			maybeTriggerAutoTopup(job.UserID)
 			return
 		case "FAILED", "CANCELLED", "TIMED_OUT":
-			message := strings.TrimSpace(state.Error)
-			if message == "" {
-				message = "RunPod H3 generation failed"
+			if message := strings.TrimSpace(state.Error); message != "" {
+				log.Printf("[video] hosted generation failed job=%s status=%s: %s", job.ID, providerStatus, message)
 			}
-			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, message)
+			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 			return
 		}
 		time.Sleep(2 * time.Second)
 	}
-	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "RunPod H3 generation did not finish within 4 hours")
+	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationTimedOutMessage)
 }
 
 func fallbackRunpodH3ToLocal(job *VideoJob, endpointID, providerJobID, variant string) bool {
 	route := h3RouteForPrompt(job.Prompt)
-	if strings.TrimSpace(route.CogURL) == "" {
+	if !localH3WorkerReady(route.CogURL) {
 		return false
 	}
 	var cancelled h3RunpodQueuedJob
@@ -1080,6 +1099,24 @@ func fallbackRunpodH3ToLocal(job *VideoJob, endpointID, providerJobID, variant s
 	return true
 }
 
+func localH3WorkerReady(cogURL string) bool {
+	cogURL = strings.TrimRight(strings.TrimSpace(cogURL), "/")
+	if cogURL == "" {
+		return false
+	}
+	req, err := http.NewRequest(http.MethodGet, cogURL+"/health-check", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := localH3CogClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 32<<10))
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
 func processLocalH3VideoJob(job *VideoJob) {
 	// Prefer sync POST: this coglet build has no GET /predictions/{id} poll route.
 	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
@@ -1102,7 +1139,8 @@ func processLocalH3VideoJob(job *VideoJob) {
 		cogURL = h3LocalCogURL()
 	}
 	if cogURL == "" {
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "H3 worker URL is not configured")
+		log.Printf("[video] local generation worker URL is not configured job=%s", job.ID)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationUnavailableMessage)
 		return
 	}
 	if variant == "" {
@@ -1111,7 +1149,8 @@ func processLocalH3VideoJob(job *VideoJob) {
 	body, _ := json.Marshal(map[string]interface{}{"input": input})
 	req, err := http.NewRequest(http.MethodPost, cogURL+"/predictions", bytes.NewReader(body))
 	if err != nil {
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, err.Error())
+		log.Printf("[video] create local generation request failed job=%s: %v", job.ID, err)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -1119,13 +1158,15 @@ func processLocalH3VideoJob(job *VideoJob) {
 	client := &http.Client{Timeout: 50 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "local H3 sync predict: "+err.Error())
+		log.Printf("[video] local generation request failed job=%s: %v", job.ID, err)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationUnavailableMessage)
 		return
 	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, strings.TrimSpace(string(data)))
+		log.Printf("[video] local generation returned status=%d job=%s: %s", resp.StatusCode, job.ID, tailOutput(data))
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 		return
 	}
 	var poll struct {
@@ -1137,25 +1178,27 @@ func processLocalH3VideoJob(job *VideoJob) {
 		ID          string                 `json:"id"`
 	}
 	if err := json.Unmarshal(data, &poll); err != nil {
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "invalid local H3 response")
+		log.Printf("[video] local generation returned invalid response job=%s: %v", job.ID, err)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 		return
 	}
 	st := strings.ToLower(strings.TrimSpace(poll.Status))
 	if st == "starting" || st == "processing" {
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "local cog returned async prediction but has no poll route; ensure Prefer respond-async is not set")
+		log.Printf("[video] local generation unexpectedly returned async status job=%s status=%s", job.ID, st)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 		return
 	}
 	if st == "failed" || st == "canceled" || st == "cancelled" {
-		msg := strings.TrimSpace(poll.Error)
-		if msg == "" {
-			msg = "local H3 prediction failed"
+		if message := strings.TrimSpace(poll.Error); message != "" {
+			log.Printf("[video] local generation failed job=%s: %s", job.ID, message)
 		}
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, msg)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 		return
 	}
 	videoURL := extractLocalH3OutputURL(poll.Output)
 	if videoURL == "" {
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "local H3 returned no video url")
+		log.Printf("[video] local generation returned no video URL job=%s", job.ID)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 		return
 	}
 	predictSeconds := poll.PredictTime
@@ -1437,6 +1480,12 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 	// Provider settlement inputs stay server-side. Public callers only see the
 	// amount actually charged to their account.
 	out.ProviderCost = 0
+	if job.Service == "h3_video" || job.Service == "sfx_generation" {
+		switch strings.ToLower(strings.TrimSpace(job.Status)) {
+		case "failed", "error", "cancelled", "canceled", "timed_out":
+			out.Error = videoGenerationFailedMessage
+		}
+	}
 	if public := publicServiceName(job.Service); public != "" {
 		out.Service = public
 	} else if job.Service == "video_generate" || job.Service == "ltx_video" {
