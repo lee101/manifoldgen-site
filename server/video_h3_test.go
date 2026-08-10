@@ -109,6 +109,7 @@ func TestPrepareH3AudioResultUsesPublicAudioShape(t *testing.T) {
 	if public.Service != "sfx" {
 		t.Fatalf("public service = %q", public.Service)
 	}
+	result = nil
 	if err := json.Unmarshal(public.Result, &result); err != nil {
 		t.Fatal(err)
 	}
