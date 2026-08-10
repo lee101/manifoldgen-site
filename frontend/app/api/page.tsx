@@ -5,7 +5,7 @@ import { PricingTable } from './pricing-table';
 
 export const metadata = {
   title: 'API Documentation',
-  description: 'Build image and native video generation into your product with the ManifoldGen API.',
+  description: 'Build image, native video, and music generation into your product with the ManifoldGen API.',
 };
 
 const createVideo = `curl https://manifoldgen.com/api/service \\
@@ -48,6 +48,56 @@ const createImage = `curl https://manifoldgen.com/api/service \\
     "num_steps": 12
   }'`;
 
+const createAudio = `curl https://manifoldgen.com/api/service \\
+  -X POST \\
+  -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "service": "audio",
+    "kind": "music",
+    "prompt": "Warm modular synths, restrained drums, hopeful sunrise",
+    "duration": 30
+  }'`;
+
+const createMusic = `curl https://manifoldgen.com/api/service \\
+  -X POST \\
+  -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"service":"music","prompt":"Slow cinematic strings at dawn","duration":45}'`;
+
+const createSFX = `curl https://manifoldgen.com/api/service \\
+  -X POST \\
+  -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"service":"sfx","prompt":"Heavy wooden door closing in a stone hall","duration":5}'`;
+
+const sfxQueuedResponse = `{
+  "service": "sfx",
+  "result": {
+    "job_id": "video_71c9…",
+    "status": "queued",
+    "status_url": "/api/video-jobs/video_71c9…"
+  },
+  "estimated_credits": 51,
+  "estimated_cost_usd": 0.51
+}`;
+
+const audioResponse = `{
+  "service": "audio",
+  "audio_id": "9c41…",
+  "audio_url": "https://…/track.wav",
+  "kind": "music",
+  "duration_seconds": 30,
+  "indexed": true,
+  "credits_used": 80,
+  "cost_usd": 0.80
+}`;
+
+const searchAudio = `curl --get https://manifoldgen.com/api/audio/search \\
+  --data-urlencode "q=hopeful modular sunrise" \\
+  --data-urlencode "kind=music" \\
+  --data-urlencode "top_k=20"`;
+
 const llmMarkdown = `# ManifoldGen API integration
 
 Use \`Authorization: Bearer $MANIFOLDGEN_API_KEY\` on every protected request. Never expose the key in browser code.
@@ -57,6 +107,9 @@ POST \`https://manifoldgen.com/api/service\` with JSON: \`{"service":"video","pr
 
 ## Generate images
 POST \`/api/service\` with \`{"service":"image","prompt":"...","width":1024,"height":1024,"num_steps":12,"n":1}\`. Image generation returns synchronously. Use \`n\` for batches.
+
+## Generate audio
+Use \`{"service":"music","prompt":"...","duration":30}\` for synchronous music generation, or \`{"service":"sfx","prompt":"...","duration":5}\` for an asynchronous sound-effect job. The umbrella form is \`{"service":"audio","kind":"music|sfx",...}\`. Music accepts 30–180 seconds; SFX accepts 4–45 seconds. Completed assets include a durable \`audio_url\` and \`audio_id\` and are searchable with \`GET /api/audio/search?q=...&kind=music|sfx&top_k=20\`.
 
 ## Extend video
 POST \`/api/studio/extend-video\` with \`{"video_url":"https://...","prompt":"continue the camera move","duration":5}\`. Authenticate with the same Bearer key, then poll the returned job/status URL if supplied.
@@ -92,6 +145,7 @@ export default function ApiDocsPage() {
             <a href="#video" className="block py-1.5 hover:text-white">Generate video</a>
             <a href="#jobs" className="block py-1.5 hover:text-white">Poll a job</a>
             <a href="#images" className="block py-1.5 hover:text-white">Generate images</a>
+            <a href="#audio" className="block py-1.5 hover:text-white">Generate audio</a>
             <a href="#pricing" className="block py-1.5 hover:text-white">Pricing</a>
             <a href="#errors" className="block py-1.5 hover:text-white">Errors</a>
           </nav>
@@ -104,7 +158,7 @@ export default function ApiDocsPage() {
             </div>
             <h1 className="font-display text-4xl font-700 tracking-tight md:text-6xl">Build with ManifoldGen</h1>
             <p className="mt-5 max-w-2xl text-lg leading-8 text-white/60">
-              Generate native video with audio and production-ready images through one small JSON API.
+              Generate native video, production-ready images, and original music through one small JSON API.
               Pay only for successful generations.
             </p>
             <div className="mt-5"><CopyMarkdownButton markdown={llmMarkdown} /></div>
@@ -174,6 +228,30 @@ export default function ApiDocsPage() {
             <h2 className="font-display text-2xl font-700">Generate images</h2>
             <p className="mb-5 mt-3 leading-7 text-white/55">Image requests return synchronously and start at 4 credits.</p>
             <CodeBlock>{createImage}</CodeBlock>
+          </section>
+
+          <section id="audio" className="scroll-mt-28 border-t border-white/10 py-10">
+            <h2 className="font-display text-2xl font-700">Generate music and sound effects</h2>
+            <p className="mb-5 mt-3 leading-7 text-white/55">
+              Use the audio umbrella with a <code>kind</code>, or call the dedicated <code>music</code> and <code>sfx</code> services.
+              Both persist as durable audio assets and become searchable by meaning.
+            </p>
+            <h3 className="mb-3 text-sm font-semibold text-white/80">Audio umbrella</h3>
+            <CodeBlock>{createAudio}</CodeBlock>
+            <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">Music · synchronous · 30–180 seconds</h3>
+            <CodeBlock>{createMusic}</CodeBlock>
+            <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">200 OK</h3>
+            <CodeBlock>{audioResponse}</CodeBlock>
+            <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">SFX · asynchronous · 4–45 seconds</h3>
+            <CodeBlock>{createSFX}</CodeBlock>
+            <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">202 Accepted</h3>
+            <CodeBlock>{sfxQueuedResponse}</CodeBlock>
+            <p className="mt-4 text-sm leading-6 text-white/50">Poll the returned status URL. A completed SFX job contains <code>audio_id</code>, <code>audio_url</code>, final cost, and credits used.</p>
+            <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">Search public audio</h3>
+            <p className="mb-5 text-sm leading-6 text-white/50">
+              Search needs no key for public assets. Add your Bearer key to include your private audio in the results.
+            </p>
+            <CodeBlock>{searchAudio}</CodeBlock>
           </section>
 
           <section id="pricing" className="scroll-mt-28 border-t border-white/10 py-10">

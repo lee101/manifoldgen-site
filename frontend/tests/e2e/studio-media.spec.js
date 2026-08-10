@@ -225,6 +225,88 @@ test('text layers stay editable and are persisted in the project document', asyn
   await expect(page.getByTestId('studio-text-content')).toHaveValue('Launch night');
 });
 
+test('persisted history keeps distinct media revisions and restores the old text render after reload', async ({ page }) => {
+  const saves = [];
+  await installMocks(page, { onProjectSave: (project) => saves.push(project) });
+  await page.goto('/studio');
+  await page.getByTestId('studio-tool-text').click();
+  await page.getByTestId('studio-add-title').click();
+  await page.getByTestId('studio-text-content').fill('A completely different historical title');
+  await page.getByTestId('studio-text-apply').click();
+  await expect.poll(() => {
+    const saved = saves.at(-1)?.document;
+    const prior = saved?.history?.undo?.at(-1)?.assets?.[0];
+    return saved?.assets?.[0]?.text?.content === 'A completely different historical title' && saved.assets[0].cloudURL && prior?.cloudURL;
+  }, { timeout: 20_000 }).toBeTruthy();
+
+  const document = saves.at(-1).document;
+  const previous = document.history.undo.at(-1).assets[0];
+  const current = document.assets[0];
+  expect(document.version).toBe(4);
+  expect(previous.mediaID).toBeTruthy();
+  expect(current.mediaID).toBeTruthy();
+  expect(previous.mediaID).not.toBe(current.mediaID);
+  expect(previous.cloudURL).not.toBe(current.cloudURL);
+
+  const storedRevisions = await page.evaluate(async () => {
+    const projectID = localStorage.getItem('mg_studio_project_id');
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('manifold-studio');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const transaction = database.transaction('assets', 'readonly');
+    const rows = await new Promise((resolve, reject) => {
+      const request = transaction.objectStore('assets').index('projectID').getAll(IDBKeyRange.only(projectID));
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    return rows.map((row) => ({ mediaID: row.assetID, name: row.file.name, size: row.file.size }));
+  });
+  expect(storedRevisions).toEqual(expect.arrayContaining([
+    expect.objectContaining({ mediaID: previous.mediaID, name: previous.name }),
+    expect.objectContaining({ mediaID: current.mediaID, name: current.name }),
+  ]));
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await page.getByTestId('studio-tool-text').click();
+  await expect(page.getByTestId('studio-text-content')).toHaveValue('Add a title');
+});
+
+test('right click keeps browser actions and opens contextual image and audio prompt windows', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+
+  await page.locator('main').click({ button: 'right', position: { x: 700, y: 300 } });
+  const menu = page.getByTestId('studio-context-menu');
+  await expect(menu).toBeVisible();
+  await expect(menu.getByText('Back', { exact: true })).toBeVisible();
+  await expect(menu.getByText('Forward', { exact: true })).toBeVisible();
+  await expect(menu.getByText('Reload', { exact: true })).toBeVisible();
+  await page.getByTestId('studio-context-generate-sfx').click();
+  await expect(page.getByRole('heading', { name: 'Generate sound' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close Generate sound' }).click();
+
+  await page.locator('main').click({ button: 'right', position: { x: 700, y: 300 } });
+  await page.getByTestId('studio-context-generate-music').click();
+  await expect(page.getByRole('heading', { name: 'Generate music' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close Generate music' }).click();
+
+  await page.locator('main').click({ button: 'right', position: { x: 700, y: 300 } });
+  await page.getByTestId('studio-context-generate-voice').click();
+  await expect(page.getByRole('heading', { name: 'Text to speech' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close Text to speech' }).click();
+
+  await page.locator('input[type=file]').setInputFiles({ name: 'opal-conservatory.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
+  const imageCard = page.getByTestId('studio-panel').getByRole('button', { name: /opal-conservatory\.png/ });
+  await imageCard.click({ button: 'right' });
+  await page.getByTestId('studio-context-similar').click();
+  await expect(page.getByRole('heading', { name: 'Generate images' })).toBeVisible();
+  await expect(page.getByTestId('studio-image-modal-prompt')).toHaveValue('opal conservatory');
+});
+
 test('video assets open the shared restyle modal and completed jobs return to the timeline', async ({ page }) => {
   let submitted;
   await installMocks(page);
@@ -358,6 +440,35 @@ test('timeline supports grouped dragging, click seeking, keyboard split, and han
   expect(widthAfterTrim).toBeLessThan(widthBeforeTrim - 20);
 });
 
+test('common timeline edits participate in undo and redo history', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'history-one.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'history-two.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+  ]);
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  await expect(clips).toHaveCount(2);
+
+  await page.getByTitle('Duplicate selected clips').click();
+  await expect(clips).toHaveCount(3);
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(clips).toHaveCount(2);
+  await page.getByRole('button', { name: 'Redo' }).click();
+  await expect(clips).toHaveCount(3);
+
+  await page.getByTitle('Delete selected clips').click();
+  await expect(clips).toHaveCount(2);
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(clips).toHaveCount(3);
+
+  await clips.nth(0).click({ position: { x: 100, y: 30 } });
+  await page.keyboard.press('s');
+  await expect(clips).toHaveCount(4);
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(clips).toHaveCount(3);
+});
+
 test('Shift-drag draws a timeline marquee and selects every intersecting clip', async ({ page }) => {
   await installMocks(page);
   await page.goto('/studio');
@@ -478,7 +589,7 @@ test('visual clips stack across timeline layers with vertical dragging and brack
   await page.keyboard.press('Control+BracketLeft');
 
   await expect.poll(() => saves.at(-1)?.document?.assets?.map((asset) => asset.visualTrack)).toEqual([2, 1]);
-  expect(saves.at(-1).document.version).toBe(3);
+  expect(saves.at(-1).document.version).toBe(4);
 });
 
 test('timeline copy paste aligns groups to the playhead and accepts dropped media', async ({ page }) => {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
@@ -82,6 +83,47 @@ func TestH3AudioJobIsNotGalleryEligible(t *testing.T) {
 	if !h3AudioJob(&VideoJob{Service: "h3_video", Result: []byte(`{"size":"audio"}`)}) {
 		t.Fatal("normalized direct audio request must be detected")
 	}
+	if !h3AudioJob(&VideoJob{Service: "sfx_generation"}) {
+		t.Fatal("public SFX jobs must always be treated as audio")
+	}
+}
+
+func TestPrepareH3AudioResultUsesPublicAudioShape(t *testing.T) {
+	job := &VideoJob{
+		ID: "video_123", UserID: "user_1", Service: "sfx_generation", Prompt: "crackling campfire",
+		Result: json.RawMessage(`{"size":"audio","duration":10}`),
+	}
+	prepared := prepareH3AudioResult(job, []byte(`{"video_url":"https://media.example/sound.webm","provider":"internal"}`))
+	var result map[string]interface{}
+	if err := json.Unmarshal(prepared, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["audio_id"] != "audio_123" || result["audio_url"] != "https://media.example/sound.webm" || result["kind"] != "sfx" {
+		t.Fatalf("unexpected audio result: %#v", result)
+	}
+	if result["duration_seconds"] != float64(10) {
+		t.Fatalf("duration = %#v", result["duration_seconds"])
+	}
+	job.Result = prepared
+	public := publicVideoJob(job)
+	if public.Service != "sfx" {
+		t.Fatalf("public service = %q", public.Service)
+	}
+	if err := json.Unmarshal(public.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["audio_url"] == nil || result["video_url"] != nil || result["provider"] != nil {
+		t.Fatalf("public SFX result leaked video/provider shape: %#v", result)
+	}
+}
+
+func TestH3AudioRequestsUseSFXJobService(t *testing.T) {
+	if got := h3JobService(ServiceUsageRequest{Service: "h3_video", Size: "audio"}); got != "sfx_generation" {
+		t.Fatalf("audio job service = %q", got)
+	}
+	if got := h3JobService(ServiceUsageRequest{Service: "h3_video", Size: "balanced"}); got != "h3_video" {
+		t.Fatalf("video job service = %q", got)
+	}
 }
 
 func TestH3RunpodQueueTimeout(t *testing.T) {
@@ -120,6 +162,16 @@ func TestPaymentRequiredJobIsTerminalForInference(t *testing.T) {
 	job := &VideoJob{Status: "payment_required", Result: json.RawMessage(`{"video_url":"https://media.example/done.webm"}`)}
 	if job.Status == "queued" || job.Status == "processing" {
 		t.Fatal("payment-required result must never relaunch inference")
+	}
+}
+
+func TestDecodeVideoDataURL(t *testing.T) {
+	artifact, err := decodeVideoDataURL("data:video/webm;base64,AAEC")
+	if err != nil || !bytes.Equal(artifact, []byte{0, 1, 2}) {
+		t.Fatalf("decoded artifact = %v, err=%v", artifact, err)
+	}
+	if _, err := decodeVideoDataURL("https://media.example/video.webm"); err == nil {
+		t.Fatal("expected non-data URL to be rejected")
 	}
 }
 

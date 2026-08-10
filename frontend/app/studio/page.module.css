@@ -459,12 +459,22 @@
 .referenceList button:hover { background: #252932; color: white; }
 .referenceList button:disabled { opacity: .2; }
 .contextMenuBackdrop { position: fixed; inset: 0; z-index: 140; }
-.contextMenu { position: fixed; width: 186px; overflow: hidden; border: 1px solid #353a44; border-radius: 9px; background: rgba(20,23,28,.98); box-shadow: 0 16px 50px rgba(0,0,0,.55); padding: 5px; backdrop-filter: blur(12px); }
+.contextMenu { position: fixed; width: 236px; max-height: calc(100dvh - 16px); overflow-x: hidden; overflow-y: auto; border: 1px solid #353a44; border-radius: 9px; background: rgba(20,23,28,.98); box-shadow: 0 16px 50px rgba(0,0,0,.55); padding: 5px; backdrop-filter: blur(12px); }
 .contextMenu button { width: 100%; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 6px; background: transparent; color: #aa9ef2; padding: 8px; text-align: left; cursor: pointer; }
 .contextMenu button:hover { background: #28243a; }
+.contextMenu button:disabled { opacity: .38; cursor: default; }
+.contextMenu button:disabled:hover { background: transparent; }
 .contextMenu button span { display: grid; gap: 2px; }
 .contextMenu button b { color: #e1e3e7; font-size: 10px; }
 .contextMenu button small { color: #777e89; font-size: 8px; }
+.contextMenuLabel { display: block; padding: 6px 8px 3px; color: #656b75; font-size: 7px; font-weight: 800; letter-spacing: .12em; }
+.contextMenuSeparator { display: block; height: 1px; margin: 4px 3px; background: #2a2e35; }
+.contextMenuRow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+.contextMenuRow button { min-width: 0; justify-content: center; gap: 5px; padding: 7px 3px; }
+.contextMenuRow button span { display: block; }
+.contextMenuRow button b { font-size: 8px; }
+.contextMenuDanger { color: #e7818c !important; }
+.contextMenuDanger b { color: #f2a0a8 !important; }
 .spin { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

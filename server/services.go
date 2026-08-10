@@ -23,19 +23,22 @@ import (
 
 // Service pricing in USD (converted to $CUTE at current rate)
 var servicePricesUSD = map[string]float64{
-	"zimage":         0.04,  // per generation
-	"chronos2":       0.002, // per forecast (Chronos-2, our own ~120M model, ms-scale call)
-	"tts":            0.005, // per 100 chars
-	"stt":            0.02,  // per minute
-	"gemma4":         0.01,  // per request
-	"caption":        0.01,  // per image
-	"lora_training":  5.00,
-	"ltx_video":      0.30,  // per ~6s 1080p video via fal.ai
-	"video_generate": 0.15,  // OpenPaths auto-video base price; model overrides below
-	"h3_video":       2.688, // per GPU-hour reference rate; exact execution is settled asynchronously
-	"video_restyle":  0.48,  // estimated five-second 720p ceiling; async settlement uses the selected backend
-	"flux_image":     0.04,  // per image via fal.ai or netwrck
-	"nsfw_detect":    0.001, // per image classification
+	"zimage":           0.04,  // per generation
+	"chronos2":         0.002, // per forecast (Chronos-2, our own ~120M model, ms-scale call)
+	"tts":              0.005, // per 100 chars
+	"stt":              0.02,  // per minute
+	"gemma4":           0.01,  // per request
+	"caption":          0.01,  // per image
+	"lora_training":    5.00,
+	"ltx_video":        0.30,  // per ~6s 1080p video via fal.ai
+	"video_generate":   0.15,  // OpenPaths auto-video base price; model overrides below
+	"h3_video":         2.688, // per GPU-hour reference rate; exact execution is settled asynchronously
+	"video_restyle":    0.48,  // estimated five-second 720p ceiling; async settlement uses the selected backend
+	"audio_generation": 0.80,  // umbrella audio API; music is the default kind
+	"music_generation": 0.80,  // per generated music track (30–180 seconds)
+	"sfx_generation":   2.688, // per GPU-hour reference; exact SFX execution is settled asynchronously
+	"flux_image":       0.04,  // per image via fal.ai or netwrck
+	"nsfw_detect":      0.001, // per image classification
 }
 
 var zimageDefaultSteps = 8
@@ -109,19 +112,20 @@ func initServices() {
 
 	// Load custom prices from env
 	envPriceMap := map[string]string{
-		"zimage":         "ZIMAGE_PRICE_USD",
-		"chronos2":       "CHRONOS_PRICE_USD",
-		"tts":            "TTS_PRICE_USD_PER_100CHARS",
-		"stt":            "STT_PRICE_USD_PER_MINUTE",
-		"gemma4":         "GEMMA4_PRICE_USD",
-		"caption":        "CAPTION_PRICE_USD",
-		"lora_training":  "LORA_TRAINING_PRICE_USD",
-		"ltx_video":      "LTX_VIDEO_PRICE_USD",
-		"video_generate": "VIDEO_GENERATE_PRICE_USD",
-		"h3_video":       "H3_VIDEO_PRICE_USD_PER_GPU_HOUR",
-		"video_restyle":  "VIDEO_RESTYLE_ESTIMATE_USD",
-		"flux_image":     "FLUX_IMAGE_PRICE_USD",
-		"nsfw_detect":    "NSFW_DETECT_PRICE_USD",
+		"zimage":           "ZIMAGE_PRICE_USD",
+		"chronos2":         "CHRONOS_PRICE_USD",
+		"tts":              "TTS_PRICE_USD_PER_100CHARS",
+		"stt":              "STT_PRICE_USD_PER_MINUTE",
+		"gemma4":           "GEMMA4_PRICE_USD",
+		"caption":          "CAPTION_PRICE_USD",
+		"lora_training":    "LORA_TRAINING_PRICE_USD",
+		"ltx_video":        "LTX_VIDEO_PRICE_USD",
+		"video_generate":   "VIDEO_GENERATE_PRICE_USD",
+		"h3_video":         "H3_VIDEO_PRICE_USD_PER_GPU_HOUR",
+		"video_restyle":    "VIDEO_RESTYLE_ESTIMATE_USD",
+		"music_generation": "MUSIC_GENERATION_PRICE_USD",
+		"flux_image":       "FLUX_IMAGE_PRICE_USD",
+		"nsfw_detect":      "NSFW_DETECT_PRICE_USD",
 	}
 	for svc, envKey := range envPriceMap {
 		if p := os.Getenv(envKey); p != "" {
@@ -268,6 +272,9 @@ type publicServiceAlias struct {
 var publicServiceAliases = []publicServiceAlias{
 	{Public: "image", Internal: "zimage"},
 	{Public: "video", Internal: "h3_video"},
+	{Public: "audio", Internal: "audio_generation"},
+	{Public: "music", Internal: "music_generation"},
+	{Public: "sfx", Internal: "sfx_generation"},
 	{Public: "speech", Internal: "tts"},
 	{Public: "transcription", Internal: "stt"},
 	{Public: "caption", Internal: "caption"},
@@ -308,18 +315,21 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 	})
 
 	units := map[string]string{
-		"zimage":         fmt.Sprintf("per generation (base); $%.2f for 20+ steps", zimageHighStepPriceUSD),
-		"chronos2":       "per forecast",
-		"tts":            "per 100 characters",
-		"stt":            "per minute",
-		"gemma4":         "per request",
-		"caption":        "per image",
-		"lora_training":  "per training job",
-		"ltx_video":      "per ~6s video",
-		"video_generate": "per generated video (model dependent)",
-		"h3_video":       "per video; final price follows measured generation time",
-		"video_restyle":  "estimated default clip; final price follows length and quality",
-		"flux_image":     "per image",
+		"zimage":           fmt.Sprintf("per generation (base); $%.2f for 20+ steps", zimageHighStepPriceUSD),
+		"chronos2":         "per forecast",
+		"tts":              "per 100 characters",
+		"stt":              "per minute",
+		"gemma4":           "per request",
+		"caption":          "per image",
+		"lora_training":    "per training job",
+		"ltx_video":        "per ~6s video",
+		"video_generate":   "per generated video (model dependent)",
+		"h3_video":         "per video; final price follows measured generation time",
+		"video_restyle":    "estimated default clip; final price follows length and quality",
+		"audio_generation": "per music track by default; set kind to music or sfx",
+		"music_generation": "per generated music track (30–180 seconds)",
+		"sfx_generation":   "estimated 5-second sound effect; final price follows measured generation time",
+		"flux_image":       "per image",
 	}
 
 	pricing := make([]ServicePricing, 0, len(publicServiceAliases))
@@ -332,6 +342,9 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		if alias.Internal == "h3_video" {
 			usdPrice = h3EstimateUSD
 			cuteCost = h3EstimateCredits
+		}
+		if alias.Internal == "sfx_generation" {
+			usdPrice, cuteCost, _ = h3Estimate(ServiceUsageRequest{Service: "sfx_generation", Size: "audio", Duration: 5, NumSteps: 20})
 		}
 		pricing = append(pricing, ServicePricing{
 			Service:   alias.Public,
@@ -424,6 +437,25 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 	if req.Service == "video_restyle" {
 		handleVideoRestyleService(ctx, req, user)
+		return
+	}
+	if req.Service == "audio_generation" {
+		switch strings.ToLower(strings.TrimSpace(req.Kind)) {
+		case "", "music":
+			handleMusicGenerationAs(ctx, user, req.Prompt, req.Duration, "audio")
+		case "sfx", "sound", "sound_effect":
+			handleSFXGeneration(ctx, req, user)
+		default:
+			jsonError(ctx, http.StatusBadRequest, "audio kind must be music or sfx")
+		}
+		return
+	}
+	if req.Service == "music_generation" {
+		handleMusicGeneration(ctx, user, req.Prompt, req.Duration)
+		return
+	}
+	if req.Service == "sfx_generation" {
+		handleSFXGeneration(ctx, req, user)
 		return
 	}
 

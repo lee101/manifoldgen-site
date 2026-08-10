@@ -35,6 +35,7 @@ const (
 var studioHTTPClient = &http.Client{Timeout: 4 * time.Minute}
 
 const studioUpscaleMaxOutputBytes = 256 << 20
+const studioGeneratedAudioMaxBytes = 128 << 20
 
 type studioUpscaleUpload struct {
 	filename string
@@ -458,6 +459,87 @@ func studioFalMusic(prompt string, duration int) (string, error) {
 	return "", fmt.Errorf("music generator returned no audio")
 }
 
+func studioGeneratedAudioFormat(contentType, rawURL string) (string, string, error) {
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	formats := map[string]string{
+		"audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav",
+		"audio/mpeg": ".mp3", "audio/ogg": ".ogg", "audio/webm": ".webm",
+		"audio/mp4": ".m4a", "audio/flac": ".flac", "audio/x-flac": ".flac",
+	}
+	if extension, ok := formats[mediaType]; ok {
+		return mediaType, extension, nil
+	}
+	parsed, _ := url.Parse(rawURL)
+	extension := strings.ToLower(path.Ext(parsed.Path))
+	for supportedType, supportedExtension := range formats {
+		if extension == supportedExtension {
+			return supportedType, supportedExtension, nil
+		}
+	}
+	return "", "", fmt.Errorf("generated audio format is unsupported")
+}
+
+func persistGeneratedAudioURL(sourceURL, userID string) (string, error) {
+	if err := studioRemoteVideoURL(sourceURL); err != nil {
+		return "", fmt.Errorf("generated audio URL is not public")
+	}
+	client := *studioHTTPClient
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return fmt.Errorf("too many audio redirects")
+		}
+		return studioRemoteVideoURL(req.URL.String())
+	}
+	req, err := http.NewRequest(http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("generated audio download returned %d", resp.StatusCode)
+	}
+	contentType, extension, err := studioGeneratedAudioFormat(resp.Header.Get("Content-Type"), sourceURL)
+	if err != nil {
+		return "", err
+	}
+	audio, err := io.ReadAll(io.LimitReader(resp.Body, studioGeneratedAudioMaxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(audio) == 0 || len(audio) > studioGeneratedAudioMaxBytes {
+		return "", fmt.Errorf("generated audio is empty or too large")
+	}
+	shortID := sanitizeUploadName(userID)
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	objectKey := fmt.Sprintf("%s/%s/audio/%s%s", strings.TrimSuffix(r2PathPrefix, "/"), shortID, newUUID(), extension)
+	uploadURL, err := presignR2PutObject(objectKey, contentType, 900)
+	if err != nil {
+		return "", err
+	}
+	put, err := http.NewRequest(http.MethodPut, uploadURL, bytes.NewReader(audio))
+	if err != nil {
+		return "", err
+	}
+	put.ContentLength = int64(len(audio))
+	put.Header.Set("Content-Type", contentType)
+	upload, err := studioHTTPClient.Do(put)
+	if err != nil {
+		return "", err
+	}
+	defer upload.Body.Close()
+	if upload.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("audio storage returned %d", upload.StatusCode)
+	}
+	return fmt.Sprintf("https://%s/%s", r2PublicHost, objectKey), nil
+}
+
 func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 	user, err := studioUser(ctx)
 	if err != nil {
@@ -468,32 +550,74 @@ func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 		Prompt   string `json:"prompt"`
 		Duration int    `json:"duration"`
 	}
-	if json.Unmarshal(ctx.PostBody(), &input) != nil || strings.TrimSpace(input.Prompt) == "" {
-		jsonError(ctx, http.StatusBadRequest, "a music prompt is required")
+	if json.Unmarshal(ctx.PostBody(), &input) != nil {
+		jsonError(ctx, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if input.Duration < studioMusicMinDuration || input.Duration > 180 {
-		jsonError(ctx, http.StatusBadRequest, "music duration must be 30–180 seconds")
-		return
+	handleMusicGeneration(ctx, user, input.Prompt, input.Duration)
+}
+
+func normalizeMusicGenerationInput(prompt string, duration int) (string, int, error) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return "", 0, fmt.Errorf("a music prompt is required")
 	}
-	balance, err := dbConn.DeductUserCredits(user.ID, studioMusicCredits)
+	if duration == 0 {
+		duration = studioMusicMinDuration
+	}
+	if duration < studioMusicMinDuration || duration > 180 {
+		return "", 0, fmt.Errorf("music duration must be 30–180 seconds")
+	}
+	return prompt, duration, nil
+}
+
+func handleMusicGeneration(ctx *fasthttp.RequestCtx, user *User, prompt string, duration int) {
+	handleMusicGenerationAs(ctx, user, prompt, duration, "music")
+}
+
+func handleMusicGenerationAs(ctx *fasthttp.RequestCtx, user *User, prompt string, duration int, service string) {
+	prompt, duration, err := normalizeMusicGenerationInput(prompt, duration)
 	if err != nil {
-		jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: music generation costs 80 credits")
+		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
-	audioURL, err := studioFalMusic(strings.TrimSpace(input.Prompt), input.Duration)
+	balance := user.Credits
+	creditsUsed := studioMusicCredits
+	if user.UnlimitedAPI {
+		creditsUsed = 0
+	} else {
+		balance, err = dbConn.DeductUserCredits(user.ID, studioMusicCredits)
+		if err != nil {
+			jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: music generation costs 80 credits")
+			return
+		}
+	}
+	audioURL, err := studioFalMusic(prompt, duration)
 	if err != nil {
 		log.Printf("studio music generation failed: %v", err)
-		_, _ = dbConn.AddUserCredits(user.ID, studioMusicCredits)
+		if creditsUsed > 0 {
+			_, _ = dbConn.AddUserCredits(user.ID, creditsUsed)
+		}
 		jsonError(ctx, http.StatusBadGateway, "music generation is temporarily unavailable")
 		return
 	}
-	price := getCUTEPriceUSD()
-	_ = dbConn.CreateBillingEvent(&BillingEvent{UserID: user.ID, EventType: "music_generation", Amount: -studioMusicCredits, CuteAmount: studioMusicCredits, USDAmount: studioMusicCredits * price, Description: "music generation", CreditsAfter: balance})
-	maybeTriggerAutoTopup(user.ID)
+	audioURL, err = persistGeneratedAudioURL(audioURL, user.ID)
+	if err != nil {
+		log.Printf("generated music storage failed: %v", err)
+		if creditsUsed > 0 {
+			_, _ = dbConn.AddUserCredits(user.ID, creditsUsed)
+		}
+		jsonError(ctx, http.StatusBadGateway, "music generation is temporarily unavailable")
+		return
+	}
+	if creditsUsed > 0 {
+		price := getCUTEPriceUSD()
+		_ = dbConn.CreateBillingEvent(&BillingEvent{UserID: user.ID, EventType: "music_generation", Amount: -creditsUsed, CuteAmount: creditsUsed, USDAmount: creditsUsed * price, Description: "music generation", CreditsAfter: balance})
+		maybeTriggerAutoTopup(user.ID)
+	}
 	asset := &GeneratedAudio{
-		ID: newUUID(), UserID: user.ID, Kind: "music", Prompt: strings.TrimSpace(input.Prompt),
-		Title: studioAudioTitle(input.Prompt), AudioURL: audioURL, DurationSeconds: input.Duration,
+		ID: newUUID(), UserID: user.ID, Kind: "music", Prompt: prompt,
+		Title: studioAudioTitle(prompt), AudioURL: audioURL, DurationSeconds: duration,
 		Public: true, CreatedAt: time.Now(),
 	}
 	indexed := true
@@ -502,9 +626,10 @@ func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 		log.Printf("studio music persistence failed for user %s: %v", user.ID, err)
 	}
 	jsonResponse(ctx, http.StatusOK, map[string]interface{}{
-		"audio_id": asset.ID, "audio_url": audioURL, "kind": asset.Kind,
+		"service": service, "audio_id": asset.ID, "audio_url": audioURL, "kind": asset.Kind,
 		"prompt": asset.Prompt, "title": asset.Title, "duration_seconds": asset.DurationSeconds,
-		"indexed": indexed, "credits_used": studioMusicCredits, "credits_remain": balance,
+		"indexed": indexed, "credits_used": creditsUsed, "credits_remain": balance,
+		"cost_usd": creditsUsed * getCUTEPriceUSD(),
 	})
 }
 

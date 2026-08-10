@@ -1,12 +1,18 @@
 import type { StudioAdjustments } from './studio-renderer';
 
-export const STUDIO_PROJECT_VERSION = 3;
+export const STUDIO_PROJECT_VERSION = 4;
 const DB_NAME = 'manifold-studio';
 const DB_VERSION = 1;
 const LAST_PROJECT_KEY = 'mg_studio_project_id';
 
 export type PortableStudioAsset = {
   id: string;
+  /**
+   * Identifies the immutable media bytes behind this logical asset. Editing a
+   * text layer keeps its asset ID but creates a new media ID so persisted
+   * history can retain both renders.
+   */
+  mediaID?: string;
   name: string;
   kind: 'video' | 'image' | 'audio';
   duration: number;
@@ -125,16 +131,16 @@ export async function saveLocalStudioProject(project: LocalStudioProject) {
     ];
     // Keep files referenced by undo/redo snapshots as well as the live
     // timeline. This is what makes "delete, close, reopen, undo" possible.
-    const wanted = new Set(projectAssets.map((asset) => `${project.id}:${asset.id}`));
+    const wanted = new Set(projectAssets.map((asset) => `${project.id}:${asset.mediaID || asset.id}`));
     for (const key of existing) {
       if (!wanted.has(String(key))) assetStore.delete(key);
     }
     const existingSet = new Set(existing.map(String));
-    for (const [assetID, file] of project.files) {
-      const key = `${project.id}:${assetID}`;
-      // Asset IDs are immutable, so avoid rewriting multi-gigabyte Blobs for
-      // every slider or timeline edit.
-      if (!existingSet.has(key)) assetStore.put({ key, projectID: project.id, assetID, file });
+    for (const [mediaID, file] of project.files) {
+      const key = `${project.id}:${mediaID}`;
+      // Media IDs are immutable, so avoid rewriting multi-gigabyte Blobs for
+      // every metadata-only slider or timeline edit.
+      if (!existingSet.has(key)) assetStore.put({ key, projectID: project.id, assetID: mediaID, file });
     }
     await transactionDone(transaction);
     localStorage.setItem(LAST_PROJECT_KEY, project.id);

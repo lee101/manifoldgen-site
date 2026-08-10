@@ -800,6 +800,16 @@ func (db *DB) UpdateVideoJob(jobID, status string, result []byte, jobErr string)
 	return err
 }
 
+func (db *DB) UpdateCompletedVideoResult(jobID string, result []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.conn.Exec(
+		`UPDATE video_jobs SET result_json = $2::jsonb, updated_at = NOW() WHERE id = $1 AND status = 'completed'`,
+		jobID, string(result),
+	)
+	return err
+}
+
 // UpdateVideoJobProvider atomically changes the durable provider handle while
 // retaining the original request. Video restyles use this when a private worker
 // cannot finish and the same user-visible job is moved to the standby queue.
