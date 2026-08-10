@@ -229,6 +229,7 @@ export default function HomePage() {
   const [backgroundRemovingID, setBackgroundRemovingID] = useState('');
   const [featuredVideos, setFeaturedVideos] = useState<VideoHit[]>([]);
   const [searchQ, setSearchQ] = useState('');
+  const [activeSearchQ, setActiveSearchQ] = useState('');
   const [searchBusy, setSearchBusy] = useState(false);
   const [videoHits, setVideoHits] = useState<VideoHit[]>([]);
   const [heroMuted, setHeroMuted] = useState(true);
@@ -374,6 +375,7 @@ export default function HomePage() {
     e?.preventDefault();
     const q = searchQ.trim();
     if (!q) {
+      setActiveSearchQ('');
       setVideoHits([]);
       await loadGallery();
       return;
@@ -387,6 +389,7 @@ export default function HomePage() {
         loadGallery(q),
       ]);
       setVideoHits(vids.results || []);
+      setActiveSearchQ(q);
     } finally {
       setSearchBusy(false);
     }
@@ -763,6 +766,20 @@ export default function HomePage() {
   // A local, cacheable poster protects LCP from slow API/gallery responses.
   const heroImage = '/brand/manifoldgen-og.webp';
   const displayVideos = videoHits.length > 0 ? videoHits : featuredVideos;
+  const mixedSearchHits = useMemo(() => {
+    const rows: Array<
+      | { kind: 'video'; id: string; prompt: string; video: VideoHit }
+      | { kind: 'image'; id: string; prompt: string; image: GalleryImage; src?: string }
+    > = [];
+    const length = Math.max(videoHits.length, gallery.length);
+    for (let index = 0; index < length && rows.length < 30; index += 1) {
+      const video = videoHits[index];
+      if (video?.video_url) rows.push({ kind: 'video', id: video.job_id, prompt: video.prompt, video });
+      const image = gallery[index];
+      if (image) rows.push({ kind: 'image', id: image.id, prompt: image.prompt, image, src: image.image_url || image.thumb_url });
+    }
+    return rows;
+  }, [gallery, videoHits]);
 
   return (
     <main className="relative min-h-screen bg-[var(--color-ink)]">
@@ -1060,9 +1077,71 @@ export default function HomePage() {
           >
             {searchBusy ? <Loader2 className="animate-spin" size={16} /> : 'Search'}
           </button>
+          {activeSearchQ ? (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => {
+                setSearchQ('');
+                setActiveSearchQ('');
+                setVideoHits([]);
+                void loadGallery();
+              }}
+              className="glass rounded-full p-3 text-white/55 transition hover:text-white"
+            >
+              <X size={16} />
+            </button>
+          ) : null}
         </form>
 
-        {displayVideos.length > 0 && (
+        {activeSearchQ ? (
+          <div className="px-3 pb-6 md:px-6" data-testid="home-search-results">
+            <div className="flex items-end justify-between border-b border-white/10 pb-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-accent-2)]">Mixed media search</p>
+                <h2 className="mt-1 font-display text-xl tracking-wide text-white">Results for “{activeSearchQ}”</h2>
+              </div>
+              <span className="text-xs text-white/40">{mixedSearchHits.length} images + videos</span>
+            </div>
+            {mixedSearchHits.length === 0 ? (
+              <p className="py-10 text-sm text-[var(--color-mute)]">No matching images or videos yet. Try a broader visual description.</p>
+            ) : (
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {mixedSearchHits.map((hit, index) => (
+                  <button
+                    key={`${hit.kind}-${hit.id}`}
+                    type="button"
+                    data-testid={`home-search-${hit.kind}-${hit.id}`}
+                    onClick={() => hit.kind === 'video' ? playVideo(hit.video) : useGalleryImage(hit.image)}
+                    className="group relative aspect-video overflow-hidden rounded-xl bg-white/5 text-left"
+                  >
+                    {hit.kind === 'video' ? (
+                      <video
+                        src={hit.video.video_url}
+                        muted
+                        loop
+                        playsInline
+                        preload={index < 4 ? 'metadata' : 'none'}
+                        className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                        onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)}
+                        onMouseLeave={(event) => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }}
+                      />
+                    ) : hit.src ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={hit.src} alt={hit.prompt} loading="lazy" className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
+                    ) : null}
+                    <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/80 backdrop-blur">
+                      {hit.kind === 'video' ? 'Video' : 'Image'}
+                    </span>
+                    <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-gradient-to-t from-black via-black/70 to-transparent px-3 pb-2 pt-8 text-xs leading-snug text-white/90">
+                      {hit.prompt}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : displayVideos.length > 0 && (
           <div className="pb-4" data-testid="showcase-reel">
             <div className="flex items-end justify-between px-3 pb-3 md:px-6">
               <div>
@@ -1114,7 +1193,7 @@ export default function HomePage() {
       </section>
 
       {/* Full-bleed gallery */}
-      <section className="relative z-10 w-full" data-testid="still-gallery">
+      {!activeSearchQ && <section className="relative z-10 w-full" data-testid="still-gallery">
         <div className="flex items-end justify-between px-3 py-4 md:px-6">
           <div>
             <h2 className="font-display text-lg tracking-wide text-white md:text-xl">Gallery</h2>
@@ -1162,7 +1241,7 @@ export default function HomePage() {
             })}
           </div>
         )}
-      </section>
+      </section>}
 
       {settingsOpen && (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-4 md:items-center">
