@@ -93,16 +93,55 @@ python scripts/publish_gallery_videos.py
 # Local accelerated H3 on the host 5090 (bypasses RunPod quota)
 # Temporarily frees VRAM if needed, then:
 python scripts/gen_gallery_local.py --count 3
+python scripts/gen_gallery_local.py \
+  --prompts scripts/prompts/manifold-gallery-100k.jsonl \
+  --count 5000 --shuffle-seed 20260810 --stop-when-done
 python scripts/gen_gallery_local.py --stop
 
 # Queue via API (app.nz, or H3_LOCAL_COG_URL when set)
 python scripts/backfill_seed.py --images 0 --videos 8
 ```
 
+## Gallery art farm
+
+The public image catalog is generated from a deterministic, family-safe prompt
+set and is safe to resume on any machine sharing the database and R2 bucket.
+The renderer stops before its local spool falls below the configured free-space
+floor. Publish before indexing so every searchable image is immediately CDN
+loadable; run moderation continuously in a second process.
+
+```bash
+python3 scripts/build_gallery_catalog.py --count 100000 \
+  --out scripts/prompts/manifold-gallery-100k.jsonl
+nice -n 19 python3 scripts/generate_gallery_art.py \
+  --prompts scripts/prompts/manifold-gallery-100k.jsonl --limit 500 \
+  --low-priority --upload-r2 --min-free-gib 80
+nice -n 19 python3 scripts/moderate_gallery_art.py --limit 500
+```
+
+The scripts are deliberately bounded by `--limit`; schedule repeated batches
+after confirming the first set looks good. Unclassified files are held out of
+semantic search once moderation starts, and NSFW/child content is excluded from
+the public gallery.
+
 Gallery CDN: `https://manifoldgenstatic.manifoldgen.com/gallery/videos/…`
 
 When RunPod `workersMax` quota is hit, set `H3_LOCAL_COG_URL=http://127.0.0.1:18089`
 after `gen_gallery_local.py` has started the cog.
+
+The two direct H3 endpoints follow `config/runpod-h3.json`: zero minimum
+workers, five-second idle shutdown, FlashBoot, a bounded one-hour execution
+window, and `/src/rp_handler.py` as the native queue handler. Do not run the Cog
+HTTP command on a queue endpoint; provider cancellation can mark that wrapper
+canceled while its inner prediction continues consuming a GPU.
+
+`gen_gallery_local.py --prompts` accepts JSONL rows with `prompt`, optional
+`slug`, and optional `seed`, or one plain prompt per line. Catalog IDs are
+deterministic, completed rows are skipped on resume, temporary WebMs are removed
+after R2 upload, and `--stop-when-done` releases the local GPU worker. Keep large
+batches on the local generator unless their RunPod budget has been explicitly
+approved; at the current measured H3 runtime, 5,000 serverless clips would cost
+roughly thousands of US dollars before storage and egress.
 
 ## Video restyle
 
@@ -120,6 +159,14 @@ weights into the warm 32 GB H3 process.
 See `deploy/manifoldgen.service` and `deploy/nginx-manifoldgen.conf`.
 `./deploy.sh` installs the server binary, syncs `frontend/out`, and rsyncs `emails/`.
 Set `DIST_DIR` to `frontend/out` after `NEXT_OUTPUT=export bun run build`.
+
+## Monitoring
+
+`monitoring/` runs confirmed-error-gated frontend and backend checks plus a real
+H3 video canary every 12 hours. Repair agents use `gpt-5.6-sol` at high reasoning
+and start only for deduplicated, confirmed failures. See
+[`monitoring/README.md`](monitoring/README.md) for schedules, safeguards, and
+manual check-only commands.
 
 ## Visualbench
 

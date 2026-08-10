@@ -1209,6 +1209,24 @@ func extractLocalH3OutputURL(output interface{}) string {
 	return ""
 }
 
+// shouldRelaunchVideoJob reports whether status polling may recover a job whose
+// in-memory runner disappeared. A local:sync processing job is not durable: its
+// synchronous Cog request may still be running, so replaying it can submit the
+// same expensive GPU workload more than once. Queued local work has not started
+// yet and remains safe to recover.
+func shouldRelaunchVideoJob(job *VideoJob) bool {
+	if job == nil {
+		return false
+	}
+	if job.Status == "queued" {
+		return true
+	}
+	if job.Status != "processing" {
+		return false
+	}
+	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(job.ProviderJobID)), "local:")
+}
+
 // handleVideoJobStatus lets a caller recover a paid result after the original
 // request disconnects. Pending jobs are relaunched after a process restart.
 func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
@@ -1244,8 +1262,10 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 		}
 	}
 	status := http.StatusOK
-	if job.Status == "queued" || job.Status == "processing" {
+	if shouldRelaunchVideoJob(job) {
 		launchVideoJob(job.ID)
+		status = http.StatusAccepted
+	} else if job.Status == "queued" || job.Status == "processing" {
 		status = http.StatusAccepted
 	}
 	if job.Status == "payment_required" {

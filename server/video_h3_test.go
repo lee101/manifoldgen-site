@@ -175,6 +175,21 @@ func TestDecodeVideoDataURL(t *testing.T) {
 	}
 }
 
+func TestShouldRelaunchVideoJobDoesNotReplayProcessingLocalCog(t *testing.T) {
+	processingLocal := &VideoJob{Status: "processing", ProviderJobID: "local:sync"}
+	if shouldRelaunchVideoJob(processingLocal) {
+		t.Fatal("processing local Cog job must not be replayed by status polling")
+	}
+	queuedLocal := &VideoJob{Status: "queued", ProviderJobID: "local:sync"}
+	if !shouldRelaunchVideoJob(queuedLocal) {
+		t.Fatal("queued local Cog job must remain recoverable")
+	}
+	processingRunPod := &VideoJob{Status: "processing", ProviderJobID: "runpod:endpoint:job"}
+	if !shouldRelaunchVideoJob(processingRunPod) {
+		t.Fatal("processing durable provider job must remain recoverable")
+	}
+}
+
 func TestNormalizeH3DrivingAudioRequiresImage(t *testing.T) {
 	req := ServiceUsageRequest{Prompt: "portrait speaking", AudioURL: "https://cdn.example/voice.wav"}
 	if err := normalizeH3VideoRequest(&req); err == nil {

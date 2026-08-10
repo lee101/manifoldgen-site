@@ -1,13 +1,16 @@
 [Unit]
 Description=ManifoldGen video studio
-After=network.target postgresql.service
+Requires=manifoldgen.socket
+After=network.target postgresql.service manifoldgen.socket
 
 [Service]
 Type=simple
+Sockets=manifoldgen.socket
 WorkingDirectory=/opt/manifoldgen-site
 EnvironmentFile=/opt/manifoldgen-site/.env
 Environment=GOBED_MODEL_PATH=/nvme0n1-disk/code/gobed/model
 Environment=DIST_DIR=frontend/out
+Environment=FRONTEND_ERROR_LOG_PATH=/opt/manifoldgen-site/logs/frontend-errors.jsonl
 ExecStart=/opt/manifoldgen-site/server/manifoldgen-server
 Restart=on-failure
 RestartSec=3

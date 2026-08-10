@@ -13,8 +13,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import random
+import re
 import subprocess
 import tempfile
 import time
@@ -29,6 +32,7 @@ IMAGE = os.environ.get("H3_LOCAL_IMAGE", "ghcr.io/lee101/h3-cog:accel-test")
 PORT = int(os.environ.get("H3_LOCAL_PORT", "18089"))
 WEIGHTS = Path(os.environ.get("H3_WEIGHTS_DIR", "/nvme0n1-disk/h3-w4a8-weights"))
 PATCH = Path(os.environ.get("H3_PATCH_DIR", "/tmp/h3-accel-patch"))
+ACCEL_PROFILE = os.environ.get("H3_ACCEL_PROFILE", "off")
 COG_URL = f"http://127.0.0.1:{PORT}"
 API = os.environ.get("MANIFOLDGEN_API", "http://127.0.0.1:8116").rstrip("/")
 DATABASE_URL = os.environ.get(
@@ -144,6 +148,11 @@ def sync_patch() -> None:
         p = src / name
         if p.exists():
             subprocess.check_call(["cp", str(p), str(PATCH / name)])
+    schema = src / ".cog" / "openapi_schema.json"
+    if schema.exists():
+        schema_dest = PATCH / ".cog" / "openapi_schema.json"
+        schema_dest.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.check_call(["cp", str(schema), str(schema_dest)])
     sol = src / "vendor" / "ComfyUI-SolAttn_triton"
     if not sol.exists():
         sol = Path("/tmp/h3-accel-patch/ComfyUI-SolAttn_triton")
@@ -227,6 +236,9 @@ def ensure_container() -> None:
         "h3_chain.py",
     ):
         mounts += ["-v", f"{PATCH / name}:/src/{name}:ro"]
+    schema = PATCH / ".cog" / "openapi_schema.json"
+    if schema.exists():
+        mounts += ["-v", f"{schema}:/src/.cog/openapi_schema.json:ro"]
     sol = PATCH / "ComfyUI-SolAttn_triton"
     if sol.exists():
         mounts += ["-v", f"{sol}:/opt/ComfyUI/custom_nodes/ComfyUI-SolAttn_triton:ro"]
@@ -246,7 +258,7 @@ def ensure_container() -> None:
         "-e",
         "MINIMAX_H3_LICENSE_ACCEPTED=1",
         "-e",
-        "H3_ACCEL_PROFILE=spectrum-sol",
+        f"H3_ACCEL_PROFILE={ACCEL_PROFILE}",
         "-e",
         "H3_QUANT=int8_convrot",
         "-e",
@@ -255,6 +267,10 @@ def ensure_container() -> None:
         "H3_INCLUDE_REF2VA=0",
         "-e",
         "H3_RESERVE_VRAM_GB=2",
+        "-e",
+        "H3_IDLE_UNLOAD_SECONDS=30",
+        "-e",
+        "H3_CACHE_RESET_EVERY=16",
         "-e",
         "WEIGHTS_DIR=/weights",
         "-e",
@@ -303,11 +319,11 @@ def http_json(method: str, url: str, payload: dict | None = None, timeout: int =
         return resp.status, json.loads(body) if body else {}
 
 
-def generate(prompt: str, *, steps: int, duration: float, seed: int | None) -> Path:
+def generate(prompt: str, *, size: str, steps: int, duration: float, seed: int | None) -> Path:
     input_obj = {
         "prompt": prompt,
         "aspect_ratio": "16:9",
-        "size": "native",
+        "size": size,
         "duration": duration,
         "steps": steps,
         "structured_prompt": True,
@@ -320,7 +336,7 @@ def generate(prompt: str, *, steps: int, duration: float, seed: int | None) -> P
         input_obj["seed"] = seed
     # This coglet build only exposes POST /predictions (+ cancel). No GET poll route,
     # so wait synchronously (full-quality stable weights can take 10–20 min on a 5090).
-    print("  predicting (sync, spectrum-sol)…", flush=True)
+    print(f"  predicting (sync, accel={ACCEL_PROFILE})…", flush=True)
     t0 = time.time()
     status, poll = http_json(
         "POST",
@@ -423,15 +439,17 @@ def psql(sql: str) -> str:
     return subprocess.check_output(["psql", os.environ.get("DATABASE_URL", DATABASE_URL), "-At", "-c", sql], text=True).strip()
 
 
-def upsert(job_id: str, user_id: str, prompt: str, video_url: str) -> None:
+def upsert(job_id: str, user_id: str, prompt: str, video_url: str, *, size: str, quant: str) -> None:
     result = json.dumps(
         {
             "video_url": video_url,
             "provider": "local-h3",
             "service": "h3_video",
             "codec": "av1",
-            "accel": "spectrum-sol",
-            "quant": "int8_convrot",
+            "accel": ACCEL_PROFILE,
+            "quant": quant,
+            "size": size,
+            "featured": True,
             "output_codec": "webm-av1",
             "encode_quality": 22,
         }
@@ -468,6 +486,59 @@ def free_vram_hint() -> None:
         pass
 
 
+def prompt_slug(prompt: str, supplied: str = "") -> str:
+    if supplied:
+        cleaned = re.sub(r"[^a-z0-9]+", "-", supplied.lower()).strip("-")[:64]
+        if cleaned:
+            return cleaned
+    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+    return f"catalog-{digest}"
+
+
+def load_prompt_file(path: Path) -> list[tuple[str, str, int | None]]:
+    """Read JSONL ({prompt, slug?, seed?}) or one plain prompt per line."""
+    jobs: list[tuple[str, str, int | None]] = []
+    seen: set[str] = set()
+    with path.open(encoding="utf-8") as source:
+        for number, raw in enumerate(source, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            supplied_slug = ""
+            seed = None
+            if line.startswith("{"):
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise SystemExit(f"{path}:{number}: invalid JSON: {error}") from error
+                if not isinstance(row, dict):
+                    raise SystemExit(f"{path}:{number}: JSONL rows must be objects")
+                prompt = str(row.get("prompt") or "").strip()
+                supplied_slug = str(row.get("slug") or "").strip()
+                if row.get("seed") is not None:
+                    try:
+                        seed = int(row["seed"])
+                    except (TypeError, ValueError) as error:
+                        raise SystemExit(f"{path}:{number}: seed must be an integer") from error
+            else:
+                prompt = line
+            if not prompt:
+                raise SystemExit(f"{path}:{number}: prompt is required")
+            if len(prompt) > 4000:
+                raise SystemExit(f"{path}:{number}: prompt exceeds 4000 characters")
+            if prompt in seen:
+                continue
+            seen.add(prompt)
+            jobs.append((prompt_slug(prompt, supplied_slug), prompt, seed))
+    if not jobs:
+        raise SystemExit(f"no prompts found in {path}")
+    return jobs
+
+
+def stop_container() -> None:
+    subprocess.call(["docker", "rm", "-f", CONTAINER])
+
+
 def main() -> None:
     load_dotenv()
     global DATABASE_URL
@@ -477,15 +548,37 @@ def main() -> None:
     ap.add_argument("--count", type=int, default=3)
     ap.add_argument("--prompt", default="")
     ap.add_argument("--slug", default="")
+    ap.add_argument(
+        "--prompts",
+        type=Path,
+        help="JSONL ({prompt, slug?, seed?}) or newline-delimited prompt catalog",
+    )
+    ap.add_argument("--offset", type=int, default=0, help="skip this many catalog rows after optional shuffle")
+    ap.add_argument("--shuffle-seed", type=int, help="deterministically mix catalog prompts before offset/count")
     ap.add_argument("--steps", type=int, default=24)
     ap.add_argument("--duration", type=float, default=5)
+    ap.add_argument("--size", choices=("preview", "balanced", "native"), default="native")
+    ap.add_argument(
+        "--actual-quant",
+        choices=("int8_convrot", "w4a8"),
+        default=os.environ.get("H3_LOCAL_ACTUAL_QUANT", "w4a8"),
+        help="quant actually exposed by the running cog schema (the accel-test image currently defaults to w4a8)",
+    )
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--stop", action="store_true", help="stop local container and exit")
+    ap.add_argument("--stop-when-done", action="store_true", help="stop the local Cog after this bounded batch")
     ap.add_argument("--no-start", action="store_true", help="assume container already running")
     args = ap.parse_args()
 
+    if args.count < 1:
+        raise SystemExit("--count must be positive")
+    if args.offset < 0:
+        raise SystemExit("--offset cannot be negative")
+    if args.prompt and args.prompts:
+        raise SystemExit("use either --prompt or --prompts, not both")
+
     if args.stop:
-        subprocess.call(["docker", "rm", "-f", CONTAINER])
+        stop_container()
         print("stopped", CONTAINER)
         return
 
@@ -501,41 +594,64 @@ def main() -> None:
     if not user_id:
         raise SystemExit("no users; sign up on manifoldgen first")
 
-    jobs: list[tuple[str, str]] = []
+    jobs: list[tuple[str, str, int | None]] = []
     if args.prompt:
         slug = args.slug or f"local-{uuid.uuid4().hex[:8]}"
-        jobs.append((slug, args.prompt))
+        jobs.append((slug, args.prompt, args.seed))
     else:
         existing = set(
             psql(
                 "SELECT id FROM video_jobs WHERE status='completed' AND service='h3_video';"
             ).splitlines()
         )
-        for slug, prompt in PROMPTS:
+        catalog = load_prompt_file(args.prompts) if args.prompts else [
+            (slug, prompt, None) for slug, prompt in PROMPTS
+        ]
+        if args.shuffle_seed is not None:
+            random.Random(args.shuffle_seed).shuffle(catalog)
+        catalog = catalog[args.offset : args.offset + args.count]
+        for slug, prompt, seed in catalog:
             job_id = f"video_h3_{slug.replace('-', '_')}"
             if job_id in existing:
                 print(f"skip existing {slug}")
                 continue
-            jobs.append((slug, prompt))
-            if len(jobs) >= args.count:
-                break
+            jobs.append((slug, prompt, seed))
         if not jobs:
             print("no new prompts to generate")
+            if args.stop_when_done:
+                stop_container()
             return
 
     ok = 0
-    for slug, prompt in jobs:
+    for slug, prompt, catalog_seed in jobs:
         print(f"[{slug}] {prompt[:70]}…")
+        local: Path | None = None
         try:
-            local = generate(prompt, steps=args.steps, duration=args.duration, seed=args.seed)
+            local = generate(
+                prompt,
+                size=args.size,
+                steps=args.steps,
+                duration=args.duration,
+                seed=args.seed if args.seed is not None else catalog_seed,
+            )
             url = upload(local, slug)
             job_id = f"video_h3_{slug.replace('-', '_')}"
-            upsert(job_id, user_id, prompt, url)
+            upsert(job_id, user_id, prompt, url, size=args.size, quant=args.actual_quant)
             print(f"  published {url}")
             ok += 1
         except Exception as e:
             print(f"  FAIL: {e}")
+        finally:
+            if local is not None:
+                local.unlink(missing_ok=True)
+                try:
+                    local.parent.rmdir()
+                except OSError:
+                    pass
     reindex()
+    if args.stop_when_done:
+        stop_container()
+        print("stopped", CONTAINER)
     print(f"done ok={ok}/{len(jobs)}")
 
 
