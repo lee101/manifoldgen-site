@@ -324,9 +324,9 @@ test('account topup presets default to $50 and show API copy', async ({ page }) 
   await page.getByTestId('account-email').fill(FIXED_EMAIL);
   await page.getByTestId('account-password').fill(FIXED_PASSWORD);
   await page.getByTestId('account-auth-submit').click();
-  await expect(page.getByTestId('account-topup-credits-preview')).toContainText('5,000');
+  await expect(page.getByTestId('account-buy-credits')).toContainText('Add $50');
   await page.getByTestId('account-topup-100').click();
-  await expect(page.getByTestId('account-topup-credits-preview')).toContainText('10,000');
+  await expect(page.getByTestId('account-buy-credits')).toContainText('Add $100');
   await expect(page.getByTestId('account-api-snippet')).toContainText('service":"zimage"');
   await expect(page.getByTestId('account-api-key')).toBeVisible();
 });

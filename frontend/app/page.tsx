@@ -30,6 +30,7 @@ import {
   type StoredUser,
 } from '../lib/auth';
 import { parseJSONResponse } from '../lib/http';
+import { ManifoldLoader } from '../components/manifold-loader';
 import {
   h3Dimensions,
   loopAnchorURL,
@@ -112,6 +113,16 @@ interface VideoJobState {
   charged_usd?: number;
   cost_usd?: number;
 }
+
+type HomeGenerationTask = {
+  id: string;
+  mode: GenerationMode;
+  label: string;
+  status: 'starting' | 'queued' | 'processing' | 'upscaling' | 'completed' | 'failed';
+  result_url?: string;
+  error?: string;
+  cost_usd?: number;
+};
 
 interface GalleryImage {
   id: string;
@@ -205,11 +216,11 @@ export default function HomePage() {
   const [loopMode, setLoopMode] = useState(false);
   const [upscaleMode, setUpscaleMode] = useState(false);
   const [upscaleScale, setUpscaleScale] = useState<2 | 4>(2);
-  const [generationStage, setGenerationStage] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [authError, setAuthError] = useState('');
   const [job, setJob] = useState<VideoJob | null>(null);
+  const [generationTasks, setGenerationTasks] = useState<HomeGenerationTask[]>([]);
   const [h3BaseEstimateUSD, setH3BaseEstimateUSD] = useState(1.01);
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [imageCredits, setImageCredits] = useState(4);
@@ -227,28 +238,26 @@ export default function HomePage() {
   const heroVideoRef = useRef<HTMLVideoElement>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
 
+  const updateGenerationTask = useCallback((id: string, update: Partial<HomeGenerationTask>) => {
+    setGenerationTasks((current) => current.map((task) => task.id === id ? { ...task, ...update } : task));
+  }, []);
+
   const creditsLabel = useMemo(() => {
     if (!user) return 'Sign in';
     const usd = user.credits_usd ?? user.credits * creditPrice;
-    const creds = creditPrice > 0 ? Math.round(usd / creditPrice) : Math.round(user.credits);
-    return `${creds.toLocaleString()} cr · $${usd.toFixed(2)}`;
+    return `$${usd.toFixed(2)}`;
   }, [user, creditPrice]);
 
   const estVideoUSD = useMemo(() => {
     const sizeFactor = size === 'preview' ? 0.45 : size === 'balanced' ? 0.7 : 1;
     return Math.max(0.1, Math.ceil(h3BaseEstimateUSD * (duration / 5) * (steps / 20) * sizeFactor * 100) / 100);
   }, [h3BaseEstimateUSD, duration, size, steps]);
-  const estVideoCredits = useMemo(
-    () => Math.max(Math.ceil(0.1 / creditPrice), Math.ceil(estVideoUSD / creditPrice)),
-    [creditPrice, estVideoUSD],
-  );
   const estUpscaleUSD = useMemo(() => {
     if (!upscaleMode) return 0;
     const [width, height] = h3Dimensions(aspect, size);
     const outputMP = width * height * upscaleScale * upscaleScale / 1_000_000;
     return Math.ceil((upscaleRates.base + outputMP * duration * upscaleRates.outputMPSecond) * 100 - 1e-8) / 100;
   }, [aspect, duration, size, upscaleMode, upscaleRates, upscaleScale]);
-  const estUpscaleCredits = Math.ceil(estUpscaleUSD / creditPrice);
 
   const applyUser = useCallback((next: StoredUser) => {
     saveUser(next);
@@ -422,7 +431,7 @@ export default function HomePage() {
         window.location.href = data.url;
         return;
       }
-      if (!data.client_secret || !data.publishable_key) throw new Error('Stripe checkout is unavailable');
+      if (!data.client_secret || !data.publishable_key) throw new Error('checkout is unavailable');
       setCheckoutLabel(kind === 'credits' ? `$${amountUSD} credits` : `${kind} subscription`);
       setCheckoutPublishableKey(data.publishable_key);
       setCheckoutClientSecret(data.client_secret);
@@ -468,18 +477,25 @@ export default function HomePage() {
       openAuth('signup');
       return;
     }
+    const taskID = `home-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const taskMode = generationMode;
+    const taskPrompt = (overrides?.prompt ?? prompt).trim();
+    setGenerationTasks((current) => [{
+      id: taskID,
+      mode: taskMode,
+      label: taskMode === 'images' ? 'Creating 4 images' : 'Starting video',
+      status: 'starting' as const,
+    }, ...current].slice(0, 12));
     setError('');
-    setBusy(true);
-    setGenerationStage(generationMode === 'images' ? 'Creating 4 image variations…' : loopMode ? 'Creating loop keyframe…' : 'Starting H3 render…');
     try {
-      if (generationMode === 'images') {
+      if (taskMode === 'images') {
         const [width, height] = h3Dimensions(aspect, size);
         const imageRes = await fetch(`${API}/service`, {
           method: 'POST',
           headers: authHeaders(apiKey),
           body: JSON.stringify({
             service: 'zimage',
-            prompt: overrides?.prompt ?? prompt,
+            prompt: taskPrompt,
             width,
             height,
             n: 4,
@@ -489,18 +505,21 @@ export default function HomePage() {
         });
         await parseJSONResponse(imageRes, 'Image generation failed');
         await loadGallery();
-        setGenerationStage('4 images added to your gallery');
+        updateGenerationTask(taskID, { status: 'completed', label: '4 images ready' });
+        window.setTimeout(() => setGenerationTasks((current) => current.filter((task) => task.id !== taskID)), 3500);
+        await softRefresh(apiKey);
         return;
       }
       let firstFrame = '';
       if (loopMode) {
+        updateGenerationTask(taskID, { label: 'Making loop frame' });
         const [width, height] = h3Dimensions(aspect, size);
         const imageRes = await fetch(`${API}/service`, {
           method: 'POST',
           headers: authHeaders(apiKey),
           body: JSON.stringify({
             service: 'zimage',
-            prompt,
+            prompt: taskPrompt,
             width,
             height,
             n: 1,
@@ -511,14 +530,14 @@ export default function HomePage() {
           'Loop keyframe generation failed',
         );
         firstFrame = loopAnchorURL(imageData, window.location.origin);
-        setGenerationStage('Animating back to the same keyframe…');
+        updateGenerationTask(taskID, { label: 'Starting loop video' });
       }
       const res = await fetch(`${API}/service`, {
         method: 'POST',
         headers: authHeaders(apiKey),
         body: JSON.stringify({
           service: 'h3_video',
-          prompt: overrides?.prompt ?? prompt,
+          prompt: taskPrompt,
           aspect_ratio: aspect,
           size,
           duration,
@@ -539,28 +558,49 @@ export default function HomePage() {
       }>(res, 'Generation failed');
       const jobId = data.result?.job_id || data.job_id || data.id;
       if (!jobId) throw new Error('No job id returned');
-      setGenerationStage('Rendering H3 video…');
-      const generated = await pollJob(jobId);
+      updateGenerationTask(taskID, { status: 'queued', label: 'Video queued' });
+      const generated = await pollJob(jobId, (state) => {
+        const resultURL = state.result_url || state.video_url || state.result?.video_url;
+        updateGenerationTask(taskID, {
+          status: state.status === 'queued' || state.status === 'pending' ? 'queued' : 'processing',
+          label: state.status === 'queued' || state.status === 'pending' ? 'Video queued' : 'Creating video',
+          result_url: resultURL,
+          cost_usd: state.charged_usd ?? state.cost_usd,
+        });
+      });
+      let finalState = generated;
       if (upscaleMode) {
         const videoURL = generated.result_url || generated.video_url || generated.result?.video_url;
-        if (!videoURL) throw new Error('H3 completed without a video to upscale');
+        if (!videoURL) throw new Error('completed without a video to upscale');
         const [width, height] = h3Dimensions(aspect, size);
-        setGenerationStage(`Starting Real-ESRGAN ${upscaleScale}× upscale…`);
+        updateGenerationTask(taskID, { status: 'upscaling', label: `Upscaling ${upscaleScale}×` });
         const upscaleResponse = await fetch(`${API}/studio/upscale-video`, {
           method: 'POST', headers: authHeaders(apiKey),
           body: JSON.stringify({ video_url: videoURL, width, height, duration, scale: upscaleScale }),
         });
         const upscale = await parseJSONResponse<{ job_id?: string }>(upscaleResponse, 'Could not start post-upscale');
         if (!upscale.job_id) throw new Error('Post-upscale returned no job');
-        setGenerationStage(`Upscaling every frame ${upscaleScale}×…`);
-        await pollJob(upscale.job_id);
+        finalState = await pollJob(upscale.job_id, (state) => updateGenerationTask(taskID, {
+          status: 'upscaling',
+          label: `Upscaling ${upscaleScale}×`,
+          cost_usd: state.charged_usd ?? state.cost_usd,
+        }));
       }
+      const finalURL = finalState.result_url || finalState.video_url || finalState.result?.video_url;
+      const finalJob = {
+        id: finalState.job_id || finalState.id || jobId,
+        status: 'completed',
+        result_url: finalURL,
+        cost_usd: finalState.charged_usd ?? finalState.cost_usd,
+      };
+      setJob(finalJob);
+      updateGenerationTask(taskID, { status: 'completed', label: 'Video ready', result_url: finalURL, cost_usd: finalJob.cost_usd });
+      window.setTimeout(() => setGenerationTasks((current) => current.filter((task) => task.id !== taskID)), 3500);
       await softRefresh(apiKey);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Generation failed');
-    } finally {
-      setBusy(false);
-      setGenerationStage('');
+      const message = err instanceof Error ? err.message : 'Generation failed';
+      updateGenerationTask(taskID, { status: 'failed', label: 'Generation failed', error: message });
+      setError(message);
     }
   }
 
@@ -661,7 +701,7 @@ export default function HomePage() {
     }
   }
 
-  async function pollJob(jobId: string): Promise<VideoJobState> {
+  async function pollJob(jobId: string, onUpdate?: (state: VideoJobState) => void): Promise<VideoJobState> {
     for (let i = 0; i < 1200; i++) {
       const res = await fetch(`${API}/video-jobs/${jobId}`, {
         headers: authHeaders(apiKey),
@@ -675,13 +715,7 @@ export default function HomePage() {
         state.result_url ||
         state.video_url ||
         state.result?.video_url;
-      setJob({
-        id: state.job_id || state.id || jobId,
-        status: state.status || 'processing',
-        result_url: url,
-        error: state.error,
-        cost_usd: state.charged_usd ?? state.cost_usd,
-      });
+      onUpdate?.({ ...state, result_url: url });
       if (['completed', 'succeeded', 'failed', 'payment_required', 'error'].includes(state.status || '')) {
         if (state.status === 'failed' || state.status === 'error' || state.status === 'payment_required') {
           throw new Error(state.error || 'Video failed');
@@ -725,6 +759,7 @@ export default function HomePage() {
   const logoSrc = '/brand/logo-nobg.webp';
 
   const resultUrl = job?.result_url || featuredVideos[0]?.video_url;
+  const activeGenerationTasks = generationTasks.filter((task) => !['completed', 'failed'].includes(task.status));
   // A local, cacheable poster protects LCP from slow API/gallery responses.
   const heroImage = '/brand/manifoldgen-og.webp';
   const displayVideos = videoHits.length > 0 ? videoHits : featuredVideos;
@@ -733,33 +768,28 @@ export default function HomePage() {
     <main className="relative min-h-screen bg-[var(--color-ink)]">
       {/* Full-bleed hero */}
       <section className="relative h-[100dvh] w-full overflow-hidden">
-        <div className="absolute inset-0">
-          {resultUrl ? (
-            <video
-              ref={heroVideoRef}
-              key={resultUrl}
-              className="hero-motion h-full w-full object-cover"
-              src={resultUrl}
-              autoPlay
-              muted={heroMuted}
-              loop
-              playsInline
-            />
-          ) : heroImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={heroImage}
-              src={heroImage}
-              alt=""
-              className="hero-motion h-full w-full object-cover opacity-90"
-            />
-          ) : (
-            <div className="hero-motion h-full w-full bg-[radial-gradient(ellipse_at_20%_20%,#2a1f66_0%,transparent_45%),radial-gradient(ellipse_at_80%_10%,#123a45_0%,transparent_40%),linear-gradient(160deg,#07070a,#12101c_55%,#0a0a10)]" />
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/25" />
-          <div className="absolute inset-0 bg-gradient-to-r from-black/55 via-transparent to-transparent" />
-          <div className="hero-grain pointer-events-none absolute inset-0 opacity-[0.35]" />
-        </div>
+        {resultUrl ? (
+          <video
+            ref={heroVideoRef}
+            key={resultUrl}
+            className="hero-motion absolute inset-0 h-full w-full object-cover"
+            src={resultUrl}
+            autoPlay
+            muted={heroMuted}
+            loop
+            playsInline
+          />
+        ) : heroImage ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={heroImage}
+            src={heroImage}
+            alt=""
+            className="hero-motion absolute inset-0 h-full w-full object-cover"
+          />
+        ) : (
+          <div className="hero-motion absolute inset-0 h-full w-full bg-[radial-gradient(ellipse_at_20%_20%,#2a1f66_0%,transparent_45%),radial-gradient(ellipse_at_80%_10%,#123a45_0%,transparent_40%),linear-gradient(160deg,#07070a,#12101c_55%,#0a0a10)]" />
+        )}
 
         <header className="relative z-20 flex items-center justify-between px-4 py-4 md:px-8">
           <div className="flex items-center gap-3">
@@ -770,7 +800,7 @@ export default function HomePage() {
                 alt=""
                 width={54}
                 height={36}
-                className="h-8 w-auto object-contain brightness-125 drop-shadow md:h-9"
+                className="h-8 w-auto scale-[1.7] object-contain brightness-125 drop-shadow md:h-9"
                 onError={() => setLogoOk(false)}
               />
             ) : (
@@ -927,14 +957,12 @@ export default function HomePage() {
                   <button
                     type="button"
                     aria-pressed={generationMode === 'video'}
-                    disabled={busy}
                     onClick={() => setGenerationMode('video')}
                     className={`rounded-full px-3 py-1.5 text-sm transition ${generationMode === 'video' ? 'bg-white/15 text-white' : 'text-[var(--color-mute)] hover:text-white'}`}
                   >Video</button>
                   <button
                     type="button"
                     aria-pressed={generationMode === 'images'}
-                    disabled={busy}
                     onClick={() => setGenerationMode('images')}
                     className={`rounded-full px-3 py-1.5 text-sm transition ${generationMode === 'images' ? 'bg-white/15 text-white' : 'text-[var(--color-mute)] hover:text-white'}`}
                   >4 images</button>
@@ -943,7 +971,7 @@ export default function HomePage() {
                   type="button"
                   data-testid="home-loop-toggle"
                   aria-pressed={loopMode}
-                  disabled={busy || generationMode === 'images'}
+                  disabled={generationMode === 'images'}
                   onClick={() => setLoopMode((enabled) => !enabled)}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
                     loopMode
@@ -959,7 +987,7 @@ export default function HomePage() {
                   type="button"
                   data-testid="home-upscale-toggle"
                   aria-pressed={upscaleMode}
-                  disabled={busy || generationMode === 'images'}
+                  disabled={generationMode === 'images'}
                   onClick={() => setUpscaleMode((enabled) => !enabled)}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
                     upscaleMode
@@ -972,10 +1000,10 @@ export default function HomePage() {
                   {upscaleMode ? `${upscaleScale}× upscale` : 'Upscale'}
                 </button>
                 <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] sm:inline" data-testid="home-video-cost">
-                  {duration}s · ~{estVideoCredits + (loopMode ? imageCredits : 0) + estUpscaleCredits} credits · est. ${(estVideoUSD + estUpscaleUSD).toFixed(2)}
+                  {duration}s · ~${(estVideoUSD + estUpscaleUSD).toFixed(2)}
                 </span>
                 <span className="hidden rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] md:inline" data-testid="home-image-cost">
-                  4 images · {imageCredits * 4} credits (${(imageCredits * 4 * creditPrice).toFixed(2)})
+                  4 images · ${(imageCredits * 4 * creditPrice).toFixed(2)}
                 </span>
                 <div className="ml-auto flex items-center gap-2">
                   <input ref={assetInputRef} type="file" accept="image/*,audio/*" multiple className="hidden" onChange={(e) => { if (e.target.files) void uploadAssets(e.target.files); e.currentTarget.value = ''; }} />
@@ -985,11 +1013,11 @@ export default function HomePage() {
                   </button>
                   <button
                     type="button"
-                    disabled={busy || !prompt.trim()}
+                    disabled={!prompt.trim()}
                     onClick={() => void generate()}
                     className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
                   >
-                    {busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+                    <Sparkles size={16} />
                     {user ? (generationMode === 'images' ? 'Generate 4 images' : 'Generate video') : 'Sign up to generate'}
                   </button>
                 </div>
@@ -998,11 +1026,9 @@ export default function HomePage() {
             {error && (
               <p className="mt-3 rounded-2xl bg-red-500/15 px-4 py-3 text-sm text-red-200">{error}</p>
             )}
-            {busy && generationStage && (
-              <p className="mt-2 text-xs text-white/65" data-testid="home-generation-stage">
-                {generationStage}
-              </p>
-            )}
+            {activeGenerationTasks.length > 0 && <div className="mt-3 flex justify-end" data-testid="home-background-activity">
+              <ManifoldLoader compact label={activeGenerationTasks.length === 1 ? activeGenerationTasks[0].label : `${activeGenerationTasks.length} tasks running`} />
+            </div>}
             {job && (
               <p className="mt-2 text-xs text-white/55" data-testid="home-job-cost">
                 {job.status}
@@ -1041,7 +1067,6 @@ export default function HomePage() {
             <div className="flex items-end justify-between px-3 pb-3 md:px-6">
               <div>
                 <h2 className="font-display text-lg tracking-wide text-white md:text-xl">Showcase</h2>
-                <p className="text-sm text-[var(--color-mute)]">H3 clips — click to load into the studio</p>
               </div>
               <span className="hidden text-xs text-white/40 sm:inline">{displayVideos.length}</span>
             </div>
@@ -1093,7 +1118,7 @@ export default function HomePage() {
         <div className="flex items-end justify-between px-3 py-4 md:px-6">
           <div>
             <h2 className="font-display text-lg tracking-wide text-white md:text-xl">Gallery</h2>
-            <p className="text-sm text-[var(--color-mute)]">Stills to remix into video prompts</p>
+            <p className="text-sm text-[var(--color-mute)]">Stills for video</p>
           </div>
           {gallery.length > 0 ? (
             <span className="text-xs text-white/40">{gallery.length}</span>
@@ -1192,22 +1217,19 @@ export default function HomePage() {
                 checked={includeAudio}
                 onChange={(e) => setIncludeAudio(e.target.checked)}
               />
-              Include audio when available
+              Audio
             </label>
             <label className="mt-3 flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
                 data-testid="settings-loop-toggle"
                 checked={loopMode}
-                disabled={busy}
                 onChange={(e) => setLoopMode(e.target.checked)}
                 className="mt-0.5"
               />
               <span>
                 Seamless loop
-                <span className="mt-0.5 block text-xs text-[var(--color-mute)]">
-                make a looping video / cinemagraph
-                </span>
+                <span className="mt-0.5 block text-xs text-[var(--color-mute)]">Looping video</span>
               </span>
             </label>
             <label className="mt-3 flex items-start gap-2 text-sm">
@@ -1215,25 +1237,21 @@ export default function HomePage() {
                 type="checkbox"
                 data-testid="settings-upscale-toggle"
                 checked={upscaleMode}
-                disabled={busy}
                 onChange={(e) => setUpscaleMode(e.target.checked)}
                 className="mt-0.5"
               />
               <span>
                 Real-ESRGAN post-upscale
                 <span className="mt-1 flex items-center gap-2 text-xs text-[var(--color-mute)]">
-                  Restore every frame after H3 renders
-                  <select value={upscaleScale} disabled={!upscaleMode || busy} onChange={(e) => setUpscaleScale(Number(e.target.value) as 2 | 4)} className="dark-select rounded-md px-2 py-1">
+                  Restore after render
+                  <select value={upscaleScale} disabled={!upscaleMode} onChange={(e) => setUpscaleScale(Number(e.target.value) as 2 | 4)} className="dark-select rounded-md px-2 py-1">
                     <option value={2}>2×</option>
                     <option value={4}>4×</option>
                   </select>
                 </span>
               </span>
             </label>
-            <p className="mt-4 text-xs text-[var(--color-mute)]">
-              Video shows an estimate up front and settles from actual generation time. Credits are about $0.01 each;
-              images cost {imageCredits} credits ($0.04). Full examples are in the API docs.
-            </p>
+            <p className="mt-4 text-xs text-[var(--color-mute)]">Final video cost follows render time. Images are $0.04 each.</p>
           </div>
         </div>
       )}
@@ -1265,13 +1283,13 @@ export default function HomePage() {
                   <img src="/brand/logo-nobg.webp" alt="" className="h-10 w-auto object-contain brightness-125" />
                   <div className="font-display text-3xl font-800 tracking-tight">ManifoldGen</div>
                 </div>
-                <p className="mt-1 text-sm text-white/70">
-                  {checkoutStep
-                    ? 'Pick a plan.'
-                    : authMode === 'signup'
+                {!checkoutStep && (
+                  <p className="mt-1 text-sm text-white/70">
+                    {authMode === 'signup'
                       ? 'Create your account.'
                       : 'Welcome back. Pick up where you left off.'}
-                </p>
+                  </p>
+                )}
               </div>
             </div>
 
@@ -1404,11 +1422,6 @@ export default function HomePage() {
                     </p>
                   )}
 
-                  {authMode === 'signup' && (
-                    <p className="mb-4 text-xs leading-relaxed text-white/45">
-                      Creates an API key and Stripe-ready wallet. Video pricing is estimated before rendering.
-                    </p>
-                  )}
 
                   <button
                     type="submit"

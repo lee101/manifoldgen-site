@@ -1,12 +1,12 @@
 {
-  "image": "ghcr.io/lee101/h3-cog:cu130-20260809-r3",
+  "image": "ghcr.io/lee101/h3-cog:cu130-20260810-r5",
   "dockerStartCmd": ["python", "-u", "/src/rp_handler.py"],
   "workersMin": 0,
   "idleTimeout": 5,
   "executionTimeoutMs": 14400000,
   "flashboot": true,
-  "scalerType": "REQUEST_COUNT",
-  "scalerValue": 1,
+  "scalerType": "QUEUE_DELAY",
+  "scalerValue": 4,
   "endpoints": [
     {
       "name": "cog-manifold-h3-normal",
@@ -31,5 +31,5 @@
       ]
     }
   ],
-  "notes": "Both variants must use the native RunPod handler, never the Cog HTTP command. The native handler lets RunPod cancellation terminate active work so canceled jobs do not leave billed orphan workers. Request-count scaling prevents a single slow cold start from provisioning duplicate workers. Five-second idle shutdown is below the 30-second cost ceiling."
+  "notes": "Both variants must use the native RunPod handler, never the Cog HTTP command. The native handler lets RunPod cancellation terminate active work so canceled jobs do not leave billed orphan workers. Five-second idle shutdown is below the 30-second cost ceiling."
 }

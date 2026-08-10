@@ -66,6 +66,7 @@ import {
 } from 'mediabunny';
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '../../lib/auth';
 import { HTTPResponseError, parseJSONResponse } from '../../lib/http';
+import { ManifoldLoader } from '../../components/manifold-loader';
 import { CREDITS_UPDATED_EVENT, openPaymentDialog } from '../../lib/payments';
 import {
   DEFAULT_ADJUSTMENTS,
@@ -388,11 +389,19 @@ type GenerationJob = {
   updated_at?: string;
 };
 
+type BackgroundActivity = {
+  id: string;
+  label: string;
+  progress?: number;
+};
+
 type StudioPerfDiagnostics = {
   renderer?: ReturnType<StudioRenderer['diagnostics']>;
   previewFrames: number;
   previewStartedAt: number;
   previewLastAt: number;
+  previewMediaTime?: number;
+  redrawPreview?: () => void;
   export?: {
     sourceWidth: number;
     sourceHeight: number;
@@ -488,6 +497,14 @@ function fitWithin(width: number, height: number, maxWidth: number, maxHeight: n
   return {
     width: Math.max(16, Math.round(scaledWidth * encoderScale / 2) * 2),
     height: Math.max(16, Math.round(scaledHeight * encoderScale / 2) * 2),
+  };
+}
+
+function fitStagePreview(width: number, height: number, maxWidth: number, maxHeight: number) {
+  const scale = Math.min(maxWidth / Math.max(1, width), maxHeight / Math.max(1, height));
+  return {
+    width: Math.max(16, Math.round(width * scale)),
+    height: Math.max(16, Math.round(height * scale)),
   };
 }
 
@@ -768,6 +785,18 @@ function galleryImageURL(value?: string) {
   return `${GALLERY_CDN}/${source.replace(/^\/?(?:images\/|gallery\/)?/, '')}`;
 }
 
+function galleryImportURL(value: string) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.hostname === 'manifoldgenstatic.manifoldgen.com' && parsed.pathname.startsWith('/gallery/')) {
+      return `/api/gallery-assets/${parsed.pathname.slice('/gallery/'.length)}?v=1`;
+    }
+  } catch {
+    // The URL is validated by the caller; use the original value for its error.
+  }
+  return value;
+}
+
 function textFileName(content: string) {
   const stem = content.trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 42) || 'text';
   return `${stem}.png`;
@@ -919,11 +948,13 @@ export default function StudioPage() {
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [stageZoom, setStageZoom] = useState(1);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [stageDragPosition, setStageDragPosition] = useState<{ assetID: string; x: number; y: number; scale: number; rotation: number } | null>(null);
   const [stageGuides, setStageGuides] = useState({ horizontal: false, vertical: false });
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [timelineDropTime, setTimelineDropTime] = useState<number | null>(null);
   const [timelineMarquee, setTimelineMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [activeTimelineClip, setActiveTimelineClip] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [videoGenerateOpen, setVideoGenerateOpen] = useState(false);
@@ -942,6 +973,7 @@ export default function StudioPage() {
   const [exportSettings, setExportSettings] = useState<ExportSettings>(loadExportSettings);
   const [exportProgress, setExportProgress] = useState(0);
   const [busy, setBusy] = useState('');
+  const [backgroundActivities, setBackgroundActivities] = useState<BackgroundActivity[]>([]);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [extendOpen, setExtendOpen] = useState(false);
@@ -998,9 +1030,54 @@ export default function StudioPage() {
   const stageDragRef = useRef<StageDrag | null>(null);
   const uploadInFlightRef = useRef(new Set<File>());
   const projectSaveSequenceRef = useRef(0);
+  const projectPickerRef = useRef<HTMLDivElement>(null);
   const editHistoryRef = useRef<EditorHistory>({ undo: [], redo: [] });
   const historyMergeRef = useRef<{ key: string; at: number } | null>(null);
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
+
+  const startBackgroundActivity = useCallback((label: string) => {
+    const id = uid();
+    setBackgroundActivities((current) => [{ id, label }, ...current].slice(0, 12));
+    return id;
+  }, []);
+
+  const updateBackgroundActivity = useCallback((id: string, label: string, progress?: number) => {
+    setBackgroundActivities((current) => current.map((activity) => activity.id === id ? { ...activity, label, progress } : activity));
+  }, []);
+
+  const finishBackgroundActivity = useCallback((id: string) => {
+    setBackgroundActivities((current) => current.filter((activity) => activity.id !== id));
+  }, []);
+
+  const clearMediaDragUI = useCallback(() => {
+    setDragging(false);
+    setTimelineDropTime(null);
+  }, []);
+
+  useEffect(() => {
+    const clear = () => clearMediaDragUI();
+    window.addEventListener('dragend', clear, true);
+    window.addEventListener('drop', clear, true);
+    window.addEventListener('blur', clear);
+    return () => {
+      window.removeEventListener('dragend', clear, true);
+      window.removeEventListener('drop', clear, true);
+      window.removeEventListener('blur', clear);
+    };
+  }, [clearMediaDragUI]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const updateSize = () => {
+      const { width, height } = stage.getBoundingClientRect();
+      setStageSize((current) => current.width === width && current.height === height ? current : { width, height });
+    };
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(stage);
+    updateSize();
+    return () => observer.disconnect();
+  }, []);
 
   const selected = assets.find((asset) => asset.id === selectedID) || null;
   const selectedAssets = useMemo(() => assets.filter((asset) => selectedIDs.includes(asset.id)), [assets, selectedIDs]);
@@ -1024,13 +1101,11 @@ export default function StudioPage() {
   const rulerDuration = Math.max(rulerStep, Math.ceil(timelineDuration / rulerStep) * rulerStep);
   const timelineWidth = Math.max(320, rulerDuration * pixelsPerSecond + 48);
   const customerExtendUSD = useMemo(() => Math.ceil(((selected?.duration || 0) * extendRates.input + extendDuration * extendRates.output) * 100 - 1e-8) / 100, [selected?.duration, extendDuration, extendRates]);
-  const extendCredits = Math.ceil(customerExtendUSD / creditPrice);
   const customerUpscaleUSD = useMemo(() => {
     if (!selected || selected.kind !== 'video') return upscaleRates.base;
     const outputMP = selected.width * selected.height * upscaleScale * upscaleScale / 1_000_000;
     return Math.ceil((upscaleRates.base + outputMP * selected.duration * upscaleRates.outputMPSecond) * 100 - 1e-8) / 100;
   }, [selected, upscaleRates, upscaleScale]);
-  const upscaleCredits = Math.ceil(customerUpscaleUSD / creditPrice);
   const videoGeneratePrompts = useMemo(() => videoGeneratePrompt
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -1044,7 +1119,6 @@ export default function StudioPage() {
   const videoGenerateBatchUSD = videoGenerateUnitUSD * videoGenerateBatchCount;
   const videoGenerateBatchCredits = Math.ceil(videoGenerateBatchUSD / creditPrice);
   const audioEstimateUSD = Math.max(0.1, Math.ceil(sfxFiveSecondEstimateUSD * audioDuration / 5 * 100) / 100);
-  const audioEstimateCredits = Math.ceil(audioEstimateUSD / creditPrice);
   const speechUSD = Math.max(ttsPer100USD * 0.1, Math.ceil(Math.max(1, speechText.trim().length) / 100 * ttsPer100USD * 10000) / 10000);
   const speechCredits = speechUSD / creditPrice;
   const restyleEstimateUSD = useMemo(() => {
@@ -1056,11 +1130,10 @@ export default function StudioPage() {
     const rate = restyleResolution === '480p' ? 0.04 : restyleResolution === '580p' ? 0.06 : 0.08;
     return Math.ceil(rate * restyleFrames / 16 * 1.2 * 100) / 100;
   }, [restyleDuration, restyleFrames, restyleModel, restyleReferences, restyleResolution]);
-  const restyleEstimateCredits = Math.ceil(restyleEstimateUSD / creditPrice);
   const creditsLabel = useMemo(() => {
     if (!user) return 'Sign in';
     const usd = user.credits_usd ?? user.credits * creditPrice;
-    return `${Math.round(user.credits).toLocaleString()} cr · $${usd.toFixed(2)}`;
+    return `$${usd.toFixed(2)}`;
   }, [user, creditPrice]);
 
   const replaceEditHistory = useCallback((next: EditorHistory | ((current: EditorHistory) => EditorHistory)) => {
@@ -1358,6 +1431,15 @@ export default function StudioPage() {
   }, [menuOpen]);
 
   useEffect(() => {
+    if (!projectMenuOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!projectPickerRef.current?.contains(event.target as Node)) setProjectMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    return () => document.removeEventListener('pointerdown', closeOnOutsideClick);
+  }, [projectMenuOpen]);
+
+  useEffect(() => {
     window.localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify(exportSettings));
   }, [exportSettings]);
 
@@ -1528,7 +1610,7 @@ export default function StudioPage() {
     const isVideo = !!params.get('video_url');
     const name = params.get('name')?.trim() || (isVideo ? 'Gallery video' : 'Gallery image');
     setNotice(`Loading gallery ${isVideo ? 'video' : 'image'}…`);
-    fetch(mediaURL)
+    fetch(isVideo ? mediaURL : galleryImportURL(mediaURL))
       .then(async (response) => {
         if (!response.ok) throw new Error(`Could not load the gallery ${isVideo ? 'video' : 'image'}`);
         const blob = await response.blob();
@@ -1556,11 +1638,22 @@ export default function StudioPage() {
     renderer.resize(previewSize.width, previewSize.height);
     if (selected.kind === 'video') {
       const video = videoRef.current;
-      if (video && video.readyState >= 2) renderer.draw(video, selected.adjustments, video.currentTime * 24);
+      if (video && video.readyState >= 2) {
+        renderer.draw(video, selected.adjustments, video.currentTime * 24);
+        perfDiagnostics().previewMediaTime = video.currentTime;
+      }
     } else if (imageRef.current) {
       renderer.draw(imageRef.current, selected.adjustments, 0);
     }
   }, [selected]);
+
+  useEffect(() => {
+    const diagnostics = perfDiagnostics();
+    diagnostics.redrawPreview = drawCurrent;
+    return () => {
+      if (diagnostics.redrawPreview === drawCurrent) delete diagnostics.redrawPreview;
+    };
+  }, [drawCurrent]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1762,9 +1855,9 @@ export default function StudioPage() {
     if (!user) { setError('Sign in to generate images'); return; }
     const prompt = imagePrompt.trim();
     if (!prompt) return;
-    setBusy('generate-images');
+    const activityID = startBackgroundActivity(`Creating ${imageCount} image${imageCount === 1 ? '' : 's'}`);
     setError('');
-    setNotice('Finding related work while your images render…');
+    setNotice('Images started');
     setMediaBrowserMode('images');
     setMediaSearch(prompt);
     const discovery = searchStudioMedia('images', prompt);
@@ -1789,12 +1882,12 @@ export default function StudioPage() {
       if (!imported.length) throw new Error('Generated images could not be imported');
       const refreshed = await refreshUser(user.api_key).catch(() => null);
       if (refreshed) { setUser(refreshed); saveUser(refreshed); }
-      setNotice(`${imported.length} generated image${imported.length === 1 ? '' : 's'} added · similar work shown below`);
+      setNotice(`${imported.length} image${imported.length === 1 ? '' : 's'} added`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Image generation failed');
     } finally {
       await discovery;
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
@@ -2097,7 +2190,8 @@ export default function StudioPage() {
   }
 
   function leaveTimelineDrop(event: ReactDragEvent<HTMLElement>) {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setTimelineDropTime(null);
+    const nextTarget = event.relatedTarget;
+    if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setTimelineDropTime(null);
   }
 
   async function dropMediaOnTimeline(event: ReactDragEvent<HTMLElement>) {
@@ -2176,6 +2270,7 @@ export default function StudioPage() {
       originals,
       historySnapshot: snapshotEditor(),
     };
+    setActiveTimelineClip(asset.id);
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
@@ -2308,6 +2403,7 @@ export default function StudioPage() {
       if (drag.didMove && count > 1) setNotice(`${count} timeline items selected`);
       setTimelineMarquee(null);
     }
+    setActiveTimelineClip(null);
     timelineDragRef.current = null;
   }
 
@@ -2561,19 +2657,19 @@ export default function StudioPage() {
 
   async function queueVideoGenerations() {
     if (!user) {
-      setVideoGenerateQueueStatus('Sign in before queueing a video creation.');
+      setVideoGenerateQueueStatus('Sign in to queue videos.');
       return;
     }
     if (!videoGeneratePrompts.length) {
-      setVideoGenerateQueueStatus('Enter at least one video prompt.');
+      setVideoGenerateQueueStatus('Add a prompt.');
       return;
     }
     setMediaBrowserMode('videos');
     setMediaSearch(videoGeneratePrompts[0]);
     void searchStudioMedia('videos', videoGeneratePrompts[0]);
-    setBusy('generate-videos');
+    const activityID = startBackgroundActivity(`Queueing ${videoGeneratePrompts.length} video${videoGeneratePrompts.length === 1 ? '' : 's'}`);
     setError('');
-    setVideoGenerateQueueStatus(`Queueing ${videoGeneratePrompts.length} video creation${videoGeneratePrompts.length === 1 ? '' : 's'}…`);
+    setVideoGenerateQueueStatus(`Queueing ${videoGeneratePrompts.length}…`);
     try {
       let selectedImageURL = '';
       if (videoGenerateUseSelected) {
@@ -2597,11 +2693,11 @@ export default function StudioPage() {
         ...current.filter((job) => !queued.some(({ jobID }) => jobID === job.job_id)),
       ]);
       const failedCount = submissions.length - queued.length;
-      setVideoGenerateQueueStatus(`${queued.length} video creation${queued.length === 1 ? '' : 's'} queued.${failedCount ? ` ${failedCount} could not be queued.` : ''} You can launch more now.`);
+      setVideoGenerateQueueStatus(`${queued.length} queued${failedCount ? ` · ${failedCount} failed` : ''}. Keep creating.`);
     } catch (reason) {
       setVideoGenerateQueueStatus(reason instanceof Error ? reason.message : 'Could not queue video creation');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
@@ -2653,14 +2749,15 @@ export default function StudioPage() {
       setError('Sign in to restyle video');
       return;
     }
-    setBusy('restyle'); setError(''); setNotice('Uploading source and references…');
+    const activityID = startBackgroundActivity('Preparing restyle');
+    setError(''); setNotice('Restyle started');
     try {
       const videoURL = source.cloudURL || await uploadPublic(source.file);
       const uploadedReferences = await Promise.all(restyleReferences.map(async (reference) => ({
         ...reference,
         publicURL: reference.cloudURL || await uploadPublic(reference.file),
       })));
-      setNotice('Starting video transformation…');
+      updateBackgroundActivity(activityID, 'Restyling video');
       const response = await fetch('/api/service', {
         method: 'POST', headers: authHeaders(user.api_key),
         body: JSON.stringify({
@@ -2688,7 +2785,7 @@ export default function StudioPage() {
         if (status === 'completed') {
           const outputURL = resultURL(payload.job?.result);
           if (!outputURL) throw new Error('Video transformation completed without a video');
-          setNotice('Downloading transformed video…');
+          updateBackgroundActivity(activityID, 'Adding restyled video');
           const result = await fetch(outputURL);
           if (!result.ok) throw new Error('Could not download transformed video');
           const blob = await result.blob();
@@ -2705,13 +2802,14 @@ export default function StudioPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Video transformation failed');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
   async function removeBackground() {
     if (!selected || selected.kind !== 'image') return;
-    setBusy('background'); setError(''); setNotice('Uploading image…');
+    const activityID = startBackgroundActivity('Removing background');
+    setError(''); setNotice('Background removal started');
     try {
       const imageURL = await uploadPublic(selected.file);
       setNotice('Removing background…');
@@ -2737,21 +2835,22 @@ export default function StudioPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Background removal failed');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
   async function extendVideo() {
     if (!selected || selected.kind !== 'video') return;
-    setBusy('extend'); setError(''); setNotice('Preparing H.264 source for Grok…');
+    const activityID = startBackgroundActivity('Preparing extension');
+    setError(''); setNotice('Extension started');
     try {
       const sourceBlob = await renderTimelineVideo({
         format: 'mp4-h264', resolution: '720p', frameRate: 'source', quality: 'balanced',
       }, selected);
       const sourceFile = new File([sourceBlob], `${selected.name.replace(/\.[^.]+$/, '')}-grok-source.mp4`, { type: 'video/mp4' });
-      setNotice('Uploading source video…');
+      updateBackgroundActivity(activityID, 'Uploading extension');
       const videoURL = await uploadPublic(sourceFile);
-      setNotice('Starting extension…');
+      updateBackgroundActivity(activityID, 'Extending video');
       const response = await fetch('/api/studio/extend-video', {
         method: 'POST', headers: authHeaders(user?.api_key || ''),
         body: JSON.stringify({ video_url: videoURL, prompt: extendPrompt, duration: extendDuration, source_duration: clipDuration(selected) }),
@@ -2783,17 +2882,18 @@ export default function StudioPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Video extension failed');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
   async function upscaleVideo() {
     if (!selected || selected.kind !== 'video' || !canUpscaleSelected) return;
     const sourceName = selected.name.replace(/\.[^.]+$/, '');
-    setBusy('upscale'); setError(''); setNotice('Uploading source video…');
+    const activityID = startBackgroundActivity(`Upscaling ${upscaleScale}×`);
+    setError(''); setNotice('Upscale started');
     try {
       const videoURL = await uploadPublic(selected.file);
-      setNotice(`Starting Real-ESRGAN ${upscaleScale}× upscale…`);
+      updateBackgroundActivity(activityID, `Upscaling ${upscaleScale}×`);
       const response = await fetch('/api/studio/upscale-video', {
         method: 'POST', headers: authHeaders(user?.api_key || ''),
         body: JSON.stringify({
@@ -2817,7 +2917,7 @@ export default function StudioPage() {
         if (status === 'completed') {
           const url = resultURL(payload.job?.result);
           if (!url) throw new Error('Upscale completed without a video');
-          setNotice('Downloading the upscaled clip…');
+          updateBackgroundActivity(activityID, 'Adding upscaled video');
           const videoResponse = await fetch(url);
           if (!videoResponse.ok) throw new Error('Could not download the upscaled clip');
           const blob = await videoResponse.blob();
@@ -2832,7 +2932,7 @@ export default function StudioPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Video upscale failed');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
@@ -2878,7 +2978,7 @@ export default function StudioPage() {
   async function pollGeneratedAudio(jobID: string) {
     for (let attempt = 0; attempt < 240; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2500));
-      const response = await fetch(`/api/video-jobs/${jobID}`, { headers: authHeaders(user?.api_key || '', false) });
+      const response = await fetch(`/api/audio-jobs/${jobID}`, { headers: authHeaders(user?.api_key || '', false) });
       const data = await parseJSONResponse<{ job?: { status?: string; result?: unknown; error?: string } }>(response, 'Audio status failed');
       const status = data.job?.status || '';
       if (status === 'failed' || status === 'payment_required') throw new Error(data.job?.error || 'Audio generation failed');
@@ -2934,7 +3034,8 @@ export default function StudioPage() {
 
   async function generateAudio() {
     if (!user) { setError('Sign in to generate audio'); return; }
-    setBusy(`generate-${audioMode}`); setError('');
+    const activityID = startBackgroundActivity(audioMode === 'speech' ? 'Creating voice' : audioMode === 'music' ? 'Creating music' : 'Creating sound');
+    setError('');
     try {
       if (audioMode === 'speech') {
         setNotice('Generating speech…');
@@ -2991,7 +3092,7 @@ export default function StudioPage() {
       }
       setError(reason instanceof Error ? reason.message : 'Audio generation failed');
     } finally {
-      setBusy('');
+      finishBackgroundActivity(activityID);
     }
   }
 
@@ -3224,16 +3325,33 @@ export default function StudioPage() {
     { id: 'audio', label: 'Audio', icon: AudioLines },
     { id: 'ai', label: 'AI tools', icon: Sparkles },
   ];
+  const foregroundActivityLabel = busy === 'export' ? 'Exporting timeline'
+    : busy === 'export-audio' ? 'Exporting audio'
+      : busy === 'extend' ? 'Extending video'
+        : busy === 'upscale' ? 'Upscaling video'
+          : busy === 'restyle' ? 'Restyling video'
+            : busy ? 'Working' : '';
+  const activeVideoGenerationCount = generationJobs.filter(isActiveGeneration).length;
+  const runningActivityCount = backgroundActivities.length + activeVideoGenerationCount;
+  const activityLabel = runningActivityCount > 1
+    ? `${runningActivityCount} tasks running`
+    : backgroundActivities[0]?.label || (activeVideoGenerationCount ? 'Generating video' : foregroundActivityLabel);
+  const activityProgress = runningActivityCount === 1 && backgroundActivities.length === 1
+    ? backgroundActivities[0].progress
+    : busy === 'export' ? exportProgress : null;
 
   return (
     <main
       className={styles.studio}
       style={{ '--visual-track-count': visualTrackCount, '--visible-visual-track-count': visibleVisualTrackCount } as CSSProperties}
       onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-      onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }}
+      onDragLeave={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) clearMediaDragUI();
+      }}
       onDrop={(event) => {
         event.preventDefault();
-        setDragging(false);
+        clearMediaDragUI();
         const catalogAudio = catalogAudioFromTransfer(event.dataTransfer);
         if (catalogAudio) void importCatalogAudio(catalogAudio, playhead);
         else void importFiles(event.dataTransfer.files);
@@ -3248,7 +3366,7 @@ export default function StudioPage() {
           <button type="button" className={styles.iconButton} aria-label="Menu" aria-expanded={menuOpen} aria-controls="studio-navigation" onClick={() => setMenuOpen((open) => !open)}><Menu size={17} /></button>
           <Link href="/" className={styles.brand} aria-label="Manifold home"><img className={styles.brandMark} src="/brand/logo-mark.webp" alt="" /><span>MANIFOLD</span></Link>
           <span className={styles.divider} />
-          <div className={styles.projectPicker}>
+          <div ref={projectPickerRef} className={styles.projectPicker}>
             <button data-testid="studio-project-menu" className={styles.projectName} aria-expanded={projectMenuOpen} onClick={() => setProjectMenuOpen((open) => !open)}>{projectName} <ChevronDown size={13} /></button>
             {projectMenuOpen && <div className={styles.projectMenu}>
               <label>Project name<input aria-label="Project name" value={projectName} maxLength={120} onChange={(event) => setProjectName(event.target.value)} onBlur={() => !projectName.trim() && setProjectName('Untitled project')} /></label>
@@ -3263,15 +3381,18 @@ export default function StudioPage() {
         <div className={styles.historyActions}>
           <button className={styles.iconButton} aria-label="Undo" title="Undo (Ctrl/Cmd + Z)" onClick={undo} disabled={!editHistory.undo.length}><Undo2 size={16} /></button>
           <button className={styles.iconButton} aria-label="Redo" title="Redo (Ctrl/Cmd + Shift + Z)" onClick={redo} disabled={!editHistory.redo.length}><Redo2 size={16} /></button>
-          <span data-testid="studio-save-status" className={styles.saved}>{saveStatus}</span>
+          <span data-testid="studio-save-status" className={styles.saved}>{saveStatus.startsWith('Uploading ') ? '' : saveStatus}</span>
+          {activityLabel && <div className={styles.activityIndicator} data-testid="studio-background-activity"><ManifoldLoader compact label={activityLabel} progress={activityProgress} /></div>}
         </div>
         <div className={styles.accountActions}>
-          <Link href="/account" className={styles.creditPill}><span className={styles.creditDot} /><span className={styles.creditFull}>{creditsLabel}</span><span className={styles.creditCompact}>{user ? compactCredits(user.credits) : 'Sign in'}</span></Link>
-          <button type="button" className={styles.topupButton} onClick={() => openPaymentDialog({ message: 'Choose a plan or add credits without leaving the Studio.' })}><Plus size={14} /> Top up</button>
+          <Link href="/account" className={styles.creditPill}><span className={styles.creditDot} /><span className={styles.creditFull}>{creditsLabel}</span><span className={styles.creditCompact}>{creditsLabel}</span></Link>
+          <button type="button" className={styles.topupButton} onClick={() => openPaymentDialog({ message: 'Choose a plan or add funds.' })}><Plus size={14} /> Top up</button>
           <Link href="/account" className={styles.avatar} aria-label="Account"><UserRound size={16} /></Link>
           <button data-testid="studio-export" className={styles.exportButton} disabled={!assets.length || !!busy} onClick={() => timelineVisuals.length ? setExportOpen(true) : void exportAudio()}><Download size={15} /> Export</button>
         </div>
       </header>
+
+      {activityLabel && <div className={styles.mobileActivity} data-testid="studio-mobile-background-activity"><ManifoldLoader compact label={activityLabel} progress={activityProgress} /></div>}
 
       {menuOpen && <div className={styles.menuBackdrop} onMouseDown={(event) => { if (event.currentTarget === event.target) setMenuOpen(false); }}>
         <aside id="studio-navigation" className={styles.menuDrawer} aria-label="Manifold navigation" onMouseDown={(event) => event.stopPropagation()}>
@@ -3287,7 +3408,7 @@ export default function StudioPage() {
             <span className={styles.menuLabel}>ACCOUNT</span>
             <Link href="/api" className={styles.menuLink} onClick={() => setMenuOpen(false)}><KeyRound size={17} /><span><b>API</b><small>Build with ManifoldGen</small></span></Link>
             <Link href="/account" className={styles.menuLink} onClick={() => setMenuOpen(false)}><UserRound size={17} /><span><b>Account</b><small>Keys, sign-in, and billing</small></span></Link>
-            <Link href="/account#credits" className={styles.menuLink} onClick={() => setMenuOpen(false)}><CreditCard size={17} /><span><b>Credits</b><small>Top up or manage your balance</small></span></Link>
+            <Link href="/account#credits" className={styles.menuLink} onClick={() => setMenuOpen(false)}><CreditCard size={17} /><span><b>Billing</b><small>Balance and plans</small></span></Link>
 
             <span className={styles.menuLabel}>LEARN</span>
             <Link href="/blog" className={styles.menuLink} onClick={() => setMenuOpen(false)}><BookOpen size={17} /><span><b>Blog</b><small>Prompt craft and faster AI systems</small></span></Link>
@@ -3297,14 +3418,14 @@ export default function StudioPage() {
 
       <div className={styles.workspace}>
         <aside className={styles.rail}>
-          {toolItems.map(({ id, label, icon: Icon }) => <button data-testid={`studio-tool-${id}`} key={id} className={tool === id ? styles.railActive : ''} onClick={() => { setTool(id); setMobilePanelOpen(tool !== id || !mobilePanelOpen); }}><Icon size={19} /><span>{label}</span></button>)}
-          <div className={styles.railBottom}><button type="button" data-testid="studio-help" aria-haspopup="dialog" aria-expanded={helpOpen} onClick={() => setHelpOpen(true)}><CircleHelp size={18} /><span>Help</span></button></div>
+          {toolItems.map(({ id, label, icon: Icon }) => <button data-testid={`studio-tool-${id}`} key={id} title={`Open ${label} tools`} className={tool === id ? styles.railActive : ''} onClick={() => { setTool(id); setMobilePanelOpen(tool !== id || !mobilePanelOpen); }}><Icon size={19} /><span>{label}</span></button>)}
+          <div className={styles.railBottom}><button type="button" data-testid="studio-help" aria-haspopup="dialog" aria-expanded={helpOpen} title="Keyboard shortcuts (?)" onClick={() => setHelpOpen(true)}><CircleHelp size={18} /><span>Help</span></button></div>
         </aside>
 
         <aside data-testid="studio-panel" className={`${styles.panel} ${mobilePanelOpen ? styles.panelOpen : ''}`}>
           <button className={styles.panelClose} aria-label="Close tools" onClick={() => setMobilePanelOpen(false)}><X size={16} /></button>
           {tool === 'media' && <>
-            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>CREATE + DISCOVER</span><h2>Media</h2></div>{mediaBrowserMode === 'project' && <button className={styles.smallIcon} onClick={() => fileInputRef.current?.click()}><Plus size={15} /></button>}</div>
+            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>CREATE + DISCOVER</span><h2>Media</h2></div>{mediaBrowserMode === 'project' && <button className={styles.smallIcon} title="Add media" onClick={() => fileInputRef.current?.click()}><Plus size={15} /></button>}</div>
             <div className={styles.mediaTabs} role="tablist" aria-label="Media library">
               {([['project', 'Project'], ['videos', 'Videos'], ['images', 'Images'], ['music', 'Music']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={mediaBrowserMode === id} data-testid={`studio-media-${id}`} className={mediaBrowserMode === id ? styles.mediaTabActive : ''} onClick={() => setMediaBrowserMode(id)}>{label}</button>)}
             </div>
@@ -3334,9 +3455,9 @@ export default function StudioPage() {
                   event.preventDefault();
                   setGenerationContextMenu({ jobID: generation.job_id, x: event.clientX, y: event.clientY });
                 }}>
-                  <button className={styles.generationMain} disabled={!ready && !failed} onClick={() => failed ? void retryGeneration(generation.job_id) : void addGenerationToTimeline(generation)} title={ready ? 'Add to timeline' : failed ? 'Retry generation' : undefined}>
-                    <span className={styles.generationPreview}>{ready && readyURL ? <video src={readyURL} muted playsInline preload="metadata" /> : <span className={styles.generationThumb}>{pending ? <Loader2 className={styles.spin} size={20} /> : failed ? <RotateCcw size={20} /> : <X size={20} />}</span>}{ready && <span className={styles.generationAdd}><Plus size={13} /> Add to timeline</span>}</span>
-                    <span className={styles.generationMeta}><b>{ready ? 'Ready to add' : pending ? 'Generating video…' : failed ? 'Retry generation' : 'Generation unavailable'}</b><small>{generation.prompt || generation.error || 'Manifold video generation'}</small></span>
+                  <button className={styles.generationMain} aria-disabled={!ready && !failed} onClick={() => failed ? void retryGeneration(generation.job_id) : ready ? void addGenerationToTimeline(generation) : undefined} title={ready ? 'Add to timeline' : failed ? 'Retry generation' : undefined}>
+                    <span className={styles.generationPreview}>{ready && readyURL ? <video src={readyURL} muted playsInline preload="metadata" /> : pending ? <ManifoldLoader compact label="Generating" /> : <span className={styles.generationThumb}>{failed ? <RotateCcw size={20} /> : <X size={20} />}</span>}{ready && <span className={styles.generationAdd}><Plus size={13} /> Add</span>}</span>
+                    <span className={styles.generationMeta}><b>{ready ? 'Ready' : pending ? 'Generating' : failed ? 'Retry' : 'Unavailable'}</b><small>{generation.prompt || generation.error || 'Manifold video'}</small></span>
                   </button>
                   <button className={styles.deleteGeneration} aria-label="Delete generation" onClick={() => void deleteGeneration(generation.job_id)}><Trash2 size={13} /></button>
                 </article>;
@@ -3348,7 +3469,7 @@ export default function StudioPage() {
             {mediaBrowserMode === 'videos' && <>
               <button data-testid="studio-video-create" className={styles.mediaCreateCard} onClick={() => { setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Sparkles size={18} /></span><span><b>Generate videos</b><small>H3 · batches, audio, loops, image guidance</small></span></button>
               <div className={styles.discoveryLabel}><span>VIDEOS FROM THE COMMUNITY</span><small>Semantic search</small></div>
-              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('videos')} placeholder="Search motion, subjects, styles…" /><button disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('videos')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
+              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('videos')} placeholder="Search motion, subjects, styles…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('videos')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
               <div className={styles.discoveryGrid}>{videoHits.map((hit) => <button data-testid={`studio-video-hit-${hit.job_id}`} className={styles.discoveryCard} key={hit.job_id} disabled={!hit.video_url || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'video', hit.prompt)} onClick={() => void addDiscoveredMedia(hit.video_url || '', hit.prompt, 'video')}>
                 <span className={styles.discoveryPreview}>{hit.video_url && <video src={hit.video_url} muted playsInline preload="metadata" />}<span><Plus size={13} /> Add</span></span>
                 <b>{hit.prompt || 'Community video'}</b><small>{hit.service || 'H3'}{typeof hit.similarity === 'number' ? ` · ${Math.round(hit.similarity * 100)}% match` : ''}</small>
@@ -3368,10 +3489,10 @@ export default function StudioPage() {
                   <label><span>Aspect</span><select data-testid="studio-image-aspect" value={imageAspect} onChange={(event) => setImageAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
                   <label><span>Outputs</span><select data-testid="studio-image-count" value={imageCount} onChange={(event) => setImageCount(Number(event.target.value) as 1 | 4)}><option value="1">1 image</option><option value="4">4 images</option></select></label>
                 </div>
-                <button data-testid="studio-image-generate" className={styles.imageGenerateButton} disabled={busy === 'generate-images' || !imagePrompt.trim()} onClick={() => void generateStudioImages()}>{busy === 'generate-images' ? <><Loader2 className={styles.spin} size={15} /> Generating + searching…</> : <><Sparkles size={15} /> Generate {imageCount} image{imageCount === 1 ? '' : 's'}</>}</button>
+                <button data-testid="studio-image-generate" className={styles.imageGenerateButton} disabled={!imagePrompt.trim()} onClick={() => void generateStudioImages()}><Sparkles size={15} /> Generate {imageCount}</button>
               </section>
               <div className={styles.discoveryLabel}><span>SIMILAR IMAGES</span><small>From everyone</small></div>
-              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('images')} placeholder="Search subjects, lighting, composition…" /><button disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('images')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
+              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('images')} placeholder="Search subjects, lighting, composition…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('images')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
               <div className={styles.discoveryGrid}>{imageHits.map((hit) => {
                 const imageURL = galleryImageURL(hit.image_url || hit.file_path);
                 const thumbURL = galleryImageURL(hit.thumb_url || hit.thumb_path || hit.image_url || hit.file_path);
@@ -3457,9 +3578,9 @@ export default function StudioPage() {
             </div>
             {selected?.kind === 'audio' && <div className={styles.audioControls}>
               <span className={styles.sectionLabel}>SELECTED CLIP</span>
-              <label className={styles.sliderRow}><span><b>Volume</b><output>{Math.round(selected.volume * 100)}%</output></span><input type="range" min="0" max="2" step="0.01" value={selected.volume} onChange={(event) => updateAsset(selected.id, { volume: Number(event.target.value) })} /></label>
-              <label className={styles.sliderRow}><span><b>Fade in</b><output>{selected.fadeIn.toFixed(1)}s</output></span><input type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeIn} onChange={(event) => updateAsset(selected.id, { fadeIn: Number(event.target.value) })} /></label>
-              <label className={styles.sliderRow}><span><b>Fade out</b><output>{selected.fadeOut.toFixed(1)}s</output></span><input type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeOut} onChange={(event) => updateAsset(selected.id, { fadeOut: Number(event.target.value) })} /></label>
+              <label className={styles.sliderRow}><span><b>Volume</b><output>{Math.round(selected.volume * 100)}%</output></span><input data-testid="studio-audio-volume" type="range" min="0" max="2" step="0.01" value={selected.volume} onChange={(event) => updateAsset(selected.id, { volume: Number(event.target.value) })} /></label>
+              <label className={styles.sliderRow}><span><b>Fade in</b><output>{selected.fadeIn.toFixed(1)}s</output></span><input data-testid="studio-audio-fade-in" type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeIn} onChange={(event) => updateAsset(selected.id, { fadeIn: Number(event.target.value) })} /></label>
+              <label className={styles.sliderRow}><span><b>Fade out</b><output>{selected.fadeOut.toFixed(1)}s</output></span><input data-testid="studio-audio-fade-out" type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeOut} onChange={(event) => updateAsset(selected.id, { fadeOut: Number(event.target.value) })} /></label>
             </div>}
             <div className={styles.catalogHeader}><span className={styles.sectionLabel}>LICENSED CATALOG</span><Library size={14} /></div>
             <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-audio-search" value={audioSearch} onChange={(event) => setAudioSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchAudioCatalog()} placeholder="Search music and sounds" /><button title="Search (Enter)" disabled={audioSearching} onClick={() => void searchAudioCatalog()}>{audioSearching ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
@@ -3477,25 +3598,35 @@ export default function StudioPage() {
           {tool === 'ai' && <>
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>ASSIST</span><h2>AI tools</h2></div></div>
             <div className={styles.aiStack}>
-              <button className={styles.aiCard} disabled={selected?.kind !== 'image' || !!busy} onClick={() => void removeBackground()}><span className={styles.aiIcon}><ImageIcon size={19} /></span><span><b>Remove background</b><small>Transparent WebP · 1 credit</small></span>{busy === 'background' ? <Loader2 className={styles.spin} size={16} /> : <ArrowLeft className={styles.arrowRight} size={14} />}</button>
-              <button data-testid="studio-upscale-open" className={styles.aiCard} disabled={!canOpenUpscale || !!busy} onClick={() => setUpscaleOpen(true)}><span className={styles.aiIcon}><Maximize size={19} /></span><span><b>Upscale video</b><small>{selected?.kind === 'video' && !canOpenUpscale ? 'Select a clip up to 60 seconds' : 'Real-ESRGAN · 2× or 4× detail'}</small></span>{busy === 'upscale' ? <Loader2 className={styles.spin} size={16} /> : <ArrowLeft className={styles.arrowRight} size={14} />}</button>
-              <button data-testid="studio-restyle-open" className={styles.aiCard} disabled={selected?.kind !== 'video' || !!busy} onClick={() => selected?.kind === 'video' && openRestyle(selected)}><span className={styles.aiIcon}><WandSparkles size={19} /></span><span><b>Restyle video</b><small>Preserve motion · transform the look</small></span>{busy === 'restyle' ? <Loader2 className={styles.spin} size={16} /> : <ArrowLeft className={styles.arrowRight} size={14} />}</button>
-              <button className={styles.aiCard} disabled={!canExtendSelected || !!busy} onClick={() => setExtendOpen(true)}><span className={styles.aiIcon}><Sparkles size={19} /></span><span><b>Extend video</b><small>{selected?.kind === 'video' && !canExtendSelected ? 'Select a 2–15 second clip' : 'Grok · auto-converts to MP4'}</small></span>{busy === 'extend' ? <Loader2 className={styles.spin} size={16} /> : <ArrowLeft className={styles.arrowRight} size={14} />}</button>
+              <button className={styles.aiCard} disabled={selected?.kind !== 'image'} onClick={() => void removeBackground()}><span className={styles.aiIcon}><ImageIcon size={19} /></span><span><b>Remove background</b><small>WebP · 1 credit</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
+              <button data-testid="studio-upscale-open" className={styles.aiCard} disabled={!canOpenUpscale} onClick={() => setUpscaleOpen(true)}><span className={styles.aiIcon}><Maximize size={19} /></span><span><b>Upscale video</b><small>{selected?.kind === 'video' && !canOpenUpscale ? 'Use a clip under 60s' : 'Real-ESRGAN · 2× or 4×'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
+              <button data-testid="studio-restyle-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openRestyle(selected)}><span className={styles.aiIcon}><WandSparkles size={19} /></span><span><b>Restyle video</b><small>Keep motion · change look</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
+              <button className={styles.aiCard} disabled={!canExtendSelected} onClick={() => setExtendOpen(true)}><span className={styles.aiIcon}><Sparkles size={19} /></span><span><b>Extend video</b><small>{selected?.kind === 'video' && !canExtendSelected ? 'Use a 2–15s clip' : 'Grok · MP4'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
             </div>
             <p className={styles.aiNote}>AI tools require a signed-in account. Local editing and export do not use credits.</p>
           </>}
         </aside>
 
+        <div className={styles.panelResize} aria-hidden="true"><span /></div>
         <section className={styles.stageArea}>
           <div className={styles.stageToolbar}>
             <div className={styles.stageLeft}><button className={styles.toolChip}><MousePointer2 size={14} /> Select</button><button className={styles.toolChip} disabled><Crop size={14} /> Crop</button></div>
             <div data-testid="studio-render-status" className={styles.stageStatus}>{selected ? selected.kind === 'audio' ? `${formatTime(selected.duration).slice(3)} audio` : `${selected.width} × ${selected.height} · GPU preview` : 'GPU editor ready'}</div>
             <div className={styles.stageRight}><button className={styles.iconButton} onClick={() => setStageZoom((value) => Math.max(.5, value - .1))}><Minus size={14} /></button><span>{Math.round(stageZoom * 100)}%</span><button className={styles.iconButton} onClick={() => setStageZoom((value) => Math.min(2, value + .1))}><Plus size={14} /></button><button className={styles.iconButton} onClick={centerStageElement} disabled={!selected || selected.kind === 'audio'} title="Center element"><Maximize size={14} /></button></div>
           </div>
-          <div ref={stageRef} className={styles.stage}>
+          <div ref={stageRef} data-testid="studio-stage" className={styles.stage}>
             {selected?.kind === 'audio' ? <audio hidden ref={audioRef} src={selected.url} preload="metadata" onLoadedMetadata={(event) => { event.currentTarget.currentTime = selected.trimStart + Math.max(0, Math.min(clipDuration(selected), playhead - selected.timelineStart)); }} onTimeUpdate={(event) => { const next = selected.timelineStart + event.currentTarget.currentTime - selected.trimStart; if (next >= clipEnd(selected)) { event.currentTarget.pause(); setPlayhead(clipEnd(selected)); } else setPlayhead(next); }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} /> : selected ? stageVisualAssets.map((asset, index) => {
               const isSelected = asset.id === selected.id;
               const dragPosition = stageDragPosition?.assetID === asset.id ? stageDragPosition : null;
+              // The observer updates later resizes; reading the mounted stage
+              // here also covers the first asset render before the grid has
+              // delivered its first ResizeObserver callback.
+              const measuredStage = stageRef.current?.getBoundingClientRect();
+              const stageWidth = stageSize.width || measuredStage?.width || 0;
+              const stageHeight = stageSize.height || measuredStage?.height || 0;
+              const previewSize = stageWidth && stageHeight
+                ? fitStagePreview(asset.width, asset.height, stageWidth - 24, stageHeight - 24)
+                : undefined;
               return <div
                 key={asset.id}
                 data-testid={isSelected ? 'studio-stage-element' : `studio-stage-layer-${asset.id}`}
@@ -3511,6 +3642,8 @@ export default function StudioPage() {
                   top: `${50 + (dragPosition?.y ?? asset.stageY) * 100}%`,
                   transform: `translate(-50%, -50%) rotate(${dragPosition?.rotation ?? asset.stageRotation}deg) scale(${stageZoom * (dragPosition?.scale ?? asset.stageScale)})`,
                   aspectRatio: `${asset.width}/${asset.height}`,
+                  width: previewSize ? `${previewSize.width}px` : undefined,
+                  height: previewSize ? `${previewSize.height}px` : undefined,
                   zIndex: asset.visualTrack * 10_000 + index,
                 }}
                 role="button"
@@ -3527,7 +3660,7 @@ export default function StudioPage() {
                 onDoubleClick={() => updateAsset(asset.id, { stageX: 0, stageY: 0 })}
               >
                 {isSelected ? <>
-                  {asset.kind === 'video' && <video ref={videoRef} className={styles.sourceVideo} src={asset.url} muted={false} playsInline preload="auto" onLoadedData={() => { if (videoRef.current) videoRef.current.currentTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart)); drawCurrent(); }} />}
+                  {asset.kind === 'video' && <video ref={videoRef} className={styles.sourceVideo} src={asset.url} muted={false} playsInline preload="auto" onLoadedData={() => { if (videoRef.current) videoRef.current.currentTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart)); drawCurrent(); }} onSeeked={drawCurrent} />}
                   <canvas ref={canvasRef} className={styles.previewCanvas} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleNW}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleNE}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
@@ -3539,7 +3672,7 @@ export default function StudioPage() {
             }) : <button data-testid="studio-empty" className={styles.dropPrompt} onClick={() => fileInputRef.current?.click()}><span><Upload size={26} /></span><b>Drop media to begin</b><small>Video, image, audio, WebM, MP4, WAV, PNG</small><em>Browse files</em></button>}
             {stageGuides.vertical && <span className={`${styles.stageGuide} ${styles.stageGuideVertical}`} />}
             {stageGuides.horizontal && <span className={`${styles.stageGuide} ${styles.stageGuideHorizontal}`} />}
-            {dragging && <div className={styles.dropOverlay}><div><Upload size={28} /><b>Drop to import</b></div></div>}
+            {dragging && <div data-testid="studio-drop-overlay" className={styles.dropOverlay}><div><Upload size={28} /><b>Drop to import</b></div></div>}
           </div>
           {(notice || error) && <div data-testid="studio-notice" className={`${styles.toast} ${error ? styles.toastError : ''}`}><span>{error || notice}</span><button onClick={() => { setError(''); setNotice(''); }}><X size={14} /></button></div>}
         </section>
@@ -3547,9 +3680,9 @@ export default function StudioPage() {
 
       <section className={styles.timeline}>
         <div className={styles.timelineToolbar}>
-          <div className={styles.timelineTools}><button onClick={() => fileInputRef.current?.click()}><Plus size={14} /> Add</button><button onClick={splitAtPlayhead} disabled={!selectedAssets.length} title="Split at playhead (S)"><Scissors size={14} /> Split</button><button data-testid="studio-layer-up" onClick={() => moveSelectionBetweenLayers(1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move up a layer (Ctrl/Cmd + ])"><ChevronUp size={14} /> Layer</button><button data-testid="studio-layer-down" onClick={() => moveSelectionBetweenLayers(-1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move down a layer (Ctrl/Cmd + [)"><ChevronDown size={14} /> Layer</button><button onClick={duplicateSelected} disabled={!selectedAssets.length} title="Duplicate selected clips"><Copy size={14} /></button><button onClick={removeSelected} disabled={!selectedAssets.length} title="Delete selected clips"><Trash2 size={14} /></button>{selectedAssets.length > 1 && <span className={styles.selectionCount}>{selectedAssets.length} selected</span>}</div>
+          <div className={styles.timelineTools}><button title="Add media" onClick={() => fileInputRef.current?.click()}><Plus size={14} /> Add</button><button onClick={splitAtPlayhead} disabled={!selectedAssets.length} title="Split at playhead (S)"><Scissors size={14} /> Split</button><button data-testid="studio-layer-up" onClick={() => moveSelectionBetweenLayers(1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move up a layer (Ctrl/Cmd + ])"><ChevronUp size={14} /> Layer</button><button data-testid="studio-layer-down" onClick={() => moveSelectionBetweenLayers(-1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move down a layer (Ctrl/Cmd + [)"><ChevronDown size={14} /> Layer</button><button onClick={duplicateSelected} disabled={!selectedAssets.length} title="Duplicate selected clips"><Copy size={14} /></button><button onClick={removeSelected} disabled={!selectedAssets.length} title="Delete selected clips"><Trash2 size={14} /></button>{selectedAssets.length > 1 && <span className={styles.selectionCount}>{selectedAssets.length} selected</span>}</div>
           <div className={styles.transport}><button aria-label={playing ? 'Pause' : 'Play'} title="Play/pause (Space)" className={styles.playButton} onClick={togglePlayback} disabled={!selected || selected.kind === 'image'}>{playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}</button><span>{formatTime(playhead)} <i>/</i> {formatTime(timelineDuration)}</span></div>
-          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Shift-drag to select · Ctrl/Cmd [ ] to layer</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
+          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Shift-drag to select · Ctrl/Cmd [ ] to layer</span><span className={styles.mobileGestureHint}>Long-press + drag to move · drag edges to trim</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
         </div>
         <div className={styles.timelineBody}>
           <div ref={timelineLabelsRef} className={styles.trackLabels} onWheel={(event) => { if (timelineContentRef.current) timelineContentRef.current.scrollTop += event.deltaY; }}><span>VIDEO</span>{Array.from({ length: visualTrackCount }, (_, index) => visualTrackCount - index - 1).map((track) => <div data-testid={`timeline-track-label-v${track + 1}`} key={track}>V{track + 1}</div>)}<div className={styles.audioLabel}>A1</div></div>
@@ -3557,7 +3690,7 @@ export default function StudioPage() {
             <div data-testid="studio-timeline-canvas" ref={timelineCanvasRef} className={styles.timelineCanvas} style={{ width: timelineWidth, minWidth: '100%' }}>
               <div data-testid="studio-timeline-ruler" className={styles.ruler} onPointerDown={beginScrub}>{Array.from({ length: Math.floor(rulerDuration / rulerStep) + 1 }, (_, index) => { const time = index * rulerStep; return <span key={time} style={{ left: time * pixelsPerSecond }}>{formatTime(time).slice(3)}</span>; })}</div>
               <div className={styles.videoTracks} onPointerDown={beginScrub}>
-            {assets.filter((asset) => asset.kind !== 'audio').map((asset) => <div data-testid={`timeline-clip-${asset.id}`} data-timeline-asset={asset.id} data-visual-track={asset.visualTrack} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} onContextMenu={(event) => openStudioContextMenu(event, asset)} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} className={`${styles.timelineClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''}`} style={{ '--track-from-top': visualTrackCount - asset.visualTrack - 1, left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) } as CSSProperties} title={`${asset.name} · V${asset.visualTrack + 1} · ${formatTime(clipDuration(asset))}`}>
+            {assets.filter((asset) => asset.kind !== 'audio').map((asset) => <div data-testid={`timeline-clip-${asset.id}`} data-timeline-asset={asset.id} data-visual-track={asset.visualTrack} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} onContextMenu={(event) => openStudioContextMenu(event, asset)} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} className={`${styles.timelineClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''} ${activeTimelineClip === asset.id ? styles.timelineClipActive : ''}`} style={{ '--track-from-top': visualTrackCount - asset.visualTrack - 1, left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) } as CSSProperties} title={`${asset.name} · V${asset.visualTrack + 1} · ${formatTime(clipDuration(asset))}`}>
                   <span className={`${styles.trimHandle} ${styles.trimHandleLeft}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-left')} title="Trim start" />
                   <span className={styles.clipThumb} style={{ backgroundImage: `url(${asset.kind === 'image' ? asset.url : ''})` }}>{asset.kind === 'video' && <Film size={15} />}</span>
                   <span className={styles.clipMeta}><b>{asset.name}</b><small>{formatTime(clipDuration(asset))}</small></span>
@@ -3565,13 +3698,13 @@ export default function StudioPage() {
                 </div>)}
               </div>
               <div className={styles.audioTrack} onPointerDown={beginScrub}>
-                {assets.filter((asset) => asset.kind === 'audio').map((asset) => <div data-timeline-asset={asset.id} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} className={`${styles.waveformClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''}`} style={{ left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) }} onContextMenu={(event) => openStudioContextMenu(event, asset)} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} title={`${asset.name} · ${formatTime(clipDuration(asset))}`}>
+                {assets.filter((asset) => asset.kind === 'audio').map((asset) => <div data-timeline-asset={asset.id} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} className={`${styles.waveformClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''} ${activeTimelineClip === asset.id ? styles.timelineClipActive : ''}`} style={{ left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) }} onContextMenu={(event) => openStudioContextMenu(event, asset)} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} title={`${asset.name} · ${formatTime(clipDuration(asset))}`}>
                   <span className={`${styles.trimHandle} ${styles.trimHandleLeft}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-left')} title="Trim start" />
                   <span className={styles.waveform}>{Array.from({ length: 54 }, (_, index) => <i key={index} style={{ height: `${15 + ((index * 29) % 70)}%` }} />)}</span><b>{asset.name}</b>
                   <span className={`${styles.trimHandle} ${styles.trimHandleRight}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-right')} title="Trim end" />
                 </div>)}
               </div>
-              {timelineDropTime !== null && <div className={styles.timelineDropMarker} style={{ left: timelineDropTime * pixelsPerSecond }}><span>Drop at {formatTime(timelineDropTime)}</span></div>}
+              {timelineDropTime !== null && <div data-testid="studio-timeline-drop-marker" className={styles.timelineDropMarker} style={{ left: timelineDropTime * pixelsPerSecond }}><span>Drop at {formatTime(timelineDropTime)}</span></div>}
               {timelineMarquee && <div data-testid="studio-timeline-marquee" className={styles.timelineMarquee} style={timelineMarquee} />}
               <div className={styles.playhead} style={{ left: playhead * pixelsPerSecond }} />
             </div>
@@ -3579,31 +3712,31 @@ export default function StudioPage() {
         </div>
       </section>
 
-      {videoGenerateOpen && <Modal title="Generate videos" onClose={() => busy !== 'generate-videos' && setVideoGenerateOpen(false)}>
+      {videoGenerateOpen && <Modal title="Generate videos" onClose={() => setVideoGenerateOpen(false)}>
         <label className={styles.field}>
           <span>Video prompts · one per line</span>
           <textarea data-testid="studio-video-generate-prompt" value={videoGeneratePrompt} onChange={(event) => setVideoGeneratePrompt(event.target.value)} rows={5} maxLength={6000} placeholder={'A cinematic macro shot of glass flowers blooming\nA slow aerial move above a bioluminescent coast'} />
         </label>
-        <p className={styles.generateHint}>Queue up to 12 videos at once. This window stays open after every launch so you can keep creating.</p>
+        <p className={styles.generateHint}>Up to 12 prompts per launch. Keep launching.</p>
         <div className={styles.generateSettings}>
           <label><span>Aspect</span><select data-testid="studio-video-generate-aspect" value={videoGenerateAspect} onChange={(event) => setVideoGenerateAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
           <label><span>Canvas</span><select data-testid="studio-video-generate-size" value={videoGenerateSize} onChange={(event) => setVideoGenerateSize(event.target.value as H3Size)}><option value="preview">Preview</option><option value="balanced">Balanced</option><option value="native">Native</option></select></label>
-          <label><span>Duration</span><select data-testid="studio-video-generate-duration" value={videoGenerateDuration} onChange={(event) => { const duration = Number(event.target.value); setVideoGenerateDuration(duration); if (duration > 15) setVideoGenerateLoop(false); }}><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds · single shot</option><option value="30">30 seconds · chained</option><option value="45">45 seconds · chained</option><option value="60">60 seconds · chained</option></select></label>
+          <label><span>Duration</span><select data-testid="studio-video-generate-duration" value={videoGenerateDuration} onChange={(event) => { const duration = Number(event.target.value); setVideoGenerateDuration(duration); if (duration > 15) { setVideoGenerateLoop(false); setVideoGenerateAudio(false); } }}><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds · single shot</option><option value="30">30 seconds · chained</option><option value="45">45 seconds · chained</option><option value="60">60 seconds · chained</option></select></label>
           <label><span>Steps</span><select data-testid="studio-video-generate-steps" value={videoGenerateSteps} onChange={(event) => setVideoGenerateSteps(Number(event.target.value))}><option value="12">12 · Fast</option><option value="20">20 · Standard</option><option value="28">28 · Detailed</option></select></label>
           <label><span>Output</span><select data-testid="studio-video-generate-format" value={videoGenerateFormat} onChange={(event) => setVideoGenerateFormat(event.target.value as H3Format)}><option value="webm-av1">WebM · AV1</option><option value="webm-vp9">WebM · VP9</option><option value="mp4-h264">MP4 · H.264</option></select></label>
         </div>
         <div className={styles.generateToggles}>
-          <label><input data-testid="studio-video-generate-audio" type="checkbox" checked={videoGenerateAudio} onChange={(event) => setVideoGenerateAudio(event.target.checked)} /><span><b>Native audio</b><small>Generate synchronized sound with the video</small></span></label>
+          <label className={videoGenerateDuration > 15 ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-audio" type="checkbox" disabled={videoGenerateDuration > 15} checked={videoGenerateAudio} onChange={(event) => setVideoGenerateAudio(event.target.checked)} /><span><b>Native audio</b><small>{videoGenerateDuration > 15 ? 'Add one continuous soundtrack in Audio after generation' : 'Generate synchronized sound with the video'}</small></span></label>
           <label className={videoGenerateDuration > 15 ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-loop" type="checkbox" disabled={videoGenerateDuration > 15} checked={videoGenerateLoop} onChange={(event) => setVideoGenerateLoop(event.target.checked)} /><span><b>Match start + end</b><small>{videoGenerateDuration > 15 ? 'Available for single shots up to 15 seconds' : 'Create and reuse one keyframe for a seamless loop'}</small></span></label>
           <label className={selected?.kind !== 'image' ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-selected-image" type="checkbox" disabled={selected?.kind !== 'image' || videoGenerateLoop} checked={videoGenerateUseSelected && selected?.kind === 'image' && !videoGenerateLoop} onChange={(event) => setVideoGenerateUseSelected(event.target.checked)} /><span><b>Use selected image</b><small>{selected?.kind === 'image' ? selected.name : 'Select an image on the timeline first'}</small></span></label>
         </div>
-        {videoGenerateDuration > 15 && <p className={styles.generateHint}>Long video uses conditioned chained shots: each ending guides the next segment. For the strongest music or dialogue continuity, generate one soundtrack in Audio and mix it across the finished clip.</p>}
+        {videoGenerateDuration > 15 && <p className={styles.generateHint}>Long videos chain shots. Add one soundtrack across the result.</p>}
         <div className={styles.priceLine}><span>Estimated batch · {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</span><b>~${videoGenerateBatchUSD.toFixed(2)} · ~{videoGenerateBatchCredits.toLocaleString()} credits</b></div>
         {videoGenerateQueueStatus && <p data-testid="studio-video-generate-status" className={styles.queueStatus} role="status">{videoGenerateQueueStatus}</p>}
-        <button data-testid="studio-video-generate-submit" className={styles.modalPrimary} disabled={busy === 'generate-videos' || !videoGeneratePrompts.length} onClick={() => void queueVideoGenerations()}>{busy === 'generate-videos' ? <><Loader2 className={styles.spin} size={16} /> Queueing creations…</> : <><Sparkles size={16} /> Queue {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</>}</button>
+        <button data-testid="studio-video-generate-submit" className={styles.modalPrimary} disabled={!videoGeneratePrompts.length} onClick={() => void queueVideoGenerations()}><Sparkles size={16} /> Queue {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</button>
       </Modal>}
 
-      {imageGenerateOpen && <Modal title="Generate images" onClose={() => busy !== 'generate-images' && setImageGenerateOpen(false)}>
+      {imageGenerateOpen && <Modal title="Generate images" onClose={() => setImageGenerateOpen(false)}>
         <label className={styles.field}><span>Prompt</span><textarea data-testid="studio-image-modal-prompt" value={imagePrompt} maxLength={2000} rows={5} onChange={(event) => setImagePrompt(event.target.value)} placeholder="Describe the image you want…" /></label>
         <div className={styles.engineChoices}>
           <button className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
@@ -3613,8 +3746,8 @@ export default function StudioPage() {
           <label><span>Aspect</span><select value={imageAspect} onChange={(event) => setImageAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
           <label><span>Outputs</span><select value={imageCount} onChange={(event) => setImageCount(Number(event.target.value) as 1 | 4)}><option value="1">1 image</option><option value="4">4 images</option></select></label>
         </div>
-        <p className={styles.generateHint}>Related community work appears in the Images panel while your creation renders.</p>
-        <button data-testid="studio-image-modal-generate" className={styles.modalPrimary} disabled={busy === 'generate-images' || !imagePrompt.trim()} onClick={() => void generateStudioImages()}>{busy === 'generate-images' ? <><Loader2 className={styles.spin} size={15} /> Generating + searching…</> : <><Sparkles size={15} /> Generate {imageCount} image{imageCount === 1 ? '' : 's'}</>}</button>
+        <p className={styles.generateHint}>Related work appears while yours renders.</p>
+        <button data-testid="studio-image-modal-generate" className={styles.modalPrimary} disabled={!imagePrompt.trim()} onClick={() => void generateStudioImages()}><Sparkles size={15} /> Generate {imageCount}</button>
       </Modal>}
 
       {helpOpen && <Modal title="Keyboard shortcuts" onClose={() => setHelpOpen(false)}>
@@ -3645,7 +3778,7 @@ export default function StudioPage() {
         </section>
       </Modal>}
 
-      {exportOpen && <Modal title="Export" onClose={() => !busy && setExportOpen(false)}>
+      {exportOpen && <Modal title="Export" onClose={() => setExportOpen(false)}>
         <div className={styles.exportOptions}>
           <button data-testid="export-format-mp4-h264" className={exportSettings.format === 'mp4-h264' ? styles.optionSelected : ''} onClick={() => setExportSettings((current) => ({ ...current, format: 'mp4-h264' }))}><span className={styles.optionIcon}>264</span><span><b>MP4 · H.264</b><small>Maximum compatibility</small></span></button>
           <button data-testid="export-format-webm-vp9" className={exportSettings.format === 'webm-vp9' ? styles.optionSelected : ''} onClick={() => setExportSettings((current) => ({ ...current, format: 'webm-vp9' }))}><span className={styles.optionIcon}>VP9</span><span><b>WebM · VP9</b><small>Efficient web playback</small></span></button>
@@ -3662,27 +3795,27 @@ export default function StudioPage() {
         <button className={styles.modalPrimary} disabled={!!busy} onClick={() => void exportVideo()}>{busy === 'export' ? <><Loader2 className={styles.spin} size={16} /> Exporting {Math.round(exportProgress * 100)}%</> : <><Download size={16} /> Export</>}</button>
       </Modal>}
 
-      {extendOpen && <Modal title="Extend video" onClose={() => !busy && setExtendOpen(false)}>
+      {extendOpen && <Modal title="Extend video" onClose={() => setExtendOpen(false)}>
         <label className={styles.field}><span>What happens next?</span><textarea value={extendPrompt} onChange={(event) => setExtendPrompt(event.target.value)} rows={4} /></label>
         <div className={styles.durationChoices}>{[2, 4, 6, 8, 10].map((duration) => <button key={duration} className={extendDuration === duration ? styles.durationActive : ''} onClick={() => setExtendDuration(duration)}>{duration}s</button>)}</div>
-        <div className={styles.priceLine}><span>Price</span><b>${customerExtendUSD.toFixed(2)} · {extendCredits.toLocaleString()} credits</b></div>
+        <div className={styles.priceLine}><span>Price</span><b>${customerExtendUSD.toFixed(2)}</b></div>
         <p className={styles.billingNote}>Your selected 2–15 second clip is rendered to H.264 MP4 before upload. Grok adds 2–10 seconds and preserves the input shape, capped at 720p.</p>
-        <button className={styles.modalPrimary} disabled={!extendPrompt.trim() || !!busy} onClick={() => void extendVideo()}><Sparkles size={16} /> Extend video</button>
+        <button className={styles.modalPrimary} disabled={!extendPrompt.trim()} onClick={() => void extendVideo()}><Sparkles size={16} /> Extend video</button>
       </Modal>}
 
-      {upscaleOpen && <Modal title="Upscale video" onClose={() => !busy && setUpscaleOpen(false)}>
+      {upscaleOpen && <Modal title="Upscale video" onClose={() => setUpscaleOpen(false)}>
         <div className={styles.durationChoices} data-testid="studio-upscale-scales">
           {([2, 4] as const).map((scale) => {
             const supported = !!selected && selected.width * scale <= 8192 && selected.height * scale <= 8192;
             return <button key={scale} disabled={!supported} className={upscaleScale === scale ? styles.durationActive : ''} onClick={() => setUpscaleScale(scale)}>{scale}×</button>;
           })}
         </div>
-        <div className={styles.priceLine}><span>Price</span><b>${customerUpscaleUSD.toFixed(2)} · {upscaleCredits.toLocaleString()} credits</b></div>
+        <div className={styles.priceLine}><span>Price</span><b>${customerUpscaleUSD.toFixed(2)}</b></div>
         <p className={styles.billingNote}>Real-ESRGAN restores each frame with tiled GPU inference, preserves audio, and adds the durable upscaled result to your timeline. Output: {selected ? `${selected.width * upscaleScale} × ${selected.height * upscaleScale}` : '—'}.</p>
-        <button data-testid="studio-upscale-submit" className={styles.modalPrimary} disabled={!canUpscaleSelected || !!busy} onClick={() => void upscaleVideo()}>{busy === 'upscale' ? <><Loader2 className={styles.spin} size={16} /> Upscaling…</> : <><Maximize size={16} /> Upscale {upscaleScale}×</>}</button>
+        <button data-testid="studio-upscale-submit" className={styles.modalPrimary} disabled={!canUpscaleSelected} onClick={() => void upscaleVideo()}><Maximize size={16} /> Upscale {upscaleScale}×</button>
       </Modal>}
 
-      {restyleOpen && <Modal title="Restyle video" onClose={() => !busy && setRestyleOpen(false)}>
+      {restyleOpen && <Modal title="Restyle video" onClose={() => setRestyleOpen(false)}>
         <div className={styles.restyleModes} role="tablist" aria-label="Video transformation mode">
           <button role="tab" aria-selected={restyleModel === 'wan-2.2'} className={restyleModel === 'wan-2.2' ? styles.durationActive : ''} onClick={() => { setRestyleModel('wan-2.2'); setRestyleResolution('720p'); setRestyleAspect('auto'); }}>Transform</button>
           <button role="tab" aria-selected={restyleModel === 'h3-reference'} className={restyleModel === 'h3-reference' ? styles.durationActive : ''} onClick={() => { setRestyleModel('h3-reference'); setRestyleResolution('2K'); setRestyleAspect('16:9'); }}>Reference to video</button>
@@ -3725,11 +3858,11 @@ export default function StudioPage() {
           </div>)}
         </div>
         <p className={styles.billingNote}>{restyleModel === 'wan-2.2' ? `About ${(restyleFrames / restyleFPS).toFixed(1)}s output. Higher strength follows the prompt more; lower strength preserves more of the source.` : 'The selected source is Video 1. References stay in the order above and can be cited by number in your prompt.'}</p>
-        <div className={styles.priceLine}><span>Estimated charge</span><b>~${restyleEstimateUSD.toFixed(2)} · ~{restyleEstimateCredits.toLocaleString()} credits</b></div>
-        <button data-testid="studio-restyle-submit" className={styles.modalPrimary} disabled={!restylePrompt.trim() || !!busy} onClick={() => void generateRestyle()}>{busy === 'restyle' ? <><Loader2 className={styles.spin} size={16} /> Transforming…</> : <><WandSparkles size={16} /> Transform video</>}</button>
+        <div className={styles.priceLine}><span>Estimate</span><b>~${restyleEstimateUSD.toFixed(2)}</b></div>
+        <button data-testid="studio-restyle-submit" className={styles.modalPrimary} disabled={!restylePrompt.trim()} onClick={() => void generateRestyle()}><WandSparkles size={16} /> Transform video</button>
       </Modal>}
 
-      {audioGenerateOpen && <Modal title={audioMode === 'music' ? 'Generate music' : audioMode === 'sfx' ? 'Generate sound' : 'Text to speech'} onClose={() => { if (!busy) { stopVoicePreview(); setAudioGenerateOpen(false); } }}>
+      {audioGenerateOpen && <Modal title={audioMode === 'music' ? 'Generate music' : audioMode === 'sfx' ? 'Generate sound' : 'Text to speech'} onClose={() => { stopVoicePreview(); setAudioGenerateOpen(false); }}>
         {audioMode === 'speech' ? <>
           <label className={styles.field}><span>Script</span><textarea data-testid="studio-speech-text" value={speechText} onChange={(event) => setSpeechText(event.target.value)} rows={5} maxLength={4000} /></label>
           <div className={styles.voicePicker} role="radiogroup" aria-label="Speech voice">
@@ -3744,14 +3877,14 @@ export default function StudioPage() {
           </div>
           <div className={styles.voiceSampleNote}><span>Pre-rendered Opus previews · free to play</span>{voicePreviewError && <b role="alert">{voicePreviewError}</b>}</div>
           <label className={styles.field}><span>Speed · {speechSpeed.toFixed(1)}×</span><input type="range" min="0.7" max="1.4" step="0.1" value={speechSpeed} onChange={(event) => setSpeechSpeed(Number(event.target.value))} /></label>
-          <div className={styles.priceLine}><span>Exact text charge</span><b>${speechUSD.toFixed(4)} · {speechCredits.toFixed(2)} credits</b></div>
+          <div className={styles.priceLine}><span>Price</span><b>${speechUSD.toFixed(4)}</b></div>
         </> : <>
           <label className={styles.field}><span>{audioMode === 'music' ? 'Describe the track' : 'Describe the sound'}</span><textarea data-testid="studio-audio-prompt" value={audioPrompt} onChange={(event) => setAudioPrompt(event.target.value)} rows={4} maxLength={2000} /></label>
           <div className={styles.durationChoices}>{(audioMode === 'music' ? [30, 45, 60, 90, 180] : [5, 10, 20, 30, 45]).map((duration) => <button key={duration} className={audioDuration === duration ? styles.durationActive : ''} onClick={() => setAudioDuration(duration)}>{duration}s</button>)}</div>
-          <div className={styles.priceLine}><span>{audioMode === 'music' ? 'music charge' : 'Estimated charge'}</span><b>{audioMode === 'music' ? '80 credits' : `~$${audioEstimateUSD.toFixed(2)} · ~${audioEstimateCredits.toLocaleString()} credits`}</b></div>
+          <div className={styles.priceLine}><span>{audioMode === 'music' ? 'Price' : 'Estimate'}</span><b>{audioMode === 'music' ? '$0.80' : `~$${audioEstimateUSD.toFixed(2)}`}</b></div>
         </>}
-        <p className={styles.billingNote}>Catalog search and editing are free. Generation is charged only through your Manifold credits.</p>
-        <button data-testid="studio-audio-generate" className={styles.modalPrimary} disabled={!!busy || (audioMode === 'speech' ? !speechText.trim() : !audioPrompt.trim())} onClick={() => void generateAudio()}>{busy.startsWith('generate-') ? <><Loader2 className={styles.spin} size={16} /> Generating…</> : <><Sparkles size={16} /> Generate and add to timeline</>}</button>
+        <p className={styles.billingNote}>Search and editing are free. You only pay for generation.</p>
+        <button data-testid="studio-audio-generate" className={styles.modalPrimary} disabled={audioMode === 'speech' ? !speechText.trim() : !audioPrompt.trim()} onClick={() => void generateAudio()}><Sparkles size={16} /> Generate</button>
       </Modal>}
 
       {contextMenu && <div className={styles.contextMenuBackdrop} onPointerDown={() => setContextMenu(null)} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); }}><div data-testid="studio-context-menu" className={styles.contextMenu} style={{ left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 248)), top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 480)) }} onPointerDown={(event) => event.stopPropagation()}>{(() => {
@@ -3803,5 +3936,48 @@ function PanelEmpty() {
 }
 
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return <div className={styles.modalBackdrop} onMouseDown={(event) => event.currentTarget === event.target && onClose()}><div className={styles.modal} role="dialog" aria-modal="true" aria-label={title}><div className={styles.modalHeader}><h2>{title}</h2><button aria-label={`Close ${title}`} onClick={onClose}><X size={18} /></button></div><div className={styles.modalBody}>{children}</div></div></div>;
+  const modalRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableElements = () => Array.from(modalRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    ) || []).filter((element) => !element.hidden && element.getAttribute('aria-hidden') !== 'true');
+    const focusFrame = window.requestAnimationFrame(() => (focusableElements()[0] || modalRef.current)?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = focusableElements();
+      if (!focusable.length) {
+        event.preventDefault();
+        modalRef.current?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !modalRef.current?.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', handleKeyDown, true);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, []);
+
+  return <div className={styles.modalBackdrop} onMouseDown={(event) => event.currentTarget === event.target && closeRef.current()}><div ref={modalRef} className={styles.modal} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}><div className={styles.modalHeader}><h2>{title}</h2><button aria-label={`Close ${title}`} onClick={() => closeRef.current()}><X size={18} /></button></div><div className={styles.modalBody}>{children}</div></div></div>;
 }

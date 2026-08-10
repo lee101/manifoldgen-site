@@ -629,6 +629,35 @@ test('timeline copy paste aligns groups to the playhead and accepts dropped medi
   expect(droppedLeft).toBeLessThan(266);
 });
 
+test('drop import indicators clear when a drag exits or is canceled', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+
+  await page.evaluate(() => {
+    const target = document.querySelector('[data-testid="studio-empty"]');
+    target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }));
+  });
+  await expect(page.getByTestId('studio-drop-overlay')).toBeVisible();
+
+  await page.evaluate(() => {
+    const target = document.querySelector('[data-testid="studio-empty"]');
+    target.dispatchEvent(new DragEvent('dragleave', { bubbles: true, cancelable: true, relatedTarget: null, dataTransfer: new DataTransfer() }));
+  });
+  await expect(page.getByTestId('studio-drop-overlay')).toBeHidden();
+
+  await page.evaluate(() => {
+    const dropzone = document.querySelector('[data-testid="studio-timeline-dropzone"]');
+    const rect = dropzone.getBoundingClientRect();
+    dropzone.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, clientX: rect.left + 96, clientY: rect.top + 40, dataTransfer: new DataTransfer() }));
+  });
+  await expect(page.getByTestId('studio-timeline-drop-marker')).toBeVisible();
+  await expect(page.getByTestId('studio-drop-overlay')).toBeHidden();
+
+  await page.evaluate(() => window.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true })));
+  await expect(page.getByTestId('studio-timeline-drop-marker')).toBeHidden();
+  await expect(page.getByTestId('studio-drop-overlay')).toBeHidden();
+});
+
 test('spacebar toggles timeline playback even after the file input had focus', async ({ page }) => {
   await installMocks(page);
   await page.goto('/studio');
