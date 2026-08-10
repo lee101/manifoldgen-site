@@ -19,6 +19,8 @@ import io
 import json
 import os
 import signal
+import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -129,6 +131,24 @@ def r2_client() -> object:
                         aws_secret_access_key=secret, region_name="auto", config=Config(s3={"addressing_style": "path"}))
 
 
+def reindex(database_url: str) -> None:
+    api_key = subprocess.check_output(
+        ["psql", database_url, "-At", "-c", "SELECT api_key FROM users WHERE api_key <> '' ORDER BY created_at ASC LIMIT 1;"],
+        text=True,
+    ).strip()
+    if not api_key:
+        raise RuntimeError("no API key is available to authorize search reindexing")
+    request = urllib.request.Request(
+        os.getenv("MANIFOLDGEN_API", "http://127.0.0.1:8116").rstrip("/") + "/api/search/reindex",
+        method="POST",
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        if response.status != 202:
+            raise RuntimeError(f"reindex returned HTTP {response.status}")
+    print("search reindex requested", flush=True)
+
+
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser()
@@ -147,6 +167,8 @@ def main() -> None:
     parser.add_argument('--min-free-gib', type=float, default=80.0, help='stop before the local spool gets too full')
     parser.add_argument('--retries', type=int, default=8, help='retries per prompt for busy/temporarily unavailable workers')
     parser.add_argument('--retry-delay', type=float, default=15.0, help='initial retry delay; exponential backoff is capped at 5 minutes')
+    parser.add_argument('--moderate-after', action='store_true', help='moderate this bounded batch after generation')
+    parser.add_argument('--reindex-after', action='store_true', help='request authenticated search reindexing after moderation')
     args = parser.parse_args()
     if not args.database_url:
         raise SystemExit('DATABASE_URL is required')
@@ -169,6 +191,7 @@ def main() -> None:
     client = r2_client() if args.upload_r2 else None
     bucket = os.getenv("R2_BUCKET", "")
     prefix = os.getenv("R2_PATH_PREFIX", "gallery").strip("/")
+    generated = 0
     for number, prompt in enumerate(pending, 1):
         if STOP:
             print('stop requested; current work is indexed and the next run will resume', flush=True)
@@ -208,12 +231,27 @@ def main() -> None:
                     (image_id, prompt, image.width, image.height, relpath, relpath, relpath, size, 'zimage-turbo-native', seed, 4),
                 )
             conn.commit()
+            generated += 1
             print(f'[{number}/{len(pending)}] indexed {relpath}', flush=True)
         except (OSError, RuntimeError, urllib.error.URLError, urllib.error.HTTPError) as error:
             conn.rollback()
             print(f'[{number}/{len(pending)}] failed: {error}', flush=True)
         if args.delay:
             time.sleep(args.delay)
+
+    if args.moderate_after and generated:
+        print(f"moderating up to {generated} generated images", flush=True)
+        subprocess.check_call([
+            sys.executable,
+            str(ROOT / "scripts" / "moderate_gallery_art.py"),
+            "--limit", str(generated),
+            "--database-url", args.database_url,
+            "--images-dir", str(args.images_dir),
+            "--endpoint", args.endpoint,
+        ])
+    if args.reindex_after:
+        reindex(args.database_url)
+    print(f"batch complete: generated={generated} requested={len(pending)}", flush=True)
 
 
 if __name__ == '__main__':

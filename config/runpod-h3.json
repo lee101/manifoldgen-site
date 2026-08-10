@@ -1,5 +1,5 @@
 {
-  "image": "ghcr.io/lee101/h3-cog:cu130-20260809-r3",
+  "image": "ghcr.io/lee101/h3-cog:cu130-20260810-r5",
   "dockerStartCmd": ["python", "-u", "/src/rp_handler.py"],
   "workersMin": 0,
   "idleTimeout": 5,

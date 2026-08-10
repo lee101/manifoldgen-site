@@ -33,6 +33,10 @@ var (
 var corsOrigins = map[string]struct{}{
 	"https://manifoldgen.com":     {},
 	"https://www.manifoldgen.com": {},
+	"https://manifoldgen.cc":      {},
+	"https://www.manifoldgen.cc":  {},
+	"https://manifoldgen.app.nz":  {},
+	"https://appstatic.app.nz":    {},
 	"http://localhost:3000":       {},
 	"http://localhost:8080":       {},
 }

@@ -28,7 +28,9 @@ if [ -f .env ]; then
   source .env
   set +a
 fi
-if [ -f /nvme0n1-disk/code/app-site/.env ]; then
+local_r2_access="${AWS_ACCESS_KEY_ID:-${CLOUDFLARE_R2_ACCESS_KEY_ID:-}}"
+local_r2_secret="${AWS_SECRET_ACCESS_KEY:-${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}}"
+if { [ -z "$local_r2_access" ] || [ -z "$local_r2_secret" ]; } && [ -f /nvme0n1-disk/code/app-site/.env ]; then
   # Prefer shared R2 creds when not already set.
   set +u
   set -a
