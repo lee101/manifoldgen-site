@@ -16,6 +16,7 @@ import {
   Crop,
   Download,
   Film,
+  GripVertical,
   Image as ImageIcon,
   KeyRound,
   Library,
@@ -138,7 +139,7 @@ type StageDrag = {
 };
 
 type AudioCatalogAsset = {
-  id: number;
+  id: number | string;
   title: string;
   url: string;
   preview_url?: string;
@@ -151,6 +152,133 @@ type AudioCatalogAsset = {
   attribution?: string;
   source_url?: string;
 };
+
+const CATALOG_AUDIO_DRAG_TYPE = 'application/x-manifold-audio';
+
+function catalogWaveform(seedValue: string, count = 44) {
+  let seed = 2166136261;
+  for (const character of seedValue) seed = Math.imul(seed ^ character.charCodeAt(0), 16777619);
+  return Array.from({ length: count }, (_, index) => {
+    seed = Math.imul(seed ^ (index + 1), 2246822519);
+    const noise = ((seed >>> 8) & 255) / 255;
+    const envelope = .55 + Math.sin((index / Math.max(1, count - 1)) * Math.PI) * .45;
+    return Math.round(18 + noise * 72 * envelope);
+  });
+}
+
+function catalogAudioFromTransfer(dataTransfer: DataTransfer) {
+  const encoded = dataTransfer.getData(CATALOG_AUDIO_DRAG_TYPE);
+  if (!encoded) return null;
+  try {
+    const asset = JSON.parse(encoded) as Partial<AudioCatalogAsset>;
+    if ((typeof asset.id !== 'number' && typeof asset.id !== 'string') || typeof asset.title !== 'string' || typeof asset.url !== 'string') return null;
+    return asset as AudioCatalogAsset;
+  } catch {
+    return null;
+  }
+}
+
+function CatalogAudioCard({
+  asset,
+  loading,
+  onAdd,
+  onDragStart,
+  onPromptContext,
+  testID,
+}: {
+  asset: AudioCatalogAsset;
+  loading: boolean;
+  onAdd: (asset: AudioCatalogAsset) => void;
+  onDragStart: (event: ReactDragEvent<HTMLElement>, asset: AudioCatalogAsset) => void;
+  onPromptContext?: (event: ReactMouseEvent<HTMLElement>, asset: AudioCatalogAsset) => void;
+  testID?: string;
+}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const duration = Math.max(.01, asset.duration || audioRef.current?.duration || 0);
+  const waveform = useMemo(() => catalogWaveform(`${asset.id}:${asset.title}`), [asset.id, asset.title]);
+  const progress = Math.max(0, Math.min(1, currentTime / duration));
+  const previewURL = asset.preview_url || asset.url;
+
+  useEffect(() => {
+    const stopOtherPreview = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === String(asset.id)) return;
+      audioRef.current?.pause();
+    };
+    window.addEventListener('manifold:audio-preview', stopOtherPreview);
+    return () => {
+      window.removeEventListener('manifold:audio-preview', stopOtherPreview);
+      audioRef.current?.pause();
+    };
+  }, [asset.id]);
+
+  const play = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    window.dispatchEvent(new CustomEvent('manifold:audio-preview', { detail: String(asset.id) }));
+    void audio.play().catch(() => setPlaying(false));
+  };
+
+  const toggle = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) play();
+    else audio.pause();
+  };
+
+  const seek = (value: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const next = Math.max(0, Math.min(Number.isFinite(audio.duration) ? audio.duration : duration, value));
+    audio.currentTime = next;
+    setCurrentTime(next);
+  };
+
+  return <article
+    key={asset.id}
+    data-testid={testID || `studio-audio-hit-${asset.id}`}
+    className={styles.catalogAudioCard}
+    draggable
+    onDragStart={(event) => onDragStart(event, asset)}
+    onContextMenu={(event) => onPromptContext?.(event, asset)}
+  >
+    <audio
+      ref={audioRef}
+      src={previewURL}
+      preload="metadata"
+      onLoadedMetadata={(event) => setCurrentTime(Math.min(currentTime, event.currentTarget.duration || duration))}
+      onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+      onPlay={() => setPlaying(true)}
+      onPause={() => setPlaying(false)}
+      onEnded={(event) => { event.currentTarget.currentTime = 0; setCurrentTime(0); setPlaying(false); }}
+    />
+    <button className={styles.catalogPlay} onClick={toggle} aria-label={`${playing ? 'Pause' : 'Preview'} ${asset.title}`}>
+      {playing ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
+    </button>
+    <div className={styles.catalogAudioBody}>
+      <div className={styles.catalogAudioTitle}><b>{asset.title}</b><span>{formatTime(currentTime).slice(3)} / {formatTime(duration).slice(3)}</span></div>
+      <div data-testid={`studio-audio-waveform-${asset.id}`} className={styles.catalogWaveform} title="Drag the handle to preview any part">
+        <div className={styles.catalogWaveformBars} aria-hidden="true">{waveform.map((height, index) => <i key={index} style={{ height: `${height}%`, opacity: index / waveform.length <= progress ? 1 : .32 }} />)}</div>
+        <input
+          data-testid={`studio-audio-scrubber-${asset.id}`}
+          aria-label={`Preview position for ${asset.title}`}
+          type="range"
+          min="0"
+          max={duration}
+          step="0.01"
+          value={Math.min(currentTime, duration)}
+          onChange={(event) => seek(Number(event.target.value))}
+          onPointerUp={play}
+          onKeyUp={play}
+        />
+      </div>
+      <small>{formatTime(asset.duration).slice(3)} · {asset.license.toUpperCase()} · {asset.attribution || asset.provider}</small>
+    </div>
+    <span className={styles.catalogDragHandle} title="Drag to the timeline" aria-hidden="true"><GripVertical size={14} /></span>
+    <button className={styles.catalogAdd} aria-label={`Add ${asset.title} to timeline at playhead`} disabled={loading} onClick={() => onAdd(asset)}>{loading ? <Loader2 className={styles.spin} size={13} /> : <Plus size={13} />}</button>
+  </article>;
+}
 
 type RestyleReference = {
   id: string;
@@ -1802,13 +1930,13 @@ export default function StudioPage() {
     setContextMenu(null);
   }
 
-  async function addGeneratedFile(file: File, kind: MediaKind, attribution?: string, text?: StudioTextStyle) {
+  async function addGeneratedFile(file: File, kind: MediaKind, attribution?: string, text?: StudioTextStyle, timelinePlacement?: number) {
     const metadata = await readDimensions(file, kind);
     const visualEnd = assets.filter((item) => item.kind !== 'audio').reduce((end, item) => Math.max(end, clipEnd(item)), 0);
     const id = uid();
     const asset: StudioAsset = {
       id, mediaID: id, name: file.name, kind, file, url: URL.createObjectURL(file), ...metadata,
-      trimStart: 0, trimEnd: metadata.duration, timelineStart: kind === 'audio' ? playhead : visualEnd, volume: 1, fadeIn: 0, fadeOut: 0,
+      trimStart: 0, trimEnd: metadata.duration, timelineStart: kind === 'audio' ? (timelinePlacement ?? playhead) : visualEnd, volume: 1, fadeIn: 0, fadeOut: 0,
       visualTrack: 0,
       stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0,
       attribution, text, adjustments: { ...DEFAULT_ADJUSTMENTS },
@@ -1981,6 +2109,11 @@ export default function StudioPage() {
     setTimelineDropTime(null);
     if (event.dataTransfer.files.length) {
       await importFiles(event.dataTransfer.files, dropTime, dropTrack);
+      return;
+    }
+    const catalogAudio = catalogAudioFromTransfer(event.dataTransfer);
+    if (catalogAudio) {
+      await importCatalogAudio(catalogAudio, dropTime);
       return;
     }
     const uri = event.dataTransfer.getData('text/uri-list').split(/\r?\n/).find((line) => line && !line.startsWith('#')) || '';
@@ -2718,14 +2851,21 @@ export default function StudioPage() {
     }
   }
 
-  async function importCatalogAudio(asset: AudioCatalogAsset) {
+  function startCatalogAudioDrag(event: ReactDragEvent<HTMLElement>, asset: AudioCatalogAsset) {
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData(CATALOG_AUDIO_DRAG_TYPE, JSON.stringify(asset));
+    event.dataTransfer.setData('text/uri-list', asset.url);
+    event.dataTransfer.setData('text/plain', asset.title);
+  }
+
+  async function importCatalogAudio(asset: AudioCatalogAsset, timelinePlacement = playhead) {
     setBusy(`catalog-${asset.id}`); setError(''); setNotice(`Importing ${asset.title}…`);
     try {
       const response = await fetch(asset.url);
       if (!response.ok) throw new Error('Could not download this catalog track');
       const blob = await response.blob();
-      const extension = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('wav') ? 'wav' : blob.type.includes('mpeg') ? 'mp3' : 'opus';
-      await addGeneratedFile(new File([blob], `${asset.title}.${extension}`, { type: blob.type || 'audio/ogg' }), 'audio', asset.attribution || asset.provider);
+      const extension = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('wav') ? 'wav' : blob.type.includes('mpeg') ? 'mp3' : blob.type.includes('webm') ? 'webm' : 'opus';
+      await addGeneratedFile(new File([blob], `${asset.title}.${extension}`, { type: blob.type || 'audio/ogg' }), 'audio', asset.attribution || asset.provider, undefined, timelinePlacement);
       setNotice(`${asset.title} added · ${asset.license.toUpperCase()}`);
       setMobilePanelOpen(false);
     } catch (reason) {
@@ -3091,7 +3231,13 @@ export default function StudioPage() {
       style={{ '--visual-track-count': visualTrackCount, '--visible-visual-track-count': visibleVisualTrackCount } as CSSProperties}
       onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
       onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }}
-      onDrop={(event) => { event.preventDefault(); setDragging(false); void importFiles(event.dataTransfer.files); }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        const catalogAudio = catalogAudioFromTransfer(event.dataTransfer);
+        if (catalogAudio) void importCatalogAudio(catalogAudio, playhead);
+        else void importFiles(event.dataTransfer.files);
+      }}
       onContextMenu={(event) => {
         if (event.defaultPrevented || (event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"]')) return;
         openStudioContextMenu(event);
@@ -3240,8 +3386,16 @@ export default function StudioPage() {
             {mediaBrowserMode === 'music' && <>
               <button data-testid="studio-music-create" className={styles.mediaCreateCard} onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Music2 size={18} /></span><span><b>Generate music</b><small>Describe a soundtrack and add it directly to the timeline</small></span></button>
               <div className={styles.discoveryLabel}><span>LICENSED MUSIC</span><small>Netwrck catalog</small></div>
-              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('music')} placeholder="Search mood, genre, instruments…" /><button disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('music')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
-              <div className={styles.catalogList}>{audioResults.map((asset) => <article key={asset.id} data-testid={`studio-music-hit-${asset.id}`} className={styles.catalogCard} onContextMenu={(event) => openPromptContextMenu(event, 'music', asset.description || asset.title)}><button className={styles.catalogPlay} onClick={() => { const audio = new Audio(asset.preview_url || asset.url); void audio.play(); }} aria-label={`Preview ${asset.title}`}><Play size={12} fill="currentColor" /></button><span><b>{asset.title}</b><small>{formatTime(asset.duration).slice(3)} · {asset.license.toUpperCase()} · {asset.attribution || asset.provider}</small></span><button aria-label={`Add ${asset.title} to timeline`} disabled={!!busy} onClick={() => void importCatalogAudio(asset)}>{busy === `catalog-${asset.id}` ? <Loader2 className={styles.spin} size={13} /> : <Plus size={13} />}</button></article>)}</div>
+              <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('music')} placeholder="Search mood, genre, instruments…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('music')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
+              <div className={styles.catalogList}>{audioResults.map((asset) => <CatalogAudioCard
+                key={asset.id}
+                testID={`studio-music-hit-${asset.id}`}
+                asset={asset}
+                loading={busy === `catalog-${asset.id}`}
+                onAdd={(item) => void importCatalogAudio(item)}
+                onDragStart={startCatalogAudioDrag}
+                onPromptContext={(event, item) => openPromptContextMenu(event, 'music', item.description || item.title)}
+              />)}</div>
               {!mediaSearchBusy && !audioResults.length && <p className={styles.discoveryEmpty}>No music found yet. Try a mood, genre, or instrument.</p>}
             </>}
           </>}
@@ -3308,9 +3462,16 @@ export default function StudioPage() {
               <label className={styles.sliderRow}><span><b>Fade out</b><output>{selected.fadeOut.toFixed(1)}s</output></span><input type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeOut} onChange={(event) => updateAsset(selected.id, { fadeOut: Number(event.target.value) })} /></label>
             </div>}
             <div className={styles.catalogHeader}><span className={styles.sectionLabel}>LICENSED CATALOG</span><Library size={14} /></div>
-            <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-audio-search" value={audioSearch} onChange={(event) => setAudioSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchAudioCatalog()} placeholder="Search music and sounds" /><button disabled={audioSearching} onClick={() => void searchAudioCatalog()}>{audioSearching ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
+            <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-audio-search" value={audioSearch} onChange={(event) => setAudioSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchAudioCatalog()} placeholder="Search music and sounds" /><button title="Search (Enter)" disabled={audioSearching} onClick={() => void searchAudioCatalog()}>{audioSearching ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
             <div className={styles.kindChips}>{(['music', 'sfx', 'voice'] as const).map((kind) => <button key={kind} className={audioKind === kind ? styles.kindActive : ''} onClick={() => setAudioKind(kind)}>{kind === 'sfx' ? 'SFX' : kind}</button>)}</div>
-            <div className={styles.catalogList}>{audioResults.map((asset) => <article key={asset.id} className={styles.catalogCard}><button className={styles.catalogPlay} onClick={() => { const audio = new Audio(asset.preview_url || asset.url); void audio.play(); }} aria-label={`Preview ${asset.title}`}><Play size={12} fill="currentColor" /></button><span><b>{asset.title}</b><small>{formatTime(asset.duration).slice(3)} · {asset.license.toUpperCase()} · {asset.provider}</small></span><button disabled={!!busy} onClick={() => void importCatalogAudio(asset)}>{busy === `catalog-${asset.id}` ? <Loader2 className={styles.spin} size={13} /> : <Plus size={13} />}</button></article>)}</div>
+            <div className={styles.catalogList}>{audioResults.map((asset) => <CatalogAudioCard
+              key={asset.id}
+              asset={asset}
+              loading={busy === `catalog-${asset.id}`}
+              onAdd={(item) => void importCatalogAudio(item)}
+              onDragStart={startCatalogAudioDrag}
+              onPromptContext={(event, item) => openPromptContextMenu(event, item.kind === 'sfx' ? 'sfx' : 'music', item.description || item.title)}
+            />)}</div>
           </>}
 
           {tool === 'ai' && <>

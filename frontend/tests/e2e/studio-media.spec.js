@@ -742,9 +742,9 @@ test('Media Music searches real catalog-shaped results, imports a track, and gen
 
 test('licensed Netwrck catalog result imports as an editable audio clip for free', async ({ page }) => {
   await installMocks(page);
-  const wav = wavFixture();
+  const wav = wavFixture(2);
   await page.route('**/api/studio/audio-search**', (route) => route.fulfill({ status: 200, json: { results: [{
-    id: 44, title: 'Night Pulse', url: 'https://audio.example/night-pulse.wav', duration: 0.3,
+    id: 44, title: 'Night Pulse', url: 'https://audio.example/night-pulse.wav', duration: 2,
     provider: 'opengameart', kind: 'music', license: 'cc0', attribution: 'Example Artist',
   }] } }));
   await page.route('https://audio.example/night-pulse.wav', (route) => route.fulfill({ status: 200, contentType: 'audio/wav', body: wav }));
@@ -752,10 +752,39 @@ test('licensed Netwrck catalog result imports as an editable audio clip for free
   await page.getByTestId('studio-tool-audio').click();
   await page.getByTestId('studio-audio-search').fill('night pulse');
   await page.getByRole('button', { name: 'Find' }).click();
-  const card = page.getByText('Night Pulse').locator('..').locator('..');
+  const card = page.getByTestId('studio-audio-hit-44');
   await expect(card).toContainText('CC0');
-  await card.locator('button').last().click();
-  await expect(page.locator('[data-timeline-asset][title^="Night Pulse.wav"]')).toBeVisible();
+  await expect(card).toHaveAttribute('draggable', 'true');
+  await expect(page.getByTestId('studio-audio-waveform-44')).toBeVisible();
+  await card.getByRole('button', { name: 'Preview Night Pulse' }).click();
+  await expect(card.getByRole('button', { name: 'Pause Night Pulse' })).toBeVisible();
+  await card.getByRole('button', { name: 'Pause Night Pulse' }).click();
+  const scrubber = page.getByTestId('studio-audio-scrubber-44');
+  await scrubber.evaluate((input) => {
+    input.value = '1.2';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect(scrubber).toHaveValue('1.2');
+  await scrubber.dispatchEvent('pointerup');
+  await expect(card.getByRole('button', { name: 'Pause Night Pulse' })).toBeVisible();
+
+  await page.evaluate(() => {
+    const cardElement = document.querySelector('[data-testid="studio-audio-hit-44"]');
+    const dropzone = document.querySelector('[data-testid="studio-timeline-dropzone"]');
+    const transfer = new DataTransfer();
+    const rect = dropzone.getBoundingClientRect();
+    cardElement.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    const init = { bubbles: true, cancelable: true, clientX: rect.left + 192, clientY: rect.top + 50, dataTransfer: transfer };
+    dropzone.dispatchEvent(new DragEvent('dragover', init));
+    dropzone.dispatchEvent(new DragEvent('drop', init));
+    cardElement.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  });
+  const clip = page.locator('[data-timeline-asset][title^="Night Pulse.wav"]');
+  await expect(clip).toBeVisible();
+  const droppedLeft = await clip.evaluate((item) => Number.parseFloat(item.style.left));
+  expect(droppedLeft).toBeGreaterThan(182);
+  expect(droppedLeft).toBeLessThan(202);
   await expect(page.getByTestId('studio-export')).toBeEnabled();
 });
 
