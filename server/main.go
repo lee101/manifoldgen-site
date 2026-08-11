@@ -324,6 +324,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStudioUpscaleVideo(ctx)
 	case path == "/api/studio/audio-search" && method == "GET":
 		handleStudioAudioSearch(ctx)
+	case path == "/api/studio/audio-proxy" && (method == "GET" || method == "HEAD"):
+		handleStudioAudioProxy(ctx)
 	case path == "/api/studio/projects" && method == "GET":
 		handleListStudioProjects(ctx)
 	case strings.HasPrefix(path, "/api/studio/projects/"):

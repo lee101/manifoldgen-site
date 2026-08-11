@@ -55,13 +55,17 @@ make server      # :8116
 make frontend    # :3006, proxies /api → :8116
 
 # HTTPS frontend for browser/auth testing
-make dev-https   # https://manifestgen.local:3006
+make dev-https   # https://manifoldgen.local:3006, proxies API calls to production
+# To exercise the local API over HTTPS instead:
+MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev-https
 ```
+
+Production-backed HTTPS dev keeps its browser login separate from the local API login.
 
 For the friendly local hostname, add this once to `/etc/hosts`:
 
 ```text
-127.0.0.1 manifestgen.local
+127.0.0.1 manifoldgen.local
 ```
 
 The HTTPS command creates a short-lived self-signed certificate in `.local-certs/`.

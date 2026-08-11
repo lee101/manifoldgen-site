@@ -24,6 +24,7 @@ import (
 // Service pricing in USD (converted to $CUTE at current rate)
 var servicePricesUSD = map[string]float64{
 	"zimage":           0.04,  // per generation
+	"image_edit":       0.24,  // GPT Image 2 image-to-image edit; falls back to Kontext/Google routing
 	"chronos2":         0.002, // per forecast (Chronos-2, our own ~120M model, ms-scale call)
 	"tts":              0.005, // per 100 chars
 	"stt":              0.02,  // per minute
@@ -86,6 +87,7 @@ func initServices() {
 	nativeGatewayURL := getEnv("OMNISERVE_NATIVE_URL", "http://127.0.0.1:8791")
 
 	serviceBackends["zimage"] = getEnv("ZIMAGE_BACKEND_URL", nativeGatewayURL)
+	serviceBackends["image_edit"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
 	serviceBackends["chronos2"] = getEnv("CHRONOS_BACKEND_URL", nativeGatewayURL)
 	serviceBackends["tts"] = getEnv("TTS_BACKEND_URL", textGeneratorURL)
 	serviceBackends["stt"] = getEnv("STT_BACKEND_URL", inferenceURL)
@@ -600,7 +602,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 }
 
 func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) ([]byte, *GeneratedImage) {
-	if req.Service != "zimage" || req.Prompt == "" || user == nil {
+	if (req.Service != "zimage" && req.Service != "image_edit") || req.Prompt == "" || user == nil {
 		return result, nil
 	}
 
@@ -960,6 +962,9 @@ func proxyToBackend(req ServiceUsageRequest, backendURL string) ([]byte, error) 
 	case "video_generate":
 		return proxyOpenPathsVideo(req)
 
+	case "image_edit":
+		return proxyOpenPathsImageEdit(req)
+
 	case "flux_image":
 		endpoint = "https://fal.run/fal-ai/flux/schnell"
 		payload := map[string]interface{}{
@@ -1036,6 +1041,96 @@ func isOmniserveNativeURL(backendURL string) bool {
 }
 
 func proxyZImageWithFallbacks(req ServiceUsageRequest, primaryURL string) ([]byte, error) {
+	// The native Z-Image gateway deliberately caps a single request at one
+	// image.  Keep the public batch API by issuing those requests one at a time
+	// rather than making a batch of four fall through to unreliable providers.
+	// This also keeps GPU memory bounded on the shared inference host.
+	if n := getImageCount(req); n > 1 {
+		return proxyZImageBatch(req, primaryURL, n)
+	}
+	return proxySingleZImageWithFallbacks(req, primaryURL)
+}
+
+// proxyOpenPathsImageEdit uses the OpenAI-compatible image edit endpoint so a
+// source image is part of the generation request, rather than merely copying
+// its old prompt into a text-to-image call. GPT Image 2 is preferred for its
+// edit fidelity; the remaining models keep the studio usable during provider
+// outages. Operators can override this list without a deploy.
+func proxyOpenPathsImageEdit(req ServiceUsageRequest) ([]byte, error) {
+	if strings.TrimSpace(openPathsAPIKey) == "" {
+		return nil, fmt.Errorf("image style transfer requires OPENPATHS_API_KEY")
+	}
+	if strings.TrimSpace(req.ImageURL) == "" {
+		return nil, fmt.Errorf("image_url is required for style transfer")
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		return nil, fmt.Errorf("style transfer prompt is required")
+	}
+	parsed, err := url.ParseRequestURI(req.ImageURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+		return nil, fmt.Errorf("image_url must be an absolute http(s) URL")
+	}
+
+	size := "1024x1024"
+	if req.Width > req.Height {
+		size = "1536x1024"
+	} else if req.Height > req.Width {
+		size = "1024x1536"
+	}
+	models := strings.Split(getEnv("OPENPATHS_IMAGE_EDIT_MODELS", "gpt-image-2,flux-kontext-pro,gemini-3-pro-image-preview"), ",")
+	var failures []string
+	for _, candidate := range models {
+		model := strings.TrimSpace(candidate)
+		if model == "" {
+			continue
+		}
+		payload, _ := json.Marshal(map[string]interface{}{
+			"model": model, "prompt": strings.TrimSpace(req.Prompt), "size": size, "n": 1,
+			"image_url": req.ImageURL, "images": []map[string]string{{"url": req.ImageURL}},
+			"reference_image_urls": []string{req.ImageURL},
+		})
+		result, err := callOpenPathsImageEdit(openPathsBaseURL+"/v1/images/edits", payload)
+		if err != nil {
+			failures = append(failures, model+": "+err.Error())
+			continue
+		}
+		var normalized map[string]interface{}
+		if err := json.Unmarshal(result, &normalized); err != nil {
+			failures = append(failures, model+": invalid JSON response")
+			continue
+		}
+		normalized["engine"] = model
+		normalized["prompt"] = req.Prompt
+		normalized["width"] = req.Width
+		normalized["height"] = req.Height
+		return json.Marshal(normalized)
+	}
+	return nil, fmt.Errorf("all image edit providers failed: %s", strings.Join(failures, " | "))
+}
+
+func callOpenPathsImageEdit(endpoint string, body []byte) ([]byte, error) {
+	httpReq, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+openPathsAPIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := backendClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	result, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("OpenPaths returned %d: %s", resp.StatusCode, truncateString(strings.TrimSpace(string(result)), 500))
+	}
+	return result, nil
+}
+
+func proxySingleZImageWithFallbacks(req ServiceUsageRequest, primaryURL string) ([]byte, error) {
 	backends := zimageBackendOrder(req, primaryURL)
 	var errs []string
 	for _, b := range backends {
@@ -1050,6 +1145,87 @@ func proxyZImageWithFallbacks(req ServiceUsageRequest, primaryURL string) ([]byt
 		return nil, fmt.Errorf("no image backends configured")
 	}
 	return nil, fmt.Errorf("all image backends failed: %s", strings.Join(errs, " | "))
+}
+
+// proxyZImageBatch preserves the existing normalized image response while
+// serializing a multi-image request into native-compatible single-image jobs.
+func proxyZImageBatch(req ServiceUsageRequest, primaryURL string, n int) ([]byte, error) {
+	images := make([]map[string]interface{}, 0, n)
+	var first map[string]interface{}
+	var engine, model string
+	for i := 0; i < n; i++ {
+		one := req
+		one.N = 1
+		one.NumImages = 1
+		if one.Seed > 0 {
+			one.Seed += i
+		}
+		result, err := proxySingleZImageWithFallbacks(one, primaryURL)
+		if err != nil {
+			return nil, fmt.Errorf("image %d of %d: %w", i+1, n, err)
+		}
+
+		var payload map[string]interface{}
+		if err := json.Unmarshal(result, &payload); err != nil {
+			return nil, fmt.Errorf("image %d of %d returned invalid JSON: %w", i+1, n, err)
+		}
+		image := imageResultItem(payload)
+		if len(image) == 0 {
+			return nil, fmt.Errorf("image %d of %d response contained no image", i+1, n)
+		}
+		if first == nil {
+			first = image
+			engine, _ = payload["engine"].(string)
+			model, _ = payload["model"].(string)
+		}
+		images = append(images, image)
+	}
+
+	width, height := req.Width, req.Height
+	if width <= 0 {
+		width = 1024
+	}
+	if height <= 0 {
+		height = 1024
+	}
+	out := map[string]interface{}{
+		"images": images,
+		"n":      len(images),
+		"width":  width,
+		"height": height,
+		"prompt": req.Prompt,
+	}
+	if engine != "" {
+		out["engine"] = engine
+	}
+	if model != "" {
+		out["model"] = model
+	}
+	for _, key := range []string{"image_base64", "image_url"} {
+		if value, ok := first[key]; ok {
+			out[key] = value
+		}
+	}
+	return json.Marshal(out)
+}
+
+func imageResultItem(payload map[string]interface{}) map[string]interface{} {
+	if rows, ok := payload["images"].([]interface{}); ok && len(rows) > 0 {
+		if row, ok := rows[0].(map[string]interface{}); ok {
+			return imageResultFields(row)
+		}
+	}
+	return imageResultFields(payload)
+}
+
+func imageResultFields(payload map[string]interface{}) map[string]interface{} {
+	item := make(map[string]interface{}, 2)
+	for _, key := range []string{"image_base64", "image_url"} {
+		if value, ok := payload[key].(string); ok && value != "" {
+			item[key] = value
+		}
+	}
+	return item
 }
 
 type namedBackend struct {

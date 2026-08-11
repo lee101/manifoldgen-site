@@ -471,6 +471,16 @@ test('text layers stay editable and are persisted in the project document', asyn
   await expect(page.getByTestId('studio-text-content')).toHaveValue('Launch night');
 });
 
+test('T adds body text and the text preset advertises its shortcut', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.getByTestId('studio-tool-text').click();
+
+  await expect(page.getByTestId('studio-add-body-text')).toHaveAttribute('title', 'Add body text (T)');
+  await page.keyboard.press('t');
+  await expect(page.getByTestId('studio-text-content')).toHaveValue('Add body text');
+});
+
 test('persisted history keeps distinct media revisions and restores the old text render after reload', async ({ page }) => {
   const saves = [];
   await installMocks(page, { onProjectSave: (project) => saves.push(project) });

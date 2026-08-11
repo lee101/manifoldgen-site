@@ -60,6 +60,7 @@ uniform float u_fade;
 uniform float u_vignette;
 uniform float u_grain;
 uniform float u_seed;
+uniform float u_fxaa;
 in vec2 v_texCoord;
 out vec4 outColor;
 
@@ -87,8 +88,36 @@ vec3 shiftHue(vec3 color, float degrees, float amount) {
   return mix(color, hsvToRgb(hsv), amount);
 }
 
+// A compact FXAA variant for the final export pass. It only blends pixels
+// that sit on a high-contrast diagonal edge, preserving flat areas and detail
+// in the source image while taking the stair-step edge off rotated glyphs.
+vec4 antiAlias(sampler2D image, vec2 uv) {
+  vec2 pixel = 1.0 / u_resolution;
+  vec4 center = texture(image, uv);
+  vec3 northWest = texture(image, uv + vec2(-1.0, -1.0) * pixel).rgb;
+  vec3 northEast = texture(image, uv + vec2(1.0, -1.0) * pixel).rgb;
+  vec3 southWest = texture(image, uv + vec2(-1.0, 1.0) * pixel).rgb;
+  vec3 southEast = texture(image, uv + vec2(1.0, 1.0) * pixel).rgb;
+  float lumaCenter = dot(center.rgb, vec3(0.299, 0.587, 0.114));
+  float lumaNW = dot(northWest, vec3(0.299, 0.587, 0.114));
+  float lumaNE = dot(northEast, vec3(0.299, 0.587, 0.114));
+  float lumaSW = dot(southWest, vec3(0.299, 0.587, 0.114));
+  float lumaSE = dot(southEast, vec3(0.299, 0.587, 0.114));
+  float lumaMin = min(lumaCenter, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));
+  float lumaMax = max(lumaCenter, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));
+  if (lumaMax - lumaMin < max(0.0312, lumaMax * 0.125)) return center;
+  vec2 direction = vec2(-((lumaNW + lumaNE) - (lumaSW + lumaSE)), (lumaNW + lumaSW) - (lumaNE + lumaSE));
+  float reduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.03125, 0.0078125);
+  float inverseDirection = 1.0 / (min(abs(direction.x), abs(direction.y)) + reduce);
+  direction = clamp(direction * inverseDirection, vec2(-8.0), vec2(8.0)) * pixel;
+  vec4 blendA = 0.5 * (texture(image, uv + direction * (1.0 / 3.0 - 0.5)) + texture(image, uv + direction * (2.0 / 3.0 - 0.5)));
+  vec4 blendB = blendA * 0.5 + 0.25 * (texture(image, uv + direction * -0.5) + texture(image, uv + direction * 0.5));
+  float blendLuma = dot(blendB.rgb, vec3(0.299, 0.587, 0.114));
+  return blendLuma < lumaMin || blendLuma > lumaMax ? blendA : blendB;
+}
+
 void main() {
-  vec4 sampleColor = texture(u_image, v_texCoord);
+  vec4 sampleColor = u_fxaa > 0.5 ? antiAlias(u_image, v_texCoord) : texture(u_image, v_texCoord);
   vec3 color = sampleColor.rgb * exp2(u_exposure);
   color += u_brightness;
   color = (color - 0.5) * (1.0 + u_contrast) + 0.5;
@@ -185,7 +214,7 @@ export class StudioRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.useProgram(program);
 
-    const names = ['exposure', 'brightness', 'contrast', 'highlights', 'shadows', 'shadowHue', 'midtoneHue', 'highlightHue', 'saturation', 'temperature', 'tint', 'fade', 'vignette', 'grain', 'seed'];
+    const names = ['exposure', 'brightness', 'contrast', 'highlights', 'shadows', 'shadowHue', 'midtoneHue', 'highlightHue', 'saturation', 'temperature', 'tint', 'fade', 'vignette', 'grain', 'seed', 'fxaa'];
     this.uniforms = Object.fromEntries(names.map((name) => [name, gl.getUniformLocation(program, `u_${name}`)]));
     this.uniforms.resolution = gl.getUniformLocation(program, 'u_resolution');
   }
@@ -208,7 +237,7 @@ export class StudioRenderer {
     if (this.canvas.height !== safeHeight) this.canvas.height = safeHeight;
   }
 
-  draw(source: TexImageSource, adjustments: StudioAdjustments, seed = 0) {
+  draw(source: TexImageSource, adjustments: StudioAdjustments, seed = 0, options: { fxaa?: boolean } = {}) {
     const { gl } = this;
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.program);
@@ -233,6 +262,7 @@ export class StudioRenderer {
       gl.uniform1f(this.uniforms[key], adjustments[key]);
     });
     gl.uniform1f(this.uniforms.seed, seed);
+    gl.uniform1f(this.uniforms.fxaa, options.fxaa ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 

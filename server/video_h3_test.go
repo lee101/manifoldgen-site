@@ -268,6 +268,17 @@ func TestNormalizeH3DrivingAudioRequiresImage(t *testing.T) {
 	}
 }
 
+func TestH3ArtifactFormat(t *testing.T) {
+	extension, contentType := h3ArtifactFormat("video/mp4; charset=binary")
+	if extension != "mp4" || contentType != "video/mp4" {
+		t.Fatalf("mp4 format = %q %q", extension, contentType)
+	}
+	extension, contentType = h3ArtifactFormat("application/octet-stream")
+	if extension != "webm" || contentType != "video/webm" {
+		t.Fatalf("fallback format = %q %q", extension, contentType)
+	}
+}
+
 func TestIsRunPodWorkersQuotaErr(t *testing.T) {
 	if !isRunPodWorkersQuotaErr(fmtError("serverless: Max workers across all endpoints must not exceed your workers quota (5)")) {
 		t.Fatal("expected quota match")

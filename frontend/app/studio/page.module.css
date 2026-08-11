@@ -9,7 +9,7 @@
   --accent: #a796ff;
   --accent-2: #725cff;
   --timeline-toolbar-height: 41px;
-  --ruler-height: 25px;
+  --ruler-height: 34px;
   --video-track-height: 70px;
   --audio-track-height: 55px;
   height: 100dvh;
@@ -104,9 +104,28 @@
 .rail button span { font-size: 9px; font-weight: 600; }
 .rail button:hover { background: #181b20; color: #c7cbd1; }
 .rail .railActive { background: #1d1d28; color: #b9acff; }
+.rail .railLibrary { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 9px 9px; }
 .railBottom { margin-top: auto; }
 
 .panel { background: var(--panel); border-right: 1px solid var(--line); min-width: 0; overflow: auto; padding: 16px 14px; scrollbar-width: thin; scrollbar-color: #343840 transparent; }
+.libraryPanel { padding: 0; background: #0b0d10; }
+.libraryPanel .panelHeader { margin: 0; padding: 13px 9px 9px; }
+.libraryPanel .mediaTabs { margin: 0; padding: 3px 7px; border-right: 0; border-left: 0; border-radius: 0; }
+.libraryPanel .searchRow { margin-right: 7px; margin-left: 7px; height: 39px; }
+.libraryPanel .discoveryLabel { margin-right: 8px; margin-left: 8px; }
+.libraryPanel .discoveryGrid { grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 5px; margin-right: 7px; margin-left: 7px; }
+.libraryPanel .discoveryCard { border-radius: 6px; padding-bottom: 6px; }
+.libraryPanel .discoveryPreview { aspect-ratio: 1.42; }
+.libraryPanel .discoveryCard > b, .libraryPanel .discoveryCard > small { margin-right: 6px; margin-left: 6px; }
+.libraryPanel .imageComposer, .libraryPanel .mediaCreateCard { margin-right: 7px; margin-left: 7px; }
+.libraryPanel .imageComposer { gap: 7px; padding: 8px; }
+.libraryPanel .imageComposer textarea { min-height: 54px; max-height: 74px; resize: vertical; }
+.styleTransferSource { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; padding: 7px; border: 1px solid #302d43; border-radius: 8px; background: #151520; }
+.styleTransferPreview { width: 42px; height: 42px; display: grid; place-items: center; flex: none; overflow: hidden; border-radius: 6px; color: #a99cf2; background: #0b0d10; }
+.styleTransferPreview img { width: 100%; height: 100%; object-fit: cover; }
+.styleTransferSource > span:last-child { min-width: 0; display: grid; gap: 2px; }
+.styleTransferSource small { color: #77708d; font-size: 8px; letter-spacing: .12em; }
+.styleTransferSource b { overflow: hidden; color: #d9d5eb; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .panelResize { position: relative; z-index: 3; width: 10px; margin: 0; padding: 0; border: 0; border-right: 1px solid var(--line); background: #0d0f12; cursor: col-resize; touch-action: none; }
 .panelResize span { display: block; width: 2px; height: 42px; margin: auto; border-radius: 99px; background: #3a3d46; transition: height .15s ease, background .15s ease; }
 .panelResize:hover span, .panelResize:focus-visible span { height: 64px; background: var(--accent); }
@@ -283,18 +302,17 @@
 .catalogCard small { color: #686f79; font-size: 8px; }
 .catalogCard > button { width: 25px; height: 25px; display: grid; place-items: center; padding: 0; border: 1px solid #30343c; border-radius: 6px; background: #1c2026; cursor: pointer; }
 .catalogCard .catalogPlay { border: 0; border-radius: 50%; color: #0e1817; background: #77d8c5; }
-.catalogAudioCard { display: grid; grid-template-columns: 29px minmax(0, 1fr) 16px 27px; align-items: center; gap: 7px; padding: 8px 7px; border: 1px solid #242a31; border-radius: 9px; background: linear-gradient(145deg, #171b20, #121519); transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+.catalogAudioCard { display: grid; grid-template-columns: 27px minmax(0, 1fr) 12px 24px; align-items: center; gap: 4px; padding: 5px 4px; border: 1px solid #242a31; border-radius: 8px; background: linear-gradient(145deg, #171b20, #121519); transition: border-color .16s ease, background .16s ease, transform .16s ease; }
 .catalogAudioCard:hover { border-color: #3a444d; background: linear-gradient(145deg, #1a2025, #14181d); }
 .catalogAudioCard:active { transform: scale(.995); }
 .catalogAudioCard audio { display: none; }
-.catalogAudioCard > button { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border: 1px solid #303740; border-radius: 7px; background: #1c2228; color: #aab1ba; cursor: pointer; }
+.catalogAudioCard > button { width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 1px solid #303740; border-radius: 6px; background: #1c2228; color: #aab1ba; cursor: pointer; }
 .catalogAudioCard > button:disabled { opacity: .55; cursor: wait; }
 .catalogAudioCard .catalogPlay { border: 0; border-radius: 50%; color: #0b1916; background: #77d8c5; box-shadow: 0 0 0 3px rgba(119,216,197,.08); }
 .catalogAudioCard .catalogPlay:hover { background: #92e3d4; }
-.catalogAudioBody { min-width: 0; display: grid; gap: 4px; }
-.catalogAudioTitle { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+.catalogAudioBody { min-width: 0; display: grid; gap: 3px; }
+.catalogAudioTitle { min-width: 0; display: flex; align-items: center; }
 .catalogAudioTitle b { overflow: hidden; color: #d2d6dc; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.catalogAudioTitle span { flex: 0 0 auto; color: #78818c; font-variant-numeric: tabular-nums; font-size: 8px; }
 .catalogAudioBody small { overflow: hidden; color: #68717c; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .catalogWaveform { position: relative; height: 33px; overflow: hidden; border: 1px solid #242d34; border-radius: 5px; background: #0d1215; }
 .catalogWaveformBars { position: absolute; inset: 4px 5px; display: flex; align-items: center; gap: 1px; pointer-events: none; }
@@ -377,9 +395,9 @@
 .trackContent { min-width: 0; position: relative; overflow: auto; scrollbar-width: thin; scrollbar-color: #343840 #101216; }
 .timelineDropActive { box-shadow: inset 0 0 0 1px rgba(167,150,255,.65); background: rgba(112,86,235,.05); }
 .timelineCanvas { position: relative; height: calc(var(--ruler-height) + var(--visual-track-count) * var(--video-track-height) + var(--audio-track-height)); }
-.ruler { height: var(--ruler-height); box-sizing: border-box; border-bottom: 1px solid #1d2025; position: relative; background: #111317; }
-.ruler span { position: absolute; top: 8px; transform: translateX(-50%); color: #4f5660; font-size: 8px; font-variant-numeric: tabular-nums; }
-.ruler span::before { content: ''; position: absolute; left: 50%; top: -8px; width: 1px; height: 5px; background: #31353c; }
+.ruler { height: var(--ruler-height); box-sizing: border-box; border-bottom: 1px solid #30353d; position: relative; background: #111317; }
+.ruler span { position: absolute; right: auto; bottom: 4px; transform: translateX(-50%); color: #d6dae1; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.ruler span::before { content: ''; position: absolute; left: 50%; top: -16px; width: 1px; height: 7px; background: #68707c; }
 .ruler, .videoTracks, .audioTrack { touch-action: none; }
 .videoTracks { height: calc(var(--visual-track-count) * var(--video-track-height)); position: relative; background-color: #0d0f12; background-image: linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px), repeating-linear-gradient(180deg, transparent 0, transparent calc(var(--video-track-height) - 1px), #1a1d21 calc(var(--video-track-height) - 1px), #1a1d21 var(--video-track-height)); background-size: 64px 100%, 100% 100%; }
 .timelineClip { position: absolute; top: calc(var(--track-from-top) * var(--video-track-height) + 7px); height: calc(var(--video-track-height) - 14px); box-sizing: border-box; min-width: 24px; border: 1px solid #353946; background: #22252d; border-radius: 6px; padding: 4px 9px; overflow: hidden; display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 7px; text-align: left; cursor: grab; user-select: none; touch-action: none; }
@@ -407,8 +425,14 @@
 .timelineDropMarker { position: absolute; z-index: 10; top: 0; bottom: 0; width: 2px; pointer-events: none; background: #8ee3c8; box-shadow: 0 0 12px rgba(89,222,194,.7); }
 .timelineDropMarker span { position: absolute; top: 4px; left: 6px; padding: 3px 6px; border: 1px solid rgba(142,227,200,.35); border-radius: 5px; color: #baf4e8; background: rgba(12,25,23,.94); font-size: 8px; font-weight: 700; white-space: nowrap; }
 .timelineMarquee { position: absolute; z-index: 12; box-sizing: border-box; pointer-events: none; border: 1px solid #aa9cff; border-radius: 3px; background: rgba(125, 105, 238, .16); box-shadow: 0 0 0 1px rgba(82, 65, 176, .25), 0 8px 28px rgba(63, 45, 153, .18); }
-.playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: #c8bdff; pointer-events: none; z-index: 8; }
-.playhead::before { content: ''; position: absolute; top: 2px; left: -4px; width: 9px; height: 9px; background: #c8bdff; border-radius: 2px 2px 5px 5px; }
+.playhead, .ghostPlayhead { position: absolute; top: 0; bottom: 0; width: 1px; pointer-events: none; }
+.playhead { background: #d4caff; box-shadow: 0 0 10px rgba(174, 156, 255, .42); z-index: 8; }
+.playhead::before { content: ''; position: absolute; top: calc(var(--ruler-height) - 5px); left: -5px; width: 11px; height: 10px; background: #d4caff; border-radius: 2px 2px 5px 5px; box-shadow: 0 2px 8px rgba(100, 76, 225, .45); }
+.playhead span, .ghostPlayhead span { position: absolute; top: 4px; left: 0; transform: translateX(-50%); padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: .01em; white-space: nowrap; }
+.playhead span { color: #fff; background: #7260cf; box-shadow: 0 2px 8px rgba(26, 20, 61, .45); }
+.ghostPlayhead { background: rgba(237, 240, 245, .62); border-left: 1px dashed rgba(237, 240, 245, .82); opacity: .88; z-index: 7; }
+.ghostPlayhead::before { content: ''; position: absolute; top: calc(var(--ruler-height) - 4px); left: -4px; width: 8px; height: 8px; box-sizing: border-box; border: 1px solid #edf0f5; border-radius: 50%; background: #22262d; }
+.ghostPlayhead span { color: #f6f7fa; border: 1px solid #69717d; background: #2a2f37; }
 
 .modalBackdrop { position: fixed; inset: 0; z-index: 1000; isolation: isolate; display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: rgba(0, 0, 0, .66); backdrop-filter: blur(7px); }
 .modal { width: min(600px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: #121419; border: 1px solid #343844; border-radius: 16px; box-shadow: 0 30px 100px rgba(0,0,0,.7); }
@@ -564,6 +588,9 @@
   .rail button span { font-size: 7px; }
   .railBottom { display: none; }
   .panel { display: none; position: absolute; z-index: 40; inset: 7px 7px 65px; padding: 16px 13px; border: 1px solid #30343c; border-radius: 14px; box-shadow: 0 25px 70px rgba(0,0,0,.72); }
+  .panel.libraryPanel { padding: 0; }
+  .libraryPanel .panelHeader { padding-top: 12px; }
+  .libraryPanel .discoveryGrid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
   .panelOpen { display: block; }
   .panelClose { position: sticky; z-index: 3; top: 0; float: right; width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #30343c; border-radius: 8px; background: #1b1e23; cursor: pointer; }
   .assetGrid { grid-template-columns: repeat(3, 1fr); }
@@ -585,11 +612,12 @@
   .transport span { min-width: 85px; font-size: 9px; }
   .transport > button:first-child { display: none; }
   .timelineZoom { display: none; }
-  .timelineBody { height: 135px; grid-template-columns: 42px minmax(0, 1fr); }
+  .timelineBody { height: 143px; grid-template-columns: 42px minmax(0, 1fr); }
   .trackLabels > span { padding: 7px 4px 0; font-size: 7px; }
   .trackLabels > div { padding: 7px 5px; font-size: 8px; }
-  .studio { --ruler-height: 21px; --video-track-height: 59px; --audio-track-height: 55px; --timeline-toolbar-height: 40px; }
-  .ruler span { top: 6px; font-size: 7px; }
+  .studio { --ruler-height: 29px; --video-track-height: 59px; --audio-track-height: 55px; --timeline-toolbar-height: 40px; }
+  .ruler span { top: auto; bottom: 3px; font-size: 9px; }
+  .ruler span::before { top: -14px; }
   .timelineClip { top: calc(var(--track-from-top) * var(--video-track-height) + 4px); height: calc(var(--video-track-height) - 8px); min-width: 24px; grid-template-columns: 36px minmax(0, 1fr); padding: 3px 9px; }
   .mobileGestureHint { display: inline; color: #9890c7; font-size: 8px; white-space: nowrap; }
   .clipThumb { width: 36px; height: 43px; }

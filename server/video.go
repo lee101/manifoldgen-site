@@ -912,7 +912,14 @@ func parseRunpodH3ProviderJob(value string) (endpointID, jobID string, ok bool) 
 	return parts[1], parts[2], true
 }
 
-func uploadH3RunpodWebM(ctx context.Context, video []byte, userID string) (string, error) {
+func h3ArtifactFormat(contentType string) (string, string) {
+	if strings.EqualFold(strings.TrimSpace(strings.Split(contentType, ";")[0]), "video/mp4") {
+		return "mp4", "video/mp4"
+	}
+	return "webm", "video/webm"
+}
+
+func uploadH3RunpodVideo(ctx context.Context, video []byte, userID, contentType string) (string, error) {
 	if len(video) == 0 || len(video) > maxGeneratedVideoBytes {
 		return "", fmt.Errorf("RunPod H3 output must be between 1 byte and 256 MiB")
 	}
@@ -920,8 +927,9 @@ func uploadH3RunpodWebM(ctx context.Context, video []byte, userID string) (strin
 	if len(shortID) > 12 {
 		shortID = shortID[:12]
 	}
-	objectKey := fmt.Sprintf("%s/%s/videos/%s.webm", strings.TrimSuffix(r2PathPrefix, "/"), shortID, newUUID())
-	uploadURL, err := presignR2PutObject(objectKey, "video/webm", 900)
+	extension, mediaType := h3ArtifactFormat(contentType)
+	objectKey := fmt.Sprintf("%s/%s/videos/%s.%s", strings.TrimSuffix(r2PathPrefix, "/"), shortID, newUUID(), extension)
+	uploadURL, err := presignR2PutObject(objectKey, mediaType, 900)
 	if err != nil {
 		return "", err
 	}
@@ -930,7 +938,7 @@ func uploadH3RunpodWebM(ctx context.Context, video []byte, userID string) (strin
 		return "", err
 	}
 	req.ContentLength = int64(len(video))
-	req.Header.Set("Content-Type", "video/webm")
+	req.Header.Set("Content-Type", mediaType)
 	resp, err := backendClient.Do(req)
 	if err != nil {
 		return "", err
@@ -1004,7 +1012,8 @@ func processRunpodH3VideoJob(job *VideoJob) {
 				return
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			videoURL, err := uploadH3RunpodWebM(ctx, artifact, user.ID)
+			contentType := state.Output.Outputs[0].ContentType
+			videoURL, err := uploadH3RunpodVideo(ctx, artifact, user.ID, contentType)
 			cancel()
 			if err != nil {
 				log.Printf("[video] store hosted generation output failed job=%s: %v", job.ID, err)
@@ -1026,9 +1035,14 @@ func processRunpodH3VideoJob(job *VideoJob) {
 				_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "CUTE price unavailable; retry status after pricing recovers")
 				return
 			}
+			extension, _ := h3ArtifactFormat(contentType)
+			codec := "av1"
+			if extension == "mp4" {
+				codec = "h264"
+			}
 			result, _ := json.Marshal(map[string]interface{}{
 				"video_url": videoURL, "provider": "runpod", "model_variant": variant,
-				"output_format": "webm", "codec": "av1", "bytes": len(artifact),
+				"output_format": extension, "codec": codec, "bytes": len(artifact),
 				"predict_seconds": predictSeconds, "provider_cost_usd": providerUSD,
 				"charged_usd": chargedUSD, "cute_price_usd": cutePrice,
 				"credits_used": chargedUSD / cutePrice, "metrics": state.Output.Metrics,
@@ -1562,7 +1576,7 @@ func publishCompletedVideoArtifact(job *VideoJob) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	publicURL, err := uploadH3RunpodWebM(ctx, artifact, job.UserID)
+	publicURL, err := uploadH3RunpodVideo(ctx, artifact, job.UserID, "video/webm")
 	if err != nil {
 		return err
 	}
