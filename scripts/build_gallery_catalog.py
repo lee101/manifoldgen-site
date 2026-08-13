@@ -51,6 +51,17 @@ PALETTES = [
     "rust and sage", "ice blue and warm cedar",
 ]
 
+# Keep the gallery visually varied without asking the image worker to render
+# unusually large canvases. Every dimension is a multiple of 64, and each
+# entry has roughly the same pixel count as the 1024px square baseline.
+DIMENSIONS = [
+    (1024, 1024),
+    (768, 1344),   # 9:16 portrait
+    (1344, 768),   # 16:9 landscape
+    (768, 1024),   # 3:4 portrait
+    (1024, 768),   # 4:3 landscape
+]
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -71,7 +82,8 @@ def main() -> None:
             if prompt in seen:
                 continue
             seen.add(prompt)
-            out.write(json.dumps({"prompt": prompt}, ensure_ascii=False) + "\n")
+            width, height = DIMENSIONS[(len(seen) - 1) % len(DIMENSIONS)]
+            out.write(json.dumps({"prompt": prompt, "width": width, "height": height}, ensure_ascii=False) + "\n")
             if len(seen) == args.count:
                 break
     if len(seen) != args.count:

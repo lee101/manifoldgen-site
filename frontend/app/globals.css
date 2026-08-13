@@ -80,6 +80,10 @@ body {
   will-change: transform;
 }
 
+.gallery-bleed {
+  column-gap: 1px;
+}
+
 .reel-scroll {
   scrollbar-width: none;
 }

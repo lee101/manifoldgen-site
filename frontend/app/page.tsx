@@ -47,6 +47,7 @@ import {
 const API = '/api';
 const GALLERY_CDN = 'https://manifoldgenstatic.manifoldgen.com/gallery';
 
+const GALLERY_ASSET_VERSION = '20260813-mixed-aspect';
 type Aspect = H3Aspect;
 type Size = H3Size;
 type Format = 'webm-av1' | 'mp4-h264';
@@ -133,6 +134,8 @@ type HomeGenerationTask = {
 interface GalleryImage {
   id: string;
   prompt: string;
+  width?: number;
+  height?: number;
   thumb_url?: string;
   image_url?: string;
   file_path?: string;
@@ -179,20 +182,21 @@ function normalizeImages(rows: GalleryImage[]): GalleryImage[] {
 // Gallery images are published to the dedicated static bucket. Keep the gallery
 // independent of whichever API host is serving local development or production.
 function galleryImageURL(value?: string) {
+  const cacheBusted = (url: string) => `${url}${url.includes('?') ? '&' : '?'}v=${GALLERY_ASSET_VERSION}`;
   const path = (value || '').trim();
   if (!path) return undefined;
-  if (path.startsWith(`${GALLERY_CDN}/`)) return path;
+  if (path.startsWith(`${GALLERY_CDN}/`)) return cacheBusted(path);
   if (/^https?:\/\//i.test(path)) {
     try {
       const parsed = new URL(path);
-      if (parsed.pathname.startsWith('/gallery/')) return `${GALLERY_CDN}${parsed.pathname.slice('/gallery'.length)}${parsed.search}`;
+      if (parsed.pathname.startsWith('/gallery/')) return cacheBusted(`${GALLERY_CDN}${parsed.pathname.slice('/gallery'.length)}${parsed.search}`);
       if (!parsed.pathname.startsWith('/images/')) return path;
-      return `${GALLERY_CDN}/${parsed.pathname.slice('/images/'.length)}${parsed.search}`;
+      return cacheBusted(`${GALLERY_CDN}/${parsed.pathname.slice('/images/'.length)}${parsed.search}`);
     } catch {
       return path;
     }
   }
-  return `${GALLERY_CDN}/${path.replace(/^\/?(?:images\/)?(?:gallery\/)?/, '')}`;
+  return cacheBusted(`${GALLERY_CDN}/${path.replace(/^\/?(?:images\/)?(?:gallery\/)?/, '')}`);
 }
 
 export default function HomePage() {
@@ -1271,13 +1275,13 @@ export default function HomePage() {
         {gallery.length === 0 ? (
           <p className="px-4 pb-12 text-sm text-[var(--color-mute)]">Gallery warming up…</p>
         ) : (
-          <div className="gallery-bleed grid grid-cols-2 gap-px bg-black sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+          <div className="gallery-bleed columns-2 bg-black sm:columns-3 md:columns-4 xl:columns-5 2xl:columns-6">
             {gallery.map((img) => {
               const src = img.image_url || img.thumb_url;
               return (
                 <div
                   key={img.id}
-                  className="group relative aspect-[3/4] overflow-hidden bg-[#0c0c12]"
+                  className="group relative mb-px break-inside-avoid overflow-hidden bg-[#0c0c12]"
                 >
                   <button type="button" onClick={() => useGalleryImage(img)} className="absolute inset-0 h-full w-full" title={img.prompt}>
                   {src ? (
@@ -1285,7 +1289,7 @@ export default function HomePage() {
                     <img
                       src={src}
                       alt={img.prompt}
-                      className="h-full w-full object-cover transition duration-700 group-hover:scale-105"
+                      className="block h-auto w-full transition duration-700 group-hover:scale-105"
                       loading="lazy"
                     />
                   ) : null}

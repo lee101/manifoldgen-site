@@ -111,18 +111,39 @@ floor. Publish before indexing so every searchable image is immediately CDN
 loadable; run moderation continuously in a second process.
 
 ```bash
-python3 scripts/build_gallery_catalog.py --count 100000 \
+# Optional licensed prompt augmentation. This downloads prompt text only and
+# drops explicit, child-related, branded, watermark, and URL-heavy rows before
+# they reach an image worker.
+python3 scripts/import_prompt_sources.py \
+  --out scripts/prompts/manifold-gallery-augmented.jsonl
+
+python3 scripts/build_gallery_catalog.py --kind image --count 100000 --seed 20260810 \
   --out scripts/prompts/manifold-gallery-100k.jsonl
 nice -n 19 python3 scripts/generate_gallery_art.py \
   --prompts scripts/prompts/manifold-gallery-100k.jsonl --limit 500 \
-  --low-priority --upload-r2 --min-free-gib 80
-nice -n 19 python3 scripts/moderate_gallery_art.py --limit 500
+  --images-dir /sdb-disk/manifoldgen-images \
+  --mixed-aspect --webp-quality 85 --low-priority --upload-r2 --min-free-gib 80 \
+  --moderate-before-index --reindex-after
+
+# Motion-specific catalog for bounded, resumable API video batches
+python3 scripts/build_gallery_catalog.py --kind video --count 10000 --seed 20260810 \
+  --out scripts/prompts/manifold-gallery-videos-10k.jsonl
+python3 scripts/backfill_seed.py --images 0 --videos 8 \
+  --video-prompts scripts/prompts/manifold-gallery-videos-10k.jsonl
 ```
 
 The scripts are deliberately bounded by `--limit`; schedule repeated batches
 after confirming the first set looks good. Unclassified files are held out of
-semantic search once moderation starts, and NSFW/child content is excluded from
-the public gallery.
+semantic search and the public gallery, and NSFW/child content is excluded from
+the public gallery. Multiple local workers can safely share the same database:
+each prompt is protected by a PostgreSQL advisory claim, so DAISY, Leetop, and
+the production GPU can consume different slices without duplicate renders.
+Catalog rows carry a deterministic mix of square, portrait, and landscape
+dimensions; older prompt files can opt into the same mix with
+`--mixed-aspect`. Catalog rows are deterministically shuffled across subject, style, light,
+palette, motion, camera, and sound axes, so small batches remain visually
+varied. Video queueing skips prompts that are already queued, running, or
+completed.
 
 Gallery CDN: `https://manifoldgenstatic.manifoldgen.com/gallery/videos/…`
 
