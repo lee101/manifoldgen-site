@@ -238,14 +238,14 @@ test('homepage signup then account monthly embedded checkout', async ({ page }) 
   await page.getByTestId('home-auth-email').fill(FIXED_EMAIL);
   await page.getByTestId('home-auth-password').fill(FIXED_PASSWORD);
   await page.getByTestId('home-auth-submit').click();
-  await expect(page.getByRole('button', { name: /Subscribe monthly/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Creator · \$14\.99\/month/i })).toBeVisible();
   const stored = await page.evaluate(() => {
     const raw = localStorage.getItem('mg_user');
     return raw ? JSON.parse(raw) : null;
   });
   expect(stored?.api_key).toBeTruthy();
   expect(stored?.email).toBe(FIXED_EMAIL);
-  await page.getByRole('button', { name: /Subscribe monthly/i }).click();
+  await page.getByRole('button', { name: /Creator · \$14\.99\/month/i }).click();
   await expect(page.getByText('Checkout', { exact: true })).toBeVisible();
   await expect(page.getByTestId('mock-stripe-checkout')).toBeVisible();
 
@@ -253,7 +253,7 @@ test('homepage signup then account monthly embedded checkout', async ({ page }) 
   await expect(page.getByTestId('account-signed-in-email')).toHaveText(FIXED_EMAIL);
   await page.getByTestId('account-buy-monthly').click();
   await expect(page.getByTestId('embedded-checkout-container')).toBeVisible();
-  await expect(page.getByText('Plan: monthly')).toBeVisible();
+  await expect(page.getByText('Plan: creator monthly')).toBeVisible();
   await expect(page.getByTestId('mock-stripe-checkout')).toBeVisible();
 });
 

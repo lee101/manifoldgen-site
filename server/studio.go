@@ -481,6 +481,10 @@ func studioGeneratedAudioFormat(contentType, rawURL string) (string, string, err
 }
 
 func persistGeneratedAudioURL(sourceURL, userID string) (string, error) {
+	return persistGeneratedAudioURLNamed(sourceURL, userID, "")
+}
+
+func persistGeneratedAudioURLNamed(sourceURL, userID, preferredName string) (string, error) {
 	if err := studioRemoteVideoURL(sourceURL); err != nil {
 		return "", fmt.Errorf("generated audio URL is not public")
 	}
@@ -518,7 +522,15 @@ func persistGeneratedAudioURL(sourceURL, userID string) (string, error) {
 	if len(shortID) > 12 {
 		shortID = shortID[:12]
 	}
-	objectKey := fmt.Sprintf("%s/%s/audio/%s%s", strings.TrimSuffix(r2PathPrefix, "/"), shortID, newUUID(), extension)
+	filename := sanitizeUploadName(strings.TrimSuffix(preferredName, filepath.Ext(preferredName)))
+	filename = strings.Trim(filename, "-_.")
+	if filename == "" {
+		filename = "voice"
+	}
+	if len(filename) > 72 {
+		filename = strings.TrimRight(filename[:72], "-_.")
+	}
+	objectKey := fmt.Sprintf("%s/%s/audio/%s-%s%s", strings.TrimSuffix(r2PathPrefix, "/"), shortID, newUUID(), filename, extension)
 	uploadURL, err := presignR2PutObject(objectKey, contentType, 900)
 	if err != nil {
 		return "", err

@@ -786,6 +786,24 @@ func (db *DB) GetVideoJobInternal(jobID string) (*VideoJob, error) {
 	return &job, nil
 }
 
+func (db *DB) FindVideoBackgroundJob(userID, requestKey string) (*VideoJob, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	var job VideoJob
+	err := scanVideoJob(db.conn.QueryRow(
+		`SELECT `+videoJobSelectColumns+` FROM video_jobs
+		 WHERE user_id = $1 AND service = 'video_background_removal'
+		   AND result_json->>'_request_key' = $2
+		   AND status IN ('queued', 'processing', 'completed', 'payment_required')
+		 ORDER BY created_at DESC LIMIT 1`,
+		userID, requestKey,
+	), &job)
+	if err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
 func (db *DB) UpdateVideoJob(jobID, status string, result []byte, jobErr string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -1698,6 +1716,71 @@ func (db *DB) InsertGeneratedAudio(asset *GeneratedAudio) error {
 	return nil
 }
 
+// ListGeneratedAudio returns a user's durable audio assets newest first.
+func (db *DB) ListGeneratedAudio(userID, kind string, limit int) ([]GeneratedAudio, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	rows, err := db.conn.Query(`
+		SELECT id, user_id, kind, prompt, title, audio_url, duration_seconds, public, created_at
+		FROM generated_audio
+		WHERE user_id = $1 AND ($2 = '' OR kind = $2)
+		ORDER BY created_at DESC
+		LIMIT $3`, userID, kind, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	assets := make([]GeneratedAudio, 0)
+	for rows.Next() {
+		var asset GeneratedAudio
+		if err := rows.Scan(&asset.ID, &asset.UserID, &asset.Kind, &asset.Prompt, &asset.Title,
+			&asset.AudioURL, &asset.DurationSeconds, &asset.Public, &asset.CreatedAt); err != nil {
+			return nil, err
+		}
+		assets = append(assets, asset)
+	}
+	return assets, rows.Err()
+}
+
+func (db *DB) GetGeneratedAudio(userID, assetID string) (*GeneratedAudio, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	var asset GeneratedAudio
+	err := db.conn.QueryRow(`
+		SELECT id, user_id, kind, prompt, title, audio_url, duration_seconds, public, created_at
+		FROM generated_audio WHERE id = $1 AND user_id = $2`, assetID, userID).Scan(
+		&asset.ID, &asset.UserID, &asset.Kind, &asset.Prompt, &asset.Title,
+		&asset.AudioURL, &asset.DurationSeconds, &asset.Public, &asset.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &asset, nil
+}
+
+func (db *DB) DeleteGeneratedAudio(userID, assetID string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	result, err := db.conn.Exec(`DELETE FROM generated_audio WHERE id = $1 AND user_id = $2`, assetID, userID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return sql.ErrNoRows
+	}
+	if audioSearch != nil {
+		audioSearch.Remove(assetID)
+	}
+	return nil
+}
+
 // StreamAllAudioPrompts feeds durable generated audio to the semantic index.
 func (db *DB) StreamAllAudioPrompts(cb func(*GeneratedAudio) error) error {
 	rows, err := db.conn.Query(`
@@ -1730,7 +1813,7 @@ func (db *DB) SearchImagesByUser(userID string, page, perPage int, allowNSFW boo
 	offset := (page - 1) * perPage
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 
 	var total int
@@ -1784,7 +1867,7 @@ func (db *DB) ListImages(page, perPage int, allowNSFW bool) ([]GeneratedImage, e
 	offset := (page - 1) * perPage
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 
 	rows, err := db.conn.Query(
@@ -1836,7 +1919,7 @@ func (db *DB) BrowseImagesVaried(seed float64, after *float64, wrapped bool, per
 
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 
 	const cols = `id, prompt, width, height, file_path, thumb_path, med_path, file_size, model, seed, steps, is_nsfw, latent_path, created_at, random_sort`
@@ -1921,7 +2004,7 @@ func (db *DB) BrowseImagesVaried(seed float64, after *float64, wrapped bool, per
 func (db *DB) StreamAllImagePrompts(allowNSFW bool, cb func(id, prompt string) error) error {
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 	rows, err := db.conn.Query(
 		`SELECT id, prompt FROM generated_images WHERE prompt <> ''` + nsfwFilter,
@@ -1963,7 +2046,7 @@ func (db *DB) GetImagesByIDs(ids []string, allowNSFW bool) ([]GeneratedImage, er
 
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 
 	query := `SELECT id, prompt, width, height, file_path, thumb_path, med_path, file_size, model, seed, steps, is_nsfw, latent_path, created_at
@@ -2006,7 +2089,7 @@ func (db *DB) SearchImages(query string, page, perPage int, allowNSFW bool) (*Im
 	// Build NSFW filter clause
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 
 	var total int

@@ -1,4 +1,6 @@
 node_modules/
+__pycache__/
+*.pyc
 .next/
 .next-dev/
 *.tsbuildinfo
@@ -9,6 +11,13 @@ test-results/
 .local-certs/
 server/manifoldgen-server
 .env
+.env.*
+*.env
+AGENTS.md.local
+server/*.backup
+server/*backup
+server/*.before-*
+server/*.next-*
 *.sum.bak
 visualbench/*
 !visualbench/README.md
@@ -21,3 +30,4 @@ visualbench/
 frontend/.next-playwright/
 monitoring
 scripts/prompts/manifold-gallery-100k.jsonl
+scripts/prompts/manifold-gallery-augmented.jsonl

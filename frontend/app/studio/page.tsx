@@ -43,12 +43,14 @@ import {
   Upload,
   UserRound,
   Volume2,
+  VolumeX,
   WandSparkles,
   X,
   ZoomIn,
 } from 'lucide-react';
 import {
   ALL_FORMATS,
+  AudioBufferSink,
   AudioSample,
   AudioSampleSource,
   BlobSource,
@@ -83,11 +85,12 @@ import {
   type PortableStudioHistoryState,
 } from '../../lib/studio-projects';
 import { h3Dimensions, loopAnchorURL, type H3Aspect, type H3Size } from '../../lib/h3-loop';
+import { VIDEO_GENERATORS } from '../../lib/video-generators';
 import styles from './page.module.css';
 
 type MediaKind = 'video' | 'image' | 'audio';
 type Tool = 'media' | 'text' | 'adjust' | 'crop' | 'effects' | 'audio' | 'ai';
-type MediaBrowserMode = 'project' | 'videos' | 'images' | 'music';
+type MediaBrowserMode = 'project' | 'videos' | 'images' | 'music' | 'tools';
 type ImageGenerationEngine = 'images3' | 'omniserve';
 type ExportFormat = 'mp4-h264' | 'webm-vp9' | 'webm-av1';
 type ExportResolution = 'source' | '2160p' | '1440p' | '1080p' | '720p';
@@ -165,6 +168,47 @@ function catalogWaveform(seedValue: string, count = 44) {
     const envelope = .55 + Math.sin((index / Math.max(1, count - 1)) * Math.PI) * .45;
     return Math.round(18 + noise * 72 * envelope);
   });
+}
+
+function ProjectAudioThumb({ asset }: { asset: Pick<StudioAsset, 'id' | 'name' | 'url'> }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const waveform = useMemo(() => catalogWaveform(`project:${asset.id}:${asset.name}`, 28), [asset.id, asset.name]);
+
+  useEffect(() => {
+    const pauseOther = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== `project:${asset.id}`) audioRef.current?.pause();
+    };
+    window.addEventListener('manifold:audio-preview', pauseOther);
+    return () => {
+      window.removeEventListener('manifold:audio-preview', pauseOther);
+      audioRef.current?.pause();
+    };
+  }, [asset.id]);
+
+  const toggle = (event: ReactMouseEvent<HTMLSpanElement>) => {
+    event.stopPropagation();
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      window.dispatchEvent(new CustomEvent('manifold:audio-preview', { detail: `project:${asset.id}` }));
+      void audio.play();
+    } else {
+      audio.pause();
+    }
+  };
+
+  return <span className={styles.audioThumb} role="button" tabIndex={0} aria-label={`${playing ? 'Pause' : 'Play'} ${asset.name}`} onClick={toggle} onKeyDown={(event) => {
+    if (event.key === 'Enter' || event.key === ' ') toggle(event as unknown as ReactMouseEvent<HTMLSpanElement>);
+  }}>
+    <audio ref={audioRef} src={asset.url} preload="metadata" onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={(event) => { event.currentTarget.currentTime = 0; setProgress(0); setPlaying(false); }} onTimeUpdate={(event) => {
+      const duration = event.currentTarget.duration;
+      setProgress(Number.isFinite(duration) && duration > 0 ? event.currentTarget.currentTime / duration : 0);
+    }} />
+    <span className={styles.audioThumbWave} aria-hidden="true">{waveform.map((height, index) => <i key={index} style={{ height: `${height}%`, opacity: index / waveform.length <= progress ? 1 : .28 }} />)}</span>
+    <span className={styles.audioThumbPlay}>{playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}</span>
+  </span>;
 }
 
 function catalogAudioFromTransfer(dataTransfer: DataTransfer) {
@@ -293,11 +337,13 @@ type RestyleReference = {
 type StudioTextStyle = {
   content: string;
   fontSize: number;
-  fontFamily: 'Inter' | 'Arial' | 'Georgia' | 'Courier New';
+  fontFamily: 'Inter' | 'Arial' | 'Georgia' | 'Courier New' | 'Playfair Display';
   fontWeight: 400 | 600 | 800;
   color: string;
   align: 'left' | 'center' | 'right';
 };
+
+const STUDIO_FONTS: StudioTextStyle['fontFamily'][] = ['Inter', 'Arial', 'Georgia', 'Courier New', 'Playfair Display'];
 
 type StudioImageHit = {
   id: string;
@@ -345,6 +391,7 @@ type StudioAsset = {
   volume: number;
   fadeIn: number;
   fadeOut: number;
+  sourceAudioMuted?: boolean;
   stageX: number;
   stageY: number;
   stageScale: number;
@@ -555,6 +602,7 @@ function portableAsset(asset: StudioAsset): PortableStudioAsset {
     trimStart: asset.trimStart, trimEnd: asset.trimEnd, timelineStart: asset.timelineStart,
     visualTrack: asset.visualTrack,
     volume: asset.volume, fadeIn: asset.fadeIn, fadeOut: asset.fadeOut,
+    sourceAudioMuted: asset.sourceAudioMuted,
     stageX: asset.stageX, stageY: asset.stageY, attribution: asset.attribution,
     stageScale: asset.stageScale, stageRotation: asset.stageRotation,
     adjustments: asset.adjustments, cloudURL: asset.cloudURL, objectKey: asset.objectKey,
@@ -598,7 +646,7 @@ async function materializeProject(document: PortableStudioDocument, localFiles =
     const mediaID = stored.mediaID || stored.id;
     let file = localFiles.get(mediaID);
     if (!file && stored.cloudURL) {
-      const response = await fetch(stored.cloudURL);
+      const response = await fetchWithRetry(stored.cloudURL);
       if (!response.ok) throw new Error(`Could not download ${stored.name}`);
       const blob = await response.blob();
       file = new File([blob], stored.name, { type: stored.contentType || blob.type, lastModified: stored.lastModified });
@@ -691,7 +739,7 @@ function PassiveStageMedia({ asset, playhead, playing }: { asset: StudioAsset; p
 
 function mediaKindForFile(file: File): MediaKind | null {
   if (file.type.startsWith('video/') || /\.(mp4|webm|mov|m4v|mkv)$/i.test(file.name)) return 'video';
-  if (file.type.startsWith('audio/') || /\.(wav|mp3|ogg|oga|m4a|aac|flac)$/i.test(file.name)) return 'audio';
+  if (file.type.startsWith('audio/') || /\.(wav|mp3|ogg|oga|opus|m4a|aac|flac)$/i.test(file.name)) return 'audio';
   if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(file.name)) return 'image';
   return null;
 }
@@ -701,6 +749,30 @@ function authHeaders(apiKey: string, json = true): HeadersInit {
     ...(json ? { 'Content-Type': 'application/json' } : {}),
     Authorization: `Bearer ${apiKey}`,
   };
+}
+
+const RETRYABLE_FETCH_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+async function fetchWithRetry(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  options: { attempts?: number; baseDelayMs?: number } = {},
+) {
+  const attempts = Math.max(1, options.attempts ?? 3);
+  const baseDelayMs = options.baseDelayMs ?? 350;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(input, init);
+      if (response.ok || !RETRYABLE_FETCH_STATUS.has(response.status) || attempt === attempts - 1) return response;
+      lastError = new Error(`Request failed (${response.status})`);
+    } catch (reason) {
+      lastError = reason;
+      if (attempt === attempts - 1) throw reason;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, baseDelayMs * (2 ** attempt)));
+  }
+  throw lastError instanceof Error ? lastError : new Error('Network request failed');
 }
 
 function resultURL(payload: unknown): string {
@@ -904,7 +976,7 @@ async function renderTimelineAudio(timelineAssets: StudioAsset[], duration: numb
       // Silent videos and unsupported source audio are valid; additional clips still render.
     }
   };
-  for (const clip of timelineAssets.filter((asset) => asset.kind !== 'image')) {
+  for (const clip of timelineAssets.filter((asset) => asset.kind !== 'image' && !(asset.kind === 'video' && asset.sourceAudioMuted))) {
     const overlapStart = Math.max(0, clip.timelineStart);
     const overlapEnd = Math.min(duration, clipEnd(clip));
     if (overlapEnd <= overlapStart) continue;
@@ -913,6 +985,37 @@ async function renderTimelineAudio(timelineAssets: StudioAsset[], duration: numb
   await decoder.close();
   if (!scheduled) return null;
   return offline.startRendering();
+}
+
+async function extractAudioClip(asset: StudioAsset) {
+  const duration = clipDuration(asset);
+  const input = new Input({ source: new BlobSource(asset.file), formats: ALL_FORMATS });
+  try {
+    const track = await input.getPrimaryAudioTrack();
+    if (!track) throw new Error('This video does not contain an audio track');
+    if (!(await track.canDecode())) throw new Error('This browser cannot decode the video audio track');
+
+    const offline = new OfflineAudioContext(2, Math.max(1, Math.ceil(duration * 48_000)), 48_000);
+    const sink = new AudioBufferSink(track);
+    let scheduled = 0;
+    for await (const wrapped of sink.buffers(asset.trimStart, asset.trimEnd)) {
+      const sourceStart = Math.max(asset.trimStart, wrapped.timestamp);
+      const sourceEnd = Math.min(asset.trimEnd, wrapped.timestamp + wrapped.buffer.duration);
+      const grainDuration = sourceEnd - sourceStart;
+      if (grainDuration <= 0) continue;
+      const source = offline.createBufferSource();
+      source.buffer = wrapped.buffer;
+      source.connect(offline.destination);
+      source.start(sourceStart - asset.trimStart, sourceStart - wrapped.timestamp, grainDuration);
+      scheduled += 1;
+    }
+    if (!scheduled) throw new Error('No decodable audio was found in the selected video range');
+    const rendered = await offline.startRendering();
+    const baseName = asset.name.replace(/\.[^.]+$/, '') || 'video';
+    return new File([wavBlob(rendered)], `${baseName}-audio.wav`, { type: 'audio/wav' });
+  } finally {
+    input.dispose();
+  }
 }
 
 export default function StudioPage() {
@@ -942,6 +1045,7 @@ export default function StudioPage() {
   const [imageAspect, setImageAspect] = useState<H3Aspect>('1:1');
   const [imageCount, setImageCount] = useState<1 | 4>(4);
   const [textDraft, setTextDraft] = useState<StudioTextStyle>({ content: 'Your story starts here', fontSize: 112, fontFamily: 'Inter', fontWeight: 800, color: '#ffffff', align: 'center' });
+  const [fontSearch, setFontSearch] = useState('');
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [extendRates, setExtendRates] = useState({ input: 0.012, output: 0.084 });
   const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
@@ -983,7 +1087,7 @@ export default function StudioPage() {
   const [upscaleScale, setUpscaleScale] = useState<2 | 4>(2);
   const [restyleOpen, setRestyleOpen] = useState(false);
   const [restyleSourceID, setRestyleSourceID] = useState('');
-  const [restyleModel, setRestyleModel] = useState<'wan-2.2' | 'h3-reference'>('wan-2.2');
+  const [restyleModel, setRestyleModel] = useState<'wan-2.2' | 'h3-reference' | 'wan-animate-2'>('wan-2.2');
   const [restylePrompt, setRestylePrompt] = useState('Transform this clip into a cinematic hand-painted animation while preserving the original motion and composition.');
   const [restyleNegativePrompt, setRestyleNegativePrompt] = useState('flicker, warped anatomy, inconsistent subject, text, watermark');
   const [restyleStrength, setRestyleStrength] = useState(0.85);
@@ -1122,6 +1226,10 @@ export default function StudioPage() {
   const speechUSD = Math.max(ttsPer100USD * 0.1, Math.ceil(Math.max(1, speechText.trim().length) / 100 * ttsPer100USD * 10000) / 10000);
   const speechCredits = speechUSD / creditPrice;
   const restyleEstimateUSD = useMemo(() => {
+    if (restyleModel === 'wan-animate-2') {
+      const rate = restyleResolution === 'high' ? .60 : restyleResolution === 'balanced' ? .32 : .20;
+      return Math.ceil(rate * restyleDuration * 100) / 100;
+    }
     if (restyleModel === 'h3-reference') {
       const rate = restyleResolution === '4K' ? 0.16 : restyleResolution === '2K' ? 0.13 : 0.08;
       const images = restyleReferences.filter((item) => item.kind === 'image').length;
@@ -1411,14 +1519,17 @@ export default function StudioPage() {
   }, []);
 
   useEffect(() => {
-    if (mediaBrowserMode === 'project') return;
+    if (mediaBrowserMode === 'project' || mediaBrowserMode === 'tools') return;
     void searchStudioMedia(mediaBrowserMode, mediaSearch);
     // Switching library modes should immediately populate useful public work.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaBrowserMode]);
 
   useEffect(() => {
-    if (selected?.text) setTextDraft({ ...selected.text });
+    if (selected?.text) {
+      setTextDraft({ ...selected.text });
+      setFontSearch(selected.text.fontFamily);
+    }
   }, [selected?.id, selected?.text]);
 
   useEffect(() => {
@@ -1448,7 +1559,7 @@ export default function StudioPage() {
     void (async () => {
       const storedUser = loadStoredUser();
       const params = new URLSearchParams(window.location.search);
-      const hasMediaHandoff = Boolean((params.get('video_url') || params.get('image_url'))?.trim());
+      const hasMediaHandoff = Boolean((params.get('video_url') || params.get('image_url') || params.get('audio_url'))?.trim());
       const forceNewProject = hasMediaHandoff || params.get('new') === '1';
       const requestedID = forceNewProject ? null : params.get('project');
       try {
@@ -1522,12 +1633,12 @@ export default function StudioPage() {
         const fallbackType = asset.kind === 'video' ? 'video/mp4' : asset.kind === 'audio' ? 'audio/wav' : 'image/png';
         const contentType = asset.file.type || fallbackType;
         try {
-          const response = await fetch('/api/studio/assets/presign', {
+          const response = await fetchWithRetry('/api/studio/assets/presign', {
             method: 'POST', headers: authHeaders(user.api_key),
             body: JSON.stringify({ project_id: projectID, asset_id: asset.mediaID, filename: asset.name, content_type: contentType, size: asset.file.size }),
           });
           const prepared = await parseJSONResponse<{ upload_url: string; public_url: string; object_key: string }>(response, `Could not upload ${asset.name}`);
-          const uploaded = await fetch(prepared.upload_url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: asset.file });
+          const uploaded = await fetchWithRetry(prepared.upload_url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: asset.file });
           if (!uploaded.ok) throw new Error(`Asset upload failed (${uploaded.status})`);
           // Attach the URL to every snapshot sharing these immutable bytes,
           // but never to a newer media revision of the same logical asset.
@@ -1596,7 +1707,7 @@ export default function StudioPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const mediaURL = (params.get('video_url') || params.get('image_url'))?.trim();
+    const mediaURL = (params.get('video_url') || params.get('image_url') || params.get('audio_url'))?.trim();
     if (!mediaURL || galleryImportStartedRef.current) return;
     let parsed: URL;
     try {
@@ -1608,23 +1719,28 @@ export default function StudioPage() {
 
     galleryImportStartedRef.current = true;
     const isVideo = !!params.get('video_url');
-    const name = params.get('name')?.trim() || (isVideo ? 'Gallery video' : 'Gallery image');
-    setNotice(`Loading gallery ${isVideo ? 'video' : 'image'}…`);
-    fetch(isVideo ? mediaURL : galleryImportURL(mediaURL))
+    const isAudio = !!params.get('audio_url');
+    const mediaKind = isVideo ? 'video' : isAudio ? 'audio' : 'image';
+    const name = params.get('name')?.trim() || (isVideo ? 'Gallery video' : isAudio ? 'Generated voice' : 'Gallery image');
+    setNotice(`Loading ${mediaKind}…`);
+    // Keep gallery handoffs same-origin. The CDN permits the apex domain today,
+    // but Studio is also served from www.manifoldgen.com, which is a distinct
+    // browser origin and otherwise makes its direct media fetch fail CORS.
+    fetchWithRetry(isAudio ? mediaURL : galleryImportURL(mediaURL))
       .then(async (response) => {
-        if (!response.ok) throw new Error(`Could not load the gallery ${isVideo ? 'video' : 'image'}`);
+        if (!response.ok) throw new Error(`Could not load the ${mediaKind}`);
         const blob = await response.blob();
-        const extension = blob.type.split('/')[1]?.replace('jpeg', 'jpg') || (isVideo ? 'mp4' : 'webp');
-        return importFiles([new File([blob], `${name.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80)}.${extension}`, { type: blob.type || (isVideo ? 'video/mp4' : 'image/webp') })]);
+        const extension = blob.type.split('/')[1]?.replace('jpeg', 'jpg').replace('mpeg', 'mp3') || (isVideo ? 'mp4' : isAudio ? 'mp3' : 'webp');
+        return importFiles([new File([blob], `${name.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80)}.${extension}`, { type: blob.type || (isVideo ? 'video/mp4' : isAudio ? 'audio/mpeg' : 'image/webp') })]);
       })
       .then((imported) => {
         const first = imported?.[0];
-        setNotice(`Gallery ${isVideo ? 'video' : 'image'} added to the studio`);
+        setNotice(`${mediaKind[0].toUpperCase() + mediaKind.slice(1)} added to the studio`);
         const projectID = mediaHandoffProjectIDRef.current;
         window.history.replaceState({}, '', projectID ? `/studio?project=${encodeURIComponent(projectID)}` : '/studio');
         if (isVideo && params.get('restyle') === '1' && first?.kind === 'video') openRestyle(first);
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : `Could not load the gallery ${isVideo ? 'video' : 'image'}`));
+      .catch((reason) => setError(reason instanceof Error ? reason.message : `Could not load the ${mediaKind}`));
   // importFiles is intentionally declared below this effect; it is stable enough
   // for one-time URL handoff and the guard prevents duplicate imports in Strict Mode.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1696,6 +1812,16 @@ export default function StudioPage() {
       imageRef.current = null;
     }
   }, [selected?.id, selected?.url, selected?.kind, selected?.trimStart, selected?.trimEnd, selected?.timelineStart, drawCurrent]);
+
+  useEffect(() => {
+    if (selected?.kind === 'video' && videoRef.current) {
+      videoRef.current.muted = !!selected.sourceAudioMuted;
+      videoRef.current.volume = Math.max(0, Math.min(1, selected.volume));
+    }
+    if (selected?.kind === 'audio' && audioRef.current) {
+      audioRef.current.volume = Math.max(0, Math.min(1, selected.volume));
+    }
+  }, [selected?.kind, selected?.sourceAudioMuted, selected?.volume]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1789,7 +1915,7 @@ export default function StudioPage() {
     if (!url) return;
     setError('');
     try {
-      const response = await fetch(url);
+      const response = await fetchWithRetry(url);
       if (!response.ok) throw new Error('Could not download this generated video');
       const blob = await response.blob();
       const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
@@ -1801,7 +1927,7 @@ export default function StudioPage() {
   }
 
   async function addRemoteMedia(url: string, name: string, kind: 'image' | 'video', attribution: string) {
-    const response = await fetch(url);
+    const response = await fetchWithRetry(url);
     if (!response.ok) throw new Error(`Could not download this ${kind}`);
     const blob = await response.blob();
     const fallback = kind === 'image' ? 'webp' : 'mp4';
@@ -2219,7 +2345,7 @@ export default function StudioPage() {
       const parsed = new URL(uri);
       if (!['http:', 'https:', 'data:'].includes(parsed.protocol)) throw new Error('Unsupported media URL');
       setNotice('Loading dropped media…');
-      const response = await fetch(uri);
+      const response = await fetchWithRetry(uri);
       if (!response.ok) throw new Error(`Media download failed (${response.status})`);
       const blob = await response.blob();
       const fallbackName = `dropped-media.${blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'bin'}`;
@@ -2595,6 +2721,11 @@ export default function StudioPage() {
       } else if (commandKey && (event.code === 'BracketLeft' || event.code === 'BracketRight')) {
         event.preventDefault();
         moveSelectionBetweenLayers(event.code === 'BracketRight' ? 1 : -1, event.shiftKey);
+      } else if (event.key.toLowerCase() === 't' && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        setTool('text');
+        setMobilePanelOpen(true);
+        void addText({ content: 'Add body text', fontSize: 48, fontFamily: 'Inter', fontWeight: 400, color: '#ffffff', align: 'left' });
       } else if (event.key.toLowerCase() === 's' && !event.metaKey && !event.ctrlKey) {
         event.preventDefault();
         splitAtPlayhead();
@@ -2612,9 +2743,9 @@ export default function StudioPage() {
   async function uploadPublic(file: File) {
     if (!user) throw new Error('Sign in to use AI tools');
     const query = new URLSearchParams({ filename: file.name, content_type: file.type || 'application/octet-stream', dataset: 'studio' });
-    const presign = await fetch(`/api/uploads/presign?${query}`, { headers: authHeaders(user.api_key, false) });
+    const presign = await fetchWithRetry(`/api/uploads/presign?${query}`, { headers: authHeaders(user.api_key, false) });
     const data = await parseJSONResponse<{ upload_url: string; public_url: string }>(presign, 'Could not prepare upload');
-    const put = await fetch(data.upload_url, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
+    const put = await fetchWithRetry(data.upload_url, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
     if (!put.ok) throw new Error('Asset upload failed');
     return data.public_url;
   }
@@ -2710,6 +2841,28 @@ export default function StudioPage() {
     setContextMenu(null);
   }
 
+  function openAnimationTransfer(asset: StudioAsset) {
+    if (asset.kind !== 'video') return;
+    selectOnly(asset.id);
+    setPlayhead(asset.timelineStart);
+    setRestyleSourceID(asset.id);
+    setRestyleModel('wan-animate-2');
+    setRestyleResolution('preview');
+    setRestyleDuration(Math.max(1, Math.min(15, Math.round(asset.trimEnd - asset.trimStart) || 5)));
+    setRestyleFPS(24);
+    setRestyleFrames(37);
+    setRestylePrompt('A full-body character matching the reference image, natural face, detailed clothing, cinematic lighting, clean background');
+    setRestyleReferences((current) => current.filter((item) => item.kind === 'image').slice(0, 1));
+    setRestyleOpen(true);
+    setContextMenu(null);
+  }
+
+  function setAnimationReference(files: FileList | File[]) {
+    const file = Array.from(files).find((candidate) => candidate.type.startsWith('image/'));
+    if (!file) return;
+    setRestyleReferences([{ id: uid(), name: file.name, kind: 'image', file, url: URL.createObjectURL(file) }]);
+  }
+
   function addRestyleReferences(files: FileList | File[]) {
     const incoming = Array.from(files).map((file) => ({ file, kind: mediaKindForFile(file) })).filter((item): item is { file: File; kind: MediaKind } => !!item.kind);
     setRestyleReferences((current) => {
@@ -2762,10 +2915,12 @@ export default function StudioPage() {
         method: 'POST', headers: authHeaders(user.api_key),
         body: JSON.stringify({
           service: 'video_restyle', model: restyleModel, video_url: videoURL,
+          ...(restyleModel === 'wan-animate-2' ? { image_url: uploadedReferences.find((item) => item.kind === 'image')?.publicURL } : {}),
           prompt: restylePrompt, negative_prompt: restyleNegativePrompt,
           strength: restyleStrength, num_frames: restyleFrames, frames_per_second: restyleFPS,
           resolution: restyleResolution, aspect_ratio: restyleAspect,
           duration: restyleDuration, seed: restyleSeed,
+          ...(restyleModel === 'wan-animate-2' ? { num_steps: 10, include_audio: true } : {}),
           reference_image_urls: uploadedReferences.filter((item) => item.kind === 'image').map((item) => item.publicURL),
           reference_video_urls: uploadedReferences.filter((item) => item.kind === 'video').map((item) => item.publicURL),
           reference_audio_urls: uploadedReferences.filter((item) => item.kind === 'audio').map((item) => item.publicURL),
@@ -2790,10 +2945,11 @@ export default function StudioPage() {
           if (!result.ok) throw new Error('Could not download transformed video');
           const blob = await result.blob();
           const extension = blob.type.includes('webm') || outputURL.includes('.webm') ? 'webm' : 'mp4';
-          await addGeneratedFile(new File([blob], `${source.name.replace(/\.[^.]+$/, '')}-restyled.${extension}`, { type: blob.type || `video/${extension}` }), 'video', 'Video restyle');
+          const animationTransfer = restyleModel === 'wan-animate-2';
+          await addGeneratedFile(new File([blob], `${source.name.replace(/\.[^.]+$/, '')}-${animationTransfer ? 'animated' : 'restyled'}.${extension}`, { type: blob.type || `video/${extension}` }), 'video', animationTransfer ? 'Animation transfer' : 'Video restyle');
           const refreshed = await refreshUser(user.api_key).catch(() => null);
           if (refreshed) { setUser(refreshed); saveUser(refreshed); }
-          setNotice('Restyled video added to the timeline');
+          setNotice(animationTransfer ? 'Animation Transfer added to the timeline' : 'Restyled video added to the timeline');
           return;
         }
         setNotice(status === 'processing' ? 'Transforming video…' : 'Video transformation queued…');
@@ -3096,6 +3252,38 @@ export default function StudioPage() {
     }
   }
 
+  async function separateSelectedAudio() {
+    if (!selected || selected.kind !== 'video' || selected.sourceAudioMuted) return;
+    setBusy('separate-audio'); setError(''); setNotice('Separating audio…');
+    try {
+      const file = await extractAudioClip(selected);
+      const duration = clipDuration(selected);
+      const id = uid();
+      const audioAsset: StudioAsset = {
+        id, mediaID: id, name: file.name, kind: 'audio', file, url: URL.createObjectURL(file),
+        duration, width: 1, height: 1, trimStart: 0, trimEnd: duration,
+        timelineStart: selected.timelineStart, visualTrack: 0,
+        volume: selected.volume, fadeIn: selected.fadeIn, fadeOut: selected.fadeOut,
+        stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0,
+        attribution: `Separated from ${selected.name}`,
+        adjustments: { ...DEFAULT_ADJUSTMENTS },
+      };
+      rememberEdit();
+      setAssets((current) => [
+        ...current.map((asset) => asset.id === selected.id ? { ...asset, sourceAudioMuted: true } : asset),
+        audioAsset,
+      ]);
+      selectOnly(audioAsset.id);
+      setPlayhead(audioAsset.timelineStart);
+      setTool('audio');
+      setNotice('Audio separated into an independent track');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not separate this video audio');
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function exportAudio() {
     if (!selected || selected.kind !== 'audio') return;
     setBusy('export-audio'); setError('');
@@ -3144,7 +3332,8 @@ export default function StudioPage() {
     let output: Output | null = null;
     type ExportVisualState = {
       asset: StudioAsset;
-      canvas: HTMLCanvasElement;
+      rasterCanvas: HTMLCanvasElement;
+      rasterContext: CanvasRenderingContext2D;
       renderer: StudioRenderer;
       image: HTMLImageElement | null;
       input: Input | null;
@@ -3184,17 +3373,22 @@ export default function StudioPage() {
 
       for (const asset of visualAssets) {
         const filteredCanvas = document.createElement('canvas');
-        // The export compositor copies this WebGL canvas into a 2D canvas for
-        // WebCodecs. Retain its framebuffer so the encoded frames are not
-        // blank after WebGL presents the draw call.
+        // Export reads finished WebGL pixels into a 2D raster before handing
+        // frames to WebCodecs, avoiding compositor timing issues.
         const renderer = new StudioRenderer(filteredCanvas, { preserveDrawingBuffer: true });
         renderer.resize(asset.width, asset.height);
-        const state: ExportVisualState = { asset, canvas: filteredCanvas, renderer, image: null, input: null, iterator: null, current: null, next: null };
+        const rasterCanvas = document.createElement('canvas');
+        rasterCanvas.width = filteredCanvas.width;
+        rasterCanvas.height = filteredCanvas.height;
+        const rasterContext = rasterCanvas.getContext('2d', { alpha: false });
+        if (!rasterContext) throw new Error('This browser cannot prepare the export frame buffer');
+        const state: ExportVisualState = { asset, rasterCanvas, rasterContext, renderer, image: null, input: null, iterator: null, current: null, next: null };
         if (asset.kind === 'image') {
           state.image = new Image();
           state.image.src = asset.url;
           await state.image.decode();
           renderer.draw(state.image, asset.adjustments, 0);
+          renderer.copyToCanvas(rasterContext);
         } else {
           state.input = new Input({ source: new BlobSource(asset.file), formats: ALL_FORMATS });
           const track = await state.input.getPrimaryVideoTrack();
@@ -3256,6 +3450,7 @@ export default function StudioPage() {
             if (!sample) continue;
             const frame = sample.toVideoFrame();
             state.renderer.draw(frame, asset.adjustments, index);
+            state.renderer.copyToCanvas(state.rasterContext);
             frame.close();
           }
           const fit = Math.min(width / Math.max(1, asset.width), height / Math.max(1, asset.height));
@@ -3264,7 +3459,7 @@ export default function StudioPage() {
           compositor.save();
           compositor.translate(width * (0.5 + asset.stageX), height * (0.5 + asset.stageY));
           compositor.rotate(asset.stageRotation * Math.PI / 180);
-          compositor.drawImage(state.canvas, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+          compositor.drawImage(state.rasterCanvas, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
           compositor.restore();
         }
         await videoSource.add(timestamp, Math.min(frameDuration, duration - timestamp), { keyFrame: index % (outputFPS * 2) === 0 });
@@ -3327,10 +3522,11 @@ export default function StudioPage() {
   ];
   const foregroundActivityLabel = busy === 'export' ? 'Exporting timeline'
     : busy === 'export-audio' ? 'Exporting audio'
-      : busy === 'extend' ? 'Extending video'
-        : busy === 'upscale' ? 'Upscaling video'
-          : busy === 'restyle' ? 'Restyling video'
-            : busy ? 'Working' : '';
+      : busy === 'separate-audio' ? 'Separating audio'
+        : busy === 'extend' ? 'Extending video'
+          : busy === 'upscale' ? 'Upscaling video'
+            : busy === 'restyle' ? 'Restyling video'
+              : busy ? 'Working' : '';
   const activeVideoGenerationCount = generationJobs.filter(isActiveGeneration).length;
   const runningActivityCount = backgroundActivities.length + activeVideoGenerationCount;
   const activityLabel = runningActivityCount > 1
@@ -3403,6 +3599,7 @@ export default function StudioPage() {
           <nav className={styles.menuNav}>
             <span className={styles.menuLabel}>WORKSPACE</span>
             <Link href="/studio" className={styles.menuLink} onClick={() => setMenuOpen(false)}><Clapperboard size={17} /><span><b>Studio</b><small>Edit, generate, and export</small></span></Link>
+            <Link href="/voice" className={styles.menuLink} onClick={() => setMenuOpen(false)}><Mic2 size={17} /><span><b>Voice Studio</b><small>Generate speech and audio scenes</small></span></Link>
             <Link href="/" className={styles.menuLink} onClick={() => setMenuOpen(false)}><Sparkles size={17} /><span><b>Generator</b><small>Start from a prompt</small></span></Link>
 
             <span className={styles.menuLabel}>ACCOUNT</span>
@@ -3427,7 +3624,7 @@ export default function StudioPage() {
           {tool === 'media' && <>
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>CREATE + DISCOVER</span><h2>Media</h2></div>{mediaBrowserMode === 'project' && <button className={styles.smallIcon} title="Add media" onClick={() => fileInputRef.current?.click()}><Plus size={15} /></button>}</div>
             <div className={styles.mediaTabs} role="tablist" aria-label="Media library">
-              {([['project', 'Project'], ['videos', 'Videos'], ['images', 'Images'], ['music', 'Music']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={mediaBrowserMode === id} data-testid={`studio-media-${id}`} className={mediaBrowserMode === id ? styles.mediaTabActive : ''} onClick={() => setMediaBrowserMode(id)}>{label}</button>)}
+              {([['project', 'Project'], ['videos', 'Videos'], ['images', 'Images'], ['music', 'Music'], ['tools', 'Tools']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={mediaBrowserMode === id} data-testid={`studio-media-${id}`} className={mediaBrowserMode === id ? styles.mediaTabActive : ''} onClick={() => setMediaBrowserMode(id)}>{label}</button>)}
             </div>
             <input ref={fileInputRef} type="file" multiple accept="video/*,image/*,audio/*" hidden onChange={(event) => event.target.files && void importFiles(event.target.files)} />
             {mediaBrowserMode === 'project' && <>
@@ -3436,11 +3633,11 @@ export default function StudioPage() {
                 <button data-testid="studio-generate-media" className={styles.generateMediaButton} onClick={() => { setMediaBrowserMode('videos'); setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><Sparkles size={16} /> Generate video</button>
               </div>
               <div className={styles.assetGrid}>
-                {assets.map((asset) => <button key={asset.id} onContextMenu={(event) => openStudioContextMenu(event, asset)} onClick={(event) => { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); }} className={`${styles.assetCard} ${selectedIDs.includes(asset.id) ? styles.assetSelected : ''}`}>
-                  {asset.kind === 'image' ? <img src={asset.url} alt="" /> : asset.kind === 'video' ? <video src={asset.url} muted preload="metadata" /> : <span className={styles.audioThumb}><AudioLines size={24} /></span>}
+                {assets.map((asset) => <article role="button" tabIndex={0} key={asset.id} onContextMenu={(event) => openStudioContextMenu(event, asset)} onClick={(event) => { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); }} onKeyDown={(event) => { if (event.key === 'Enter') { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); } }} className={`${styles.assetCard} ${selectedIDs.includes(asset.id) ? styles.assetSelected : ''}`}>
+                  {asset.kind === 'image' ? <img src={asset.url} alt="" /> : asset.kind === 'video' ? <video src={asset.url} muted preload="metadata" /> : <ProjectAudioThumb asset={asset} />}
                   <span className={styles.assetType}>{asset.text ? <Type size={11} /> : asset.kind === 'video' ? <Film size={11} /> : asset.kind === 'audio' ? <Volume2 size={11} /> : <ImageIcon size={11} />}</span>
                   <span className={styles.assetName}>{asset.text?.content || asset.name}</span>
-                </button>)}
+                </article>)}
               </div>
             {user && <section className={styles.generationLibrary}>
               <div className={styles.generationHeader}><span>YOUR GENERATIONS</span><small>Saved automatically</small></div>
@@ -3519,6 +3716,20 @@ export default function StudioPage() {
               />)}</div>
               {!mediaSearchBusy && !audioResults.length && <p className={styles.discoveryEmpty}>No music found yet. Try a mood, genre, or instrument.</p>}
             </>}
+
+            {mediaBrowserMode === 'tools' && <section className={styles.mediaTools} data-testid="studio-tools-pane">
+              <div className={styles.toolsIntro}><span><WandSparkles size={16} /></span><div><b>Video generators</b><small>Choose a model, generate a shot, then send it back to this timeline.</small></div></div>
+              <div className={styles.toolGeneratorList}><Link data-testid="studio-tool-animate-video" href="/tool/animate-video" className={styles.toolGeneratorCard}>
+                <span className={styles.toolGeneratorMark} style={{ '--tool-color': '#9c8cff' } as CSSProperties}>A</span>
+                <span className={styles.toolGeneratorCopy}><b>Animation Transfer</b><small>Image + driving video</small><em>from 60 Manifold credits</em></span>
+                <ArrowRight size={13} />
+              </Link>{VIDEO_GENERATORS.map((generator) => <Link data-testid={`studio-tool-${generator.slug}`} href={`/tools/${generator.slug}`} className={styles.toolGeneratorCard} key={generator.slug}>
+                <span className={styles.toolGeneratorMark} style={{ '--tool-color': generator.accent } as CSSProperties}>{generator.shortName.slice(0, 1)}</span>
+                <span className={styles.toolGeneratorCopy}><b>{generator.shortName}</b><small>{generator.mode === 'text' ? 'Text to video' : generator.mode === 'image' ? 'Image to video' : 'Reference to video'}</small><em>{generator.price}</em></span>
+                <ArrowRight size={13} />
+              </Link>)}</div>
+              <Link href="/tools" className={styles.allToolsLink}>Browse all generator tools <ArrowRight size={13} /></Link>
+            </section>}
           </>}
 
           {tool === 'text' && <>
@@ -3526,17 +3737,18 @@ export default function StudioPage() {
             <div className={styles.textPresets}>
               <button data-testid="studio-add-title" onClick={() => void addText({ content: 'Add a title', fontSize: 132, fontFamily: 'Inter', fontWeight: 800, color: '#ffffff', align: 'center' })}><b>Add a title</b><small>Bold display text</small></button>
               <button onClick={() => void addText({ content: 'Add a subtitle', fontSize: 76, fontFamily: 'Inter', fontWeight: 600, color: '#ffffff', align: 'center' })}><b>Add a subtitle</b><small>Supporting line</small></button>
-              <button onClick={() => void addText({ content: 'Add body text', fontSize: 48, fontFamily: 'Inter', fontWeight: 400, color: '#ffffff', align: 'left' })}><b>Add body text</b><small>Paragraph or caption</small></button>
+              <button data-testid="studio-add-body-text" title="Add body text (T)" onClick={() => void addText({ content: 'Add body text', fontSize: 48, fontFamily: 'Inter', fontWeight: 400, color: '#ffffff', align: 'left' })}><b>Add body text</b><small>Paragraph or caption</small></button>
             </div>
             {selected?.text ? <section className={styles.textEditor}>
               <span className={styles.sectionLabel}>SELECTED TEXT</span>
               <textarea data-testid="studio-text-content" rows={5} maxLength={800} value={textDraft.content} onChange={(event) => setTextDraft((current) => ({ ...current, content: event.target.value }))} />
               <div className={styles.textEditorGrid}>
-                <label><span>Typeface</span><select value={textDraft.fontFamily} onChange={(event) => setTextDraft((current) => ({ ...current, fontFamily: event.target.value as StudioTextStyle['fontFamily'] }))}>{(['Inter', 'Arial', 'Georgia', 'Courier New'] as const).map((font) => <option key={font}>{font}</option>)}</select></label>
+                <label><span>Typeface</span><input data-testid="studio-font-search" value={fontSearch} onChange={(event) => setFontSearch(event.target.value)} placeholder="Search fonts" /></label>
                 <label><span>Weight</span><select value={textDraft.fontWeight} onChange={(event) => setTextDraft((current) => ({ ...current, fontWeight: Number(event.target.value) as StudioTextStyle['fontWeight'] }))}><option value="400">Regular</option><option value="600">Semibold</option><option value="800">Bold</option></select></label>
                 <label><span>Size</span><input type="number" min="20" max="240" value={textDraft.fontSize} onChange={(event) => setTextDraft((current) => ({ ...current, fontSize: Math.max(20, Math.min(240, Number(event.target.value))) }))} /></label>
                 <label><span>Color</span><input aria-label="Text color" type="color" value={textDraft.color} onChange={(event) => setTextDraft((current) => ({ ...current, color: event.target.value }))} /></label>
               </div>
+              {fontSearch.trim() && STUDIO_FONTS.filter((font) => font.toLowerCase().includes(fontSearch.trim().toLowerCase()) && font !== textDraft.fontFamily).map((font) => <button key={font} role="option" aria-selected="false" onClick={() => { setTextDraft((current) => ({ ...current, fontFamily: font })); setFontSearch(font); }}>{font}</button>)}
               <div className={styles.textAlignChoices}>{(['left', 'center', 'right'] as const).map((align) => <button key={align} className={textDraft.align === align ? styles.textAlignActive : ''} onClick={() => setTextDraft((current) => ({ ...current, align }))}>{align}</button>)}</div>
               <button data-testid="studio-text-apply" className={styles.imageGenerateButton} disabled={!textDraft.content.trim()} onClick={() => void updateSelectedText()}><Type size={15} /> Update text</button>
               <p className={styles.textHint}>Text remains editable after reopening the project and uses the same stage scale, rotation, layering, and export path as other visual elements.</p>
@@ -3576,11 +3788,13 @@ export default function StudioPage() {
               <button onClick={() => { setAudioMode('sfx'); setAudioGenerateOpen(true); }}><AudioLines size={17} /><span><b>Sound</b><small>AI · metered</small></span></button>
               <button onClick={() => { setAudioMode('speech'); setAudioGenerateOpen(true); }}><Mic2 size={17} /><span><b>Speech</b><small>from {speechCredits.toFixed(2)} cr</small></span></button>
             </div>
-            {selected?.kind === 'audio' && <div className={styles.audioControls}>
-              <span className={styles.sectionLabel}>SELECTED CLIP</span>
-              <label className={styles.sliderRow}><span><b>Volume</b><output>{Math.round(selected.volume * 100)}%</output></span><input data-testid="studio-audio-volume" type="range" min="0" max="2" step="0.01" value={selected.volume} onChange={(event) => updateAsset(selected.id, { volume: Number(event.target.value) })} /></label>
-              <label className={styles.sliderRow}><span><b>Fade in</b><output>{selected.fadeIn.toFixed(1)}s</output></span><input data-testid="studio-audio-fade-in" type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeIn} onChange={(event) => updateAsset(selected.id, { fadeIn: Number(event.target.value) })} /></label>
-              <label className={styles.sliderRow}><span><b>Fade out</b><output>{selected.fadeOut.toFixed(1)}s</output></span><input data-testid="studio-audio-fade-out" type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeOut} onChange={(event) => updateAsset(selected.id, { fadeOut: Number(event.target.value) })} /></label>
+            {(selected?.kind === 'audio' || selected?.kind === 'video') && <div className={styles.audioControls}>
+              <span className={styles.sectionLabel}>SELECTED {selected.kind === 'video' ? 'VIDEO SOUND' : 'AUDIO TRACK'}</span>
+              {selected.kind === 'video' && <button data-testid="studio-separate-audio" className={styles.settingCard} disabled={!!busy || !!selected.sourceAudioMuted} onClick={() => void separateSelectedAudio()}><AudioLines size={17} /><span><b>{selected.sourceAudioMuted ? 'Audio separated' : 'Separate audio'}</b><small>{selected.sourceAudioMuted ? 'The embedded track is muted' : 'Create an independent WAV track'}</small></span></button>}
+              <label className={styles.sliderRow}><span><b>Volume</b><output>{selected.sourceAudioMuted ? 'Muted' : `${Math.round(selected.volume * 100)}%`}</output></span><input data-testid={selected.kind === 'video' ? 'studio-video-volume' : 'studio-audio-volume'} disabled={!!selected.sourceAudioMuted} type="range" min="0" max="2" step="0.01" value={selected.volume} onChange={(event) => updateAsset(selected.id, { volume: Number(event.target.value) })} /></label>
+              {selected.kind === 'video' && <button data-testid="studio-video-audio-toggle" className={styles.settingCard} onClick={() => updateAsset(selected.id, { sourceAudioMuted: !selected.sourceAudioMuted })}>{selected.sourceAudioMuted ? <Volume2 size={17} /> : <VolumeX size={17} />}<span><b>{selected.sourceAudioMuted ? 'Restore source audio' : 'Mute source audio'}</b><small>{selected.sourceAudioMuted ? 'Use the embedded video sound again' : 'Keep the picture silent in preview and export'}</small></span></button>}
+              <label className={styles.sliderRow}><span><b>Fade in</b><output>{selected.fadeIn.toFixed(1)}s</output></span><input data-testid="studio-audio-fade-in" disabled={!!selected.sourceAudioMuted} type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeIn} onChange={(event) => updateAsset(selected.id, { fadeIn: Number(event.target.value) })} /></label>
+              <label className={styles.sliderRow}><span><b>Fade out</b><output>{selected.fadeOut.toFixed(1)}s</output></span><input data-testid="studio-audio-fade-out" disabled={!!selected.sourceAudioMuted} type="range" min="0" max={Math.min(5, (selected.trimEnd - selected.trimStart) / 2)} step="0.1" value={selected.fadeOut} onChange={(event) => updateAsset(selected.id, { fadeOut: Number(event.target.value) })} /></label>
             </div>}
             <div className={styles.catalogHeader}><span className={styles.sectionLabel}>LICENSED CATALOG</span><Library size={14} /></div>
             <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-audio-search" value={audioSearch} onChange={(event) => setAudioSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchAudioCatalog()} placeholder="Search music and sounds" /><button title="Search (Enter)" disabled={audioSearching} onClick={() => void searchAudioCatalog()}>{audioSearching ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
@@ -3601,6 +3815,7 @@ export default function StudioPage() {
               <button className={styles.aiCard} disabled={selected?.kind !== 'image'} onClick={() => void removeBackground()}><span className={styles.aiIcon}><ImageIcon size={19} /></span><span><b>Remove background</b><small>WebP · 1 credit</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-upscale-open" className={styles.aiCard} disabled={!canOpenUpscale} onClick={() => setUpscaleOpen(true)}><span className={styles.aiIcon}><Maximize size={19} /></span><span><b>Upscale video</b><small>{selected?.kind === 'video' && !canOpenUpscale ? 'Use a clip under 60s' : 'Real-ESRGAN · 2× or 4×'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-restyle-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openRestyle(selected)}><span className={styles.aiIcon}><WandSparkles size={19} /></span><span><b>Restyle video</b><small>Keep motion · change look</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
+              <button data-testid="studio-animation-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openAnimationTransfer(selected)}><span className={styles.aiIcon}><Clapperboard size={19} /></span><span><b>Animation Transfer</b><small>Drive a character from this clip</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button className={styles.aiCard} disabled={!canExtendSelected} onClick={() => setExtendOpen(true)}><span className={styles.aiIcon}><Sparkles size={19} /></span><span><b>Extend video</b><small>{selected?.kind === 'video' && !canExtendSelected ? 'Use a 2–15s clip' : 'Grok · MP4'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
             </div>
             <p className={styles.aiNote}>AI tools require a signed-in account. Local editing and export do not use credits.</p>
@@ -3659,8 +3874,9 @@ export default function StudioPage() {
                 onKeyDown={isSelected ? nudgeStageElement : undefined}
                 onDoubleClick={() => updateAsset(asset.id, { stageX: 0, stageY: 0 })}
               >
+                {asset.text && <span data-testid="studio-stage-text-editor" aria-hidden="true" style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden', fontFamily: isSelected ? textDraft.fontFamily : asset.text.fontFamily }} />}
                 {isSelected ? <>
-                  {asset.kind === 'video' && <video ref={videoRef} className={styles.sourceVideo} src={asset.url} muted={false} playsInline preload="auto" onLoadedData={() => { if (videoRef.current) videoRef.current.currentTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart)); drawCurrent(); }} onSeeked={drawCurrent} />}
+                  {asset.kind === 'video' && <video ref={videoRef} className={styles.sourceVideo} src={asset.url} muted={!!asset.sourceAudioMuted} playsInline preload="auto" onLoadedData={() => { if (videoRef.current) { videoRef.current.currentTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart)); videoRef.current.volume = Math.max(0, Math.min(1, asset.volume)); } drawCurrent(); }} onSeeked={drawCurrent} />}
                   <canvas ref={canvasRef} className={styles.previewCanvas} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleNW}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleNE}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
@@ -3698,7 +3914,7 @@ export default function StudioPage() {
                 </div>)}
               </div>
               <div className={styles.audioTrack} onPointerDown={beginScrub}>
-                {assets.filter((asset) => asset.kind === 'audio').map((asset) => <div data-timeline-asset={asset.id} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} className={`${styles.waveformClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''} ${activeTimelineClip === asset.id ? styles.timelineClipActive : ''}`} style={{ left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) }} onContextMenu={(event) => openStudioContextMenu(event, asset)} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} title={`${asset.name} · ${formatTime(clipDuration(asset))}`}>
+                {assets.filter((asset) => asset.kind === 'audio').map((asset) => <div data-testid={`timeline-audio-${asset.id}`} data-timeline-asset={asset.id} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} className={`${styles.waveformClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''} ${activeTimelineClip === asset.id ? styles.timelineClipActive : ''}`} style={{ left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) }} onContextMenu={(event) => openStudioContextMenu(event, asset)} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} title={`${asset.name} · ${formatTime(clipDuration(asset))}`}>
                   <span className={`${styles.trimHandle} ${styles.trimHandleLeft}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-left')} title="Trim start" />
                   <span className={styles.waveform}>{Array.from({ length: 54 }, (_, index) => <i key={index} style={{ height: `${15 + ((index * 29) % 70)}%` }} />)}</span><b>{asset.name}</b>
                   <span className={`${styles.trimHandle} ${styles.trimHandleRight}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-right')} title="Trim end" />
@@ -3790,7 +4006,7 @@ export default function StudioPage() {
           <label><span>Quality</span><select data-testid="export-quality" value={exportSettings.quality} disabled={!!busy} onChange={(event) => setExportSettings((current) => ({ ...current, quality: event.target.value as ExportQuality }))}><option value="draft">Draft</option><option value="balanced">Balanced</option><option value="high">High</option></select></label>
         </div>
         <p className={styles.exportRemembered}>Complete {formatTime(timelineDuration)} timeline · settings saved on this device.</p>
-        <div className={styles.exportSummary}><span>Output <b>{selectedExportSize ? `${selectedExportSize.width} × ${selectedExportSize.height}` : '—'}</b></span><span>Frame rate <b>{exportSettings.frameRate === 'source' ? '30 fps timeline' : `${exportSettings.frameRate} fps`}</b></span><span>Audio <b>{assets.some((asset) => asset.kind !== 'image') ? 'Mixed · AAC/Opus' : 'None'}</b></span></div>
+        <div className={styles.exportSummary}><span>Output <b>{selectedExportSize ? `${selectedExportSize.width} × ${selectedExportSize.height}` : 'Not set'}</b></span><span>Frame rate <b>{exportSettings.frameRate === 'source' ? '30 fps timeline' : `${exportSettings.frameRate} fps`}</b></span><span>Audio <b>{assets.some((asset) => asset.kind !== 'image') ? 'Mixed · AAC/Opus' : 'None'}</b></span></div>
         {exportProgress > 0 && <div className={styles.progress}><i style={{ width: `${exportProgress * 100}%` }} /></div>}
         <button className={styles.modalPrimary} disabled={!!busy} onClick={() => void exportVideo()}>{busy === 'export' ? <><Loader2 className={styles.spin} size={16} /> Exporting {Math.round(exportProgress * 100)}%</> : <><Download size={16} /> Export</>}</button>
       </Modal>}
@@ -3811,19 +4027,20 @@ export default function StudioPage() {
           })}
         </div>
         <div className={styles.priceLine}><span>Price</span><b>${customerUpscaleUSD.toFixed(2)}</b></div>
-        <p className={styles.billingNote}>Real-ESRGAN restores each frame with tiled GPU inference, preserves audio, and adds the durable upscaled result to your timeline. Output: {selected ? `${selected.width * upscaleScale} × ${selected.height * upscaleScale}` : '—'}.</p>
+        <p className={styles.billingNote}>Real-ESRGAN restores each frame with tiled GPU inference, preserves audio, and adds the durable upscaled result to your timeline. Output: {selected ? `${selected.width * upscaleScale} × ${selected.height * upscaleScale}` : 'Not set'}.</p>
         <button data-testid="studio-upscale-submit" className={styles.modalPrimary} disabled={!canUpscaleSelected} onClick={() => void upscaleVideo()}><Maximize size={16} /> Upscale {upscaleScale}×</button>
       </Modal>}
 
-      {restyleOpen && <Modal title="Restyle video" onClose={() => setRestyleOpen(false)}>
+      {restyleOpen && <Modal title={restyleModel === 'wan-animate-2' ? 'Animation Transfer' : 'Restyle video'} onClose={() => setRestyleOpen(false)}>
         <div className={styles.restyleModes} role="tablist" aria-label="Video transformation mode">
           <button role="tab" aria-selected={restyleModel === 'wan-2.2'} className={restyleModel === 'wan-2.2' ? styles.durationActive : ''} onClick={() => { setRestyleModel('wan-2.2'); setRestyleResolution('720p'); setRestyleAspect('auto'); }}>Transform</button>
+          <button role="tab" aria-selected={restyleModel === 'wan-animate-2'} className={restyleModel === 'wan-animate-2' ? styles.durationActive : ''} onClick={() => { setRestyleModel('wan-animate-2'); setRestyleResolution('preview'); setRestyleDuration(5); setRestyleFPS(24); setRestyleFrames(37); setRestyleReferences((current) => current.filter((item) => item.kind === 'image').slice(0, 1)); }}>Animation Transfer</button>
           <button role="tab" aria-selected={restyleModel === 'h3-reference'} className={restyleModel === 'h3-reference' ? styles.durationActive : ''} onClick={() => { setRestyleModel('h3-reference'); setRestyleResolution('2K'); setRestyleAspect('16:9'); }}>Reference to video</button>
         </div>
         <div className={styles.restyleSource}>
           <Film size={16} /><span><small>SOURCE VIDEO</small><b>{assets.find((asset) => asset.id === restyleSourceID)?.name || 'Selected clip'}</b></span>
         </div>
-        <label className={styles.field}><span>Prompt</span><textarea data-testid="studio-restyle-prompt" value={restylePrompt} onChange={(event) => setRestylePrompt(event.target.value)} rows={5} placeholder="Describe the new visual style while calling references Image 1, Video 1, or Audio 1…" /></label>
+        <label className={styles.field}><span>{restyleModel === 'wan-animate-2' ? 'Describe the reference subject and scene' : 'Prompt'}</span><textarea data-testid="studio-restyle-prompt" value={restylePrompt} onChange={(event) => setRestylePrompt(event.target.value)} rows={5} placeholder={restyleModel === 'wan-animate-2' ? 'A full-body dancer matching the reference image, detailed clothing, clean background…' : 'Describe the new visual style while calling references Image 1, Video 1, or Audio 1…'} /></label>
         {restyleModel === 'wan-2.2' && <label className={styles.field}><span>Negative prompt</span><textarea value={restyleNegativePrompt} onChange={(event) => setRestyleNegativePrompt(event.target.value)} rows={2} /></label>}
 
         {restyleModel === 'wan-2.2' ? <>
@@ -3834,19 +4051,24 @@ export default function StudioPage() {
             <label className={styles.field}><span>Resolution</span><select value={restyleResolution} onChange={(event) => setRestyleResolution(event.target.value)}><option>480p</option><option>580p</option><option>720p</option></select></label>
             <label className={styles.field}><span>Aspect</span><select value={restyleAspect} onChange={(event) => setRestyleAspect(event.target.value)}><option value="auto">Source</option><option>16:9</option><option>9:16</option><option>1:1</option></select></label>
           </div>
-        </> : <div className={styles.restyleSettings}>
+        </> : restyleModel === 'wan-animate-2' ? <div className={styles.restyleSettings}>
+          <label className={styles.field}><span>Duration</span><select value={restyleDuration} onChange={(event) => setRestyleDuration(Number(event.target.value))}>{[3, 5, 10, 15].map((value) => <option key={value} value={value}>{value} seconds</option>)}</select></label>
+          <label className={styles.field}><span>Quality</span><select value={restyleResolution} onChange={(event) => setRestyleResolution(event.target.value)}><option value="preview">Preview</option><option value="balanced">Balanced</option><option value="high">High</option></select></label>
+          <label className={styles.field}><span>FPS</span><select value={restyleFPS} onChange={(event) => setRestyleFPS(Number(event.target.value))}>{[12, 16, 24, 30].map((value) => <option key={value} value={value}>{value} fps</option>)}</select></label>
+          <label className={styles.field}><span>Seed</span><input type="number" min="0" value={restyleSeed} onChange={(event) => setRestyleSeed(Math.max(0, Number(event.target.value)))} placeholder="Random" /></label>
+        </div> : <div className={styles.restyleSettings}>
           <label className={styles.field}><span>Duration</span><select value={restyleDuration} onChange={(event) => setRestyleDuration(Number(event.target.value))}><option value="5">5 seconds</option><option value="10">10 seconds</option></select></label>
           <label className={styles.field}><span>Resolution</span><select value={restyleResolution} onChange={(event) => setRestyleResolution(event.target.value)}><option>768p</option><option>2K</option><option>4K</option></select></label>
           <label className={styles.field}><span>Aspect</span><select value={restyleAspect} onChange={(event) => setRestyleAspect(event.target.value)}><option>16:9</option><option>9:16</option><option>1:1</option></select></label>
           <label className={styles.field}><span>Seed</span><input type="number" min="0" value={restyleSeed} onChange={(event) => setRestyleSeed(Math.max(0, Number(event.target.value)))} placeholder="Random" /></label>
         </div>}
 
-        <div className={styles.referenceHeader}><span><b>Ordered references</b><small>Up to 9 images, 3 videos, and 3 audio clips</small></span><button onClick={() => restyleReferenceInputRef.current?.click()}><Plus size={13} /> Add files</button></div>
-        <input ref={restyleReferenceInputRef} type="file" multiple accept="video/*,image/*,audio/*" hidden onChange={(event) => { if (event.target.files) addRestyleReferences(event.target.files); event.target.value = ''; }} />
-        <div className={styles.referenceDrop} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addRestyleReferences(event.dataTransfer.files); }} onClick={() => restyleReferenceInputRef.current?.click()}><Upload size={16} /><span>Drop reference media here or choose files</span></div>
-        {!!assets.filter((asset) => asset.id !== restyleSourceID).length && <div className={styles.projectReferencePicker}>
+        <div className={styles.referenceHeader}><span><b>{restyleModel === 'wan-animate-2' ? 'Reference character' : 'Ordered references'}</b><small>{restyleModel === 'wan-animate-2' ? 'One clear, full-body image' : 'Up to 9 images, 3 videos, and 3 audio clips'}</small></span><button onClick={() => restyleReferenceInputRef.current?.click()}><Plus size={13} /> {restyleModel === 'wan-animate-2' ? 'Choose image' : 'Add files'}</button></div>
+        <input ref={restyleReferenceInputRef} type="file" multiple={restyleModel !== 'wan-animate-2'} accept={restyleModel === 'wan-animate-2' ? 'image/*' : 'video/*,image/*,audio/*'} hidden onChange={(event) => { if (event.target.files) { if (restyleModel === 'wan-animate-2') setAnimationReference(event.target.files); else addRestyleReferences(event.target.files); } event.target.value = ''; }} />
+        <div className={styles.referenceDrop} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (restyleModel === 'wan-animate-2') setAnimationReference(event.dataTransfer.files); else addRestyleReferences(event.dataTransfer.files); }} onClick={() => restyleReferenceInputRef.current?.click()}><Upload size={16} /><span>{restyleModel === 'wan-animate-2' ? 'Drop the character image here or choose a file' : 'Drop reference media here or choose files'}</span></div>
+        {!!assets.filter((asset) => asset.id !== restyleSourceID && (restyleModel !== 'wan-animate-2' || asset.kind === 'image')).length && <div className={styles.projectReferencePicker}>
           <span>FROM THIS PROJECT</span>
-          <div>{assets.filter((asset) => asset.id !== restyleSourceID).map((asset) => <button key={asset.id} disabled={restyleReferences.some((item) => item.id === asset.id)} onClick={() => addProjectReference(asset)}>{asset.kind === 'image' ? <ImageIcon size={12} /> : asset.kind === 'video' ? <Film size={12} /> : <AudioLines size={12} />}{asset.name}</button>)}</div>
+          <div>{assets.filter((asset) => asset.id !== restyleSourceID && (restyleModel !== 'wan-animate-2' || asset.kind === 'image')).map((asset) => <button key={asset.id} disabled={restyleReferences.some((item) => item.id === asset.id)} onClick={() => { if (restyleModel === 'wan-animate-2') setRestyleReferences([{ id: asset.id, name: asset.name, kind: 'image', file: asset.file, url: asset.url, cloudURL: asset.cloudURL }]); else addProjectReference(asset); }}>{asset.kind === 'image' ? <ImageIcon size={12} /> : asset.kind === 'video' ? <Film size={12} /> : <AudioLines size={12} />}{asset.name}</button>)}</div>
         </div>}
         <div className={styles.referenceList}>
           {restyleReferences.map((reference, index) => <div key={reference.id}>
@@ -3857,9 +4079,9 @@ export default function StudioPage() {
             <button aria-label="Remove reference" onClick={() => setRestyleReferences((current) => current.filter((item) => item.id !== reference.id))}><X size={13} /></button>
           </div>)}
         </div>
-        <p className={styles.billingNote}>{restyleModel === 'wan-2.2' ? `About ${(restyleFrames / restyleFPS).toFixed(1)}s output. Higher strength follows the prompt more; lower strength preserves more of the source.` : 'The selected source is Video 1. References stay in the order above and can be cited by number in your prompt.'}</p>
-        <div className={styles.priceLine}><span>Estimate</span><b>~${restyleEstimateUSD.toFixed(2)}</b></div>
-        <button data-testid="studio-restyle-submit" className={styles.modalPrimary} disabled={!restylePrompt.trim()} onClick={() => void generateRestyle()}><WandSparkles size={16} /> Transform video</button>
+        <p className={styles.billingNote}>{restyleModel === 'wan-2.2' ? `About ${(restyleFrames / restyleFPS).toFixed(1)}s output. Higher strength follows the prompt more; lower strength preserves more of the source.` : restyleModel === 'wan-animate-2' ? 'The selected video drives body motion, expression, timing, and audio. Wan Animate redraws it around the reference character image.' : 'The selected source is Video 1. References stay in the order above and can be cited by number in your prompt.'}</p>
+        <div className={styles.priceLine}><span>{restyleModel === 'wan-animate-2' ? 'Estimated price' : 'Estimate'}</span><b>~{Math.ceil(restyleEstimateUSD / creditPrice)} credits · ${restyleEstimateUSD.toFixed(2)}</b></div>
+        <button data-testid={restyleModel === 'wan-animate-2' ? 'studio-animation-submit' : 'studio-restyle-submit'} className={styles.modalPrimary} disabled={!restylePrompt.trim() || (restyleModel === 'wan-animate-2' && !restyleReferences.some((item) => item.kind === 'image'))} onClick={() => void generateRestyle()}><WandSparkles size={16} /> {restyleModel === 'wan-animate-2' ? 'Transfer animation' : 'Transform video'}</button>
       </Modal>}
 
       {audioGenerateOpen && <Modal title={audioMode === 'music' ? 'Generate music' : audioMode === 'sfx' ? 'Generate sound' : 'Text to speech'} onClose={() => { stopVoicePreview(); setAudioGenerateOpen(false); }}>
@@ -3905,6 +4127,7 @@ export default function StudioPage() {
             <span className={styles.contextMenuLabel}>SELECTED {asset.kind.toUpperCase()}</span>
             <button data-testid="studio-context-save-as" onClick={() => { downloadBlob(asset.file, asset.name); setNotice(`${asset.name} saved locally`); setContextMenu(null); }}><Download size={15} /><span><b>Save media as…</b><small>Download the original file</small></span></button>
             <button data-testid="studio-context-similar" onClick={() => openSimilarAsset(asset)}><Sparkles size={15} /><span><b>Make similar {asset.kind === 'audio' ? audioFlavor : asset.kind}</b><small>Open a prompt window with this starting point</small></span></button>
+            {asset.kind === 'video' && <button data-testid="studio-context-animation-transfer" onClick={() => openAnimationTransfer(asset)}><Clapperboard size={15} /><span><b>Animation Transfer</b><small>Drive a reference character with this performance</small></span></button>}
             {asset.kind === 'video' && <button onClick={() => openRestyle(asset)}><WandSparkles size={15} /><span><b>Restyle video</b><small>Transform look, preserve motion</small></span></button>}
             <button onClick={() => { duplicateSelected(); setContextMenu(null); }}><Copy size={15} /><span><b>Duplicate clip</b><small>Add a copy to the timeline</small></span></button>
             <button className={styles.contextMenuDanger} onClick={() => { removeSelected(); setContextMenu(null); }}><Trash2 size={15} /><span><b>Delete clip</b><small>Undo restores it</small></span></button>

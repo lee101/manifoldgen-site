@@ -33,6 +33,7 @@ PORT = int(os.environ.get("H3_LOCAL_PORT", "18089"))
 WEIGHTS = Path(os.environ.get("H3_WEIGHTS_DIR", "/nvme0n1-disk/h3-w4a8-weights"))
 PATCH = Path(os.environ.get("H3_PATCH_DIR", "/tmp/h3-accel-patch"))
 ACCEL_PROFILE = os.environ.get("H3_ACCEL_PROFILE", "off")
+FACE_REFINE = os.environ.get("H3_LOCAL_FACE_REFINE", "0")
 COG_URL = f"http://127.0.0.1:{PORT}"
 API = os.environ.get("MANIFOLDGEN_API", "http://127.0.0.1:8116").rstrip("/")
 DATABASE_URL = os.environ.get(
@@ -42,6 +43,21 @@ DATABASE_URL = os.environ.get(
 R2_ACCOUNT_ID = "f76d25b8b86cfa5638f43016510d8f77"
 R2_BUCKET = "manifoldgenstatic"
 R2_PUBLIC = "manifoldgenstatic.manifoldgen.com"
+PATCH_MODULES = (
+    "h3_workflow.py",
+    "h3_runtime.py",
+    "h3_face_refine.py",
+    "rp_handler.py",
+    "predict.py",
+    "weights.py",
+    "h3_media.py",
+    "h3_tuning.py",
+    "h3_sweep.py",
+    "h3_prompt.py",
+    "h3_serverless.py",
+    "h3_chain.py",
+    "h3_benchmark.py",
+)
 
 PROMPTS = [
     (
@@ -132,19 +148,7 @@ def load_dotenv() -> None:
 def sync_patch() -> None:
     PATCH.mkdir(parents=True, exist_ok=True)
     src = Path("/nvme0n1-disk/code/h3-cog")
-    for name in (
-        "h3_workflow.py",
-        "h3_runtime.py",
-        "rp_handler.py",
-        "predict.py",
-        "weights.py",
-        "h3_media.py",
-        "h3_tuning.py",
-        "h3_sweep.py",
-        "h3_prompt.py",
-        "h3_serverless.py",
-        "h3_chain.py",
-    ):
+    for name in PATCH_MODULES:
         p = src / name
         if p.exists():
             subprocess.check_call(["cp", str(p), str(PATCH / name)])
@@ -222,19 +226,7 @@ def ensure_container() -> None:
         "-v",
         f"{WEIGHTS}:/weights",
     ]
-    for name in (
-        "h3_workflow.py",
-        "h3_runtime.py",
-        "rp_handler.py",
-        "predict.py",
-        "weights.py",
-        "h3_media.py",
-        "h3_tuning.py",
-        "h3_sweep.py",
-        "h3_prompt.py",
-        "h3_serverless.py",
-        "h3_chain.py",
-    ):
+    for name in PATCH_MODULES:
         mounts += ["-v", f"{PATCH / name}:/src/{name}:ro"]
     schema = PATCH / ".cog" / "openapi_schema.json"
     if schema.exists():
@@ -251,12 +243,14 @@ def ensure_container() -> None:
         "-d",
         "--gpus",
         "all",
+        "--network",
+        "host",
         "--name",
         CONTAINER,
         "--restart",
         "unless-stopped",
-        "-p",
-        f"{PORT}:5000",
+        "-e",
+        f"PORT={PORT}",
         "-e",
         "MINIMAX_H3_LICENSE_ACCEPTED=1",
         "-e",
@@ -268,7 +262,21 @@ def ensure_container() -> None:
         "-e",
         "H3_INCLUDE_REF2VA=0",
         "-e",
+        f"H3_FACE_REFINE_ENABLED={FACE_REFINE}",
+        "-e",
         "H3_RESERVE_VRAM_GB=2",
+        "-e",
+        "H3_VRAM_BROKER_URL=http://127.0.0.1:8791",
+        "-e",
+        "H3_VRAM_BROKER_REQUIRED=1",
+        "-e",
+        "H3_VRAM_LEASE_MB=14336",
+        "-e",
+        "H3_VRAM_LEASE_MIN_MB=12288",
+        "-e",
+        "H3_VRAM_LEASE_TTL_SECONDS=3600",
+        "-e",
+        "H3_VRAM_LEASE_WAIT_SECONDS=900",
         "-e",
         "H3_IDLE_UNLOAD_SECONDS=30",
         "-e",
@@ -563,8 +571,8 @@ def main() -> None:
     ap.add_argument(
         "--actual-quant",
         choices=("int8_convrot", "w4a8"),
-        default=os.environ.get("H3_LOCAL_ACTUAL_QUANT", "w4a8"),
-        help="quant actually exposed by the running cog schema (the accel-test image currently defaults to w4a8)",
+        default=os.environ.get("H3_LOCAL_ACTUAL_QUANT", "int8_convrot"),
+        help="quant recorded in gallery metadata (stable int8_convrot unless explicitly overridden)",
     )
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--stop", action="store_true", help="stop local container and exit")

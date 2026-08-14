@@ -24,14 +24,19 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   applicationName: 'ManifoldGen',
   title: {
-    default: 'ManifoldGen — AI Video Generator',
+    default: 'ManifoldGen | AI Video Creator and Generator',
     template: '%s | ManifoldGen',
   },
   description:
-    'Create cinematic AI video from a text prompt. Control aspect ratio, duration, quality, and audio in one fast video studio.',
+    'Create AI video from text, images, and reference media with ManifoldGen, an AI video creator for cinematic generation, audio, and editing.',
   keywords: [
     'AI video',
+    'AI video creator',
     'AI video generator',
+    'AI video maker',
+    'create AI video',
+    'text to video AI',
+    'image to video AI',
     'text to video',
     'cinematic video generator',
     'video generation',
@@ -59,8 +64,8 @@ export const metadata: Metadata = {
     type: 'website',
     url: siteUrl,
     siteName: 'ManifoldGen',
-    title: 'ManifoldGen — AI Video Generator',
-    description: 'Turn a prompt into cinematic AI video.',
+    title: 'ManifoldGen | AI Video Creator and Generator',
+    description: 'Create cinematic AI video from text, images, and reference media.',
     images: [
       {
         url: socialImage,
@@ -72,8 +77,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'ManifoldGen — AI Video Generator',
-    description: 'Turn a prompt into cinematic AI video.',
+    title: 'ManifoldGen | AI Video Creator and Generator',
+    description: 'Create cinematic AI video from text, images, and reference media.',
     images: [socialImage],
   },
   icons: {
@@ -91,7 +96,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     '@type': 'SoftwareApplication',
     name: 'ManifoldGen',
     url: siteUrl,
-    description: 'A web-based AI video generator for creating cinematic video from text prompts.',
+    description: 'A web-based AI video creator for generating and editing cinematic video from text prompts, images, and reference media.',
     applicationCategory: 'MultimediaApplication',
     operatingSystem: 'Web',
   };
@@ -100,6 +105,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${syne.variable} ${dmSans.variable} dark`}>
       <body className="min-h-screen antialiased">
         <PaymentProvider>{children}</PaymentProvider>
+        <footer className="border-t border-white/10 bg-[#0a0910] px-5 py-6 text-center text-sm text-white/50">
+          <a
+            href="https://manifoldgan.evangeler.com"
+            className="font-medium text-white/65 transition hover:text-white"
+          >
+            Affiliate program
+          </a>
+        </footer>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}

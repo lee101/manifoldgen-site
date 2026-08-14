@@ -5,7 +5,7 @@ import { PricingTable } from './pricing-table';
 
 export const metadata = {
   title: 'API Documentation',
-  description: 'Build image, native video, and music generation into your product with the ManifoldGen API.',
+  description: 'Build image, native video, music, and AI voice generation into your product with the ManifoldGen API.',
 };
 
 const createVideo = `curl https://manifoldgen.com/api/service \\
@@ -98,6 +98,24 @@ const searchAudio = `curl --get https://manifoldgen.com/api/audio/search \\
   --data-urlencode "kind=music" \\
   --data-urlencode "top_k=20"`;
 
+const createVoice = `curl https://manifoldgen.com/api/voice/generate \
+  -X POST \
+  -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "seed-speech",
+    "text": "The future sounds closer than you think.",
+    "voice": "stokie_en",
+    "voice_details": "Warm, confident, cinematic delivery",
+    "mood": "happy",
+    "batch_size": 1,
+    "speed": 1,
+    "pitch": 0,
+    "volume": 1,
+    "output_format": "mp3",
+    "sample_rate": 24000
+  }'`;
+
 const llmMarkdown = `# ManifoldGen API integration
 
 Use \`Authorization: Bearer $MANIFOLDGEN_API_KEY\` on every protected request. Never expose the key in browser code.
@@ -110,6 +128,9 @@ POST \`/api/service\` with \`{"service":"image","prompt":"...","width":1024,"hei
 
 ## Generate audio
 Use \`{"service":"music","prompt":"...","duration":30}\` for synchronous music generation, or \`{"service":"sfx","prompt":"...","duration":5}\` for an asynchronous sound-effect job. The umbrella form is \`{"service":"audio","kind":"music|sfx",...}\`. Music accepts 30–180 seconds; SFX accepts 4–45 seconds. Completed assets include a durable \`audio_url\` and \`audio_id\` and are searchable with \`GET /api/audio/search?q=...&kind=music|sfx&top_k=20\`.
+
+## Generate voices
+POST \`/api/voice/generate\` with a model ID, text, and optional delivery/audio controls. Discover the live model catalog at \`GET /api/voice/models\`. Batch size is 1–4. Successful results contain durable private \`audio_url\` values and exact usage charges.
 
 ## Extend video
 POST \`/api/studio/extend-video\` with \`{"video_url":"https://...","prompt":"continue the camera move","duration":5}\`. Authenticate with the same Bearer key, then poll the returned job/status URL if supplied.
@@ -146,6 +167,7 @@ export default function ApiDocsPage() {
             <a href="#jobs" className="block py-1.5 hover:text-white">Poll a job</a>
             <a href="#images" className="block py-1.5 hover:text-white">Generate images</a>
             <a href="#audio" className="block py-1.5 hover:text-white">Generate audio</a>
+            <a href="#voice" className="block py-1.5 hover:text-white">Generate voices</a>
             <a href="#pricing" className="block py-1.5 hover:text-white">Pricing</a>
             <a href="#errors" className="block py-1.5 hover:text-white">Errors</a>
           </nav>
@@ -191,6 +213,9 @@ export default function ApiDocsPage() {
           <section id="video" className="scroll-mt-28 border-t border-white/10 py-10">
             <h2 className="font-display text-2xl font-700">Generate video</h2>
             <p className="mb-5 mt-3 leading-7 text-white/55">Creates an asynchronous video job. Audio is enabled by default.</p>
+            <Link href="/api/video-generators" className="mb-6 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.035] px-4 py-3 text-sm font-semibold text-white/75 hover:border-white/25 hover:text-white">
+              Browse every video generator API <Sparkles size={15} />
+            </Link>
             <CodeBlock>{createVideo}</CodeBlock>
             <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">202 Accepted</h3>
             <CodeBlock>{queuedResponse}</CodeBlock>
@@ -252,6 +277,15 @@ export default function ApiDocsPage() {
               Search needs no key for public assets. Add your Bearer key to include your private audio in the results.
             </p>
             <CodeBlock>{searchAudio}</CodeBlock>
+          </section>
+
+          <section id="voice" className="scroll-mt-28 border-t border-white/10 py-10">
+            <h2 className="font-display text-2xl font-700">Generate voices</h2>
+            <p className="mb-5 mt-3 leading-7 text-white/55">
+              Generate one to four durable voice takes with Seed Audio, ElevenLabs, Qwen, MiniMax, Seed Speech, Google, or Grok.
+              Call <code>GET /api/voice/models</code> for live pricing and model-specific controls.
+            </p>
+            <CodeBlock>{createVoice}</CodeBlock>
           </section>
 
           <section id="pricing" className="scroll-mt-28 border-t border-white/10 py-10">

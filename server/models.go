@@ -183,6 +183,8 @@ type ServiceUsageRequest struct {
 	IncludeAudio       *bool    `json:"include_audio,omitempty"`
 	Structured         *bool    `json:"structured_prompt,omitempty"`
 	EncodeQuality      int      `json:"encode_quality,omitempty"`
+	BackgroundColor    string   `json:"background_color,omitempty"`
+	PreserveAudio      *bool    `json:"preserve_audio,omitempty"`
 	// H3 weight profile: int8_convrot (stable default) or w4a8 (experimental opt-in).
 	Quant string `json:"quant,omitempty"`
 	// zimage fields

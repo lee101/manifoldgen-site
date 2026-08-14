@@ -218,6 +218,26 @@ func TestNormalizeH3DrivingAudioRequiresImage(t *testing.T) {
 	}
 }
 
+func TestH3ArtifactFormat(t *testing.T) {
+	extension, contentType := h3ArtifactFormat("video/mp4; charset=binary")
+	if extension != "mp4" || contentType != "video/mp4" {
+		t.Fatalf("mp4 format = %q %q", extension, contentType)
+	}
+	extension, contentType = h3ArtifactFormat("application/octet-stream")
+	if extension != "webm" || contentType != "video/webm" {
+		t.Fatalf("fallback format = %q %q", extension, contentType)
+	}
+}
+
+func TestVideoDataURLContentType(t *testing.T) {
+	if got := videoDataURLContentType("data:video/mp4;base64,AAAA"); got != "video/mp4" {
+		t.Fatalf("mp4 content type = %q", got)
+	}
+	if got := videoDataURLContentType("data:video/webm;base64,AAAA"); got != "video/webm" {
+		t.Fatalf("webm content type = %q", got)
+	}
+}
+
 func TestNormalizeH3OrderedKeyframesPreservesSequence(t *testing.T) {
 	req := ServiceUsageRequest{
 		Service: "h3_video", Prompt: "move through all three moments", Duration: 5,

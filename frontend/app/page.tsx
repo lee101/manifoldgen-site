@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import {
   Clapperboard,
   ClipboardPaste,
@@ -16,6 +17,7 @@ import {
   GripVertical,
   Image as ImageIcon,
   Maximize2,
+  Mic2,
   Music2,
   Paperclip,
   Search,
@@ -46,8 +48,12 @@ import {
 
 const API = '/api';
 const GALLERY_CDN = 'https://manifoldgenstatic.manifoldgen.com/gallery';
-
 const GALLERY_ASSET_VERSION = '20260813-mixed-aspect';
+const HOMEPAGE_HERO_PROMPT =
+  'An obsidian lighthouse fractures moonlight into spectral fog while black waves climb upward, slow impossible crane shot; sub-bass surf, distant glass harmonics';
+const HOMEPAGE_HERO_VIDEO_URL =
+  'https://manifoldgenstatic.manifoldgen.com/gallery/03475ad6-41a/videos/add2e0dd-9f8f-4d6d-b0dc-41a210fecaa3.webm';
+
 type Aspect = H3Aspect;
 type Size = H3Size;
 type Format = 'webm-av1' | 'mp4-h264';
@@ -56,7 +62,14 @@ type AuthMode = 'signup' | 'signin';
 type AuthResponse = Parameters<typeof userFromAuthResponse>[0] & {
   created?: boolean;
 };
-type CheckoutKind = 'credits' | 'monthly' | 'annual';
+type CheckoutKind = 'credits' | 'creator_monthly' | 'creator_annual' | 'pro_monthly' | 'pro_annual';
+
+const checkoutPlanLabels: Record<Exclude<CheckoutKind, 'credits'>, string> = {
+  creator_monthly: 'Creator · $14.99/month',
+  creator_annual: 'Creator · $149/year',
+  pro_monthly: 'Pro · $49/month',
+  pro_annual: 'Pro · $490/year',
+};
 
 interface StripeEmbeddedCheckout {
   mount: (target: string | HTMLElement) => void;
@@ -213,9 +226,7 @@ export default function HomePage() {
   const checkoutMountRef = useRef<HTMLDivElement>(null);
   const embeddedCheckoutRef = useRef<StripeEmbeddedCheckout | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [prompt, setPrompt] = useState(
-    'Slow aerial drift over a neon harbor at night, wet asphalt reflections, cinematic anamorphic bokeh',
-  );
+  const [prompt, setPrompt] = useState(HOMEPAGE_HERO_PROMPT);
   const [generationMode, setGenerationMode] = useState<GenerationMode>('video');
   const [aspect, setAspect] = useState<Aspect>('16:9');
   const [size, setSize] = useState<Size>('native');
@@ -300,14 +311,6 @@ export default function HomePage() {
     const data = await res.json();
     const rows: VideoHit[] = (data.results || []).filter((r: VideoHit) => r.video_url);
     setFeaturedVideos(rows);
-    if (rows[0]?.prompt) {
-      setPrompt((p) =>
-        p ===
-          'Slow aerial drift over a neon harbor at night, wet asphalt reflections, cinematic anamorphic bokeh'
-          ? rows[0].prompt
-          : p,
-      );
-    }
   }, []);
 
   useEffect(() => {
@@ -414,14 +417,27 @@ export default function HomePage() {
     setAuthOpen(true);
   }
 
-  function closeAuth() {
+  const closeAuth = useCallback(() => {
     embeddedCheckoutRef.current?.destroy();
     embeddedCheckoutRef.current = null;
     setCheckoutClientSecret('');
     setCheckoutPublishableKey('');
     setCheckoutStep(false);
     setAuthOpen(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!authOpen && !framesOpen && !settingsOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (authOpen) closeAuth();
+      else if (framesOpen) setFramesOpen(false);
+      else setSettingsOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [authOpen, closeAuth, framesOpen, settingsOpen]);
 
   async function startCheckout(kind: CheckoutKind, amountUSD = 25) {
     if (!apiKey) return;
@@ -445,7 +461,7 @@ export default function HomePage() {
         return;
       }
       if (!data.client_secret || !data.publishable_key) throw new Error('checkout is unavailable');
-      setCheckoutLabel(kind === 'credits' ? `$${amountUSD} credits` : `${kind} subscription`);
+      setCheckoutLabel(kind === 'credits' ? `$${amountUSD} credits` : checkoutPlanLabels[kind]);
       setCheckoutPublishableKey(data.publishable_key);
       setCheckoutClientSecret(data.client_secret);
     } catch (err) {
@@ -667,7 +683,7 @@ export default function HomePage() {
     }
   }
 
-  function useGalleryImage(img: GalleryImage) {
+  function selectGalleryImage(img: GalleryImage) {
     const src = img.image_url || img.thumb_url;
     if (!src) return;
     setPrompt(img.prompt);
@@ -830,7 +846,10 @@ export default function HomePage() {
   const [logoOk, setLogoOk] = useState(true);
   const logoSrc = '/brand/logo-nobg.webp';
 
-  const resultUrl = job?.result_url || featuredVideos[0]?.video_url;
+  // Keep the landing experience deterministic. Showcase data is loaded lazily
+  // and may change order; it should not replace the homepage hero underneath a
+  // visitor. User-selected and newly generated videos still take precedence.
+  const resultUrl = job?.result_url || HOMEPAGE_HERO_VIDEO_URL;
   const activeGenerationTasks = generationTasks.filter((task) => !['completed', 'failed'].includes(task.status));
   // A local, cacheable poster protects LCP from slow API/gallery responses.
   const heroImage = '/brand/manifoldgen-og.webp';
@@ -852,9 +871,11 @@ export default function HomePage() {
         {resultUrl ? (
           <video
             ref={heroVideoRef}
+            data-testid="home-hero-video"
             key={resultUrl}
             className="hero-motion absolute inset-0 h-full w-full object-cover"
             src={resultUrl}
+            poster={heroImage}
             autoPlay
             muted={heroMuted}
             loop
@@ -887,11 +908,18 @@ export default function HomePage() {
             ) : (
               <Clapperboard className="text-[var(--color-accent-2)]" size={22} />
             )}
-            <h1 className="font-display text-base font-700 tracking-tight sm:text-xl md:text-2xl">
+            <p className="font-display text-base font-700 tracking-tight sm:text-xl md:text-2xl">
               ManifoldGen
-            </h1>
+            </p>
           </div>
           <div className="flex items-center gap-2">
+            <a href="/voice" className="glass hidden items-center gap-2 rounded-full px-3 py-2 text-sm text-[var(--color-mute)] hover:text-white md:flex">
+              <Mic2 size={14} />
+              Voice
+            </a>
+            <Link href="/tools" className="glass hidden rounded-full px-3 py-2 text-sm text-[var(--color-mute)] hover:text-white md:block">
+              Tools
+            </Link>
             <a href="/studio" className="glass hidden items-center gap-2 rounded-full px-3 py-2 text-sm text-[var(--color-mute)] hover:text-white sm:flex">
               <Clapperboard size={14} />
               Editor
@@ -972,6 +1000,11 @@ export default function HomePage() {
 
         <div className="absolute inset-x-0 bottom-0 z-20 px-3 pb-4 pt-24 md:px-6 md:pb-6">
           <div className="mx-auto w-full max-w-4xl">
+            <div className="mb-4 max-w-3xl drop-shadow-[0_3px_18px_rgba(0,0,0,.7)]">
+              <p className="text-xs font-semibold uppercase tracking-[.18em] text-[var(--color-accent-2)]">AI video creator</p>
+              <h1 className="mt-2 font-display text-2xl font-700 tracking-tight text-white sm:text-3xl md:text-4xl">Create AI video from text, images, and reference media.</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/75 md:text-base">ManifoldGen is an AI video generator and editor for cinematic text-to-video, image-to-video, motion, audio, and finishing.</p>
+            </div>
             <div
               className={`glass prompt-glow rounded-3xl p-3 transition md:p-4 ${draggingAsset ? 'ring-2 ring-[var(--color-accent-2)]' : ''}`}
               onDragEnter={(e) => {
@@ -1283,7 +1316,7 @@ export default function HomePage() {
                   key={img.id}
                   className="group relative mb-px break-inside-avoid overflow-hidden bg-[#0c0c12]"
                 >
-                  <button type="button" onClick={() => useGalleryImage(img)} className="absolute inset-0 h-full w-full" title={img.prompt}>
+                  <button type="button" onClick={() => selectGalleryImage(img)} className="absolute inset-0 h-full w-full" title={img.prompt}>
                   {src ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -1300,7 +1333,7 @@ export default function HomePage() {
                   </div>
                   {src ? (
                     <div className="absolute inset-x-3 bottom-3 z-10 grid grid-cols-2 gap-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
-                      <button type="button" onClick={() => { useGalleryImage(img); void generate({ prompt: img.prompt, image: src }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
+                      <button type="button" onClick={() => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: src }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
                       <button type="button" onClick={() => openGalleryImageInStudio(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Studio</button>
                       <button type="button" disabled={backgroundRemovingID === img.id} onClick={() => void removeGalleryBackground(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black disabled:opacity-60">{backgroundRemovingID === img.id ? <Loader2 className="animate-spin" size={13} /> : <WandSparkles size={13} />}Remove BG</button>
                     </div>
@@ -1313,8 +1346,8 @@ export default function HomePage() {
       </section>
 
       {settingsOpen && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm md:items-center">
-          <div className="glass w-full max-w-md rounded-3xl border border-white/10 p-5 shadow-2xl shadow-black/40">
+        <div data-testid="homepage-settings-backdrop" className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm md:items-center" onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}>
+          <div className="glass w-full max-w-md rounded-3xl border border-white/10 p-5 shadow-2xl shadow-black/40" role="dialog" aria-modal="true" aria-label="Video settings">
             <div className="mb-5 flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-2 font-display text-xl font-700">
@@ -1430,11 +1463,13 @@ export default function HomePage() {
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 p-0 backdrop-blur-sm md:items-center md:p-6"
           onPaste={handleAssetPaste}
-          onClick={() => setFramesOpen(false)}
+          onMouseDown={(event) => event.target === event.currentTarget && setFramesOpen(false)}
         >
           <div
             className="auth-panel flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[2rem] border border-white/10 bg-[#0b0b12] md:rounded-[2rem]"
-            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Steering frames"
             tabIndex={-1}
             autoFocus
           >
@@ -1525,8 +1560,8 @@ export default function HomePage() {
       )}
 
       {authOpen && (
-        <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/75 p-0 backdrop-blur-sm md:items-center md:p-6">
-          <div className="auth-panel relative flex h-full w-full max-w-lg flex-col overflow-hidden bg-[#0b0b12] md:h-auto md:max-h-[90dvh] md:rounded-[2rem] md:border md:border-white/10">
+        <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/75 p-0 backdrop-blur-sm md:items-center md:p-6" onMouseDown={(event) => event.target === event.currentTarget && closeAuth()}>
+          <div className="auth-panel relative flex h-full w-full max-w-lg flex-col overflow-hidden bg-[#0b0b12] md:h-auto md:max-h-[90dvh] md:rounded-[2rem] md:border md:border-white/10" role="dialog" aria-modal="true" aria-label={checkoutStep ? 'Checkout' : authMode === 'signup' ? 'Create your account' : 'Sign in'}>
             <div className="relative h-40 shrink-0 overflow-hidden md:h-48">
               {resultUrl ? (
                 <video src={resultUrl} muted loop autoPlay playsInline className="h-full w-full object-cover" />
@@ -1589,11 +1624,11 @@ export default function HomePage() {
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => void startCheckout('monthly')}
+                        onClick={() => void startCheckout('creator_monthly')}
                         className="rounded-2xl border border-[var(--color-accent)] bg-[var(--color-accent)]/15 p-4 text-left transition hover:bg-[var(--color-accent)]/25 disabled:opacity-50"
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <span className="font-semibold">Subscribe monthly</span>
+                          <span className="font-semibold">Creator · $14.99/month</span>
                           <span className="rounded-full bg-[var(--color-accent)] px-2.5 py-1 text-xs font-semibold">Recommended</span>
                         </div>
                         <div className="mt-1 text-sm text-white/60">Unlimited images + $25 video credits/month</div>
@@ -1601,11 +1636,29 @@ export default function HomePage() {
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => void startCheckout('annual')}
+                        onClick={() => void startCheckout('creator_annual')}
                         className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition hover:bg-white/10 disabled:opacity-50"
                       >
-                        <div className="font-semibold">Subscribe annually</div>
-                        <div className="mt-1 text-sm text-white/60">Unlimited images + $300 video credits/year</div>
+                        <div className="font-semibold">Creator · $149/year</div>
+                        <div className="mt-1 text-sm text-white/60">Two months free + $300 video credits/year</div>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void startCheckout('pro_monthly')}
+                        className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <div className="font-semibold">Pro · $49/month</div>
+                        <div className="mt-1 text-sm text-white/60">Unlimited images and a higher-volume creator workspace</div>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void startCheckout('pro_annual')}
+                        className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <div className="font-semibold">Pro · $490/year</div>
+                        <div className="mt-1 text-sm text-white/60">Two months free on a year of Pro</div>
                       </button>
                       <div className="pt-1">
                         <div className="mb-2 text-xs font-medium uppercase tracking-wider text-white/40">Or buy credits</div>

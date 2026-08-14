@@ -9,14 +9,22 @@ import (
 )
 
 func TestSubscriptionCreditGrant(t *testing.T) {
-	if got := subscriptionCreditGrantUSD("monthly"); got != 25 {
-		t.Fatalf("monthly grant = %v, want 25", got)
+	tests := []struct {
+		plan string
+		want float64
+	}{
+		{plan: "monthly", want: 25},
+		{plan: "creator_monthly", want: 25},
+		{plan: "annual", want: 300},
+		{plan: "creator_annual", want: 300},
+		{plan: "pro_annual", want: 300},
+		{plan: "creator-yearly", want: 300},
+		{plan: "", want: 25},
 	}
-	if got := subscriptionCreditGrantUSD("annual"); got != 300 {
-		t.Fatalf("annual grant = %v, want 300", got)
-	}
-	if got := subscriptionCreditGrantUSD(""); got != 25 {
-		t.Fatalf("default grant = %v, want 25", got)
+	for _, test := range tests {
+		if got := subscriptionCreditGrantUSD(test.plan); got != test.want {
+			t.Errorf("grant for %q = %v, want %v", test.plan, got, test.want)
+		}
 	}
 }
 

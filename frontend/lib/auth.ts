@@ -81,7 +81,7 @@ export function userFromAuthResponse(data: {
   };
 }
 
-/** Soft refresh. Never clears storage — network/404/500 must not sign people out. */
+/** Soft refresh. Never clears storage; network/404/500 must not sign people out. */
 export async function refreshUser(apiKey: string): Promise<StoredUser | null> {
   const key = apiKey.trim();
   if (!key) return null;

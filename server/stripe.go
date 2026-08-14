@@ -169,9 +169,9 @@ func (s *stripeService) createCheckoutSession(customerID, returnURL string, amou
 		"line_items[0][price_data][currency]":     {"usd"},
 		"line_items[0][price_data][unit_amount]":  {fmt.Sprintf("%d", amountUSDCents)},
 		"line_items[0][quantity]":                 {"1"},
-		"automatic_tax[enabled]":                 {"true"},
-		"customer_update[address]":               {"auto"},
-		"invoice_creation[enabled]":              {"true"},
+		"automatic_tax[enabled]":                  {"true"},
+		"customer_update[address]":                {"auto"},
+		"invoice_creation[enabled]":               {"true"},
 	}
 	if productID := strings.TrimSpace(getEnv("STRIPE_CREDITS_PRODUCT_ID", "")); productID != "" {
 		vals.Set("line_items[0][price_data][product]", productID)
@@ -192,14 +192,14 @@ func (s *stripeService) createCheckoutSession(customerID, returnURL string, amou
 
 func (s *stripeService) createSubscriptionCheckoutSession(customerID, returnURL, priceID string, metadata map[string]string) (*stripeCheckoutSession, error) {
 	vals := url.Values{
-		"customer":                {customerID},
-		"mode":                    {"subscription"},
-		"ui_mode":                 {stripeCheckoutUIMode()},
-		"return_url":              {returnURL},
-		"redirect_on_completion":  {"if_required"},
-		"line_items[0][price]":    {priceID},
-		"line_items[0][quantity]": {"1"},
-		"automatic_tax[enabled]":  {"true"},
+		"customer":                 {customerID},
+		"mode":                     {"subscription"},
+		"ui_mode":                  {stripeCheckoutUIMode()},
+		"return_url":               {returnURL},
+		"redirect_on_completion":   {"if_required"},
+		"line_items[0][price]":     {priceID},
+		"line_items[0][quantity]":  {"1"},
+		"automatic_tax[enabled]":   {"true"},
 		"customer_update[address]": {"auto"},
 	}
 	for k, v := range metadata {
@@ -324,30 +324,46 @@ type stripeCheckoutRequest struct {
 	CancelURL     string  `json:"cancel_url"`
 }
 
-func stripeMonthlyPriceID() string {
-	return strings.TrimPrefix(strings.TrimSpace(getEnv("STRIPE_MONTHLY_PRICE_ID", "price_1U0eggQda7Fr1LvlSAUWcs8r")), "/")
+func stripeCreatorMonthlyPriceID() string {
+	return strings.TrimPrefix(strings.TrimSpace(getEnv("STRIPE_CREATOR_MONTHLY_PRICE_ID", getEnv("STRIPE_MONTHLY_PRICE_ID", "price_1U3RWpHS07k89Tt2D18g8vZE"))), "/")
 }
 
-func stripeAnnualPriceID() string {
-	return strings.TrimPrefix(strings.TrimSpace(getEnv("STRIPE_ANNUAL_PRICE_ID", "price_1U0egmQda7Fr1Lvl3bAPYpoD")), "/")
+func stripeCreatorAnnualPriceID() string {
+	return strings.TrimPrefix(strings.TrimSpace(getEnv("STRIPE_CREATOR_ANNUAL_PRICE_ID", getEnv("STRIPE_ANNUAL_PRICE_ID", "price_1U3RWpHS07k89Tt2DLaeh6bN"))), "/")
+}
+
+func stripeProMonthlyPriceID() string {
+	return strings.TrimPrefix(strings.TrimSpace(getEnv("STRIPE_PRO_MONTHLY_PRICE_ID", "price_1U3RWqHS07k89Tt2Y70Z9yH8")), "/")
+}
+
+func stripeProAnnualPriceID() string {
+	return strings.TrimPrefix(strings.TrimSpace(getEnv("STRIPE_PRO_ANNUAL_PRICE_ID", "price_1U3RWqHS07k89Tt2qQINF6ng")), "/")
 }
 
 func stripePlanPriceID(plan string) (string, string) {
 	switch strings.ToLower(strings.TrimSpace(plan)) {
-	case "annual", "year", "yearly":
-		return "annual", stripeAnnualPriceID()
+	case "pro_monthly", "pro-monthly", "pro":
+		return "pro_monthly", stripeProMonthlyPriceID()
+	case "pro_annual", "pro-annual", "pro_yearly", "pro-yearly":
+		return "pro_annual", stripeProAnnualPriceID()
+	case "annual", "year", "yearly", "creator_annual", "creator-annual", "creator_yearly", "creator-yearly":
+		return "creator_annual", stripeCreatorAnnualPriceID()
 	default:
-		return "monthly", stripeMonthlyPriceID()
+		return "creator_monthly", stripeCreatorMonthlyPriceID()
 	}
 }
 
 func stripePlanFromPriceID(priceID string) string {
 	priceID = strings.TrimPrefix(strings.TrimSpace(priceID), "/")
 	switch priceID {
-	case stripeAnnualPriceID():
-		return "annual"
-	case stripeMonthlyPriceID():
-		return "monthly"
+	case stripeCreatorAnnualPriceID(), "price_1U23cXHS07k89Tt2xAwAPV8Y":
+		return "creator_annual"
+	case stripeCreatorMonthlyPriceID(), "price_1U23cXHS07k89Tt2FAaOIol0":
+		return "creator_monthly"
+	case stripeProAnnualPriceID():
+		return "pro_annual"
+	case stripeProMonthlyPriceID():
+		return "pro_monthly"
 	default:
 		return ""
 	}
@@ -689,7 +705,10 @@ func grantSubscriptionAPICredits(session stripeCheckoutSession, userID, plan str
 func subscriptionCreditGrantUSD(plan string) float64 {
 	// Base (monthly) Creator plan: $25 rollover credits for H3 video + other
 	// metered services. Images stay unlimited via unlimited_api. Annual is 12×.
-	if plan == "annual" {
+	plan = strings.ToLower(strings.TrimSpace(plan))
+	if plan == "annual" || plan == "year" || plan == "yearly" ||
+		strings.HasSuffix(plan, "_annual") || strings.HasSuffix(plan, "-annual") ||
+		strings.HasSuffix(plan, "_yearly") || strings.HasSuffix(plan, "-yearly") {
 		return 300
 	}
 	return 25

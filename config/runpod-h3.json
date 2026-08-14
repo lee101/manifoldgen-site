@@ -1,6 +1,12 @@
 {
-  "image": "ghcr.io/lee101/h3-cog:cu130-20260810-r6",
+  "image": "ghcr.io/lee101/h3-cog:cu130-20260814-face-refine-r17",
   "dockerStartCmd": ["python", "-u", "/src/rp_handler.py"],
+  "env": {
+    "H3_ACCEL_PROFILE": "balanced",
+    "H3_ATTENTION_BACKEND": "ck",
+    "H3_FACE_REFINE_ENABLED": "1",
+    "H3_FACE_REFINE_REQUIRED": "0"
+  },
   "workersMin": 0,
   "idleTimeout": 5,
   "executionTimeoutMs": 14400000,
@@ -9,27 +15,26 @@
   "scalerValue": 4,
   "endpoints": [
     {
+      "id": "snzfeqekxdmw1v",
+      "templateId": "8f03l2lyj6",
       "name": "cog-manifold-h3-normal",
       "workersMax": 2,
       "gpuTypeIds": [
-        "NVIDIA A40",
-        "NVIDIA RTX A6000",
-        "NVIDIA RTX 6000 Ada Generation",
-        "NVIDIA L40",
         "NVIDIA L40S"
-      ]
+      ],
+      "unsetEnv": ["H3_FACE_REFINE_LORA", "H3_FACE_REFINE_STEPS"]
     },
     {
+      "id": "811c0jb28shcnr",
+      "templateId": "tod8ekrmft",
       "name": "cog-manifold-h3-pinkcherry",
       "workersMax": 1,
       "gpuTypeIds": [
-        "NVIDIA A100 80GB PCIe",
-        "NVIDIA A100-SXM4-80GB",
         "NVIDIA H100 PCIe",
         "NVIDIA H100 80GB HBM3",
         "NVIDIA H100 NVL"
       ]
     }
   ],
-  "notes": "Both variants must use the native RunPod handler, never the Cog HTTP command. The native handler lets RunPod cancellation terminate active work so canceled jobs do not leave billed orphan workers. Five-second idle shutdown is below the 30-second cost ceiling."
+  "notes": "Both variants must use the native RunPod handler, never the Cog HTTP command. Face refine is proven on L40S and H100; A40 workers crash during the second H3 pass and are intentionally excluded. The native handler lets RunPod cancellation terminate active work so canceled jobs do not leave billed orphan workers. Five-second idle shutdown is below the 30-second cost ceiling."
 }

@@ -22,6 +22,25 @@ The rotate endpoint returns the replacement once and immediately invalidates the
 
 Dark-mode AI video studio at [manifoldgen.com](https://manifoldgen.com).
 
+## MCP and Codex skill
+
+The hosted Streamable HTTP MCP endpoint is `https://manifoldgen.com/api/mcp`.
+It exposes pricing, semantic media search, credit-backed generation, and durable
+job retrieval using the same `MANIFOLDGEN_API_KEY` as the REST API. This
+repository includes a project MCP configuration, and Codex Infinity bundles a
+`manifoldgen-platform` system skill with repository and spend-safety guidance.
+See [the MCP and skill guide](docs/manifoldgen-mcp-and-skill.md).
+
+## Local checks
+
+Install the tracked Git hooks once with `make hooks`. Commits run fast Go
+format/tests and frontend type checks. Pushes that touch frontend or browser-gate
+files additionally run the fast mocked Studio browser suite; server-only and
+docs-only pushes skip Chromium. The GPU/WebGL export benchmarks remain in the
+full browser suite run by CI. Use `make check-fast` or `make verify` to run
+those fast gates manually; `make test-studio-full` runs the complete browser
+suite.
+
 Built on the same Go fasthttp + Postgres + Stripe stack as CuteDSL / app.nz,
 focused on H3 video (app.nz cogs) with optional omniserve-native LTX.
 
@@ -45,13 +64,17 @@ make server      # :8116
 make frontend    # :3006, proxies /api → :8116
 
 # HTTPS frontend for browser/auth testing
-make dev-https   # https://manifestgen.local:3006
+make dev-https   # https://manifoldgen.local:3006, proxies API calls to production
+# To exercise the local API over HTTPS instead:
+MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev-https
 ```
+
+Production-backed HTTPS dev keeps its browser login separate from the local API login.
 
 For the friendly local hostname, add this once to `/etc/hosts`:
 
 ```text
-127.0.0.1 manifestgen.local
+127.0.0.1 manifoldgen.local
 ```
 
 The HTTPS command creates a short-lived self-signed certificate in `.local-certs/`.
@@ -175,6 +198,34 @@ with a 20% multiplier. Configure the private endpoint from
 FlashBoot, and shared cached weights keep idle spend at zero without mixing the Wan
 weights into the warm 32 GB H3 process.
 
+## Video background removal
+
+`video_background_removal` accepts a public source URL up to 30 seconds and
+returns a durable transparent VP9 WebM job. The API submits to
+`VIDEO_BACKGROUND_RUNPOD_ENDPOINT_ID` first. Two submission/status failures
+open a 90-second circuit; only then (or when the private endpoint is not
+configured) does the same public job move to the FAL BRIA standby queue.
+
+The GPU worker and endpoint definition live in the sibling `omniserve-native`
+repository. Manifold submits its explicit `video-matting` workload and retains
+only durable product-job identity, billing, presigned uploads, circuit breaking,
+and FAL standby. OmniServe keeps source RGB pixels and infers only the recurrent
+alpha field; it also provides content-addressed cache locking and a generic
+native queue shared with other workload kinds. The compatibility command
+`scripts/deploy-video-background-runpod.sh` delegates to OmniServe; set
+`OMNISERVE_NATIVE_ROOT` when the repositories are not adjacent. Netwrck can
+retain its existing $0.10/second customer price by setting
+`VIDEO_BACKGROUND_REMOVAL_RATE_USD_PER_SECOND=0.10` on the ManifoldGen service
+account used by that route.
+
+The serverless endpoint uses request-count scaling with one worker per queued or
+active job, a three-worker ceiling, and zero minimum workers. This avoids
+queue-delay overscaling during a long cold start while preserving bounded
+parallel throughput.
+
+RVM is GPL-3.0 research software; replace it with an appropriately licensed
+matting engine or complete the licensing review before commercial deployment.
+
 ## Deploy
 
 See `deploy/manifoldgen.service` and `deploy/nginx-manifoldgen.conf`.
@@ -197,4 +248,19 @@ Desktop + mobile screenshots live in `visualbench/`.
 cd frontend && bun run dev -- --port 3219
 # other terminal
 VISUALBENCH_BASE_URL=http://127.0.0.1:3219 node visualbench/capture-studio.cjs
+
+# Capture only the gallery-to-Studio handoff at desktop and mobile sizes.
+VISUALBENCH_BASE_URL=http://127.0.0.1:3219 VISUALBENCH_GALLERY_ONLY=1 \
+  node visualbench/capture-studio.cjs
+```
+
+## CI
+
+Every pull request and push to `main` runs secret scanning, Go module/format/vet/race/build checks, a production frontend build (including TypeScript validation), and mocked Playwright coverage for the Studio and API docs. Browser traces and reports are retained for seven days on failure.
+
+Run the closest checks locally with:
+
+```bash
+(cd server && go vet ./... && go test -race ./... && go build ./...)
+(cd frontend && bun run build && bunx playwright test tests/e2e/studio-media.spec.js tests/e2e/api-pricing.spec.js)
 ```

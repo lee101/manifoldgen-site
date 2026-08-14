@@ -23,22 +23,23 @@ import (
 
 // Service pricing in USD (converted to $CUTE at current rate)
 var servicePricesUSD = map[string]float64{
-	"zimage":           0.04,  // per generation
-	"chronos2":         0.002, // per forecast (Chronos-2, our own ~120M model, ms-scale call)
-	"tts":              0.005, // per 100 chars
-	"stt":              0.02,  // per minute
-	"gemma4":           0.01,  // per request
-	"caption":          0.01,  // per image
-	"lora_training":    5.00,
-	"ltx_video":        0.30,  // per ~6s 1080p video via fal.ai
-	"video_generate":   0.15,  // OpenPaths auto-video base price; model overrides below
-	"h3_video":         2.688, // per GPU-hour reference rate; exact execution is settled asynchronously
-	"video_restyle":    0.48,  // estimated five-second 720p ceiling; async settlement uses the selected backend
-	"audio_generation": 0.80,  // umbrella audio API; music is the default kind
-	"music_generation": 0.80,  // per generated music track (30–180 seconds)
-	"sfx_generation":   2.688, // per GPU-hour reference; exact SFX execution is settled asynchronously
-	"flux_image":       0.04,  // per image via fal.ai or netwrck
-	"nsfw_detect":      0.001, // per image classification
+	"zimage":                   0.04,  // per generation
+	"chronos2":                 0.002, // per forecast (Chronos-2, our own ~120M model, ms-scale call)
+	"tts":                      0.005, // per 100 chars
+	"stt":                      0.02,  // per minute
+	"gemma4":                   0.01,  // per request
+	"caption":                  0.01,  // per image
+	"lora_training":            5.00,
+	"ltx_video":                0.30,   // per ~6s 1080p video via fal.ai
+	"video_generate":           0.15,   // OpenPaths auto-video base price; model overrides below
+	"h3_video":                 2.688,  // per GPU-hour reference rate; exact execution is settled asynchronously
+	"video_restyle":            0.48,   // estimated five-second 720p ceiling; async settlement uses the selected backend
+	"video_background_removal": 0.0252, // five-second estimate at the public per-second rate
+	"audio_generation":         0.80,   // umbrella audio API; music is the default kind
+	"music_generation":         0.80,   // per generated music track (30–180 seconds)
+	"sfx_generation":           2.688,  // per GPU-hour reference; exact SFX execution is settled asynchronously
+	"flux_image":               0.04,   // per image via fal.ai or netwrck
+	"nsfw_detect":              0.001,  // per image classification
 }
 
 var zimageDefaultSteps = 8
@@ -59,10 +60,23 @@ var openPathsAPIKey string
 var openPathsBaseURL string
 
 var videoModelPricesUSD = map[string]float64{
-	"auto-video":             0.15,
-	"ltx-video":              0.08,
-	"ltx-2":                  0.12,
-	"ltx-2.3-image-to-video": 1.85,
+	"auto-video": 0.15,
+	"ltx-video":  0.05,
+	"ltx-2":      0.072,
+	"ra2v":       1.00,
+}
+
+const downstreamVideoPriceMultiplier = 1.20
+
+var videoModelPricesPerSecondUSD = map[string]float64{
+	"seedance-2.0-fast-text-to-video":      0.26609,
+	"seedance-2.0-text-to-video":           0.33374,
+	"seedance-2.0-image-to-video":          0.33264,
+	"seedance-2.0-fast-reference-to-video": 0.26609,
+	"seedance-2.0-reference-to-video":      0.33264,
+	"alibaba/happy-horse/image-to-video":   0.28,
+	"ltx-2.3-image-to-video":               0.28,
+	"wan":                                  0.15,
 }
 
 // Reusable HTTP client with connection pooling
@@ -112,20 +126,21 @@ func initServices() {
 
 	// Load custom prices from env
 	envPriceMap := map[string]string{
-		"zimage":           "ZIMAGE_PRICE_USD",
-		"chronos2":         "CHRONOS_PRICE_USD",
-		"tts":              "TTS_PRICE_USD_PER_100CHARS",
-		"stt":              "STT_PRICE_USD_PER_MINUTE",
-		"gemma4":           "GEMMA4_PRICE_USD",
-		"caption":          "CAPTION_PRICE_USD",
-		"lora_training":    "LORA_TRAINING_PRICE_USD",
-		"ltx_video":        "LTX_VIDEO_PRICE_USD",
-		"video_generate":   "VIDEO_GENERATE_PRICE_USD",
-		"h3_video":         "H3_VIDEO_PRICE_USD_PER_GPU_HOUR",
-		"video_restyle":    "VIDEO_RESTYLE_ESTIMATE_USD",
-		"music_generation": "MUSIC_GENERATION_PRICE_USD",
-		"flux_image":       "FLUX_IMAGE_PRICE_USD",
-		"nsfw_detect":      "NSFW_DETECT_PRICE_USD",
+		"zimage":                   "ZIMAGE_PRICE_USD",
+		"chronos2":                 "CHRONOS_PRICE_USD",
+		"tts":                      "TTS_PRICE_USD_PER_100CHARS",
+		"stt":                      "STT_PRICE_USD_PER_MINUTE",
+		"gemma4":                   "GEMMA4_PRICE_USD",
+		"caption":                  "CAPTION_PRICE_USD",
+		"lora_training":            "LORA_TRAINING_PRICE_USD",
+		"ltx_video":                "LTX_VIDEO_PRICE_USD",
+		"video_generate":           "VIDEO_GENERATE_PRICE_USD",
+		"h3_video":                 "H3_VIDEO_PRICE_USD_PER_GPU_HOUR",
+		"video_restyle":            "VIDEO_RESTYLE_ESTIMATE_USD",
+		"video_background_removal": "VIDEO_BACKGROUND_REMOVAL_ESTIMATE_USD",
+		"music_generation":         "MUSIC_GENERATION_PRICE_USD",
+		"flux_image":               "FLUX_IMAGE_PRICE_USD",
+		"nsfw_detect":              "NSFW_DETECT_PRICE_USD",
 	}
 	for svc, envKey := range envPriceMap {
 		if p := os.Getenv(envKey); p != "" {
@@ -181,8 +196,15 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 		usdPrice = zimageHighStepPriceUSD
 	}
 	if req.Service == "video_generate" {
-		if price, exists := videoModelPricesUSD[normalizeVideoModel(req.Model)]; exists {
-			usdPrice = price
+		model := normalizeVideoModel(req.Model)
+		if price, exists := videoModelPricesUSD[model]; exists {
+			usdPrice = price * downstreamVideoPriceMultiplier
+		} else if price, exists := videoModelPricesPerSecondUSD[model]; exists {
+			duration := req.Duration
+			if duration <= 0 {
+				duration = 5
+			}
+			usdPrice = price * float64(duration) * downstreamVideoPriceMultiplier
 		}
 	}
 	if req.Service == "zimage" || req.Service == "flux_image" {
@@ -282,6 +304,7 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "text", Internal: "gemma4"},
 	{Public: "training", Internal: "lora_training"},
 	{Public: "video_restyle", Internal: "video_restyle"},
+	{Public: "video_background_removal", Internal: "video_background_removal"},
 	{Public: "safety", Internal: "nsfw_detect"},
 }
 
@@ -315,21 +338,22 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 	})
 
 	units := map[string]string{
-		"zimage":           fmt.Sprintf("per generation (base); $%.2f for 20+ steps", zimageHighStepPriceUSD),
-		"chronos2":         "per forecast",
-		"tts":              "per 100 characters",
-		"stt":              "per minute",
-		"gemma4":           "per request",
-		"caption":          "per image",
-		"lora_training":    "per training job",
-		"ltx_video":        "per ~6s video",
-		"video_generate":   "per generated video (model dependent)",
-		"h3_video":         "per video; final price follows measured generation time",
-		"video_restyle":    "estimated default clip; final price follows length and quality",
-		"audio_generation": "per music track by default; set kind to music or sfx",
-		"music_generation": "per generated music track (30–180 seconds)",
-		"sfx_generation":   "estimated 5-second sound effect; final price follows measured generation time",
-		"flux_image":       "per image",
+		"zimage":                   fmt.Sprintf("per generation (base); $%.2f for 20+ steps", zimageHighStepPriceUSD),
+		"chronos2":                 "per forecast",
+		"tts":                      "per 100 characters",
+		"stt":                      "per minute",
+		"gemma4":                   "per request",
+		"caption":                  "per image",
+		"lora_training":            "per training job",
+		"ltx_video":                "per ~6s video",
+		"video_generate":           "per generated video (model dependent)",
+		"h3_video":                 "per video; final price follows measured generation time",
+		"video_restyle":            "estimated default clip; final price follows length and quality",
+		"video_background_removal": "per second of source video (30 seconds maximum)",
+		"audio_generation":         "per music track by default; set kind to music or sfx",
+		"music_generation":         "per generated music track (30–180 seconds)",
+		"sfx_generation":           "estimated 5-second sound effect; final price follows measured generation time",
+		"flux_image":               "per image",
 	}
 
 	pricing := make([]ServicePricing, 0, len(publicServiceAliases))
@@ -345,6 +369,12 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		}
 		if alias.Internal == "sfx_generation" {
 			usdPrice, cuteCost, _ = h3Estimate(ServiceUsageRequest{Service: "sfx_generation", Size: "audio", Duration: 5, NumSteps: 20})
+		}
+		if alias.Internal == "video_background_removal" {
+			usdPrice = videoBackgroundPublicRateUSD()
+			if cutePrice > 0 {
+				cuteCost = usdPrice / cutePrice
+			}
 		}
 		pricing = append(pricing, ServicePricing{
 			Service:   alias.Public,
@@ -437,6 +467,10 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 	if req.Service == "video_restyle" {
 		handleVideoRestyleService(ctx, req, user)
+		return
+	}
+	if req.Service == "video_background_removal" {
+		handleVideoBackgroundRemovalService(ctx, req, user)
 		return
 	}
 	if req.Service == "audio_generation" {
@@ -1036,6 +1070,17 @@ func isOmniserveNativeURL(backendURL string) bool {
 }
 
 func proxyZImageWithFallbacks(req ServiceUsageRequest, primaryURL string) ([]byte, error) {
+	// The native Z-Image gateway deliberately caps a single request at one
+	// image.  Keep the public batch API by issuing those requests one at a time
+	// rather than making a batch of four fall through to unreliable providers.
+	// This also keeps GPU memory bounded on the shared inference host.
+	if n := getImageCount(req); n > 1 {
+		return proxyZImageBatch(req, primaryURL, n)
+	}
+	return proxySingleZImageWithFallbacks(req, primaryURL)
+}
+
+func proxySingleZImageWithFallbacks(req ServiceUsageRequest, primaryURL string) ([]byte, error) {
 	backends := zimageBackendOrder(req, primaryURL)
 	var errs []string
 	for _, b := range backends {
@@ -1050,6 +1095,87 @@ func proxyZImageWithFallbacks(req ServiceUsageRequest, primaryURL string) ([]byt
 		return nil, fmt.Errorf("no image backends configured")
 	}
 	return nil, fmt.Errorf("all image backends failed: %s", strings.Join(errs, " | "))
+}
+
+// proxyZImageBatch preserves the existing normalized image response while
+// serializing a multi-image request into native-compatible single-image jobs.
+func proxyZImageBatch(req ServiceUsageRequest, primaryURL string, n int) ([]byte, error) {
+	images := make([]map[string]interface{}, 0, n)
+	var first map[string]interface{}
+	var engine, model string
+	for i := 0; i < n; i++ {
+		one := req
+		one.N = 1
+		one.NumImages = 1
+		if one.Seed > 0 {
+			one.Seed += i
+		}
+		result, err := proxySingleZImageWithFallbacks(one, primaryURL)
+		if err != nil {
+			return nil, fmt.Errorf("image %d of %d: %w", i+1, n, err)
+		}
+
+		var payload map[string]interface{}
+		if err := json.Unmarshal(result, &payload); err != nil {
+			return nil, fmt.Errorf("image %d of %d returned invalid JSON: %w", i+1, n, err)
+		}
+		image := imageResultItem(payload)
+		if len(image) == 0 {
+			return nil, fmt.Errorf("image %d of %d response contained no image", i+1, n)
+		}
+		if first == nil {
+			first = image
+			engine, _ = payload["engine"].(string)
+			model, _ = payload["model"].(string)
+		}
+		images = append(images, image)
+	}
+
+	width, height := req.Width, req.Height
+	if width <= 0 {
+		width = 1024
+	}
+	if height <= 0 {
+		height = 1024
+	}
+	out := map[string]interface{}{
+		"images": images,
+		"n":      len(images),
+		"width":  width,
+		"height": height,
+		"prompt": req.Prompt,
+	}
+	if engine != "" {
+		out["engine"] = engine
+	}
+	if model != "" {
+		out["model"] = model
+	}
+	for _, key := range []string{"image_base64", "image_url"} {
+		if value, ok := first[key]; ok {
+			out[key] = value
+		}
+	}
+	return json.Marshal(out)
+}
+
+func imageResultItem(payload map[string]interface{}) map[string]interface{} {
+	if rows, ok := payload["images"].([]interface{}); ok && len(rows) > 0 {
+		if row, ok := rows[0].(map[string]interface{}); ok {
+			return imageResultFields(row)
+		}
+	}
+	return imageResultFields(payload)
+}
+
+func imageResultFields(payload map[string]interface{}) map[string]interface{} {
+	item := make(map[string]interface{}, 2)
+	for _, key := range []string{"image_base64", "image_url"} {
+		if value, ok := payload[key].(string); ok && value != "" {
+			item[key] = value
+		}
+	}
+	return item
 }
 
 type namedBackend struct {

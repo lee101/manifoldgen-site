@@ -11,15 +11,18 @@ import (
 )
 
 const (
-	galleryCDNHost      = "manifoldgenstatic.manifoldgen.com"
-	galleryAssetMaxSize = 32 << 20
+	galleryCDNHost = "manifoldgenstatic.manifoldgen.com"
+	// Imported Studio videos can be noticeably larger than source images. Keep
+	// the proxy bounded while accepting the short generated clips it is meant to
+	// hand off from the gallery.
+	galleryAssetMaxSize = 128 << 20
 )
 
 var galleryHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-// handleGalleryAsset proxies only files from our public gallery bucket. Studio
-// imports need the image bytes, and a same-origin request avoids depending on
-// the bucket's CORS configuration (or an intermediary cache preserving it).
+// handleGalleryAsset proxies image and video files from our public gallery
+// bucket. Studio imports need the media bytes, and a same-origin request avoids
+// depending on the bucket's CORS configuration (including www vs apex origin).
 func handleGalleryAsset(ctx *fasthttp.RequestCtx) {
 	objectKey := strings.TrimPrefix(string(ctx.Path()), "/api/gallery-assets/")
 	if !validGalleryObjectKey(objectKey) {
@@ -43,8 +46,9 @@ func handleGalleryAsset(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	contentType := response.Header.Get("Content-Type")
-	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
-		jsonError(ctx, fasthttp.StatusBadGateway, "gallery asset is not an image")
+	mediaType := strings.ToLower(contentType)
+	if !strings.HasPrefix(mediaType, "image/") && !strings.HasPrefix(mediaType, "video/") {
+		jsonError(ctx, fasthttp.StatusBadGateway, "gallery asset is not supported media")
 		return
 	}
 

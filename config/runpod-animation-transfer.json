@@ -1,0 +1,14 @@
+{
+  "name": "manifold-animation-transfer-wan-animate-2",
+  "template": "wan-animate-2",
+  "workersMin": 0,
+  "workersMax": 2,
+  "idleTimeout": 30,
+  "flashboot": true,
+  "scalerType": "QUEUE_DELAY",
+  "scalerValue": 4,
+  "executionTimeout": 5400,
+  "modelCache": "network-volume",
+  "billingMarkup": 2.0,
+  "notes": "Ada 48 Pro serverless pool; scale to zero after 30 seconds and keep Wan Animate weights on the shared regional volume."
+}

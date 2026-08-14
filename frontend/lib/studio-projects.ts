@@ -26,6 +26,8 @@ export type PortableStudioAsset = {
   volume: number;
   fadeIn: number;
   fadeOut: number;
+  /** The video's embedded audio is excluded after it has been separated. */
+  sourceAudioMuted?: boolean;
   stageX: number;
   stageY: number;
   /** Uniform element scale. Optional so older projects remain readable. */
