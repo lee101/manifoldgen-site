@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+refs_file="$(mktemp)"
+trap 'rm -f "$refs_file"' EXIT
+cat > "$refs_file"
+
+PRE_PUSH_REFS_FILE="$refs_file" "$(git rev-parse --show-toplevel)/scripts/check-all.sh"

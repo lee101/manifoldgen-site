@@ -30,6 +30,7 @@ const (
 	studioUpscaleOutputMPUSD = 0.012
 	studioAudioSearchLimit   = 24
 	studioMusicCredits       = 80.0
+	studioAudioLibraryHost   = "netwrckstatic.netwrck.com"
 )
 
 var studioHTTPClient = &http.Client{Timeout: 4 * time.Minute}
@@ -252,8 +253,14 @@ func handleStudioAudioSearch(ctx *fasthttp.RequestCtx) {
 		if asset.Title == "" || studioPublicMediaURL(asset.URL) != nil {
 			continue
 		}
+		// The public Netwrck library is not configured for browser CORS. Return
+		// a same-origin URL so previews and imports work in the studio.
+		asset.URL = studioAudioProxyURL(asset.URL)
 		if asset.PreviewURL != "" && studioPublicMediaURL(asset.PreviewURL) != nil {
 			asset.PreviewURL = ""
+		}
+		if asset.PreviewURL != "" {
+			asset.PreviewURL = studioAudioProxyURL(asset.PreviewURL)
 		}
 		clean = append(clean, asset)
 	}
@@ -261,6 +268,71 @@ func handleStudioAudioSearch(ctx *fasthttp.RequestCtx) {
 	jsonResponse(ctx, http.StatusOK, map[string]interface{}{
 		"kind": "audio", "results": clean, "count": len(clean),
 	})
+}
+
+func studioAudioProxyURL(raw string) string {
+	return "/api/studio/audio-proxy?url=" + url.QueryEscape(strings.TrimSpace(raw))
+}
+
+func studioAudioLibraryURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), studioAudioLibraryHost) {
+		return nil, fmt.Errorf("audio URL is not from the approved library")
+	}
+	if !strings.HasPrefix(parsed.Path, "/static/audio/library/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("audio URL is not from the approved library")
+	}
+	return parsed, nil
+}
+
+// handleStudioAudioProxy keeps the catalog's storage CORS policy out of the
+// browser path. Range headers are forwarded because audio elements commonly
+// request metadata and playback segments separately.
+func handleStudioAudioProxy(ctx *fasthttp.RequestCtx) {
+	target, err := studioAudioLibraryURL(string(ctx.QueryArgs().Peek("url")))
+	if err != nil {
+		jsonError(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+	method := string(ctx.Method())
+	if method != http.MethodGet && method != http.MethodHead {
+		ctx.Response.Header.Set("Allow", "GET, HEAD")
+		ctx.SetStatusCode(http.StatusMethodNotAllowed)
+		return
+	}
+	request, err := http.NewRequest(method, target.String(), nil)
+	if err != nil {
+		jsonError(ctx, http.StatusBadRequest, "invalid audio URL")
+		return
+	}
+	if value := string(ctx.Request.Header.Peek("Range")); value != "" {
+		request.Header.Set("Range", value)
+	}
+	response, err := studioHTTPClient.Do(request)
+	if err != nil {
+		jsonError(ctx, http.StatusBadGateway, "could not load catalog audio")
+		return
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		response.Body.Close()
+		ctx.SetStatusCode(response.StatusCode)
+		return
+	}
+	if contentType := response.Header.Get("Content-Type"); contentType != "" {
+		ctx.Response.Header.Set("Content-Type", contentType)
+	}
+	for _, header := range []string{"Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
+		if value := response.Header.Get(header); value != "" {
+			ctx.Response.Header.Set(header, value)
+		}
+	}
+	ctx.Response.Header.Set("Cache-Control", "public, max-age=86400")
+	ctx.SetStatusCode(response.StatusCode)
+	if method == http.MethodGet {
+		ctx.Response.SetBodyStream(response.Body, int(response.ContentLength))
+	} else {
+		response.Body.Close()
+	}
 }
 
 func studioUser(ctx *fasthttp.RequestCtx) (*User, error) {

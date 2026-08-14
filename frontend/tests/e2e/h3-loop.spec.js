@@ -195,3 +195,24 @@ test('image mode always requests a four-image batch', async ({ page }) => {
 
   expect(requestBody).toMatchObject({ service: 'zimage', n: 4, num_images: 4, image_backend: 'auto' });
 });
+
+test('home generator accepts repeated launches while earlier videos start', async ({ page }) => {
+  const requests = [];
+  let releaseRequests;
+  const requestGate = new Promise((resolve) => { releaseRequests = resolve; });
+  await installStudioMocks(page, async (route) => {
+    requests.push(route.request().postDataJSON());
+    await requestGate;
+    await route.fulfill({ status: 202, json: { result: { job_id: 'job-loop-e2e' } } });
+  });
+
+  await page.goto('/');
+  const generateButton = page.getByRole('button', { name: /^Generate video$/ });
+  await generateButton.click();
+  await expect(generateButton).toBeEnabled();
+  await generateButton.click();
+  await expect.poll(() => requests.length).toBe(2);
+  await expect(page.getByTestId('home-background-activity')).toContainText('2 tasks running');
+  releaseRequests();
+  await expect(page.getByTestId('home-job-cost')).toContainText('completed');
+});

@@ -40,7 +40,6 @@ docs-only pushes skip Chromium. The GPU/WebGL export benchmarks remain in the
 full browser suite run by CI. Use `make check-fast` or `make verify` to run
 those fast gates manually; `make test-studio-full` runs the complete browser
 suite.
-
 Built on the same Go fasthttp + Postgres + Stripe stack as CuteDSL / app.nz,
 focused on H3 video (app.nz cogs) with optional omniserve-native LTX.
 
@@ -178,6 +177,21 @@ workers, five-second idle shutdown, FlashBoot, a bounded one-hour execution
 window, and `/src/rp_handler.py` as the native queue handler. Do not run the Cog
 HTTP command on a queue endpoint; provider cancellation can mark that wrapper
 canceled while its inner prediction continues consuming a GPU.
+
+Deploy an H3 image with the checked-in endpoint contract:
+
+```bash
+# Prints the image, templates, worker limits, and allowed GPU pools.
+python3 scripts/deploy-h3-runpod.py
+
+# Refuses active queues, drains warm workers, updates both templates, then
+# reactivates the endpoints. RUNPOD_API_KEY must be set.
+python3 scripts/deploy-h3-runpod.py --apply
+```
+
+The worker drain is required: changing a RunPod template does not replace an
+already warm process. Face refinement is production-tested on L40S and H100;
+A40 is excluded because its ComfyUI child exited during the second H3 pass.
 
 `gen_gallery_local.py --prompts` accepts JSONL rows with `prompt`, optional
 `slug`, and optional `seed`, or one plain prompt per line. Catalog IDs are

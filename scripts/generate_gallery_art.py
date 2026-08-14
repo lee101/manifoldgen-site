@@ -238,8 +238,6 @@ def reindex(database_url: str) -> None:
         if response.status != 202:
             raise RuntimeError(f"reindex returned HTTP {response.status}")
     print("search reindex requested", flush=True)
-
-
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser()

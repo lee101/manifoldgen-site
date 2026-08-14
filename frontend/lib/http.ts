@@ -17,15 +17,25 @@ export class HTTPResponseError extends Error {
 function messageFromData(data: unknown): string | null {
   if (!data || typeof data !== 'object') return null;
   const record = data as Record<string, unknown>;
-  if (typeof record.error === 'string' && record.error.trim()) return record.error;
-  if (typeof record.message === 'string' && record.message.trim()) return record.message;
+  const message = typeof record.error === 'string' && record.error.trim()
+    ? record.error.trim()
+    : typeof record.message === 'string'
+      ? record.message.trim()
+      : '';
+  if (message && !['not found', '404 not found'].includes(message.toLowerCase())) return message;
   return null;
 }
 
 function textFallback(text: string): string | null {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
-  if (!trimmed || lower.startsWith('<!doctype') || lower.startsWith('<html')) return null;
+  if (
+    !trimmed ||
+    lower === 'not found' ||
+    lower === '404 not found' ||
+    lower.startsWith('<!doctype') ||
+    lower.startsWith('<html')
+  ) return null;
   return trimmed.slice(0, 200);
 }
 

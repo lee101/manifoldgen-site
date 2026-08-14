@@ -12,6 +12,8 @@ import base64
 import hashlib
 import json
 import os
+import random
+import subprocess
 import sys
 import time
 import urllib.error
@@ -68,17 +70,51 @@ PROMPTS = [
 ]
 
 VIDEO_PROMPTS = [
-    "Slow orbit around a marble goddess under candle smoke, camera push-in, museum hush; soft room tone and distant footsteps, cinematic 16:9",
-    "Cyber-geisha walking through monsoon neon, tracking shot, rain beads on lacquer, reflective asphalt; rain ambience and distant traffic",
-    "Dancer spinning in translucent gold chiffon among temple ruins at dusk, dust motes, IMAX wide motion; wind through stone and silk rustle",
-    "Underwater ballroom: floating chandeliers drift as camera glides past velvet dress and bioluminescent plankton; muffled hydrophone hush",
-    "Noir jazz singer in scarlet satin, slow dolly, cigarette haze curling, wet cobblestones catching light; brushed snare and muted trumpet bed",
-    "Intimate boudoir: silk robe slips as soft Rembrandt light shifts, tasteful artistic nude study, gentle pan; quiet fabric and breath",
-    "Glass orchid greenhouse night: condensation trails as silhouette moves behind frosted panes; soft rain on glass, eerie beauty",
-    "Astronaut removing helmet in flower field, pollen rising, soft focus rack, editorial fashion motion; breeze and distant birds",
-    "A glass hummingbird drinks from a bright orange flower, soft morning light, gentle camera push-in; crystalline wing chimes",
-    "Chrome android ballerina mid-arabesque in a museum atrium, hard speculars circling; quiet HVAC and heel clicks on marble",
+    "A glass hummingbird above trumpet flowers moves in one calm continuous cycle; locked-off macro shot, cinematic 16:9, soft dawn mist; audio: soft glass harmonics",
+    "A cliffside observatory above a storm sea slowly unfolds and returns to its opening pose; slow aerial orbit, cinematic 16:9, distant lightning; audio: waves against stone",
+    "A lunar greenhouse filled with floating pollen drifts forward through layered atmosphere; gentle dolly forward, cinematic 16:9, moonlight and warm practical lights; audio: low mechanical resonance",
+    "A ceramic fox crosses a moss garden while the environment responds naturally; low tracking shot, cinematic 16:9, sun shafts through moving leaves; audio: quiet forest ambience",
+    "A solar sail skims a planet's cloud tops and settles into a clean hero composition; wide lateral glide, cinematic 16:9, golden-hour backlight; audio: soft electrical shimmer",
+    "A clockwork orchid opens at midnight and returns to its opening pose; close focus pull, cinematic 16:9, deep indigo night; audio: subtle room tone and wood creaks",
+    "A sea turtle glides over a coral library as particles stream past; steady arc camera, cinematic 16:9, subtle bioluminescent glow; audio: underwater hush",
+    "A paper crane flies through a rain-soaked station in one continuous loop; low tracking shot, cinematic 16:9, blue-hour reflections; audio: rain and a far bell",
+    "A glass torus suspended in a greenhouse rotates as reflected light travels across its surface; slow pedestal rise, cinematic 16:9; audio: soft glass harmonics",
+    "A ring habitat passes from night into dawn while terraced gardens unfold; impossible pass-through camera, cinematic 16:9; audio: low mechanical resonance",
 ]
+
+
+def read_prompt_catalog(path: Path) -> list[str]:
+    prompts: list[str] = []
+    seen: set[str] = set()
+    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise SystemExit(f"{path}:{number}: invalid JSON: {error}") from error
+        prompt = str(row.get("prompt") or "").strip() if isinstance(row, dict) else ""
+        if not prompt:
+            raise SystemExit(f"{path}:{number}: prompt is required")
+        if prompt not in seen:
+            prompts.append(prompt)
+            seen.add(prompt)
+    return prompts
+
+
+def completed_video_prompts() -> set[str]:
+    output = subprocess.check_output(
+        [
+            "psql",
+            DATABASE_URL,
+            "-At",
+            "-c",
+            "SELECT prompt FROM video_jobs WHERE status = 'completed' OR status IN ('queued','processing','starting');",
+        ],
+        text=True,
+    )
+    return {line.strip() for line in output.splitlines() if line.strip()}
 
 
 def http_json(method: str, url: str, payload: dict | None = None, headers: dict | None = None, timeout: int = 180):
@@ -237,13 +273,34 @@ def queue_h3_video(api_key: str, prompt: str) -> dict:
     return data
 
 
+def request_reindex(api_key: str) -> None:
+    if not api_key:
+        return
+    try:
+        req = urllib.request.Request(
+            f"{API}/api/search/reindex",
+            method="POST",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        urllib.request.urlopen(req, timeout=10).read()
+        print("reindex requested")
+    except Exception as error:
+        print("reindex skip:", error)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--images", type=int, default=16)
     ap.add_argument("--videos", type=int, default=6)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--size", default="1024x1024")
+    ap.add_argument("--video-prompts", type=Path, help="JSONL prompt catalog built with --kind video")
+    ap.add_argument("--video-offset", type=int, default=0, help="skip this many pending video prompts")
+    ap.add_argument("--shuffle-seed", type=int, help="deterministically shuffle pending video prompts")
+    ap.add_argument("--queue-delay", type=float, default=1.0, help="seconds between video submissions")
     args = ap.parse_args()
+    if args.images < 0 or args.videos < 0 or args.video_offset < 0:
+        raise SystemExit("counts and offsets cannot be negative")
 
     w, h = (int(x) for x in args.size.lower().split("x"))
     print(f"omni={OMNI} api={API} images_dir={IMAGES_DIR}")
@@ -260,11 +317,21 @@ def main() -> None:
             print(f"  FAIL: {e}", file=sys.stderr)
             time.sleep(1)
 
+    reindex_key = ""
     if args.videos > 0:
+        video_prompts = read_prompt_catalog(args.video_prompts) if args.video_prompts else list(VIDEO_PROMPTS)
+        if args.shuffle_seed is not None:
+            random.Random(args.shuffle_seed).shuffle(video_prompts)
+        if not args.dry_run:
+            existing = completed_video_prompts()
+            video_prompts = [prompt for prompt in video_prompts if prompt not in existing]
+        video_prompts = video_prompts[args.video_offset : args.video_offset + args.videos]
+        print(f"video catalog selected={len(video_prompts)} requested={args.videos}")
         if args.dry_run:
-            print(f"would queue {args.videos} H3 videos")
+            print(f"would queue {len(video_prompts)} H3 videos")
         else:
             key = ensure_seed_user()
+            reindex_key = key
             # top up credits
             try:
                 import subprocess
@@ -281,22 +348,19 @@ def main() -> None:
             except Exception as e:
                 print("credit topup warn:", e, file=sys.stderr)
 
-            for i, prompt in enumerate(VIDEO_PROMPTS[: args.videos]):
-                print(f"[video {i+1}/{args.videos}] {prompt[:70]}…")
+            for i, prompt in enumerate(video_prompts):
+                print(f"[video {i+1}/{len(video_prompts)}] {prompt[:70]}…")
                 try:
                     data = queue_h3_video(key, prompt)
                     print("  queued:", json.dumps(data)[:200])
                 except Exception as e:
                     print(f"  FAIL: {e}", file=sys.stderr)
                     time.sleep(2)
+                if args.queue_delay:
+                    time.sleep(args.queue_delay)
 
-    # ask server to reindex if up
-    try:
-        req = urllib.request.Request(f"{API}/api/search/reindex", method="POST")
-        urllib.request.urlopen(req, timeout=10).read()
-        print("reindex requested")
-    except Exception as e:
-        print("reindex skip:", e)
+    if not args.dry_run:
+        request_reindex(reindex_key)
 
 
 if __name__ == "__main__":

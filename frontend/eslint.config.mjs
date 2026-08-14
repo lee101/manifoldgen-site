@@ -1,21 +1,40 @@
-import { FlatCompat } from "@eslint/eslintrc";
-import { defineConfig, globalIgnores } from "eslint/config";
+import tsParser from '@typescript-eslint/parser';
+import tsPlugin from '@typescript-eslint/eslint-plugin';
+import nextPlugin from '@next/eslint-plugin-next';
+import reactHooks from 'eslint-plugin-react-hooks';
+import importPlugin from 'eslint-plugin-import';
 
-const compat = new FlatCompat({ baseDirectory: import.meta.dirname });
-
-export default defineConfig([
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+export default [
   {
-    files: ["**/*.js", "**/*.cjs"],
-    rules: { "@typescript-eslint/no-require-imports": "off" },
+    ignores: [
+      '.next/**',
+      '.next-dev/**',
+      '.next-long-video/**',
+      '.next-*/**',
+      '.next-playwright/**',
+      'out/**',
+      'node_modules/**',
+      'test-results/**',
+    ],
   },
-  globalIgnores([
-    ".next/**",
-    ".next-dev/**",
-    ".next-playwright/**",
-    "out/**",
-    "playwright-report/**",
-    "test-results/**",
-    "next-env.d.ts",
-  ]),
-]);
+  {
+    files: ['**/*.{js,jsx,ts,tsx}'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+      '@next/next': nextPlugin,
+      'react-hooks': reactHooks,
+      import: importPlugin,
+    },
+    rules: {
+      'no-unused-vars': 'off',
+    },
+  },
+];

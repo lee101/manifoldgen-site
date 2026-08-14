@@ -580,6 +580,7 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 		jsonError(ctx, http.StatusBadGateway, "video service did not return a job")
 		return
 	}
+	scheduleH3ScaleToZero(route.RunpodEndpointID)
 	job, err := dbConn.CreateVideoJobForService(user.ID, "runpod:"+route.RunpodEndpointID+":"+queued.ID, h3JobService(req), req.Prompt)
 	if err != nil {
 		log.Printf("[video] persist hosted generation job failed: %v", err)
@@ -1056,7 +1057,6 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 		return
 	}
-	defer scheduleH3ScaleToZero(endpointID)
 	variant := h3NormalVariant
 	if len(job.Result) > 0 {
 		var persisted map[string]interface{}
@@ -1539,7 +1539,7 @@ func handleRetryVideoJob(ctx *fasthttp.RequestCtx, jobID string) {
 		return
 	}
 	status := strings.ToLower(strings.TrimSpace(job.Status))
-	if status != "failed" && status != "error" && status != "cancelled" && status != "canceled" {
+	if job.Settled || (status != "failed" && status != "error" && status != "cancelled" && status != "canceled") {
 		jsonError(ctx, http.StatusConflict, "only failed generations can be retried")
 		return
 	}

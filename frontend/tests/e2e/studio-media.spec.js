@@ -310,7 +310,6 @@ test('homepage gallery art imports through the same-origin gallery endpoint', as
   await expect(page.getByTestId('studio-panel').getByRole('button', { name: /Homepage art\.png/ })).toBeVisible();
   expect(proxyRequest).toBe(true);
 });
-
 test('an account project restores its R2 media on a device without a local copy', async ({ page }) => {
   const projectID = '7cd844da-0b82-48c2-a8b2-2c20107b4cb0';
   const assetID = '923ef911-cf5f-446f-9a21-da355553b5fc';
@@ -1076,7 +1075,6 @@ test('a gallery image handoff loads through the same-origin proxy and fills the 
   expect(box.width).toBeGreaterThan(expectedSize - 3);
   expect(box.height).toBeGreaterThan(expectedSize - 3);
 });
-
 test('multiple PNGs export the complete slideshow as a local WebM video', async ({ page }) => {
   test.setTimeout(120_000);
   await installMocks(page);

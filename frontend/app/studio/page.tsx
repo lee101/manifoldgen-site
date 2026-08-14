@@ -241,7 +241,8 @@ function CatalogAudioCard({
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const duration = Math.max(.01, asset.duration || audioRef.current?.duration || 0);
+  const [decodedDuration, setDecodedDuration] = useState(0);
+  const duration = Math.max(.01, decodedDuration || asset.duration || 0);
   const waveform = useMemo(() => catalogWaveform(`${asset.id}:${asset.title}`), [asset.id, asset.title]);
   const progress = Math.max(0, Math.min(1, currentTime / duration));
   const previewURL = asset.preview_url || asset.url;
@@ -262,6 +263,12 @@ function CatalogAudioCard({
     const audio = audioRef.current;
     if (!audio) return;
     window.dispatchEvent(new CustomEvent('manifold:audio-preview', { detail: String(asset.id) }));
+    // Catalog files occasionally carry unusual playback defaults in the browser.
+    // Previews should always start audible and at their native speed.
+    audio.muted = false;
+    audio.volume = 1;
+    audio.defaultPlaybackRate = 1;
+    audio.playbackRate = 1;
     void audio.play().catch(() => setPlaying(false));
   };
 
@@ -292,7 +299,11 @@ function CatalogAudioCard({
       ref={audioRef}
       src={previewURL}
       preload="metadata"
-      onLoadedMetadata={(event) => setCurrentTime(Math.min(currentTime, event.currentTarget.duration || duration))}
+      onLoadedMetadata={(event) => {
+        const nativeDuration = event.currentTarget.duration;
+        if (Number.isFinite(nativeDuration) && nativeDuration > 0) setDecodedDuration(nativeDuration);
+        setCurrentTime((time) => Math.min(time, nativeDuration || duration));
+      }}
       onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
       onPlay={() => setPlaying(true)}
       onPause={() => setPlaying(false)}
@@ -302,7 +313,7 @@ function CatalogAudioCard({
       {playing ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
     </button>
     <div className={styles.catalogAudioBody}>
-      <div className={styles.catalogAudioTitle}><b>{asset.title}</b><span>{formatTime(currentTime).slice(3)} / {formatTime(duration).slice(3)}</span></div>
+      <div className={styles.catalogAudioTitle}><b>{asset.title}</b></div>
       <div data-testid={`studio-audio-waveform-${asset.id}`} className={styles.catalogWaveform} title="Drag the handle to preview any part">
         <div className={styles.catalogWaveformBars} aria-hidden="true">{waveform.map((height, index) => <i key={index} style={{ height: `${height}%`, opacity: index / waveform.length <= progress ? 1 : .32 }} />)}</div>
         <input
@@ -337,14 +348,37 @@ type RestyleReference = {
 type StudioTextStyle = {
   content: string;
   fontSize: number;
-  fontFamily: 'Inter' | 'Arial' | 'Georgia' | 'Courier New' | 'Playfair Display';
+  fontFamily: string;
   fontWeight: 400 | 600 | 800;
   color: string;
   align: 'left' | 'center' | 'right';
 };
 
-const STUDIO_FONTS: StudioTextStyle['fontFamily'][] = ['Inter', 'Arial', 'Georgia', 'Courier New', 'Playfair Display'];
+const STUDIO_FONTS = [
+  { name: 'DM Sans', category: 'Clean sans', stack: 'var(--font-body), sans-serif' },
+  { name: 'Space Grotesk', category: 'Modern sans', stack: 'var(--font-space-grotesk), sans-serif' },
+  { name: 'Syne', category: 'Display', stack: 'var(--font-display), sans-serif' },
+  { name: 'Bebas Neue', category: 'Condensed display', stack: 'var(--font-bebas), Impact, sans-serif' },
+  { name: 'Playfair Display', category: 'Editorial serif', stack: 'var(--font-playfair), Georgia, serif' },
+  { name: 'Cormorant Garamond', category: 'Elegant serif', stack: 'var(--font-cormorant), Georgia, serif' },
+  { name: 'IBM Plex Mono', category: 'Modern mono', stack: 'var(--font-ibm-plex-mono), monospace' },
+  { name: 'Inter', category: 'Modern sans', stack: 'Inter, var(--font-body), sans-serif' },
+  { name: 'Arial', category: 'Clean sans', stack: 'Arial, Helvetica, sans-serif' },
+  { name: 'Trebuchet MS', category: 'Humanist sans', stack: '"Trebuchet MS", Arial, sans-serif' },
+  { name: 'Verdana', category: 'Clean sans', stack: 'Verdana, Geneva, sans-serif' },
+  { name: 'Impact', category: 'Bold display', stack: 'Impact, Haettenschweiler, sans-serif' },
+  { name: 'Georgia', category: 'Editorial serif', stack: 'Georgia, "Times New Roman", serif' },
+  { name: 'Times New Roman', category: 'Classic serif', stack: '"Times New Roman", Times, serif' },
+  { name: 'Courier New', category: 'Monospace', stack: '"Courier New", Courier, monospace' },
+] as const;
 
+function studioFontStack(name: string) {
+  const configured = STUDIO_FONTS.find((font) => font.name === name)?.stack;
+  if (!configured) return `${JSON.stringify(name)}, sans-serif`;
+  if (typeof window === 'undefined' || !configured.includes('var(')) return configured;
+  return configured.replace(/var\((--[^)]+)\)/g, (_, variable: string) =>
+    getComputedStyle(document.documentElement).getPropertyValue(variable).trim() || 'sans-serif');
+}
 type StudioImageHit = {
   id: string;
   prompt: string;
@@ -354,6 +388,18 @@ type StudioImageHit = {
   thumb_path?: string;
   model?: string;
   similarity?: number;
+};
+
+type LibraryMediaContext = {
+  url: string;
+  thumbURL?: string;
+  name: string;
+  prompt: string;
+  kind: 'image' | 'video';
+  // Project images retain the original file so image-to-image requests can be
+  // sent as a compact WebP rather than relying on a browser-only blob URL.
+  file?: File;
+  cloudURL?: string;
 };
 
 type StudioVideoHit = {
@@ -833,6 +879,7 @@ function base64File(value: string, contentType: string, name: string) {
 function generatedImageItems(payload: unknown): { url?: string; base64?: string }[] {
   if (!payload || typeof payload !== 'object') return [];
   const data = payload as Record<string, unknown>;
+  if (data.result) return generatedImageItems(data.result);
   const collection = Array.isArray(data.images) ? data.images : Array.isArray(data.data) ? data.data : null;
   if (collection) {
     return collection.flatMap((item) => generatedImageItems(item));
@@ -840,6 +887,31 @@ function generatedImageItems(payload: unknown): { url?: string; base64?: string 
   const url = [data.image_url, data.url, data.path].find((value): value is string => typeof value === 'string' && Boolean(value.trim()));
   const base64 = [data.image_base64, data.b64_json].find((value): value is string => typeof value === 'string' && Boolean(value.trim()));
   return url || base64 ? [{ url, base64 }] : [];
+}
+
+function isManifoldImageURL(value: string) {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === 'manifoldgenstatic.manifoldgen.com' || host.endsWith('.r2.dev') || host.endsWith('.r2.cloudflarestorage.com');
+  } catch {
+    return false;
+  }
+}
+
+async function webpFileAtQuality85(file: File) {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Image encoding is unavailable');
+    context.drawImage(bitmap, 0, 0);
+    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Could not encode the source image')), 'image/webp', 0.85));
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'source'}.webp`, { type: 'image/webp' });
+  } finally {
+    bitmap.close();
+  }
 }
 
 function galleryImageURL(value?: string) {
@@ -884,7 +956,9 @@ async function renderTextFile(style: StudioTextStyle) {
   context.fillStyle = style.color;
   context.textAlign = style.align;
   context.textBaseline = 'middle';
-  context.font = `${style.fontWeight} ${style.fontSize}px ${JSON.stringify(style.fontFamily)}, sans-serif`;
+  const fontStack = studioFontStack(style.fontFamily);
+  await document.fonts?.load(`${style.fontWeight} ${style.fontSize}px ${fontStack}`).catch(() => undefined);
+  context.font = `${style.fontWeight} ${style.fontSize}px ${fontStack}`;
   const maxWidth = 1600;
   const words = style.content.trim().split(/\s+/).filter(Boolean);
   const lines: string[] = [];
@@ -1019,6 +1093,7 @@ async function extractAudioClip(asset: StudioAsset) {
 }
 
 export default function StudioPage() {
+  const [isMacOS, setIsMacOS] = useState(false);
   const [assets, setAssets] = useState<StudioAsset[]>([]);
   const [projectID, setProjectID] = useState('');
   const [projectName, setProjectName] = useState('Untitled project');
@@ -1027,7 +1102,8 @@ export default function StudioPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([]);
   const [saveStatus, setSaveStatus] = useState('Loading project…');
-  const [syncRetry, setSyncRetry] = useState(0);
+  const [uploadRetry, setUploadRetry] = useState(0);
+  const [saveRetry, setSaveRetry] = useState(0);
   const [selectedID, setSelectedID] = useState('');
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
   const [editHistory, setEditHistory] = useState<EditorHistory>({ undo: [], redo: [] });
@@ -1044,7 +1120,8 @@ export default function StudioPage() {
   const [imageEngine, setImageEngine] = useState<ImageGenerationEngine>('images3');
   const [imageAspect, setImageAspect] = useState<H3Aspect>('1:1');
   const [imageCount, setImageCount] = useState<1 | 4>(4);
-  const [textDraft, setTextDraft] = useState<StudioTextStyle>({ content: 'Your story starts here', fontSize: 112, fontFamily: 'Inter', fontWeight: 800, color: '#ffffff', align: 'center' });
+  const [textDraft, setTextDraft] = useState<StudioTextStyle>({ content: 'Your story starts here', fontSize: 112, fontFamily: 'DM Sans', fontWeight: 800, color: '#ffffff', align: 'center' });
+  const [editingTextID, setEditingTextID] = useState('');
   const [fontSearch, setFontSearch] = useState('');
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [extendRates, setExtendRates] = useState({ input: 0.012, output: 0.084 });
@@ -1057,6 +1134,8 @@ export default function StudioPage() {
   const [stageGuides, setStageGuides] = useState({ horizontal: false, vertical: false });
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [timelineDropTime, setTimelineDropTime] = useState<number | null>(null);
+  const [timelineHoverTime, setTimelineHoverTime] = useState<number | null>(null);
+  const [timelineViewportWidth, setTimelineViewportWidth] = useState(320);
   const [timelineMarquee, setTimelineMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [activeTimelineClip, setActiveTimelineClip] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -1098,7 +1177,8 @@ export default function StudioPage() {
   const [restyleDuration, setRestyleDuration] = useState(10);
   const [restyleSeed, setRestyleSeed] = useState(0);
   const [restyleReferences, setRestyleReferences] = useState<RestyleReference[]>([]);
-  const [contextMenu, setContextMenu] = useState<{ assetID?: string; prompt?: string; promptKind?: 'image' | 'video' | 'music' | 'sfx' | 'speech'; x: number; y: number } | null>(null);
+  const [imageStyleTransferSource, setImageStyleTransferSource] = useState<LibraryMediaContext | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ assetID?: string; prompt?: string; promptKind?: 'image' | 'video' | 'music' | 'sfx' | 'speech'; remoteMedia?: LibraryMediaContext; x: number; y: number } | null>(null);
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const [audioMode, setAudioMode] = useState<'music' | 'sfx' | 'speech'>('music');
   const [audioPrompt, setAudioPrompt] = useState('Dreamlike ambient score with glass harmonics, soft pulse, and a seamless ending');
@@ -1133,10 +1213,15 @@ export default function StudioPage() {
   const stageRef = useRef<HTMLDivElement>(null);
   const stageDragRef = useRef<StageDrag | null>(null);
   const uploadInFlightRef = useRef(new Set<File>());
+  const uploadFailuresRef = useRef(0);
+  const saveFailuresRef = useRef(0);
+  const uploadRetryTimerRef = useRef(0);
+  const saveRetryTimerRef = useRef(0);
   const projectSaveSequenceRef = useRef(0);
   const projectPickerRef = useRef<HTMLDivElement>(null);
   const editHistoryRef = useRef<EditorHistory>({ undo: [], redo: [] });
   const historyMergeRef = useRef<{ key: string; at: number } | null>(null);
+  const textRenderRevisionRef = useRef(new Map<string, number>());
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
 
   const startBackgroundActivity = useCallback((label: string) => {
@@ -1183,6 +1268,16 @@ export default function StudioPage() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const timeline = timelineContentRef.current;
+    if (!timeline) return;
+    const updateWidth = () => setTimelineViewportWidth(timeline.clientWidth);
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(timeline);
+    updateWidth();
+    return () => observer.disconnect();
+  }, []);
+
   const selected = assets.find((asset) => asset.id === selectedID) || null;
   const selectedAssets = useMemo(() => assets.filter((asset) => selectedIDs.includes(asset.id)), [assets, selectedIDs]);
   const stageVisualAssets = useMemo(() => assets
@@ -1202,8 +1297,8 @@ export default function StudioPage() {
   const visibleVisualTrackCount = Math.min(3, visualTrackCount);
   const pixelsPerSecond = 64 * timelineZoom;
   const rulerStep = pixelsPerSecond < 42 ? 5 : pixelsPerSecond < 82 ? 2 : 1;
-  const rulerDuration = Math.max(rulerStep, Math.ceil(timelineDuration / rulerStep) * rulerStep);
-  const timelineWidth = Math.max(320, rulerDuration * pixelsPerSecond + 48);
+  const rulerDuration = Math.max(rulerStep, Math.ceil(Math.max(timelineDuration, timelineViewportWidth / pixelsPerSecond) / rulerStep) * rulerStep);
+  const timelineWidth = Math.max(timelineViewportWidth, rulerDuration * pixelsPerSecond);
   const customerExtendUSD = useMemo(() => Math.ceil(((selected?.duration || 0) * extendRates.input + extendDuration * extendRates.output) * 100 - 1e-8) / 100, [selected?.duration, extendDuration, extendRates]);
   const customerUpscaleUSD = useMemo(() => {
     if (!selected || selected.kind !== 'video') return upscaleRates.base;
@@ -1463,26 +1558,25 @@ export default function StudioPage() {
       try {
         const response = await fetch('/api/video-jobs', { headers: authHeaders(user.api_key, false), signal: controller.signal });
         const data = await parseJSONResponse<{ jobs?: GenerationJob[] }>(response, 'Could not load generations');
+        // The list endpoint is the durable source of truth and also resumes
+        // stale provider jobs. Refresh at most four active rows per pass so a
+        // large history cannot fan out into an unbounded request burst.
         const listed = data.jobs || [];
-        const refreshed = new Map<string, GenerationJob>();
-        for (let index = 0; index < listed.length; index += 4) {
-          const batch = listed.slice(index, index + 4);
-          const statuses = await Promise.allSettled(batch.map(async (job) => {
-            if (!isActiveGeneration(job)) return job;
-            const statusResponse = await fetch(`/api/video-jobs/${encodeURIComponent(job.job_id)}`, {
-              headers: authHeaders(user.api_key, false),
-              signal: controller.signal,
-            });
-            const statusData = await parseJSONResponse<{ job?: GenerationJob }>(statusResponse, 'Could not refresh generation');
-            return statusData.job || job;
-          }));
-          statuses.forEach((status, offset) => refreshed.set(batch[offset].job_id, status.status === 'fulfilled' ? status.value : batch[offset]));
-        }
-        const next = listed.map((job) => refreshed.get(job.job_id) || job);
+        const active = listed.filter(isActiveGeneration).slice(0, 4);
+        const refreshed = await Promise.allSettled(active.map(async (job) => {
+          const statusResponse = await fetch(`/api/video-jobs/${encodeURIComponent(job.job_id)}`, {
+            headers: authHeaders(user.api_key, false),
+            signal: controller.signal,
+          });
+          const statusData = await parseJSONResponse<{ job?: GenerationJob }>(statusResponse, 'Could not refresh generation');
+          return statusData.job || job;
+        }));
+        const byID = new Map(active.map((job, index) => [job.job_id, refreshed[index].status === 'fulfilled' ? refreshed[index].value : job]));
+        const next = listed.map((job) => byID.get(job.job_id) || job);
         failures = 0;
         if (!cancelled) setGenerationJobs((current) => mergeGenerationJobs(current, next));
         const hasActive = next.some(isActiveGeneration);
-        schedule(document.hidden ? 30_000 : hasActive ? 2_500 : 12_000);
+        schedule(document.hidden ? 30_000 : hasActive ? 5_000 : 15_000);
       } catch (reason) {
         if (!cancelled && !(reason instanceof DOMException && reason.name === 'AbortError')) {
           failures += 1;
@@ -1614,6 +1708,21 @@ export default function StudioPage() {
   }, [applyProject, fetchCloudProject, refreshCloudProjects]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('generate');
+    const prompt = params.get('prompt')?.trim();
+    if (mode === 'video') {
+      if (prompt) setVideoGeneratePrompt(prompt.slice(0, 6000));
+      if (params.get('image_url')) setVideoGenerateUseSelected(true);
+      setVideoGenerateQueueStatus('');
+      setVideoGenerateOpen(true);
+    } else if (mode === 'image') {
+      if (prompt) setImagePrompt(prompt.slice(0, 2000));
+      setImageGenerateOpen(true);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!projectReady || !projectID || !user) return;
     const retainedAssets = [
       ...assets,
@@ -1647,17 +1756,26 @@ export default function StudioPage() {
             undo: current.undo.map((state) => ({ ...state, assets: state.assets.map((item) => item.mediaID === asset.mediaID && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
             redo: current.redo.map((state) => ({ ...state, assets: state.assets.map((item) => item.mediaID === asset.mediaID && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
           }));
+          return true;
         } catch (reason) {
-          setSaveStatus('Cloud upload will retry');
           setError(reason instanceof Error ? reason.message : `Could not upload ${asset.name}`);
-          window.setTimeout(() => setSyncRetry((value) => value + 1), 5000);
+          return false;
         } finally {
           uploadInFlightRef.current.delete(asset.file);
-          // If a newer revision was skipped while this ID was in flight, give
-          // the uploader another pass even when no other state changed.
-          setSyncRetry((value) => value + 1);
         }
-      }));
+      })).then((results) => {
+        if (results.every(Boolean)) {
+          uploadFailuresRef.current = 0;
+          window.clearTimeout(uploadRetryTimerRef.current);
+          // Successful state updates naturally schedule the next pending batch.
+          return;
+        }
+        uploadFailuresRef.current += 1;
+        const delay = Math.min(60_000, 5_000 * (2 ** (uploadFailuresRef.current - 1)));
+        setSaveStatus(`Cloud upload will retry in ${Math.round(delay / 1000)}s`);
+        window.clearTimeout(uploadRetryTimerRef.current);
+        uploadRetryTimerRef.current = window.setTimeout(() => setUploadRetry((value) => value + 1), delay);
+      });
     };
     const idleWindow = window as typeof window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
     const idleID = idleWindow.requestIdleCallback?.(start, { timeout: 1000 });
@@ -1666,10 +1784,11 @@ export default function StudioPage() {
       if (!started && idleID !== undefined) idleWindow.cancelIdleCallback?.(idleID);
       if (!started && timerID !== undefined) window.clearTimeout(timerID);
     };
-  }, [assets, editHistory, projectID, projectReady, replaceEditHistory, syncRetry, user]);
+  }, [assets, editHistory, projectID, projectReady, replaceEditHistory, uploadRetry, user]);
 
   useEffect(() => {
     if (!projectReady || !projectID) return;
+    window.clearTimeout(saveRetryTimerRef.current);
     const sequence = ++projectSaveSequenceRef.current;
     setSaveStatus(user ? (assets.some((asset) => !asset.cloudURL) ? 'Uploading assets…' : 'Saving to cloud…') : 'Saving locally…');
     const timer = window.setTimeout(() => {
@@ -1693,17 +1812,21 @@ export default function StudioPage() {
         const data = await parseJSONResponse<{ project: CloudProject }>(response, 'Could not save project to the cloud');
         if (sequence !== projectSaveSequenceRef.current) return;
         setCloudProjects((current) => [data.project, ...current.filter((project) => project.id !== data.project.id)]);
+        saveFailuresRef.current = 0;
+        window.clearTimeout(saveRetryTimerRef.current);
         setSaveStatus(assets.some((asset) => !asset.cloudURL) ? 'Uploading assets…' : 'Saved to cloud');
       }).catch((reason) => {
         if (sequence === projectSaveSequenceRef.current) {
-          setSaveStatus(user ? 'Cloud save will retry' : 'Local save failed');
+          saveFailuresRef.current += 1;
+          const delay = Math.min(60_000, 5_000 * (2 ** (saveFailuresRef.current - 1)));
+          setSaveStatus(user ? `Cloud save will retry in ${Math.round(delay / 1000)}s` : 'Local save failed');
           setError(reason instanceof Error ? reason.message : 'Could not save project');
-          window.setTimeout(() => setSyncRetry((value) => value + 1), 5000);
+          if (user) saveRetryTimerRef.current = window.setTimeout(() => setSaveRetry((value) => value + 1), delay);
         }
       });
     }, 650);
     return () => window.clearTimeout(timer);
-  }, [assets, editHistory, projectID, projectName, projectReady, selectedID, syncRetry, user]);
+  }, [assets, editHistory, projectID, projectName, projectReady, saveRetry, selectedID, user]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1937,6 +2060,7 @@ export default function StudioPage() {
 
   async function addDiscoveredMedia(url: string, prompt: string, kind: 'image' | 'video') {
     if (!url) return;
+    setContextMenu(null);
     setBusy('import-discovery');
     setError('');
     try {
@@ -1981,17 +2105,37 @@ export default function StudioPage() {
     if (!user) { setError('Sign in to generate images'); return; }
     const prompt = imagePrompt.trim();
     if (!prompt) return;
-    const activityID = startBackgroundActivity(`Creating ${imageCount} image${imageCount === 1 ? '' : 's'}`);
+    const styleSource = imageStyleTransferSource;
+    const activityID = startBackgroundActivity(styleSource ? 'Styling image' : `Creating ${imageCount} image${imageCount === 1 ? '' : 's'}`);
     setError('');
-    setNotice('Images started');
+    setNotice(styleSource ? 'Style transfer started' : 'Images started');
     setMediaBrowserMode('images');
     setMediaSearch(prompt);
     const discovery = searchStudioMedia('images', prompt);
     try {
       const [width, height] = h3Dimensions(imageAspect, 'balanced');
+      let imageURL = '';
+      if (styleSource) {
+        // Avoid a second upload for images already served from our R2 bucket.
+        // Everything else is made into a predictable q85 WebP before upload;
+        // blob: URLs are not reachable by an image model.
+        imageURL = styleSource.cloudURL || (isManifoldImageURL(styleSource.url) ? styleSource.url : '');
+        if (!imageURL) {
+          let sourceFile = styleSource.file;
+          if (!sourceFile) {
+            const sourceResponse = await fetch(styleSource.url);
+            if (!sourceResponse.ok) throw new Error('Could not download the source image');
+            const sourceBlob = await sourceResponse.blob();
+            sourceFile = new File([sourceBlob], styleSource.name || 'source-image', { type: sourceBlob.type || 'image/*' });
+          }
+          imageURL = await uploadPublic(await webpFileAtQuality85(sourceFile));
+        }
+      }
       const response = await fetch('/api/service', {
         method: 'POST', headers: authHeaders(user.api_key),
-        body: JSON.stringify({ service: 'zimage', prompt, width, height, n: imageCount, num_images: imageCount, image_backend: imageEngine }),
+        body: JSON.stringify(styleSource
+          ? { service: 'image_edit', prompt, width, height, n: 1, num_images: 1, image_url: imageURL, model: 'gpt-image-2' }
+          : { service: 'zimage', prompt, width, height, n: imageCount, num_images: imageCount, image_backend: imageEngine }),
       });
       const data = await parseJSONResponse<unknown>(response, 'Image generation failed');
       const generated = generatedImageItems(data).slice(0, imageCount);
@@ -2000,15 +2144,17 @@ export default function StudioPage() {
       for (const [index, item] of generated.entries()) {
         if (item.base64) {
           const file = base64File(item.base64.replace(/^data:[^,]+,/, ''), 'image/webp', `generated-${index + 1}.webp`);
-          imported.push(await addGeneratedFile(file, 'image', `${imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
+          imported.push(await addGeneratedFile(file, 'image', `${styleSource ? 'GPT Image 2 · Style transfer' : imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
         } else if (item.url) {
-          imported.push(await addRemoteMedia(item.url, `generated-${index + 1}`, 'image', `${imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
+          imported.push(await addRemoteMedia(item.url, `generated-${index + 1}`, 'image', `${styleSource ? 'GPT Image 2 · Style transfer' : imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
         }
       }
       if (!imported.length) throw new Error('Generated images could not be imported');
       const refreshed = await refreshUser(user.api_key).catch(() => null);
       if (refreshed) { setUser(refreshed); saveUser(refreshed); }
       setNotice(`${imported.length} image${imported.length === 1 ? '' : 's'} added`);
+      setImageGenerateOpen(false);
+      setImageStyleTransferSource(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Image generation failed');
     } finally {
@@ -2090,11 +2236,11 @@ export default function StudioPage() {
     setContextMenu({ assetID: asset?.id, x: event.clientX, y: event.clientY });
   }
 
-  function openPromptContextMenu(event: ReactMouseEvent<HTMLElement>, promptKind: 'image' | 'video' | 'music' | 'sfx' | 'speech', prompt: string) {
+  function openPromptContextMenu(event: ReactMouseEvent<HTMLElement>, promptKind: 'image' | 'video' | 'music' | 'sfx' | 'speech', prompt: string, remoteMedia?: LibraryMediaContext) {
     event.preventDefault();
     event.stopPropagation();
     setGenerationContextMenu(null);
-    setContextMenu({ prompt, promptKind, x: event.clientX, y: event.clientY });
+    setContextMenu({ prompt, promptKind, remoteMedia, x: event.clientX, y: event.clientY });
   }
 
   function openPromptGenerator(promptKind: 'image' | 'video' | 'music' | 'sfx' | 'speech', prompt: string) {
@@ -2149,19 +2295,27 @@ export default function StudioPage() {
     setContextMenu(null);
   }
 
+  function openImageStyleTransfer(source: LibraryMediaContext) {
+    setImageStyleTransferSource(source);
+    setImagePrompt(`${source.prompt ? `${source.prompt}\n\n` : ''}Restyle this image while preserving its subject, composition, and framing. New visual style: `);
+    setImageCount(1);
+    setImageGenerateOpen(true);
+    setContextMenu(null);
+  }
+
   async function addGeneratedFile(file: File, kind: MediaKind, attribution?: string, text?: StudioTextStyle, timelinePlacement?: number) {
     const metadata = await readDimensions(file, kind);
     const visualEnd = assets.filter((item) => item.kind !== 'audio').reduce((end, item) => Math.max(end, clipEnd(item)), 0);
     const id = uid();
     const asset: StudioAsset = {
       id, mediaID: id, name: file.name, kind, file, url: URL.createObjectURL(file), ...metadata,
-      trimStart: 0, trimEnd: metadata.duration, timelineStart: kind === 'audio' ? (timelinePlacement ?? playhead) : visualEnd, volume: 1, fadeIn: 0, fadeOut: 0,
+      trimStart: 0, trimEnd: metadata.duration, timelineStart: timelinePlacement ?? (kind === 'audio' ? playhead : visualEnd), volume: 1, fadeIn: 0, fadeOut: 0,
       visualTrack: 0,
       stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0,
       attribution, text, adjustments: { ...DEFAULT_ADJUSTMENTS },
     };
     rememberEdit();
-    setAssets((current) => [...current, asset]);
+    setAssets((current) => stackOverlappingVisuals([...current, asset]));
     selectOnly(asset.id);
     setPlayhead(asset.timelineStart);
     return asset;
@@ -2171,7 +2325,8 @@ export default function StudioPage() {
     setError('');
     try {
       const file = await renderTextFile(style);
-      await addGeneratedFile(file, 'image', 'Editable text', { ...style });
+      const asset = await addGeneratedFile(file, 'image', 'Editable text', { ...style }, playhead);
+      setEditingTextID(asset.id);
       setNotice('Text added to the timeline');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not add text');
@@ -2180,13 +2335,18 @@ export default function StudioPage() {
 
   async function updateSelectedText() {
     if (!selected?.text || !textDraft.content.trim()) return;
+    const assetID = selected.id;
+    const draft = { ...textDraft };
+    const revision = (textRenderRevisionRef.current.get(assetID) || 0) + 1;
+    textRenderRevisionRef.current.set(assetID, revision);
     setError('');
     try {
-      const file = await renderTextFile(textDraft);
+      const file = await renderTextFile(draft);
+      if (textRenderRevisionRef.current.get(assetID) !== revision) return;
       rememberEdit();
       const url = URL.createObjectURL(file);
-      setAssets((current) => current.map((asset) => asset.id === selected.id ? {
-        ...asset, mediaID: uid(), name: file.name, file, url, width: 1920, height: 1080, text: { ...textDraft }, cloudURL: undefined, objectKey: undefined,
+      setAssets((current) => current.map((asset) => asset.id === assetID ? {
+        ...asset, mediaID: uid(), name: file.name, file, url, width: 1920, height: 1080, text: draft, cloudURL: undefined, objectKey: undefined,
       } : asset));
       setNotice('Text updated');
     } catch (reason) {
@@ -2369,7 +2529,6 @@ export default function StudioPage() {
       } else {
         selectOnly(asset.id);
       }
-      seekTimeline(timelineTimeAt(event.clientX), asset.id);
     } else {
       selectOnly(asset.id);
     }
@@ -2436,6 +2595,7 @@ export default function StudioPage() {
   }
 
   function moveTimelinePointer(event: ReactPointerEvent<HTMLElement>) {
+    setTimelineHoverTime(timelineTimeAt(event.clientX, pixelsPerSecond, rulerDuration));
     const drag = timelineDragRef.current;
     if (!drag || drag.pointerID !== event.pointerId) return;
     if (drag.mode === 'marquee') {
@@ -2511,7 +2671,10 @@ export default function StudioPage() {
     if (drag.didMove && drag.historySnapshot && ['move', 'trim-left', 'trim-right'].includes(drag.mode)) {
       rememberSnapshot(drag.historySnapshot);
     }
-    if (drag.toggleOnClick && !drag.didMove && drag.targetID) selectClip(drag.targetID, true);
+    if (!drag.didMove && drag.targetID) {
+      if (drag.toggleOnClick) selectClip(drag.targetID, true);
+      else seekTimeline(timelineTimeAt(event.clientX, drag.pixelsPerSecond));
+    }
     if (drag.mode === 'move' && drag.didMove && drag.trackDelta) {
       setNotice(`Moved ${drag.originals.size === 1 ? 'clip' : `${drag.originals.size} clips`} ${Math.abs(drag.trackDelta)} layer${Math.abs(drag.trackDelta) === 1 ? '' : 's'} ${drag.trackDelta > 0 ? 'up' : 'down'}`);
     }
@@ -2674,6 +2837,10 @@ export default function StudioPage() {
       setPlaying(false);
     }
   }
+
+  useEffect(() => {
+    setIsMacOS(/Mac|iPhone|iPad|iPod/.test(navigator.platform));
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2962,12 +3129,11 @@ export default function StudioPage() {
     }
   }
 
-  async function removeBackground() {
-    if (!selected || selected.kind !== 'image') return;
+  async function removeBackgroundFromFile(sourceFile: File, sourceName: string, sourceAsset?: StudioAsset) {
     const activityID = startBackgroundActivity('Removing background');
     setError(''); setNotice('Background removal started');
     try {
-      const imageURL = await uploadPublic(selected.file);
+      const imageURL = await uploadPublic(sourceFile);
       setNotice('Removing background…');
       const response = await fetch('/api/studio/remove-background', {
         method: 'POST', headers: authHeaders(user?.api_key || ''), body: JSON.stringify({ image_url: imageURL }),
@@ -2976,22 +3142,48 @@ export default function StudioPage() {
       const url = data.image_url || data.data_url || resultURL(data);
       if (!url) throw new Error('Background removal returned no image');
       const blob = await fetch(url).then((item) => item.blob());
-      const file = new File([blob], `${selected.name.replace(/\.[^.]+$/, '')}-cutout.webp`, { type: blob.type || 'image/webp' });
-      const metadata = await readDimensions(file, 'image');
-      const id = uid();
-      const cutout: StudioAsset = { ...selected, id, mediaID: id, name: file.name, file, url: URL.createObjectURL(file), ...metadata, trimStart: 0, trimEnd: 5 };
-      rememberEdit();
-      setAssets((items) => [...items, cutout]);
-      selectOnly(cutout.id);
+      const file = new File([blob], `${sourceName.replace(/\.[^.]+$/, '')}-cutout.webp`, { type: blob.type || 'image/webp' });
+      if (sourceAsset) {
+        const metadata = await readDimensions(file, 'image');
+        const id = uid();
+        const cutout: StudioAsset = { ...sourceAsset, id, mediaID: id, name: file.name, file, url: URL.createObjectURL(file), ...metadata, trimStart: 0, trimEnd: 5 };
+        rememberEdit();
+        setAssets((items) => [...items, cutout]);
+        selectOnly(cutout.id);
+      } else {
+        await addGeneratedFile(file, 'image', 'Background removed');
+      }
       if (user && typeof data.credits_remain === 'number') {
         const next = { ...user, credits: data.credits_remain };
         setUser(next); saveUser(next);
       }
-      setNotice('Background removed · 1 credit');
+      setNotice(`Background removed · added to ${sourceAsset ? 'the timeline' : 'Media'} · 1 credit`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Background removal failed');
     } finally {
       finishBackgroundActivity(activityID);
+    }
+  }
+
+  async function removeBackground() {
+    if (!selected || selected.kind !== 'image') return;
+    setContextMenu(null);
+    await removeBackgroundFromFile(selected.file, selected.name, selected);
+  }
+
+  async function removeBackgroundFromLibrary(source: LibraryMediaContext) {
+    setContextMenu(null);
+    setBusy('remove-background');
+    try {
+      const response = await fetch(source.url);
+      if (!response.ok) throw new Error('Could not download this library image');
+      const blob = await response.blob();
+      const extension = blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'webp';
+      await removeBackgroundFromFile(new File([blob], `${source.name.replace(/\.[^.]+$/, '')}.${extension}`, { type: blob.type || 'image/webp' }), source.name);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not remove the image background');
+    } finally {
+      setBusy('');
     }
   }
 
@@ -3342,6 +3534,7 @@ export default function StudioPage() {
       next: VideoSample | null;
     };
     const visualStates: ExportVisualState[] = [];
+    let antiAliasRenderer: StudioRenderer | null = null;
     try {
       const format = exportFormatDetails(settings.format);
       const codec = format.codec;
@@ -3370,6 +3563,21 @@ export default function StudioPage() {
       workCanvas.height = height;
       const compositor = workCanvas.getContext('2d', { alpha: false, desynchronized: true });
       if (!compositor) throw new Error('This browser cannot start the timeline compositor');
+      compositor.imageSmoothingEnabled = true;
+      compositor.imageSmoothingQuality = 'high';
+
+      // Editable text starts as a crisp transparent PNG, but the 2D
+      // compositor has to resample it when it is rotated. A final, tiny FXAA
+      // pass repairs those diagonal glyph edges without changing ordinary
+      // photo/video exports or adding an export control users need to manage.
+      const needsTextAntiAlias = visualAssets.some((asset) => asset.text && Math.abs(asset.stageRotation % 90) > 0.01);
+      const exportCanvas = needsTextAntiAlias ? document.createElement('canvas') : workCanvas;
+      if (needsTextAntiAlias) {
+        exportCanvas.width = width;
+        exportCanvas.height = height;
+        antiAliasRenderer = new StudioRenderer(exportCanvas, { preserveDrawingBuffer: true });
+        antiAliasRenderer.resize(width, height);
+      }
 
       for (const asset of visualAssets) {
         const filteredCanvas = document.createElement('canvas');
@@ -3406,7 +3614,7 @@ export default function StudioPage() {
         format: settings.format.startsWith('webm-') ? new WebMOutputFormat() : new Mp4OutputFormat({ fastStart: 'in-memory' }),
         target,
       });
-      const videoSource = new CanvasSource(workCanvas, {
+      const videoSource = new CanvasSource(exportCanvas, {
         codec, quality, hardwareAcceleration,
         latencyMode: hardwareSupported ? 'quality' : 'realtime',
         contentHint: 'motion',
@@ -3462,6 +3670,7 @@ export default function StudioPage() {
           compositor.drawImage(state.rasterCanvas, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
           compositor.restore();
         }
+        if (antiAliasRenderer) antiAliasRenderer.draw(workCanvas, DEFAULT_ADJUSTMENTS, index, { fxaa: true });
         await videoSource.add(timestamp, Math.min(frameDuration, duration - timestamp), { keyFrame: index % (outputFPS * 2) === 0 });
         setExportProgress(Math.min(0.9, (index + 1) / frames * 0.9));
       }
@@ -3490,6 +3699,7 @@ export default function StudioPage() {
         state.renderer.destroy();
         state.input?.dispose();
       }
+      antiAliasRenderer?.destroy();
     }
   }
 
@@ -3536,6 +3746,8 @@ export default function StudioPage() {
     ? backgroundActivities[0].progress
     : busy === 'export' ? exportProgress : null;
 
+  const commandKeyLabel = isMacOS ? '⌘' : 'Ctrl';
+
   return (
     <main
       className={styles.studio}
@@ -3569,8 +3781,8 @@ export default function StudioPage() {
               <button className={styles.newProjectButton} onClick={newProject}><Plus size={13} /> New project</button>
               {user && <span className={styles.projectMenuLabel}>YOUR CLOUD PROJECTS</span>}
               {cloudProjects.map((project) => <button key={project.id} className={project.id === projectID ? styles.currentProject : ''} onClick={() => void openProject(project.id)}><span>{project.name}</span><small>{new Date(project.updated_at).toLocaleDateString()}</small></button>)}
-              {user && !cloudProjects.length && <small className={styles.noProjects}>This project will appear here after its first save.</small>}
-              {!user && <small className={styles.noProjects}>Sign in to sync projects and media across devices.</small>}
+              {user && !cloudProjects.length && <small className={styles.noProjects}>Projects appear after saving.</small>}
+              {!user && <small className={styles.noProjects}>Sign in to sync.</small>}
             </div>}
           </div>
         </div>
@@ -3593,7 +3805,7 @@ export default function StudioPage() {
       {menuOpen && <div className={styles.menuBackdrop} onMouseDown={(event) => { if (event.currentTarget === event.target) setMenuOpen(false); }}>
         <aside id="studio-navigation" className={styles.menuDrawer} aria-label="Manifold navigation" onMouseDown={(event) => event.stopPropagation()}>
           <div className={styles.menuHeader}>
-            <div><span className={styles.eyebrow}>MANIFOLDGEN</span><h2>Navigate</h2></div>
+            <Link href="/" className={styles.menuHome} onClick={() => setMenuOpen(false)}>MANIFOLDGEN</Link>
             <button type="button" className={styles.menuClose} aria-label="Close menu" onClick={() => setMenuOpen(false)}><X size={16} /></button>
           </div>
           <nav className={styles.menuNav}>
@@ -3616,13 +3828,14 @@ export default function StudioPage() {
       <div className={styles.workspace}>
         <aside className={styles.rail}>
           {toolItems.map(({ id, label, icon: Icon }) => <button data-testid={`studio-tool-${id}`} key={id} title={`Open ${label} tools`} className={tool === id ? styles.railActive : ''} onClick={() => { setTool(id); setMobilePanelOpen(tool !== id || !mobilePanelOpen); }}><Icon size={19} /><span>{label}</span></button>)}
+          <button data-testid="studio-content-library" title="Open content library" className={`${styles.railLibrary} ${tool === 'media' && mediaBrowserMode !== 'project' ? styles.railActive : ''}`} onClick={() => { setTool('media'); setMediaBrowserMode('videos'); setMobilePanelOpen(true); }}><Library size={19} /><span>Library</span></button>
           <div className={styles.railBottom}><button type="button" data-testid="studio-help" aria-haspopup="dialog" aria-expanded={helpOpen} title="Keyboard shortcuts (?)" onClick={() => setHelpOpen(true)}><CircleHelp size={18} /><span>Help</span></button></div>
         </aside>
 
-        <aside data-testid="studio-panel" className={`${styles.panel} ${mobilePanelOpen ? styles.panelOpen : ''}`}>
+        <aside data-testid="studio-panel" className={`${styles.panel} ${tool === 'media' && mediaBrowserMode !== 'project' ? styles.libraryPanel : ''} ${mobilePanelOpen ? styles.panelOpen : ''}`}>
           <button className={styles.panelClose} aria-label="Close tools" onClick={() => setMobilePanelOpen(false)}><X size={16} /></button>
           {tool === 'media' && <>
-            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>CREATE + DISCOVER</span><h2>Media</h2></div>{mediaBrowserMode === 'project' && <button className={styles.smallIcon} title="Add media" onClick={() => fileInputRef.current?.click()}><Plus size={15} /></button>}</div>
+            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>CREATE + DISCOVER</span><h2>Media</h2></div></div>
             <div className={styles.mediaTabs} role="tablist" aria-label="Media library">
               {([['project', 'Project'], ['videos', 'Videos'], ['images', 'Images'], ['music', 'Music'], ['tools', 'Tools']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={mediaBrowserMode === id} data-testid={`studio-media-${id}`} className={mediaBrowserMode === id ? styles.mediaTabActive : ''} onClick={() => setMediaBrowserMode(id)}>{label}</button>)}
             </div>
@@ -3640,8 +3853,8 @@ export default function StudioPage() {
                 </article>)}
               </div>
             {user && <section className={styles.generationLibrary}>
-              <div className={styles.generationHeader}><span>YOUR GENERATIONS</span><small>Saved automatically</small></div>
-              {!generationJobs.length ? <p className={styles.generationEmpty}>New videos started from Generate appear here. Finished videos can be added to this timeline.</p> : generationJobs.map((generation) => {
+              <div className={styles.generationHeader}><span>YOUR GENERATIONS</span><small>Auto-saved</small></div>
+              {!generationJobs.length ? <p className={styles.generationEmpty}>Queued videos appear here. Tap a finished video to add it.</p> : generationJobs.map((generation) => {
                 const readyURL = resultURL(generation.result);
                 const status = generationStatus(generation);
                 const ready = READY_GENERATION_STATUSES.has(status) && Boolean(readyURL);
@@ -3660,23 +3873,23 @@ export default function StudioPage() {
                 </article>;
               })}
             </section>}
-              {!assets.length && <div className={styles.emptyLibrary}><Clapperboard size={24} /><p>{user ? 'Imports stay local while they upload securely in the background.' : 'Your imported files stay in this browser. Sign in for cloud sync.'}</p></div>}
+              {!assets.length && <div className={styles.emptyLibrary}><Clapperboard size={24} /><p>{user ? 'Imports upload in the background.' : 'Imports stay in this browser.'}</p></div>}
             </>}
 
             {mediaBrowserMode === 'videos' && <>
-              <button data-testid="studio-video-create" className={styles.mediaCreateCard} onClick={() => { setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Sparkles size={18} /></span><span><b>Generate videos</b><small>H3 · batches, audio, loops, image guidance</small></span></button>
+              <button data-testid="studio-video-create" className={styles.mediaCreateCard} onClick={() => { setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Sparkles size={18} /></span><span><b>Generate videos</b><small>H3 · batch · audio · loop</small></span></button>
               <div className={styles.discoveryLabel}><span>VIDEOS FROM THE COMMUNITY</span><small>Semantic search</small></div>
               <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('videos')} placeholder="Search motion, subjects, styles…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('videos')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
-              <div className={styles.discoveryGrid}>{videoHits.map((hit) => <button data-testid={`studio-video-hit-${hit.job_id}`} className={styles.discoveryCard} key={hit.job_id} disabled={!hit.video_url || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'video', hit.prompt)} onClick={() => void addDiscoveredMedia(hit.video_url || '', hit.prompt, 'video')}>
+              <div className={styles.discoveryGrid}>{videoHits.map((hit) => <button data-testid={`studio-video-hit-${hit.job_id}`} className={styles.discoveryCard} key={hit.job_id} disabled={!hit.video_url || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'video', hit.prompt, { url: hit.video_url || '', name: hit.prompt || 'community-video', prompt: hit.prompt, kind: 'video' })} onClick={() => void addDiscoveredMedia(hit.video_url || '', hit.prompt, 'video')}>
                 <span className={styles.discoveryPreview}>{hit.video_url && <video src={hit.video_url} muted playsInline preload="metadata" />}<span><Plus size={13} /> Add</span></span>
                 <b>{hit.prompt || 'Community video'}</b><small>{hit.service || 'H3'}{typeof hit.similarity === 'number' ? ` · ${Math.round(hit.similarity * 100)}% match` : ''}</small>
               </button>)}</div>
-              {!mediaSearchBusy && !videoHits.length && <p className={styles.discoveryEmpty}>No videos found yet. Try a broader visual description.</p>}
+              {!mediaSearchBusy && !videoHits.length && <p className={styles.discoveryEmpty}>No matches. Try fewer words.</p>}
             </>}
 
             {mediaBrowserMode === 'images' && <>
               <section className={styles.imageComposer}>
-                <div className={styles.imageComposerTitle}><span><Sparkles size={15} /></span><div><b>Generate images</b><small>Related community work appears while rendering</small></div></div>
+                <div className={styles.imageComposerTitle}><span><Sparkles size={15} /></span><div><b>Generate images</b><small>Related work loads alongside</small></div></div>
                 <textarea data-testid="studio-image-prompt" value={imagePrompt} maxLength={2000} rows={4} onChange={(event) => setImagePrompt(event.target.value)} placeholder="Describe the image you want…" />
                 <div className={styles.engineChoices}>
                   <button data-testid="studio-image-engine-images3" className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
@@ -3693,16 +3906,16 @@ export default function StudioPage() {
               <div className={styles.discoveryGrid}>{imageHits.map((hit) => {
                 const imageURL = galleryImageURL(hit.image_url || hit.file_path);
                 const thumbURL = galleryImageURL(hit.thumb_url || hit.thumb_path || hit.image_url || hit.file_path);
-                return <button data-testid={`studio-image-hit-${hit.id}`} className={styles.discoveryCard} key={hit.id} disabled={!imageURL || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'image', hit.prompt)} onClick={() => void addDiscoveredMedia(imageURL, hit.prompt, 'image')}>
+                return <button data-testid={`studio-image-hit-${hit.id}`} className={styles.discoveryCard} key={hit.id} disabled={!imageURL || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'image', hit.prompt, { url: imageURL || '', thumbURL, name: hit.prompt || `community-image-${hit.id}`, prompt: hit.prompt, kind: 'image' })} onClick={() => void addDiscoveredMedia(imageURL, hit.prompt, 'image')}>
                   <span className={styles.discoveryPreview}>{thumbURL && <img src={thumbURL} alt="" />}<span><Plus size={13} /> Add</span></span>
                   <b>{hit.prompt || 'Community image'}</b><small>{hit.model || 'Generated'}{typeof hit.similarity === 'number' ? ` · ${Math.round(hit.similarity * 100)}% match` : ''}</small>
                 </button>;
               })}</div>
-              {!mediaSearchBusy && !imageHits.length && <p className={styles.discoveryEmpty}>No related images found yet. Generation still works independently.</p>}
+              {!mediaSearchBusy && !imageHits.length && <p className={styles.discoveryEmpty}>No matches. Generation still works.</p>}
             </>}
 
             {mediaBrowserMode === 'music' && <>
-              <button data-testid="studio-music-create" className={styles.mediaCreateCard} onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Music2 size={18} /></span><span><b>Generate music</b><small>Describe a soundtrack and add it directly to the timeline</small></span></button>
+              <button data-testid="studio-music-create" className={styles.mediaCreateCard} onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Music2 size={18} /></span><span><b>Generate music</b><small>Create a soundtrack</small></span></button>
               <div className={styles.discoveryLabel}><span>LICENSED MUSIC</span><small>Netwrck catalog</small></div>
               <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('music')} placeholder="Search mood, genre, instruments…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('music')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
               <div className={styles.catalogList}>{audioResults.map((asset) => <CatalogAudioCard
@@ -3735,23 +3948,35 @@ export default function StudioPage() {
           {tool === 'text' && <>
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>TYPOGRAPHY</span><h2>Text</h2></div></div>
             <div className={styles.textPresets}>
-              <button data-testid="studio-add-title" onClick={() => void addText({ content: 'Add a title', fontSize: 132, fontFamily: 'Inter', fontWeight: 800, color: '#ffffff', align: 'center' })}><b>Add a title</b><small>Bold display text</small></button>
-              <button onClick={() => void addText({ content: 'Add a subtitle', fontSize: 76, fontFamily: 'Inter', fontWeight: 600, color: '#ffffff', align: 'center' })}><b>Add a subtitle</b><small>Supporting line</small></button>
+              <button data-testid="studio-add-title" onClick={() => void addText({ content: 'Add a title', fontSize: 132, fontFamily: 'Syne', fontWeight: 800, color: '#ffffff', align: 'center' })}><b>Add a title</b><small>Bold display text</small></button>
+              <button onClick={() => void addText({ content: 'Add a subtitle', fontSize: 76, fontFamily: 'DM Sans', fontWeight: 600, color: '#ffffff', align: 'center' })}><b>Add a subtitle</b><small>Supporting line</small></button>
               <button data-testid="studio-add-body-text" title="Add body text (T)" onClick={() => void addText({ content: 'Add body text', fontSize: 48, fontFamily: 'Inter', fontWeight: 400, color: '#ffffff', align: 'left' })}><b>Add body text</b><small>Paragraph or caption</small></button>
             </div>
             {selected?.text ? <section className={styles.textEditor}>
               <span className={styles.sectionLabel}>SELECTED TEXT</span>
               <textarea data-testid="studio-text-content" rows={5} maxLength={800} value={textDraft.content} onChange={(event) => setTextDraft((current) => ({ ...current, content: event.target.value }))} />
+              <div className={styles.fontPicker}>
+                <div className={styles.fontSearch}><Search size={13} /><input data-testid="studio-font-search" value={fontSearch} onChange={(event) => setFontSearch(event.target.value)} placeholder="Find a font" aria-label="Find a font" />{fontSearch && <button aria-label="Clear font search" onClick={() => setFontSearch('')}><X size={12} /></button>}</div>
+                <div className={styles.fontResults} role="listbox" aria-label="Fonts">
+                  {STUDIO_FONTS.filter((font) => `${font.name} ${font.category}`.toLowerCase().includes(fontSearch.trim().toLowerCase())).map((font) => <button
+                    key={font.name}
+                    type="button"
+                    role="option"
+                    aria-selected={textDraft.fontFamily === font.name}
+                    className={textDraft.fontFamily === font.name ? styles.fontOptionActive : ''}
+                    onClick={() => setTextDraft((current) => ({ ...current, fontFamily: font.name }))}
+                  ><span style={{ fontFamily: font.stack }}>{font.name}</span><small>{font.category}</small>{textDraft.fontFamily === font.name && <i>Selected</i>}</button>)}
+                  {!STUDIO_FONTS.some((font) => `${font.name} ${font.category}`.toLowerCase().includes(fontSearch.trim().toLowerCase())) && <p>No matching fonts</p>}
+                </div>
+              </div>
               <div className={styles.textEditorGrid}>
-                <label><span>Typeface</span><input data-testid="studio-font-search" value={fontSearch} onChange={(event) => setFontSearch(event.target.value)} placeholder="Search fonts" /></label>
                 <label><span>Weight</span><select value={textDraft.fontWeight} onChange={(event) => setTextDraft((current) => ({ ...current, fontWeight: Number(event.target.value) as StudioTextStyle['fontWeight'] }))}><option value="400">Regular</option><option value="600">Semibold</option><option value="800">Bold</option></select></label>
                 <label><span>Size</span><input type="number" min="20" max="240" value={textDraft.fontSize} onChange={(event) => setTextDraft((current) => ({ ...current, fontSize: Math.max(20, Math.min(240, Number(event.target.value))) }))} /></label>
                 <label><span>Color</span><input aria-label="Text color" type="color" value={textDraft.color} onChange={(event) => setTextDraft((current) => ({ ...current, color: event.target.value }))} /></label>
               </div>
-              {fontSearch.trim() && STUDIO_FONTS.filter((font) => font.toLowerCase().includes(fontSearch.trim().toLowerCase()) && font !== textDraft.fontFamily).map((font) => <button key={font} role="option" aria-selected="false" onClick={() => { setTextDraft((current) => ({ ...current, fontFamily: font })); setFontSearch(font); }}>{font}</button>)}
               <div className={styles.textAlignChoices}>{(['left', 'center', 'right'] as const).map((align) => <button key={align} className={textDraft.align === align ? styles.textAlignActive : ''} onClick={() => setTextDraft((current) => ({ ...current, align }))}>{align}</button>)}</div>
               <button data-testid="studio-text-apply" className={styles.imageGenerateButton} disabled={!textDraft.content.trim()} onClick={() => void updateSelectedText()}><Type size={15} /> Update text</button>
-              <p className={styles.textHint}>Text remains editable after reopening the project and uses the same stage scale, rotation, layering, and export path as other visual elements.</p>
+              <p className={styles.textHint}>Text stays editable.</p>
             </section> : <div className={styles.panelEmpty}><Type size={22} /><p>Add a text style above, or select existing text on the stage.</p></div>}
           </>}
 
@@ -3818,7 +4043,7 @@ export default function StudioPage() {
               <button data-testid="studio-animation-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openAnimationTransfer(selected)}><span className={styles.aiIcon}><Clapperboard size={19} /></span><span><b>Animation Transfer</b><small>Drive a character from this clip</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button className={styles.aiCard} disabled={!canExtendSelected} onClick={() => setExtendOpen(true)}><span className={styles.aiIcon}><Sparkles size={19} /></span><span><b>Extend video</b><small>{selected?.kind === 'video' && !canExtendSelected ? 'Use a 2–15s clip' : 'Grok · MP4'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
             </div>
-            <p className={styles.aiNote}>AI tools require a signed-in account. Local editing and export do not use credits.</p>
+            <p className={styles.aiNote}>AI needs sign-in. Editing and export are free.</p>
           </>}
         </aside>
 
@@ -3874,10 +4099,42 @@ export default function StudioPage() {
                 onKeyDown={isSelected ? nudgeStageElement : undefined}
                 onDoubleClick={() => updateAsset(asset.id, { stageX: 0, stageY: 0 })}
               >
-                {asset.text && <span data-testid="studio-stage-text-editor" aria-hidden="true" style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden', fontFamily: isSelected ? textDraft.fontFamily : asset.text.fontFamily }} />}
                 {isSelected ? <>
                   {asset.kind === 'video' && <video ref={videoRef} className={styles.sourceVideo} src={asset.url} muted={!!asset.sourceAudioMuted} playsInline preload="auto" onLoadedData={() => { if (videoRef.current) { videoRef.current.currentTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart)); videoRef.current.volume = Math.max(0, Math.min(1, asset.volume)); } drawCurrent(); }} onSeeked={drawCurrent} />}
-                  <canvas ref={canvasRef} className={styles.previewCanvas} />
+                  {asset.text ? <textarea
+                    data-testid="studio-stage-text-editor"
+                    className={`${styles.stageTextEditor} ${editingTextID === asset.id ? styles.stageTextEditorEditing : styles.stageTextEditorMove}`}
+                    rows={Math.max(1, Math.min(8, textDraft.content.split('\n').length))}
+                    maxLength={800}
+                    value={textDraft.content}
+                    readOnly={editingTextID !== asset.id}
+                    autoFocus={editingTextID === asset.id}
+                    aria-label="Edit text on canvas"
+                    style={{
+                      color: textDraft.color,
+                      fontFamily: studioFontStack(textDraft.fontFamily),
+                      fontSize: `${Math.max(12, textDraft.fontSize * (previewSize?.width || 1920) / 1920)}px`,
+                      fontWeight: textDraft.fontWeight,
+                      textAlign: textDraft.align,
+                    }}
+                    onChange={(event) => setTextDraft((current) => ({ ...current, content: event.target.value }))}
+                    onBlur={(event) => {
+                      const nextTarget = event.relatedTarget as HTMLElement | null;
+                      const movingToTextControls = !!nextTarget?.closest('[data-testid="studio-panel"]');
+                      if (editingTextID === asset.id && !movingToTextControls) void updateSelectedText();
+                      setEditingTextID('');
+                    }}
+                    onPointerDown={(event) => { if (editingTextID === asset.id) event.stopPropagation(); }}
+                    onPointerMove={(event) => { if (editingTextID === asset.id) event.stopPropagation(); }}
+                    onPointerUp={(event) => { if (editingTextID === asset.id) event.stopPropagation(); }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setEditingTextID(asset.id);
+                      event.currentTarget.focus();
+                    }}
+                  /> : <canvas ref={canvasRef} className={styles.previewCanvas} />}
                   <i className={`${styles.stageHandle} ${styles.stageHandleNW}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleNE}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleSW}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
@@ -3902,7 +4159,7 @@ export default function StudioPage() {
         </div>
         <div className={styles.timelineBody}>
           <div ref={timelineLabelsRef} className={styles.trackLabels} onWheel={(event) => { if (timelineContentRef.current) timelineContentRef.current.scrollTop += event.deltaY; }}><span>VIDEO</span>{Array.from({ length: visualTrackCount }, (_, index) => visualTrackCount - index - 1).map((track) => <div data-testid={`timeline-track-label-v${track + 1}`} key={track}>V{track + 1}</div>)}<div className={styles.audioLabel}>A1</div></div>
-          <div ref={timelineContentRef} data-testid="studio-timeline-dropzone" className={`${styles.trackContent} ${timelineDropTime !== null ? styles.timelineDropActive : ''}`} onScroll={(event) => { if (timelineLabelsRef.current) timelineLabelsRef.current.scrollTop = event.currentTarget.scrollTop; }} onDragOver={dragMediaOverTimeline} onDragLeave={leaveTimelineDrop} onDrop={(event) => void dropMediaOnTimeline(event)} onPointerMove={moveTimelinePointer} onPointerUp={endTimelinePointer} onPointerCancel={endTimelinePointer}>
+          <div ref={timelineContentRef} data-testid="studio-timeline-dropzone" className={`${styles.trackContent} ${timelineDropTime !== null ? styles.timelineDropActive : ''}`} onScroll={(event) => { if (timelineLabelsRef.current) timelineLabelsRef.current.scrollTop = event.currentTarget.scrollTop; }} onDragOver={dragMediaOverTimeline} onDragLeave={leaveTimelineDrop} onDrop={(event) => void dropMediaOnTimeline(event)} onPointerMove={moveTimelinePointer} onPointerLeave={() => setTimelineHoverTime(null)} onPointerUp={endTimelinePointer} onPointerCancel={endTimelinePointer}>
             <div data-testid="studio-timeline-canvas" ref={timelineCanvasRef} className={styles.timelineCanvas} style={{ width: timelineWidth, minWidth: '100%' }}>
               <div data-testid="studio-timeline-ruler" className={styles.ruler} onPointerDown={beginScrub}>{Array.from({ length: Math.floor(rulerDuration / rulerStep) + 1 }, (_, index) => { const time = index * rulerStep; return <span key={time} style={{ left: time * pixelsPerSecond }}>{formatTime(time).slice(3)}</span>; })}</div>
               <div className={styles.videoTracks} onPointerDown={beginScrub}>
@@ -3922,7 +4179,8 @@ export default function StudioPage() {
               </div>
               {timelineDropTime !== null && <div data-testid="studio-timeline-drop-marker" className={styles.timelineDropMarker} style={{ left: timelineDropTime * pixelsPerSecond }}><span>Drop at {formatTime(timelineDropTime)}</span></div>}
               {timelineMarquee && <div data-testid="studio-timeline-marquee" className={styles.timelineMarquee} style={timelineMarquee} />}
-              <div className={styles.playhead} style={{ left: playhead * pixelsPerSecond }} />
+              {timelineHoverTime !== null && Math.abs(timelineHoverTime - playhead) > .01 && <div className={styles.ghostPlayhead} style={{ left: timelineHoverTime * pixelsPerSecond }}><span>{formatTime(timelineHoverTime)}</span></div>}
+              <div className={styles.playhead} style={{ left: playhead * pixelsPerSecond }}><span>{formatTime(playhead)}</span></div>
             </div>
           </div>
         </div>
@@ -3952,7 +4210,8 @@ export default function StudioPage() {
         <button data-testid="studio-video-generate-submit" className={styles.modalPrimary} disabled={!videoGeneratePrompts.length} onClick={() => void queueVideoGenerations()}><Sparkles size={16} /> Queue {videoGenerateBatchCount} video{videoGenerateBatchCount === 1 ? '' : 's'}</button>
       </Modal>}
 
-      {imageGenerateOpen && <Modal title="Generate images" onClose={() => setImageGenerateOpen(false)}>
+      {imageGenerateOpen && <Modal title={imageStyleTransferSource ? 'Style transfer' : 'Generate images'} onClose={() => { setImageGenerateOpen(false); setImageStyleTransferSource(null); }}>
+        {imageStyleTransferSource && <div className={styles.styleTransferSource}><span className={styles.styleTransferPreview}>{imageStyleTransferSource.thumbURL ? <img src={imageStyleTransferSource.thumbURL} alt="" /> : <ImageIcon size={18} />}</span><span><small>SOURCE IMAGE</small><b>{imageStyleTransferSource.name}</b></span></div>}
         <label className={styles.field}><span>Prompt</span><textarea data-testid="studio-image-modal-prompt" value={imagePrompt} maxLength={2000} rows={5} onChange={(event) => setImagePrompt(event.target.value)} placeholder="Describe the image you want…" /></label>
         <div className={styles.engineChoices}>
           <button className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
@@ -3962,8 +4221,8 @@ export default function StudioPage() {
           <label><span>Aspect</span><select value={imageAspect} onChange={(event) => setImageAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
           <label><span>Outputs</span><select value={imageCount} onChange={(event) => setImageCount(Number(event.target.value) as 1 | 4)}><option value="1">1 image</option><option value="4">4 images</option></select></label>
         </div>
-        <p className={styles.generateHint}>Related work appears while yours renders.</p>
-        <button data-testid="studio-image-modal-generate" className={styles.modalPrimary} disabled={!imagePrompt.trim()} onClick={() => void generateStudioImages()}><Sparkles size={15} /> Generate {imageCount}</button>
+        <p className={styles.generateHint}>{imageStyleTransferSource ? 'Describe the new look. The styled variation will be added to your Media.' : 'Related work appears while yours renders.'}</p>
+        <button data-testid="studio-image-modal-generate" className={styles.modalPrimary} disabled={!imagePrompt.trim()} onClick={() => void generateStudioImages()}>{imageStyleTransferSource ? <><WandSparkles size={15} /> Create styled image</> : <><Sparkles size={15} /> Generate {imageCount}</>}</button>
       </Modal>}
 
       {helpOpen && <Modal title="Keyboard shortcuts" onClose={() => setHelpOpen(false)}>
@@ -3972,11 +4231,12 @@ export default function StudioPage() {
           <h3 id="timeline-shortcuts">Timeline</h3>
           <div className={styles.shortcutList}>
             <div><span>Play or pause the selected video or audio</span><kbd>Space</kbd></div>
-            <div><span>Select every clip</span><span className={styles.shortcutKeys}><kbd>⌘ / Ctrl</kbd><kbd>A</kbd></span></div>
-            <div><span>Copy or paste selected clips at the playhead</span><span className={styles.shortcutKeys}><kbd>⌘ / Ctrl</kbd><kbd>C</kbd><em>/</em><kbd>V</kbd></span></div>
+            <div><span>Select every clip</span><span className={styles.shortcutKeys}><kbd>{commandKeyLabel}</kbd><kbd>A</kbd></span></div>
+            <div><span>Copy or paste selected clips at the playhead</span><span className={styles.shortcutKeys}><kbd>{commandKeyLabel}</kbd><kbd>C</kbd><em>/</em><kbd>V</kbd></span></div>
             <div><span>Split selected clips at the playhead</span><kbd>S</kbd></div>
+            <div><span>Add body text</span><kbd>T</kbd></div>
             <div><span>Delete selected clips</span><span className={styles.shortcutKeys}><kbd>Delete</kbd><em>or</em><kbd>Backspace</kbd></span></div>
-            <div><span>Move selected visual clips between layers</span><span className={styles.shortcutKeys}><kbd>⌘ / Ctrl</kbd><kbd>[</kbd><kbd>]</kbd></span></div>
+            <div><span>Move selected visual clips between layers</span><span className={styles.shortcutKeys}><kbd>{commandKeyLabel}</kbd><kbd>[</kbd><kbd>]</kbd></span></div>
           </div>
         </section>
         <section className={styles.shortcutSection} aria-labelledby="canvas-shortcuts">
@@ -4015,7 +4275,7 @@ export default function StudioPage() {
         <label className={styles.field}><span>What happens next?</span><textarea value={extendPrompt} onChange={(event) => setExtendPrompt(event.target.value)} rows={4} /></label>
         <div className={styles.durationChoices}>{[2, 4, 6, 8, 10].map((duration) => <button key={duration} className={extendDuration === duration ? styles.durationActive : ''} onClick={() => setExtendDuration(duration)}>{duration}s</button>)}</div>
         <div className={styles.priceLine}><span>Price</span><b>${customerExtendUSD.toFixed(2)}</b></div>
-        <p className={styles.billingNote}>Your selected 2–15 second clip is rendered to H.264 MP4 before upload. Grok adds 2–10 seconds and preserves the input shape, capped at 720p.</p>
+        <p className={styles.billingNote}>2–15s clip · adds 2–10s · up to 720p.</p>
         <button className={styles.modalPrimary} disabled={!extendPrompt.trim()} onClick={() => void extendVideo()}><Sparkles size={16} /> Extend video</button>
       </Modal>}
 
@@ -4128,9 +4388,17 @@ export default function StudioPage() {
             <button data-testid="studio-context-save-as" onClick={() => { downloadBlob(asset.file, asset.name); setNotice(`${asset.name} saved locally`); setContextMenu(null); }}><Download size={15} /><span><b>Save media as…</b><small>Download the original file</small></span></button>
             <button data-testid="studio-context-similar" onClick={() => openSimilarAsset(asset)}><Sparkles size={15} /><span><b>Make similar {asset.kind === 'audio' ? audioFlavor : asset.kind}</b><small>Open a prompt window with this starting point</small></span></button>
             {asset.kind === 'video' && <button data-testid="studio-context-animation-transfer" onClick={() => openAnimationTransfer(asset)}><Clapperboard size={15} /><span><b>Animation Transfer</b><small>Drive a reference character with this performance</small></span></button>}
+            {asset.kind === 'image' && <button onClick={() => void removeBackground()}><ImageIcon size={15} /><span><b>Remove background</b><small>Add a transparent cutout to Media</small></span></button>}
+            {asset.kind === 'image' && <button onClick={() => openImageStyleTransfer({ url: asset.url, thumbURL: asset.url, name: asset.name, prompt: promptForAsset(asset), kind: 'image', file: asset.file, cloudURL: asset.cloudURL })}><WandSparkles size={15} /><span><b>Style transfer</b><small>Create a styled image variation</small></span></button>}
             {asset.kind === 'video' && <button onClick={() => openRestyle(asset)}><WandSparkles size={15} /><span><b>Restyle video</b><small>Transform look, preserve motion</small></span></button>}
             <button onClick={() => { duplicateSelected(); setContextMenu(null); }}><Copy size={15} /><span><b>Duplicate clip</b><small>Add a copy to the timeline</small></span></button>
             <button className={styles.contextMenuDanger} onClick={() => { removeSelected(); setContextMenu(null); }}><Trash2 size={15} /><span><b>Delete clip</b><small>Undo restores it</small></span></button>
+          </> : contextMenu.remoteMedia ? <>
+            <span className={styles.contextMenuLabel}>CONTENT LIBRARY {contextMenu.remoteMedia.kind.toUpperCase()}</span>
+            <button data-testid="studio-library-add" onClick={() => void addDiscoveredMedia(contextMenu.remoteMedia!.url, contextMenu.remoteMedia!.prompt, contextMenu.remoteMedia!.kind)}><Plus size={15} /><span><b>Add to Media</b><small>Download to this project</small></span></button>
+            {contextMenu.remoteMedia.kind === 'image' && <button data-testid="studio-library-remove-background" onClick={() => void removeBackgroundFromLibrary(contextMenu.remoteMedia!)}><ImageIcon size={15} /><span><b>Remove background</b><small>Add a transparent cutout to Media</small></span></button>}
+            {contextMenu.remoteMedia.kind === 'image' && <button data-testid="studio-library-style-transfer" onClick={() => openImageStyleTransfer(contextMenu.remoteMedia!)}><WandSparkles size={15} /><span><b>Style transfer</b><small>Create a styled image variation</small></span></button>}
+            <button onClick={() => openPromptGenerator(contextMenu.promptKind || contextMenu.remoteMedia!.kind, contextMenu.remoteMedia!.prompt)}><Sparkles size={15} /><span><b>Make similar {contextMenu.remoteMedia.kind}</b><small>Open a new prompt from this result</small></span></button>
           </> : contextMenu.promptKind && contextMenu.prompt !== undefined ? <>
             <span className={styles.contextMenuLabel}>RELATED {contextMenu.promptKind.toUpperCase()}</span>
             <button data-testid="studio-context-similar" onClick={() => openPromptGenerator(contextMenu.promptKind!, contextMenu.prompt!)}><Sparkles size={15} /><span><b>Make similar {contextMenu.promptKind === 'speech' ? 'voice' : contextMenu.promptKind}</b><small>Open its prompt in the matching generator</small></span></button>
