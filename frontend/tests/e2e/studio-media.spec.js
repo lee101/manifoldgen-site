@@ -617,6 +617,7 @@ test('2K preview stays frame-driven on WebGL and export requests GPU and hardwar
   const previewSeconds = (preview.previewLastAt - preview.previewStartedAt) / 1000;
   expect(preview.renderer.api).toBe('webgl2');
   expect(preview.renderer.maxTextureSize).toBeGreaterThanOrEqual(2048);
+  test.skip(/SwiftShader|llvmpipe|software rasterizer/i.test(preview.renderer.renderer), 'Hardware preview benchmark requires a real GPU WebGL renderer');
   // Headless Chrome frequently uses a software compositor; 15 fps is the
   // regression floor here, while production GPU runs remain frame-rate bound.
   expect(preview.previewFrames / previewSeconds).toBeGreaterThanOrEqual(15);
@@ -638,6 +639,10 @@ test('2K preview stays frame-driven on WebGL and export requests GPU and hardwar
     expect(exported.height).toBeLessThanOrEqual(1080);
   }
   expect(exported.completedAt).toBeGreaterThan(exported.startedAt);
+  expect(exported.preparedAt).toBeGreaterThan(exported.startedAt);
+  expect(exported.framesCompletedAt).toBeGreaterThan(exported.preparedAt);
+  expect(exported.outputBytes).toBeGreaterThan(10_000);
+  expect(exported.estimatedWorkingSetBytes).toBeGreaterThan(0);
   expect(elapsedSeconds).toBeLessThan(45);
 });
 

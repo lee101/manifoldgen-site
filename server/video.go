@@ -564,6 +564,11 @@ func callH3Runpod(endpointID, suffix string, method string, input interface{}, o
 
 func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, route h3WorkerRoute) {
 	input := appNZH3Input(req)
+	if err := prepareH3RunpodOutputTarget(input, user.ID); err != nil {
+		log.Printf("[video] prepare hosted output upload failed: %v", err)
+		jsonError(ctx, http.StatusServiceUnavailable, videoGenerationUnavailableMessage)
+		return
+	}
 	var queued h3RunpodQueuedJob
 	status, err := submitScaledH3RunpodJob(route, input, &queued)
 	if err != nil {
@@ -994,13 +999,18 @@ type h3RunpodStatus struct {
 	Error         string `json:"error"`
 	ExecutionTime int64  `json:"executionTime"`
 	Output        struct {
-		Outputs []struct {
-			Filename    string `json:"filename"`
-			Data        string `json:"data"`
-			ContentType string `json:"content_type"`
-		} `json:"outputs"`
+		Outputs []h3RunpodArtifact     `json:"outputs"`
 		Metrics map[string]interface{} `json:"metrics"`
 	} `json:"output"`
+}
+
+type h3RunpodArtifact struct {
+	Filename    string `json:"filename"`
+	Data        string `json:"data"`
+	URL         string `json:"url"`
+	ContentType string `json:"content_type"`
+	Bytes       int64  `json:"bytes"`
+	SHA256      string `json:"sha256"`
 }
 
 func parseRunpodH3ProviderJob(value string) (endpointID, jobID string, ok bool) {
@@ -1016,6 +1026,65 @@ func h3ArtifactFormat(contentType string) (string, string) {
 		return "mp4", "video/mp4"
 	}
 	return "webm", "video/webm"
+}
+
+func h3OutputContentType(input map[string]interface{}) string {
+	if strings.EqualFold(strings.TrimSpace(fmt.Sprint(input["output_codec"])), "mp4-h264") {
+		return "video/mp4"
+	}
+	return "video/webm"
+}
+
+func prepareH3RunpodOutputTarget(input map[string]interface{}, userID string) error {
+	contentType := h3OutputContentType(input)
+	extension, _ := h3ArtifactFormat(contentType)
+	shortID := sanitizeUploadName(userID)
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	objectKey := fmt.Sprintf("%s/%s/videos/%s.%s", strings.TrimSuffix(r2PathPrefix, "/"), shortID, newUUID(), extension)
+	uploadURL, err := presignR2PutObject(objectKey, contentType, 6*60*60)
+	if err != nil {
+		return err
+	}
+	input["_output_upload_url"] = uploadURL
+	input["_output_public_url"] = fmt.Sprintf("https://%s/%s", r2PublicHost, objectKey)
+	return nil
+}
+
+func expectedH3OutputURL(job *VideoJob) string {
+	if job == nil || len(job.Result) == 0 {
+		return ""
+	}
+	var input map[string]interface{}
+	if json.Unmarshal(job.Result, &input) != nil {
+		return ""
+	}
+	value, _ := input["_output_public_url"].(string)
+	return strings.TrimSpace(value)
+}
+
+func resolveH3RunpodArtifact(artifact h3RunpodArtifact, expectedURL string) (string, []byte, int64, error) {
+	if strings.TrimSpace(artifact.URL) != "" {
+		if expectedURL == "" || artifact.URL != expectedURL {
+			return "", nil, 0, fmt.Errorf("RunPod H3 returned an unexpected output URL")
+		}
+		if artifact.Bytes <= 0 || artifact.Bytes > maxGeneratedVideoBytes {
+			return "", nil, 0, fmt.Errorf("RunPod H3 direct output size is invalid")
+		}
+		return artifact.URL, nil, artifact.Bytes, nil
+	}
+	if artifact.Data == "" {
+		return "", nil, 0, fmt.Errorf("RunPod H3 completed without an artifact")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(artifact.Data)
+	if err != nil {
+		return "", nil, 0, fmt.Errorf("decode RunPod H3 artifact: %w", err)
+	}
+	if len(decoded) == 0 || len(decoded) > maxGeneratedVideoBytes {
+		return "", nil, 0, fmt.Errorf("RunPod H3 inline output size is invalid")
+	}
+	return "", decoded, int64(len(decoded)), nil
 }
 
 func uploadH3RunpodVideo(ctx context.Context, video []byte, userID, contentType string) (string, error) {
@@ -1094,30 +1163,28 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		}
 		switch providerStatus {
 		case "COMPLETED":
-			if len(state.Output.Outputs) == 0 || state.Output.Outputs[0].Data == "" {
+			if len(state.Output.Outputs) == 0 {
 				log.Printf("[video] hosted generation completed without an artifact job=%s", job.ID)
 				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 				return
 			}
-			artifact, err := base64.StdEncoding.DecodeString(state.Output.Outputs[0].Data)
+			outputArtifact := state.Output.Outputs[0]
+			videoURL, artifact, artifactBytes, err := resolveH3RunpodArtifact(outputArtifact, expectedH3OutputURL(job))
 			if err != nil {
-				log.Printf("[video] hosted generation returned malformed artifact job=%s: %v", job.ID, err)
+				log.Printf("[video] hosted generation returned invalid artifact job=%s: %v", job.ID, err)
 				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 				return
 			}
-			user, err := dbConn.GetUserByID(job.UserID)
-			if err != nil {
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "video job owner no longer exists")
-				return
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			contentType := state.Output.Outputs[0].ContentType
-			videoURL, err := uploadH3RunpodVideo(ctx, artifact, user.ID, contentType)
-			cancel()
-			if err != nil {
-				log.Printf("[video] store hosted generation output failed job=%s: %v", job.ID, err)
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
-				return
+			contentType := outputArtifact.ContentType
+			if videoURL == "" {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				videoURL, err = uploadH3RunpodVideo(ctx, artifact, job.UserID, contentType)
+				cancel()
+				if err != nil {
+					log.Printf("[video] store hosted generation output failed job=%s: %v", job.ID, err)
+					_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
+					return
+				}
 			}
 			predictSeconds := float64(state.ExecutionTime) / 1000
 			if predictSeconds <= 0 {
@@ -1141,7 +1208,7 @@ func processRunpodH3VideoJob(job *VideoJob) {
 			}
 			result, _ := json.Marshal(map[string]interface{}{
 				"video_url": videoURL, "provider": "runpod", "model_variant": variant,
-				"output_format": extension, "codec": codec, "bytes": len(artifact),
+				"output_format": extension, "codec": codec, "bytes": artifactBytes,
 				"predict_seconds": predictSeconds, "provider_cost_usd": providerUSD,
 				"charged_usd": chargedUSD, "cute_price_usd": cutePrice,
 				"credits_used": chargedUSD / cutePrice, "metrics": state.Output.Metrics,
@@ -1248,6 +1315,8 @@ func processLocalH3VideoJob(job *VideoJob) {
 	variant, _ := input["_h3_variant"].(string)
 	delete(input, "_h3_cog_url")
 	delete(input, "_h3_variant")
+	delete(input, "_output_upload_url")
+	delete(input, "_output_public_url")
 	if cogURL == "" {
 		cogURL = h3LocalCogURL()
 	}
@@ -1459,6 +1528,9 @@ func retryH3VideoJob(job *VideoJob) error {
 	if route.RunpodEndpointID != "" {
 		delete(input, "_h3_cog_url")
 		input["_h3_variant"] = route.Variant
+		if err := prepareH3RunpodOutputTarget(input, job.UserID); err != nil {
+			return fmt.Errorf("could not prepare H3 retry output: %w", err)
+		}
 		var queued h3RunpodQueuedJob
 		if _, err := submitScaledH3RunpodJob(route, input, &queued); err != nil {
 			return fmt.Errorf("could not queue H3 retry: %w", err)
@@ -1928,7 +2000,9 @@ func transcodeAndUploadAV1(ctx context.Context, sourceURL, userID string) (strin
 
 	encodeArgs := []string{"-y", "-i", inputPath, "-map", "0:v:0", "-map", "0:a?", "-c:v", "av1_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "38", "-b:v", "0", "-pix_fmt", "yuv420p", "-c:a", "libopus", "-b:a", "96k", outputPath}
 	if output, encodeErr := exec.CommandContext(ctx, "ffmpeg", encodeArgs...).CombinedOutput(); encodeErr != nil {
-		fallback := []string{"-y", "-i", inputPath, "-map", "0:v:0", "-map", "0:a?", "-c:v", "libsvtav1", "-crf", "38", "-preset", "8", "-pix_fmt", "yuv420p", "-c:a", "libopus", "-b:a", "96k", outputPath}
+		// A many-core SVT default can exceed 8 GiB at 2K. The measured lp=8,
+		// preset-10 fallback stayed below 2 GiB while remaining faster than realtime.
+		fallback := []string{"-y", "-i", inputPath, "-map", "0:v:0", "-map", "0:a?", "-c:v", "libsvtav1", "-crf", "38", "-preset", "10", "-svtav1-params", "lp=8", "-pix_fmt", "yuv420p", "-c:a", "libopus", "-b:a", "96k", outputPath}
 		if fallbackOut, fallbackErr := exec.CommandContext(ctx, "ffmpeg", fallback...).CombinedOutput(); fallbackErr != nil {
 			return "", 0, sourceBytes, fmt.Errorf("AV1 encode failed: %s; fallback: %s", tailOutput(output), tailOutput(fallbackOut))
 		}

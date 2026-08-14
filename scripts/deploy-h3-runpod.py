@@ -2,9 +2,9 @@
 """Safely apply config/runpod-h3.json to existing RunPod endpoints.
 
 Dry-run is the default. Passing --apply verifies that both queues are empty,
-drains every worker, updates the templates, and only then reactivates the
-endpoints. Draining matters because RunPod does not replace an already warm
-worker when its template version changes.
+drains every worker, updates the templates, and leaves the endpoints paused for
+the app's request-time scaler. Draining matters because RunPod does not replace
+an already warm worker when its template version changes.
 """
 
 from __future__ import annotations
@@ -172,14 +172,16 @@ def apply(config: dict[str, Any], api_key: str, drain_timeout: int) -> None:
             print(f"updated template {template_id} to {config['image']}")
 
         for endpoint in endpoints:
+            staged = endpoint_payload(config, endpoint)
+            staged["workersMax"] = 0
             request_json(
                 "PATCH",
                 f"{REST_BASE}/endpoints/{endpoint['id']}",
                 api_key,
-                endpoint_payload(config, endpoint),
+                staged,
             )
             print(
-                f"activated {endpoint['name']} max={endpoint['workersMax']} "
+                f"staged {endpoint['name']} paused burst-max={endpoint['workersMax']} "
                 f"gpus={','.join(endpoint['gpuTypeIds'])}"
             )
     except Exception:

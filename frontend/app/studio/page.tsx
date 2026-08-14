@@ -508,6 +508,12 @@ type StudioPerfDiagnostics = {
     format?: ExportFormat;
     frameRate?: ExportFrameRate;
     quality?: ExportQuality;
+    preparedAt?: number;
+    framesCompletedAt?: number;
+    outputBytes?: number;
+    estimatedWorkingSetBytes?: number;
+    heapStartedBytes?: number;
+    heapCompletedBytes?: number;
   };
 };
 
@@ -3545,9 +3551,11 @@ export default function StudioPage() {
       // Software WebCodecs at 2K can be slower than 0.1x realtime. Keep full
       // 2K/4K when a hardware encoder is exposed and use a 1080p safety path
       // otherwise, so export never wedges a laptop for minutes per second.
-      const { width, height } = hardwareSupported || settings.resolution !== 'source'
-        ? requestedSize
-        : fitWithin(exportBase.width, exportBase.height, 1920, 1080);
+      // Explicit 2K/4K used to bypass the software safety path. That made the
+      // slowest browsers attempt the largest jobs. Preserve the requested size
+      // only with a hardware encoder; otherwise cap every format at 1080p.
+      const softwareSafeSize = fitWithin(requestedSize.width, requestedSize.height, 1920, 1080);
+      const { width, height } = hardwareSupported ? requestedSize : softwareSafeSize;
       const quality = hardwareSupported ? requestedQuality : new Quality(settings.quality === 'high' ? 'high' : qualityLevel);
       const hardwareAcceleration = hardwareSupported
         ? 'prefer-hardware' as const
@@ -3555,7 +3563,13 @@ export default function StudioPage() {
       if (!(await canEncodeVideo(codec, { width, height, quality, hardwareAcceleration }))) {
         throw new Error(`${format.label} encoding is not available in this browser`);
       }
-      perfDiagnostics().export = { sourceWidth: exportBase.width, sourceHeight: exportBase.height, width, height, hardwareAcceleration, hardwareRequested: 'prefer-hardware', startedAt: performance.now(), format: settings.format, frameRate: settings.frameRate, quality: settings.quality };
+      const performanceWithMemory = performance as Performance & { memory?: { usedJSHeapSize?: number } };
+      perfDiagnostics().export = {
+        sourceWidth: exportBase.width, sourceHeight: exportBase.height, width, height,
+        hardwareAcceleration, hardwareRequested: 'prefer-hardware', startedAt: performance.now(),
+        format: settings.format, frameRate: settings.frameRate, quality: settings.quality,
+        heapStartedBytes: performanceWithMemory.memory?.usedJSHeapSize,
+      };
       const duration = exportDuration;
 
       const workCanvas = document.createElement('canvas');
@@ -3609,6 +3623,13 @@ export default function StudioPage() {
         visualStates.push(state);
       }
 
+      const exportDiagnostics = perfDiagnostics().export;
+      if (exportDiagnostics) {
+        const outputCanvases = needsTextAntiAlias ? 2 : 1;
+        exportDiagnostics.estimatedWorkingSetBytes = width * height * 4 * outputCanvases
+          + visualStates.reduce((total, state) => total + state.asset.width * state.asset.height * 8, 0);
+      }
+
       const target = new BufferTarget();
       output = new Output({
         format: settings.format.startsWith('webm-') ? new WebMOutputFormat() : new Mp4OutputFormat({ fastStart: 'in-memory' }),
@@ -3631,6 +3652,7 @@ export default function StudioPage() {
       }
 
       await output.start();
+      if (perfDiagnostics().export) perfDiagnostics().export!.preparedAt = performance.now();
       // A mixed timeline has no single source cadence. "Source" therefore uses
       // a deterministic 30 fps clock; explicit 24/30/60 choices stay exact.
       const outputFPS = settings.frameRate === 'source' ? 30 : settings.frameRate;
@@ -3675,6 +3697,8 @@ export default function StudioPage() {
         setExportProgress(Math.min(0.9, (index + 1) / frames * 0.9));
       }
 
+      if (perfDiagnostics().export) perfDiagnostics().export!.framesCompletedAt = performance.now();
+
       if (audioSource && mixedAudio) {
         for (const sample of AudioSample.fromAudioBuffer(mixedAudio, 0)) {
           await audioSource.add(sample);
@@ -3686,6 +3710,8 @@ export default function StudioPage() {
       if (perf.export) {
         perf.export.completedAt = performance.now();
         perf.export.frames = frames;
+        perf.export.outputBytes = target.buffer?.byteLength || 0;
+        perf.export.heapCompletedBytes = performanceWithMemory.memory?.usedJSHeapSize;
       }
       setExportProgress(1);
       return new Blob([target.buffer!], { type: format.mime });

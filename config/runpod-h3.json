@@ -1,5 +1,5 @@
 {
-  "image": "ghcr.io/lee101/h3-cog:cu130-20260814-face-refine-r17",
+  "image": "ghcr.io/lee101/h3-cog:cu130-20260814-face-refine-r21",
   "dockerStartCmd": ["python", "-u", "/src/rp_handler.py"],
   "env": {
     "H3_ACCEL_PROFILE": "balanced",
@@ -11,8 +11,8 @@
   "idleTimeout": 5,
   "executionTimeoutMs": 14400000,
   "flashboot": true,
-  "scalerType": "QUEUE_DELAY",
-  "scalerValue": 4,
+  "scalerType": "REQUEST_COUNT",
+  "scalerValue": 1,
   "endpoints": [
     {
       "id": "snzfeqekxdmw1v",

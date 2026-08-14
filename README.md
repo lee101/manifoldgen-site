@@ -173,8 +173,9 @@ When RunPod `workersMax` quota is hit, set `H3_LOCAL_COG_URL=http://127.0.0.1:18
 after `gen_gallery_local.py` has started the cog.
 
 The two direct H3 endpoints follow `config/runpod-h3.json`: zero minimum
-workers, five-second idle shutdown, FlashBoot, a bounded one-hour execution
-window, and `/src/rp_handler.py` as the native queue handler. Do not run the Cog
+workers, one worker per queued request up to each endpoint's cap, five-second
+idle shutdown, FlashBoot, a bounded one-hour execution window, and
+`/src/rp_handler.py` as the native queue handler. Do not run the Cog
 HTTP command on a queue endpoint; provider cancellation can mark that wrapper
 canceled while its inner prediction continues consuming a GPU.
 
@@ -185,13 +186,22 @@ Deploy an H3 image with the checked-in endpoint contract:
 python3 scripts/deploy-h3-runpod.py
 
 # Refuses active queues, drains warm workers, updates both templates, then
-# reactivates the endpoints. RUNPOD_API_KEY must be set.
+# leaves endpoints paused for request-time activation. RUNPOD_API_KEY must be set.
 python3 scripts/deploy-h3-runpod.py --apply
 ```
 
 The worker drain is required: changing a RunPod template does not replace an
 already warm process. Face refinement is production-tested on L40S and H100;
 A40 is excluded because its ComfyUI child exited during the second H3 pass.
+
+H3 outputs are encoded with GPU AV1 by default and uploaded directly from the
+worker to a unique, short-lived R2 PUT target. RunPod returns metadata rather
+than base64 video, which avoids holding several copies of a large result in the
+worker and Go server heaps. The CPU SVT fallback is capped at eight logical
+processors after 2K stress testing. Studio's on-device exporter keeps requested
+2K/4K output when WebCodecs exposes hardware encoding and safely caps all
+software-only codecs to 1080p. Detailed codec timings and quality measurements
+live in the sibling `h3-cog/experiments/codec-bench` report.
 
 `gen_gallery_local.py --prompts` accepts JSONL rows with `prompt`, optional
 `slug`, and optional `seed`, or one plain prompt per line. Catalog IDs are

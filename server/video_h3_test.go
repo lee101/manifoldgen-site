@@ -38,6 +38,36 @@ func TestParseRunpodH3ProviderJob(t *testing.T) {
 	}
 }
 
+func TestResolveH3RunpodArtifactPrefersExpectedDirectURL(t *testing.T) {
+	artifact := h3RunpodArtifact{
+		URL: "https://cdn.example/output.webm", ContentType: "video/webm", Bytes: 1234,
+	}
+	url, inline, size, err := resolveH3RunpodArtifact(artifact, artifact.URL)
+	if err != nil || url != artifact.URL || inline != nil || size != 1234 {
+		t.Fatalf("direct artifact = url=%q inline=%v size=%d err=%v", url, inline, size, err)
+	}
+	if _, _, _, err := resolveH3RunpodArtifact(artifact, "https://cdn.example/other.webm"); err == nil {
+		t.Fatal("expected mismatched direct URL to fail")
+	}
+}
+
+func TestResolveH3RunpodArtifactRetainsInlineCompatibility(t *testing.T) {
+	artifact := h3RunpodArtifact{Data: "dmlkZW8=", ContentType: "video/webm"}
+	url, inline, size, err := resolveH3RunpodArtifact(artifact, "")
+	if err != nil || url != "" || string(inline) != "video" || size != 5 {
+		t.Fatalf("inline artifact = url=%q inline=%q size=%d err=%v", url, inline, size, err)
+	}
+}
+
+func TestH3OutputContentTypeTracksRequestedContainer(t *testing.T) {
+	if got := h3OutputContentType(map[string]interface{}{"output_codec": "mp4-h264"}); got != "video/mp4" {
+		t.Fatalf("mp4 content type = %q", got)
+	}
+	if got := h3OutputContentType(map[string]interface{}{"output_codec": "webm-av1"}); got != "video/webm" {
+		t.Fatalf("webm content type = %q", got)
+	}
+}
+
 func TestNormalizeH3VideoRequestDefaults(t *testing.T) {
 	req := ServiceUsageRequest{Prompt: "neon alley rain"}
 	if err := normalizeH3VideoRequest(&req); err != nil {
