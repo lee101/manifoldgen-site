@@ -27,7 +27,7 @@ type PricingResponse = {
     tiers?: VideoPricingTier[];
   };
   pricing?: Array<{ service?: string; price_usd?: number; price_cute?: number; unit?: string }>;
-  studio?: { music_generation_credits?: number };
+  studio?: { music_generation_credits?: number; music_generation_base_usd?: number; music_generation_minimum_usd?: number; music_generation_minute_usd?: number };
 };
 
 const FALLBACK_TIERS: VideoPricingTier[] = [
@@ -44,7 +44,7 @@ const FALLBACK: PricingResponse = {
   image_high_step_credits: 10,
   video_pricing: { basis_steps: 20, tiers: FALLBACK_TIERS },
   pricing: [{ service: 'speech', price_usd: .005, price_cute: .5, unit: 'per 100 characters' }],
-  studio: { music_generation_credits: 80 },
+	studio: { music_generation_credits: 190, music_generation_base_usd: 1.50, music_generation_minimum_usd: 1.80, music_generation_minute_usd: .80 },
 };
 
 function money(value: number, minimumDigits = 2) {
@@ -70,7 +70,8 @@ export function PricingTable() {
   const tiers = pricing.video_pricing?.tiers?.length ? pricing.video_pricing.tiers : FALLBACK_TIERS;
   const durations = tiers[0]?.prices.map((point) => point.duration_seconds) || [5, 10, 15, 30, 60];
   const creditPrice = pricing.credit_price_usd || .01;
-  const musicCredits = pricing.studio?.music_generation_credits || 80;
+	const musicMinimum = pricing.studio?.music_generation_minimum_usd || 1.80;
+	const musicPerMinute = pricing.studio?.music_generation_minute_usd || .80;
   const tts = pricing.pricing?.find((item) => item.service === 'speech');
 
   return (
@@ -133,9 +134,9 @@ export function PricingTable() {
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
             <div className="text-sm text-white/45">Music generation</div>
-            <div className="mt-2 text-2xl font-semibold">{money(musicCredits * creditPrice)}</div>
-            <div className="mt-1 text-sm text-white/50">{credits(musicCredits)} credits per track</div>
-            <div className="mt-3 border-t border-white/10 pt-3 text-xs leading-5 text-white/35">Licensed catalog search and imports are free</div>
+			<div className="mt-2 text-2xl font-semibold">from {money(musicMinimum)}</div>
+			<div className="mt-1 text-sm text-white/50">{money(musicPerMinute)}/minute + base</div>
+			<div className="mt-3 border-t border-white/10 pt-3 text-xs leading-5 text-white/35">Built with MiniMax-Music3 · successful generations only</div>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
             <div className="text-sm text-white/45">Text to speech</div>

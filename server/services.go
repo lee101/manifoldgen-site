@@ -35,8 +35,8 @@ var servicePricesUSD = map[string]float64{
 	"video_generate":   0.15,  // OpenPaths auto-video base price; model overrides below
 	"h3_video":         2.688, // per GPU-hour reference rate; exact execution is settled asynchronously
 	"video_restyle":    0.48,  // estimated five-second 720p ceiling; async settlement uses the selected backend
-	"audio_generation": 0.80,  // umbrella audio API; music is the default kind
-	"music_generation": 0.80,  // per generated music track (30–180 seconds)
+	"audio_generation": 1.80,  // MiniMax-Music3 H100 minimum; final price follows duration
+	"music_generation": 1.80,  // $1.50 base + $0.80/output minute, $1.80 minimum
 	"sfx_generation":   2.688, // per GPU-hour reference; exact SFX execution is settled asynchronously
 	"flux_image":       0.04,  // per image via fal.ai or netwrck
 	"nsfw_detect":      0.001, // per image classification
@@ -387,6 +387,9 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"studio": map[string]interface{}{
 			"background_removal_credits":   studioBackgroundCredits,
 			"music_generation_credits":     studioMusicCredits,
+			"music_generation_base_usd":    1.50,
+			"music_generation_minimum_usd": 1.80,
+			"music_generation_minute_usd":  0.80,
 			"extend_input_second_usd":      studioExtendInputPerSec,
 			"extend_output_second_usd":     studioExtendOutputPerSec,
 			"upscale_base_usd":             studioUpscaleBaseUSD,
@@ -444,7 +447,16 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	if req.Service == "audio_generation" {
 		switch strings.ToLower(strings.TrimSpace(req.Kind)) {
 		case "", "music":
-			handleMusicGenerationAs(ctx, user, req.Prompt, req.Duration, "audio")
+			if music3EndpointID() != "" {
+				prompt, duration, inputErr := normalizeMusicGenerationInput(req.Prompt, req.Duration)
+				if inputErr != nil {
+					jsonError(ctx, http.StatusBadRequest, inputErr.Error())
+					return
+				}
+				handleMusic3Generation(ctx, user, prompt, req.Lyrics, duration, "audio")
+			} else {
+				handleMusicGenerationAs(ctx, user, req.Prompt, req.Duration, "audio")
+			}
 		case "sfx", "sound", "sound_effect":
 			handleSFXGeneration(ctx, req, user)
 		default:
@@ -453,7 +465,16 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	if req.Service == "music_generation" {
-		handleMusicGeneration(ctx, user, req.Prompt, req.Duration)
+		if music3EndpointID() != "" {
+			prompt, duration, inputErr := normalizeMusicGenerationInput(req.Prompt, req.Duration)
+			if inputErr != nil {
+				jsonError(ctx, http.StatusBadRequest, inputErr.Error())
+				return
+			}
+			handleMusic3Generation(ctx, user, prompt, req.Lyrics, duration, "music")
+		} else {
+			handleMusicGeneration(ctx, user, req.Prompt, req.Duration)
+		}
 		return
 	}
 	if req.Service == "sfx_generation" {

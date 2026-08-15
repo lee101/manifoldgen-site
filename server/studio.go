@@ -29,7 +29,7 @@ const (
 	studioUpscaleBaseUSD     = 0.10
 	studioUpscaleOutputMPUSD = 0.012
 	studioAudioSearchLimit   = 24
-	studioMusicCredits       = 80.0
+	studioMusicCredits       = 190.0
 	studioAudioLibraryHost   = "netwrckstatic.netwrck.com"
 )
 
@@ -553,6 +553,10 @@ func studioGeneratedAudioFormat(contentType, rawURL string) (string, string, err
 }
 
 func persistGeneratedAudioURL(sourceURL, userID string) (string, error) {
+	return persistGeneratedAudioURLNamed(sourceURL, userID, "")
+}
+
+func persistGeneratedAudioURLNamed(sourceURL, userID, preferredName string) (string, error) {
 	if err := studioRemoteVideoURL(sourceURL); err != nil {
 		return "", fmt.Errorf("generated audio URL is not public")
 	}
@@ -590,7 +594,15 @@ func persistGeneratedAudioURL(sourceURL, userID string) (string, error) {
 	if len(shortID) > 12 {
 		shortID = shortID[:12]
 	}
-	objectKey := fmt.Sprintf("%s/%s/audio/%s%s", strings.TrimSuffix(r2PathPrefix, "/"), shortID, newUUID(), extension)
+	filename := sanitizeUploadName(strings.TrimSuffix(preferredName, filepath.Ext(preferredName)))
+	filename = strings.Trim(filename, "-_.")
+	if filename == "" {
+		filename = "voice"
+	}
+	if len(filename) > 72 {
+		filename = strings.TrimRight(filename[:72], "-_.")
+	}
+	objectKey := fmt.Sprintf("%s/%s/audio/%s-%s%s", strings.TrimSuffix(r2PathPrefix, "/"), shortID, newUUID(), filename, extension)
 	uploadURL, err := presignR2PutObject(objectKey, contentType, 900)
 	if err != nil {
 		return "", err
@@ -620,13 +632,23 @@ func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 	}
 	var input struct {
 		Prompt   string `json:"prompt"`
+		Lyrics   string `json:"lyrics"`
 		Duration int    `json:"duration"`
 	}
 	if json.Unmarshal(ctx.PostBody(), &input) != nil {
 		jsonError(ctx, http.StatusBadRequest, "invalid json")
 		return
 	}
-	handleMusicGeneration(ctx, user, input.Prompt, input.Duration)
+	prompt, duration, normalizeErr := normalizeMusicGenerationInput(input.Prompt, input.Duration)
+	if normalizeErr != nil {
+		jsonError(ctx, http.StatusBadRequest, normalizeErr.Error())
+		return
+	}
+	if music3EndpointID() != "" {
+		handleMusic3Generation(ctx, user, prompt, input.Lyrics, duration, "music")
+		return
+	}
+	handleMusicGeneration(ctx, user, prompt, duration)
 }
 
 func normalizeMusicGenerationInput(prompt string, duration int) (string, int, error) {
@@ -653,6 +675,10 @@ func handleMusicGenerationAs(ctx *fasthttp.RequestCtx, user *User, prompt string
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
+	if music3EndpointID() != "" {
+		handleMusic3Generation(ctx, user, prompt, "", duration, service)
+		return
+	}
 	balance := user.Credits
 	creditsUsed := studioMusicCredits
 	if user.UnlimitedAPI {
@@ -660,7 +686,7 @@ func handleMusicGenerationAs(ctx *fasthttp.RequestCtx, user *User, prompt string
 	} else {
 		balance, err = dbConn.DeductUserCredits(user.ID, studioMusicCredits)
 		if err != nil {
-			jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: music generation costs 80 credits")
+			jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: music generation costs 190 credits")
 			return
 		}
 	}
