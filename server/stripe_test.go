@@ -6,6 +6,20 @@ import (
 	"testing"
 )
 
+func TestStripeCreatorPriceIDsMigrateRetiredLegacyPrices(t *testing.T) {
+	t.Setenv("STRIPE_CREATOR_MONTHLY_PRICE_ID", "")
+	t.Setenv("STRIPE_CREATOR_ANNUAL_PRICE_ID", "")
+	t.Setenv("STRIPE_MONTHLY_PRICE_ID", "price_1U23cXHS07k89Tt2FAaOIol0")
+	t.Setenv("STRIPE_ANNUAL_PRICE_ID", "price_1U23cXHS07k89Tt2xAwAPV8Y")
+
+	if got := stripeCreatorMonthlyPriceID(); got != "price_1U3RWpHS07k89Tt2D18g8vZE" {
+		t.Fatalf("creator monthly price = %q, want active replacement", got)
+	}
+	if got := stripeCreatorAnnualPriceID(); got != "price_1U3RWpHS07k89Tt2DLaeh6bN" {
+		t.Fatalf("creator annual price = %q, want active replacement", got)
+	}
+}
+
 func TestCreateBillingPortalSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

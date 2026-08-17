@@ -324,12 +324,31 @@ type stripeCheckoutRequest struct {
 	CancelURL     string  `json:"cancel_url"`
 }
 
+const (
+	stripeCreatorMonthlyPriceIDActive  = "price_1U3RWpHS07k89Tt2D18g8vZE"
+	stripeCreatorAnnualPriceIDActive   = "price_1U3RWpHS07k89Tt2DLaeh6bN"
+	stripeCreatorMonthlyPriceIDRetired = "price_1U23cXHS07k89Tt2FAaOIol0"
+	stripeCreatorAnnualPriceIDRetired  = "price_1U23cXHS07k89Tt2xAwAPV8Y"
+)
+
+func activeStripeCheckoutPriceID(priceID string) string {
+	priceID = strings.TrimPrefix(strings.TrimSpace(priceID), "/")
+	switch priceID {
+	case stripeCreatorMonthlyPriceIDRetired:
+		return stripeCreatorMonthlyPriceIDActive
+	case stripeCreatorAnnualPriceIDRetired:
+		return stripeCreatorAnnualPriceIDActive
+	default:
+		return priceID
+	}
+}
+
 func stripeCreatorMonthlyPriceID() string {
-	return strings.TrimPrefix(strings.TrimSpace(getEnv("STRIPE_CREATOR_MONTHLY_PRICE_ID", getEnv("STRIPE_MONTHLY_PRICE_ID", "price_1U3RWpHS07k89Tt2D18g8vZE"))), "/")
+	return activeStripeCheckoutPriceID(getEnv("STRIPE_CREATOR_MONTHLY_PRICE_ID", getEnv("STRIPE_MONTHLY_PRICE_ID", stripeCreatorMonthlyPriceIDActive)))
 }
 
 func stripeCreatorAnnualPriceID() string {
-	return strings.TrimPrefix(strings.TrimSpace(getEnv("STRIPE_CREATOR_ANNUAL_PRICE_ID", getEnv("STRIPE_ANNUAL_PRICE_ID", "price_1U3RWpHS07k89Tt2DLaeh6bN"))), "/")
+	return activeStripeCheckoutPriceID(getEnv("STRIPE_CREATOR_ANNUAL_PRICE_ID", getEnv("STRIPE_ANNUAL_PRICE_ID", stripeCreatorAnnualPriceIDActive)))
 }
 
 func stripeProMonthlyPriceID() string {
@@ -505,7 +524,7 @@ func handleStripeCheckout(ctx *fasthttp.RequestCtx) {
 	if checkoutType == "subscription" {
 		plan, priceID := stripePlanPriceID(req.Plan)
 		if req.PriceID != "" {
-			priceID = strings.TrimPrefix(strings.TrimSpace(req.PriceID), "/")
+			priceID = activeStripeCheckoutPriceID(req.PriceID)
 			if p := stripePlanFromPriceID(priceID); p != "" {
 				plan = p
 			}
