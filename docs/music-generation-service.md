@@ -14,22 +14,35 @@ MiniMax-Music3 checkpoint from a regional network volume.
 | MCP | `generate_media` with `service: "music"`, `prompt`, `lyrics`, `duration` |
 | Status | `GET /api/audio-jobs/{job_id}` |
 
-Lyrics are optional; omit them for an instrumental. Keep `[Verse]`, `[Chorus]`,
-`[Bridge]` and `[Outro]` on their own lines — the model drops any lyric text that
-shares a line with a tag. Durations are 30–180 seconds and act as a cap: the
-model may end the song earlier.
+Lyrics are optional; omit them for an instrumental. Durations are 30–300
+seconds and act as a cap: the model may end the song earlier.
+
+Section tags are the song's structure, and the model stops singing when the
+structure runs out — plain lyrics come back as a fragment. `music_lyrics.go`
+therefore structures every request server side: existing tags are kept and any
+text sharing a tag's line is moved onto its own line (the model would otherwise
+drop it), and untagged lyrics are divided into verses and choruses, with a
+repeated block recognised as the chorus. The same words went from 99 s
+unstructured to 158 s structured.
 
 ## Measured performance (NVIDIA H200)
 
 | Track | Generation | Wall clock from submit | Notes |
 | --- | --- | --- | --- |
-| 30 s | 11.4 s | 83 s | cold worker, model load overlapped with boot |
-| 100 s | 39.3 s | 86 s | warm worker |
-| 158 s | 71.7 s | 127 s | warm worker |
+| 30 s | 11.4 s | 83 s | bf16, cold worker |
+| 100 s | 39.3 s | 86 s | bf16, warm worker |
+| 158 s | 71.7 s | 127 s | bf16, cold worker |
+| 130 s | 45.3 s | 108 s | FP8 backbone, cold worker |
 
-Generation runs about 2.2x faster than real time. A cold worker adds roughly a
-minute of model load, which the warm-start thread overlaps with container boot
-so it is mostly hidden from the request.
+The Qwen3 backbone serves in FP8 (`--quantization fp8`), which renders about
+1.31x faster per second of audio than bf16 — 0.35 generation seconds per output
+second against 0.46 — because the AR decode is bound by reading weights rather
+than by arithmetic. FP8 changes which codes get sampled, so a seed does not
+reproduce the bf16 take; it produces a different take of the same song. Serve
+bf16 instead by deploying with `MUSIC3_SERVE_EXTRA_ARGS=""`.
+
+A cold worker adds roughly a minute of model load, which the warm-start thread
+overlaps with container boot so it is mostly hidden from the request.
 
 ## Capacity policy
 
