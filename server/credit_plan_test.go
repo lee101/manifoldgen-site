@@ -52,6 +52,77 @@ func TestImageBatchScalesPrice(t *testing.T) {
 	}
 }
 
+func TestGPTImageBatchIsAlwaysMeteredAtPaidRate(t *testing.T) {
+	req := ServiceUsageRequest{Service: "gpt_image", N: 4}
+	if usd := getRequestServicePriceUSD(req); usd != 0.96 {
+		t.Fatalf("GPT Image 2 batch usd = %v, want 0.96", usd)
+	}
+	if credits := getRequestServicePriceCUTE(req); credits != 96 {
+		t.Fatalf("GPT Image 2 batch credits = %v, want 96", credits)
+	}
+	if firstPartyServices[req.Service] {
+		t.Fatal("GPT Image 2 must use current credit pricing, not first-party ATH pricing")
+	}
+}
+
+func TestProxyOpenPathsGPTImageGenerationPinsModelAndBatch(t *testing.T) {
+	var got map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/generations" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer test-openpaths-key" {
+			t.Fatalf("authorization = %q", auth)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": []map[string]string{{"b64_json": "aW1hZ2U="}},
+		})
+	}))
+	defer srv.Close()
+
+	oldClient, oldBaseURL, oldKey := backendClient, openPathsBaseURL, openPathsAPIKey
+	backendClient, openPathsBaseURL, openPathsAPIKey = srv.Client(), srv.URL, "test-openpaths-key"
+	defer func() { backendClient, openPathsBaseURL, openPathsAPIKey = oldClient, oldBaseURL, oldKey }()
+
+	result, err := proxyOpenPathsImageGeneration(ServiceUsageRequest{
+		Prompt: "  paid image  ", Width: 1536, Height: 1024, N: 4, Model: "some-other-model",
+	})
+	if err != nil {
+		t.Fatalf("proxyOpenPathsImageGeneration: %v", err)
+	}
+	if got["model"] != "gpt-image-2" || got["size"] != "1536x1024" || got["n"] != float64(4) {
+		t.Fatalf("OpenPaths request = %#v", got)
+	}
+	var normalized map[string]interface{}
+	if err := json.Unmarshal(result, &normalized); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if normalized["engine"] != "gpt-image-2" {
+		t.Fatalf("engine = %v", normalized["engine"])
+	}
+}
+
+func TestGPTImagePublicAlias(t *testing.T) {
+	if got := requestedServiceName("gpt-image-2"); got != "gpt_image" {
+		t.Fatalf("requestedServiceName = %q, want gpt_image", got)
+	}
+}
+
+func TestGeneratedImageSafetyStatus(t *testing.T) {
+	for _, service := range []string{"gpt_image", "image_edit"} {
+		status := generatedImageSafetyStatus(service)
+		if status == nil || *status {
+			t.Fatalf("generatedImageSafetyStatus(%q) = %v, want explicit false", service, status)
+		}
+	}
+	if status := generatedImageSafetyStatus("zimage"); status != nil {
+		t.Fatalf("generatedImageSafetyStatus(zimage) = %v, want nil for local moderation", *status)
+	}
+}
+
 func TestZImageBackendOrderPrefersRequested(t *testing.T) {
 	req := ServiceUsageRequest{Service: "zimage", ImageBackend: "images3"}
 	order := zimageBackendOrder(req, "http://127.0.0.1:8100")

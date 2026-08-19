@@ -38,6 +38,8 @@ export type PortableStudioAsset = {
   adjustments: StudioAdjustments;
   cloudURL?: string;
   objectKey?: string;
+  /** Small AV1/WebM derivative used only for hover/scrub previews in Media. */
+  previewURL?: string;
   contentType: string;
   size: number;
   lastModified: number;
@@ -146,6 +148,32 @@ export async function saveLocalStudioProject(project: LocalStudioProject) {
     }
     await transactionDone(transaction);
     localStorage.setItem(LAST_PROJECT_KEY, project.id);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Persist immutable media as soon as it enters a project. Keeping this small
+ * write separate from the debounced project-document save means playback can
+ * always use a local Blob, even if the tab closes before the next metadata
+ * save. Browser storage decides whether this lives on disk, but IndexedDB is
+ * the durable cache rather than an in-memory media map.
+ */
+export async function cacheLocalStudioFiles(projectID: string, files: Map<string, File>) {
+  if (!projectID || !files.size) return;
+  const db = await openStudioDB();
+  try {
+    const transaction = db.transaction('assets', 'readwrite');
+    const store = transaction.objectStore('assets');
+    const existing = new Set((await requestResult(store.index('projectID').getAllKeys(IDBKeyRange.only(projectID)))).map(String));
+    for (const [mediaID, file] of files) {
+      const key = `${projectID}:${mediaID}`;
+      // Media IDs identify immutable bytes, so a cache hit never needs a
+      // large Blob rewrite just because the timeline metadata changed.
+      if (!existing.has(key)) store.put({ key, projectID, assetID: mediaID, file });
+    }
+    await transactionDone(transaction);
   } finally {
     db.close();
   }

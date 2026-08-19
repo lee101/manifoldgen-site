@@ -27,8 +27,9 @@ test('API docs show concrete video resolution and duration prices', async ({ pag
   await expect(table).toContainText('$0.46');
   await expect(table).toContainText('$1.42');
   await expect(table).toContainText('$2.02');
-  await expect(page.getByText('80 credits per track')).toBeVisible();
-  await expect(page.getByText('4 credits per image')).toBeVisible();
+  await expect(page.getByText('from $0.50')).toBeVisible();
+  await expect(page.getByText('$0.20/minute + base')).toBeVisible();
+  await expect(page.getByText('4 credits per image', { exact: true })).toBeVisible();
   await expect(page.getByText('estimate returned by API')).toHaveCount(0);
   await expect(page.getByText(/Fetch current estimates/)).toHaveCount(0);
   const docs = await page.locator('body').innerText();

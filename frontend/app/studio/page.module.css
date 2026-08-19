@@ -172,7 +172,8 @@
 .discoveryCard:disabled { opacity: .58; cursor: default; }
 .discoveryPreview { position: relative; display: block; overflow: hidden; aspect-ratio: 1.2; background: #090b0e; }
 .discoveryPreview img, .discoveryPreview video { width: 100%; height: 100%; display: block; object-fit: cover; }
-.discoveryPreview > span { position: absolute; right: 5px; bottom: 5px; display: flex; align-items: center; gap: 3px; padding: 4px 6px; border-radius: 5px; background: rgba(9, 10, 13, .82); color: #d8d1ff; font-size: 8px; font-weight: 800; backdrop-filter: blur(6px); }
+.discoveryAdd { position: absolute; z-index: 4; right: 5px; bottom: 5px; display: flex; align-items: center; gap: 3px; padding: 4px 6px; border-radius: 5px; background: rgba(9, 10, 13, .82); color: #d8d1ff; font-size: 8px; font-weight: 800; pointer-events: none; transition: opacity .14s ease; backdrop-filter: blur(6px); }
+.discoveryPreview:has(.hoverVideoPreview[data-preview-active="true"]) .discoveryAdd { opacity: 0; }
 .discoveryCard > b, .discoveryCard > small { display: block; overflow: hidden; margin: 6px 7px 0; text-overflow: ellipsis; white-space: nowrap; }
 .discoveryCard > b { font-size: 9px; }
 .discoveryCard > small { margin-top: 3px; color: #7b8594; font-size: 8px; }
@@ -190,6 +191,12 @@
 .engineChoices b { font-size: 10px; }
 .engineChoices small { color: #686f79; font-size: 8px; }
 .engineChoices .engineActive { border-color: #7565b0; background: #262139; color: #e2dcff; }
+.engineChoices button:disabled { opacity: .42; cursor: default; }
+.premiumImageToggle { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 9px; padding: 9px; border: 1px solid #594f7e; border-radius: 8px; background: rgba(117, 101, 176, .12); color: #dcd6fa; cursor: pointer; }
+.premiumImageToggle input { width: 15px; height: 15px; accent-color: #8c7cff; }
+.premiumImageToggle span { min-width: 0; display: grid; gap: 2px; }
+.premiumImageToggle b { font-size: 10px; }
+.premiumImageToggle small { color: #9188ad; font-size: 8px; line-height: 1.35; }
 .imageSettings, .textEditorGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .imageSettings label, .textEditorGrid label { display: grid; gap: 4px; color: #8a94a2; font-size: 8px; font-weight: 700; }
 .imageSettings select, .textEditorGrid select, .textEditorGrid input[type="number"] { min-width: 0; width: 100%; height: 30px; border: 1px solid #30343c; border-radius: 7px; padding: 0 7px; background: #16191e; color: #c9cdd3; font-size: 9px; }
@@ -226,6 +233,13 @@
 .assetGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
 .assetCard { position: relative; overflow: hidden; border: 1px solid #252930; background: #181b20; padding: 0; border-radius: 8px; cursor: pointer; text-align: left; aspect-ratio: 1.2; }
 .assetCard img, .assetCard video { width: 100%; height: calc(100% - 24px); object-fit: cover; display: block; background: #08090b; }
+.hoverVideoPreview { position: relative; width: 100%; height: 100%; display: block; overflow: hidden; background: radial-gradient(circle at 50% 20%, rgba(137, 119, 255, .16), transparent 58%), #08090b; }
+.hoverVideoPreview video { width: 100%; height: 100%; display: block; object-fit: cover; background: #08090b; }
+.assetCard .hoverVideoPreview { height: calc(100% - 24px); }
+.hoverVideoScrub { position: absolute; z-index: 3; right: 5px; bottom: 5px; left: 5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 4px 5px; border: 1px solid rgba(218, 212, 255, .18); border-radius: 5px; background: rgba(8, 9, 12, .82); color: #d8d4eb; opacity: 0; pointer-events: none; transform: translateY(4px); transition: opacity .16s ease, transform .16s ease; backdrop-filter: blur(8px); }
+.hoverVideoPreview[data-preview-active="true"] .hoverVideoScrub { opacity: 1; pointer-events: auto; transform: translateY(0); }
+.hoverVideoScrub input { width: 100%; min-width: 0; height: 14px; margin: 0; accent-color: #ad9cff; cursor: ew-resize; }
+.hoverVideoScrub output { color: #b9b4cc; font-size: 7px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .generationLibrary { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
 .generationHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; color: #87919f; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
 .generationHeader small { color: #75808f; font-size: 8px; font-weight: 600; letter-spacing: 0; }
@@ -366,6 +380,7 @@
 .canvasWrapDragging { cursor: grabbing; transition: none; }
 .stageLayerMedia { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .sourceVideo { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.playbackPrebuffer { position: fixed; z-index: -1; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
 .previewCanvas { display: block; width: 100%; height: 100%; object-fit: contain; background: black; pointer-events: none; }
 .stageTextEditor { position: absolute; z-index: 1; left: 8%; right: 8%; top: 50%; width: 84%; min-height: 1.25em; max-height: 80%; box-sizing: border-box; padding: .12em .2em; transform: translateY(-50%); overflow: hidden; resize: none; border: 1px dashed rgba(255,255,255,.38); border-radius: 3px; outline: 0; color: white; background: transparent; line-height: 1.18; caret-color: white; text-shadow: 0 1px 2px rgba(0,0,0,.45); touch-action: none; }
 .stageTextEditor:focus { border-color: #b4a7ff; box-shadow: 0 0 0 1px rgba(142,126,243,.42); }

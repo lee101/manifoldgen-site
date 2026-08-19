@@ -58,6 +58,16 @@ class PromptSpec:
     height: int | None = None
 
 
+@dataclass(frozen=True)
+class GalleryR2Config:
+    account: str
+    endpoint: str
+    bucket: str
+    prefix: str
+    access_key: str
+    secret_key: str
+
+
 def stop(_signum: int, _frame: object) -> None:
     global STOP
     STOP = True
@@ -133,12 +143,21 @@ def generate(endpoint: str, model: str, prompt: str, width: int, height: int, se
     body = json.dumps({
         'prompt': prompt,
         'seed': seed,
-        **({'width': width, 'height': height, 'num_inference_steps': 8} if direct_worker else {
+        **({
+            'width': width,
+            'height': height,
+            'num_inference_steps': 8,
+            # This script is a resumable gallery farm. Direct worker requests
+            # must remain background traffic even when an older service unit
+            # omitted --low-priority; otherwise a capacity retry can sit ahead
+            # of interactive image requests for the full HTTP budget.
+            'low_priority': True,
+        } if direct_worker else {
             'model': model, 'size': f'{width}x{height}', 'n': 1, 'low_priority': low_priority,
         }),
     }).encode()
     headers = {'Content-Type': 'application/json'}
-    if secret := os.getenv('OMNISERVE_NATIVE_SECRET', os.getenv('OMNISERVE_SECRET', '')):
+    if secret := image_worker_secret():
         headers['Authorization'] = f'Bearer {secret}'
     request = urllib.request.Request(
         endpoint.rstrip('/') + ('/generate_image' if direct_worker else '/v1/images/generations'),
@@ -170,19 +189,32 @@ def ensure_free_space(directory: Path, minimum_gib: float) -> None:
         raise RuntimeError(f"stopping safely: only {free / 1024**3:.1f} GiB free in {directory}")
 
 
-def r2_client() -> object:
-    account = os.getenv("R2_ACCOUNT_ID", "")
-    key = os.getenv("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
-    secret = os.getenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
-    bucket = os.getenv("R2_BUCKET", "")
-    if not all((account, key, secret, bucket)):
-        raise RuntimeError("R2_ACCOUNT_ID, R2_BUCKET, and R2 credentials are required for --upload-r2")
-    return boto3.client("s3", endpoint_url=f"https://{account}.r2.cloudflarestorage.com", aws_access_key_id=key,
-                        aws_secret_access_key=secret, region_name="auto", config=Config(s3={"addressing_style": "path"}))
+def gallery_r2_config() -> GalleryR2Config:
+    account = os.getenv("MANIFOLDGEN_R2_ACCOUNT_ID", os.getenv("R2_ACCOUNT_ID", ""))
+    endpoint = os.getenv("MANIFOLDGEN_R2_ENDPOINT", f"https://{account}.r2.cloudflarestorage.com")
+    bucket = os.getenv("MANIFOLDGEN_R2_BUCKET", "manifoldgenstatic").strip()
+    prefix = os.getenv("MANIFOLDGEN_R2_PATH_PREFIX", "gallery").strip("/")
+    key = os.getenv("MANIFOLDGEN_R2_ACCESS_KEY_ID", os.getenv("CLOUDFLARE_R2_ACCESS_KEY_ID", ""))
+    secret = os.getenv("MANIFOLDGEN_R2_SECRET_ACCESS_KEY", os.getenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY", ""))
+    if not all((account, endpoint, bucket, prefix, key, secret)):
+        raise RuntimeError("ManifoldGen R2 account, bucket, prefix, and credentials are required for --upload-r2")
+    return GalleryR2Config(account, endpoint, bucket, prefix, key, secret)
+
+
+def r2_client(config: GalleryR2Config) -> object:
+    return boto3.client("s3", endpoint_url=config.endpoint, aws_access_key_id=config.access_key,
+                        aws_secret_access_key=config.secret_key, region_name="auto", config=Config(s3={"addressing_style": "path"}))
+
+
+def image_worker_secret(preferred_env: str = "OMNISERVE_NATIVE_SECRET") -> str:
+    return os.getenv(
+        preferred_env,
+        os.getenv("OMNISERVE_IMAGE_WORKER_SECRET", os.getenv("OMNISERVE_SECRET", os.getenv("IMAGE_API_SECRET", ""))),
+    )
 
 
 def moderate_image(endpoint: str, path: Path, threshold: float, secret_env: str) -> tuple[bool, float]:
-    secret = os.getenv(secret_env, os.getenv("OMNISERVE_SECRET", os.getenv("IMAGE_API_SECRET", "")))
+    secret = image_worker_secret(secret_env)
     params = {"secret": secret} if secret else {}
     with path.open("rb") as image:
         response = requests.post(
@@ -289,9 +321,10 @@ def main() -> None:
     originals = args.images_dir / 'originals'
     originals.mkdir(parents=True, exist_ok=True)
     ensure_free_space(args.images_dir, args.min_free_gib)
-    client = r2_client() if args.upload_r2 else None
-    bucket = os.getenv("R2_BUCKET", "")
-    prefix = os.getenv("R2_PATH_PREFIX", "gallery").strip("/")
+    r2 = gallery_r2_config() if args.upload_r2 else None
+    client = r2_client(r2) if r2 else None
+    bucket = r2.bucket if r2 else ""
+    prefix = r2.prefix if r2 else "gallery"
     generated = 0
     for number, spec in enumerate(pending, 1):
         prompt = spec.prompt

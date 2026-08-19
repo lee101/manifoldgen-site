@@ -29,6 +29,7 @@ def config():
                 "name": "normal-h3",
                 "workersMax": 2,
                 "gpuTypeIds": ["NVIDIA L40S"],
+                "env": {"H3_MODEL_VARIANT": "pinned-h3"},
                 "unsetEnv": ["H3_FACE_REFINE_STEPS"],
             }
         ],
@@ -53,7 +54,7 @@ def test_template_payload_preserves_variant_and_secrets_but_removes_canary_overr
     assert payload["imageName"] == "registry.example/h3:r17"
     assert payload["dockerStartCmd"] == ["python", "-u", "/src/rp_handler.py"]
     assert payload["env"]["SECRET"] == "preserved"
-    assert payload["env"]["H3_MODEL_VARIANT"] == "normal-h3"
+    assert payload["env"]["H3_MODEL_VARIANT"] == "pinned-h3"
     assert payload["env"]["H3_FACE_REFINE_REQUIRED"] == "0"
     assert "H3_FACE_REFINE_STEPS" not in payload["env"]
 

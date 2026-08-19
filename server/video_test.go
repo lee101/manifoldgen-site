@@ -112,6 +112,25 @@ func TestCallAppNZH3PreservesLoopPayload(t *testing.T) {
 	}
 }
 
+func TestCancelPredictionAtUsesStablePredictionID(t *testing.T) {
+	var method, path, authorization string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path, authorization = r.Method, r.URL.Path, r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := cancelPredictionAt(srv.URL, "video_job-123", "worker-secret"); err != nil {
+		t.Fatalf("cancelPredictionAt failed: %v", err)
+	}
+	if method != http.MethodPost || path != "/predictions/video_job-123/cancel" {
+		t.Fatalf("cancel request = %s %s", method, path)
+	}
+	if authorization != "Bearer worker-secret" {
+		t.Fatalf("authorization = %q", authorization)
+	}
+}
+
 func TestH3LoopSettlementMarkupRoundsUp(t *testing.T) {
 	if got := h3DownstreamMicros(1); got != h3MinimumChargeMicros {
 		t.Fatalf("one micro provider cost settled to %d, want minimum %d", got, h3MinimumChargeMicros)

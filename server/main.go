@@ -316,6 +316,9 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	case path == "/api/pricing" && method == "GET":
 		handleGetPricing(ctx)
 
+	case path == "/api/anima/status" && method == "GET":
+		handleAnimaStatus(ctx)
+
 	// Wallet balance
 	case path == "/api/balance" && method == "GET":
 		handleGetBalance(ctx)
@@ -361,6 +364,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStudioProject(ctx, strings.TrimPrefix(path, "/api/studio/projects/"), method)
 	case path == "/api/studio/assets/presign" && method == "POST":
 		handleStudioAssetPresign(ctx)
+	case path == "/api/studio/assets/preview" && (method == "GET" || method == "POST"):
+		handleStudioVideoPreview(ctx)
 	case path == "/api/video-jobs" && method == "GET":
 		handleListVideoJobs(ctx)
 	case path == "/api/audio-jobs" && method == "GET":
@@ -368,6 +373,12 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	case strings.HasPrefix(path, "/api/video-jobs/") && strings.HasSuffix(path, "/retry") && method == "POST":
 		jobID := strings.TrimSuffix(strings.TrimPrefix(path, "/api/video-jobs/"), "/retry")
 		handleRetryVideoJob(ctx, jobID)
+	case strings.HasPrefix(path, "/api/video-jobs/") && strings.HasSuffix(path, "/cancel") && method == "POST":
+		jobID := strings.TrimSuffix(strings.TrimPrefix(path, "/api/video-jobs/"), "/cancel")
+		handleCancelVideoJob(ctx, jobID)
+	case strings.HasPrefix(path, "/api/audio-jobs/") && strings.HasSuffix(path, "/cancel") && method == "POST":
+		jobID := strings.TrimSuffix(strings.TrimPrefix(path, "/api/audio-jobs/"), "/cancel")
+		handleCancelVideoJob(ctx, jobID)
 	case strings.HasPrefix(path, "/api/audio-jobs/") && method == "DELETE":
 		handleDeleteVideoJob(ctx, strings.TrimPrefix(path, "/api/audio-jobs/"))
 	case strings.HasPrefix(path, "/api/audio-jobs/") && method == "GET":

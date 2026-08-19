@@ -86,6 +86,7 @@ def template_payload(
     payload["dockerStartCmd"] = config["dockerStartCmd"]
     env = dict(current.get("env") or {})
     env.update(config.get("env") or {})
+    env.update(endpoint.get("env") or {})
     for key in endpoint.get("unsetEnv", []):
         env.pop(key, None)
     payload["env"] = env

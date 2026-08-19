@@ -1,14 +1,17 @@
 {
   "name": "manifold-animation-transfer-wan-animate-2",
   "template": "wan-animate-2",
+  "image": "ghcr.io/lee101/wan-animate-cog@sha256:c6607ae517f87e9dbb49e2c0d0ea1595111dcf9e14e9d0455caa1ad2b97f12f3",
+  "dockerStartCmd": ["python", "-u", "/src/rp_handler.py"],
+  "registryAuthEnv": "RUNPOD_WAN_ANIMATE_REGISTRY_AUTH_ID",
   "workersMin": 0,
-  "workersMax": 2,
-  "idleTimeout": 30,
+  "workersMax": 1,
+  "idleTimeout": 5,
   "flashboot": true,
-  "scalerType": "QUEUE_DELAY",
-  "scalerValue": 4,
+  "scalerType": "REQUEST_COUNT",
+  "scalerValue": 1,
   "executionTimeout": 5400,
   "modelCache": "network-volume",
   "billingMarkup": 2.0,
-  "notes": "Ada 48 Pro serverless pool; scale to zero after 30 seconds and keep Wan Animate weights on the shared regional volume."
+  "notes": "Run the native RunPod queue handler, not Cog HTTP. Keep one worker per endpoint to avoid duplicate 14B cold-start pressure, scale to zero after five idle seconds, and authenticate the pinned private GHCR digest with the package-scoped registry credential."
 }

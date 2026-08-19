@@ -278,8 +278,7 @@ export default function AccountPage() {
         },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Checkout failed');
+      const data = await parseJSONResponse<{ url?: string; client_secret?: string; publishable_key?: string }>(res, 'Checkout failed');
       if (data.url && !data.client_secret) {
         window.location.href = data.url;
         return;

@@ -102,7 +102,17 @@ var (
 )
 
 func stripeCheckoutUIMode() string {
-	return getEnv("STRIPE_CHECKOUT_UI_MODE", "embedded_page")
+	// This Stripe account/API version uses the account-compatible
+	// "embedded_page" spelling for embedded Checkout sessions.
+	mode := strings.ToLower(strings.TrimSpace(getEnv("STRIPE_CHECKOUT_UI_MODE", "embedded_page")))
+	switch mode {
+	case "embedded", "embedded_page":
+		return "embedded_page"
+	case "custom", "hosted":
+		return mode
+	default:
+		return "embedded_page"
+	}
 }
 
 func initStripe() {

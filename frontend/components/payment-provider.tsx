@@ -10,6 +10,7 @@ import {
   PAYMENT_REQUIRED_EVENT,
   type PaymentDialogDetail,
 } from '../lib/payments';
+import { parseJSONResponse } from '../lib/http';
 import styles from './payment-provider.module.css';
 
 type CheckoutKind = 'credits' | 'creator_monthly' | 'creator_annual' | 'pro_monthly' | 'pro_annual';
@@ -171,8 +172,7 @@ export default function PaymentProvider({ children }: { children: React.ReactNod
           ? { type: 'credits', amount_usd: amountUSD, return_url: window.location.href }
           : { type: 'subscription', plan: kind, return_url: window.location.href }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Checkout failed');
+	      const data = await parseJSONResponse<{ url?: string; client_secret?: string; publishable_key?: string }>(response, 'Checkout failed');
       if (data.url && !data.client_secret) {
         window.location.assign(data.url);
         return;

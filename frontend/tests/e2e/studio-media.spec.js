@@ -331,6 +331,34 @@ test('an account project restores its R2 media on a device without a local copy'
   await expect(page.getByTestId('studio-render-status')).toContainText('2 × 2 · GPU preview');
 });
 
+test('a restored gallery video is fetched once through the CORS-safe cache and playback stays local', async ({ page }) => {
+  const projectID = '58c511e4-9271-49bd-9dfe-3bb7912e6405';
+  const assetID = 'd9e60bfd-ad18-4a70-96ba-0e5cb3a4a9c3';
+  const objectPath = `studio/test/${projectID}/${assetID}/cached-video.webm`;
+  const now = new Date().toISOString();
+  let proxyRequests = 0;
+  await installMocks(page, { cloudProjects: [{
+    id: projectID, name: 'Cached playback', revision: 1, created_at: now, updated_at: now,
+    document: { version: 1, selectedID: assetID, assets: [{
+      id: assetID, mediaID: assetID, name: 'cached-video.webm', kind: 'video', duration: 4, width: 640, height: 360,
+      trimStart: 0, trimEnd: 4, timelineStart: 0, visualTrack: 0, volume: 1, fadeIn: 0, fadeOut: 0,
+      stageX: 0, stageY: 0, adjustments: {}, contentType: 'video/webm', size: fs.statSync(VIDEO).size, lastModified: 1,
+      cloudURL: `https://manifoldgenstatic.manifoldgen.com/gallery/${objectPath}`, objectKey: `gallery/${objectPath}`,
+    }] },
+  }] });
+  await page.route(`**/api/gallery-assets/${objectPath}?v=1`, async (route) => {
+    proxyRequests += 1;
+    await route.fulfill({ status: 200, contentType: 'video/webm', body: fs.readFileSync(VIDEO) });
+  });
+  await page.route(`https://manifoldgenstatic.manifoldgen.com/gallery/${objectPath}`, (route) => route.abort());
+
+  await page.goto('/studio');
+  await expect(page.getByTestId('studio-stage-element').locator('video')).toHaveAttribute('src', /^blob:/);
+  await page.getByLabel('Play').click();
+  await expect(page.getByLabel('Pause')).toBeVisible();
+  expect(proxyRequests).toBe(1);
+});
+
 test('a stale queued generation reconciles into a video tile and reuses its prompt', async ({ page }) => {
   const prompt = 'A silver fox running through luminous alpine grass at blue hour';
   let listChecks = 0;
@@ -364,6 +392,35 @@ test('a stale queued generation reconciles into a video tile and reuses its prom
   await expect(page.getByTestId('studio-video-generate-prompt')).toHaveValue(prompt);
 });
 
+test('an active generation asks for confirmation and sends a cancel request without deleting it', async ({ page }) => {
+  const job = {
+    job_id: 'generation-running-1', status: 'processing', prompt: 'A cavalry charge through a fantasy battlefield',
+    created_at: '2026-08-14T00:00:00Z', updated_at: '2026-08-14T00:00:01Z',
+  };
+  let cancelMethod = '';
+  await installMocks(page);
+  await page.route('**/api/video-jobs', (route) => route.fulfill({ status: 200, json: { jobs: [job] } }));
+  await page.route('**/api/video-jobs/generation-running-1/cancel', async (route) => {
+    cancelMethod = route.request().method();
+    await route.fulfill({ status: 200, json: {
+      cancelled: true,
+      job: { ...job, status: 'cancelled', error: 'generation cancelled by user', updated_at: '2026-08-14T00:00:02Z' },
+    } });
+  });
+
+  await page.goto('/studio');
+  const confirmMessage = new Promise((resolve) => page.once('dialog', async (dialog) => {
+    resolve(dialog.message());
+    await dialog.accept();
+  }));
+  await page.getByTestId('studio-generation-cancel-generation-running-1').click();
+
+  expect(await confirmMessage).toContain('Cancel this generation?');
+  expect(cancelMethod).toBe('POST');
+  await expect(page.getByText('Generation cancelled. Credits were not refunded.')).toBeVisible();
+  await expect(page.getByTestId('studio-generation-generation-running-1')).toContainText('Retry');
+});
+
 test('video generation exposes native and chained timings through one request', async ({ page }) => {
   const videoRequests = [];
   await installMocks(page);
@@ -388,6 +445,35 @@ test('video generation exposes native and chained timings through one request', 
   await page.getByTestId('studio-video-generate-submit').click();
   await expect.poll(() => videoRequests.length).toBe(1);
   expect(videoRequests[0]).toMatchObject({ service: 'h3_video', duration: 60, loop: false, include_audio: false });
+});
+
+test('music video mode creates an opening frame and queues the MiniMax to H3 pipeline', async ({ page }) => {
+  const requests = [];
+  await installMocks(page);
+  await page.route('**/api/search?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route('**/api/service', async (route) => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    if (body.service === 'zimage') {
+      await route.fulfill({ status: 200, json: { saved_image_url: 'https://studio-result.example/music-opening.webp' } });
+      return;
+    }
+    await route.fulfill({ status: 202, json: { service: 'music_video', result: { job_id: 'music-video-job', status: 'queued', stage: 'music' } } });
+  });
+
+  await page.goto('/studio');
+  await page.getByTestId('studio-generate-media').click();
+  await page.getByTestId('studio-video-generate-prompt').fill('A chrome moth orchestra circles a moonlit radio tower');
+  await page.getByTestId('studio-video-generate-music-video').check();
+  await expect(page.getByTestId('studio-video-generate-loop')).toBeDisabled();
+  await expect(page.getByTestId('studio-video-generate-audio')).toBeDisabled();
+  await page.getByTestId('studio-video-generate-submit').click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[0]).toMatchObject({ service: 'zimage', n: 1 });
+  expect(requests[1]).toMatchObject({
+    service: 'h3_video', music_video: true, music_duration: 30, duration: 15,
+    first_frame: 'https://studio-result.example/music-opening.webp', include_audio: true, loop: false,
+  });
 });
 
 test('video generation stays live for repeated background launches', async ({ page }) => {
@@ -418,13 +504,16 @@ test('video generation stays live for repeated background launches', async ({ pa
 test('Studio searches community video and image libraries while generating with the selected image engine', async ({ page }) => {
   const imagePrompt = 'opal glass greenhouse in dawn fog';
   const imageRequests = [];
+  const communityVideoPath = 'videos/community.webm';
+  const communityVideoURL = `https://manifoldgenstatic.manifoldgen.com/gallery/${communityVideoPath}`;
+  let communityVideoProxyRequest = false;
   await installMocks(page);
   await page.route('**/api/images?**', (route) => route.fulfill({ status: 200, json: { images: [] } }));
   await page.route('**/api/images/semantic?**', (route) => route.fulfill({ status: 200, json: { results: [{
     id: 'similar-image-1', prompt: 'Opal conservatory', image_url: '/images/similar.png', thumb_url: '/images/similar.png', model: 'zimage', similarity: 0.91,
   }] } }));
   await page.route('**/api/search?**', (route) => route.fulfill({ status: 200, json: { results: [{
-    job_id: 'community-video-1', prompt: 'Fog moving through a glass greenhouse', video_url: 'https://studio-result.example/community.webm', service: 'h3_video', similarity: 0.88,
+    job_id: 'community-video-1', prompt: 'Fog moving through a glass greenhouse', video_url: communityVideoURL, service: 'h3_video', similarity: 0.88,
   }] } }));
   await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
   await page.route('**/api/service', async (route) => {
@@ -433,7 +522,11 @@ test('Studio searches community video and image libraries while generating with 
   });
   await page.route('https://studio-result.example/generated.png', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE }));
   await page.route('**/gallery/similar.png', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE }));
-  await page.route('https://studio-result.example/community.webm', (route) => route.fulfill({ status: 200, contentType: 'video/webm', body: fs.readFileSync(VIDEO) }));
+  await page.route(`**/api/gallery-assets/${communityVideoPath}?v=1`, async (route) => {
+    communityVideoProxyRequest = true;
+    await route.fulfill({ status: 200, contentType: 'video/webm', body: fs.readFileSync(VIDEO) });
+  });
+  await page.route(communityVideoURL, (route) => route.abort());
 
   await page.goto('/studio');
   await page.getByTestId('studio-media-images').click();
@@ -449,12 +542,26 @@ test('Studio searches community video and image libraries while generating with 
   await expect.poll(() => imageRequests.length).toBe(2);
   expect(imageRequests[1]).toMatchObject({ service: 'zimage', image_backend: 'images3' });
 
+  await page.getByTestId('studio-image-gpt2').check();
+  await expect(page.getByTestId('studio-image-generate')).toContainText('24 credits');
+  await page.getByTestId('studio-image-generate').click();
+  await expect.poll(() => imageRequests.length).toBe(3);
+  expect(imageRequests[2]).toMatchObject({ service: 'gpt-image-2', model: 'gpt-image-2', n: 1, num_images: 1 });
+
   await page.getByTestId('studio-media-videos').click();
   await page.getByTestId('studio-media-search').fill('glass greenhouse fog');
   await page.getByTestId('studio-media-search').press('Enter');
-  await expect(page.getByTestId('studio-video-hit-community-video-1')).toBeVisible();
-  await page.getByTestId('studio-video-hit-community-video-1').click();
+  const communityVideo = page.getByTestId('studio-video-hit-community-video-1');
+  await expect(communityVideo).toBeVisible();
+  await communityVideo.hover();
+  const scrub = communityVideo.getByTestId('studio-video-hit-community-video-1-preview-scrub');
+  await expect(scrub).toBeVisible();
+  await scrub.press('ArrowRight');
+  // The preview now contains an interactive scrubber. Click the explicit Add
+  // affordance so this exercises import instead of seeking the preview.
+  await communityVideo.getByText('Add', { exact: true }).click();
   await expect(page.getByText('Community video added to the timeline')).toBeVisible();
+  expect(communityVideoProxyRequest).toBe(true);
 });
 
 test('text layers stay editable and are persisted in the project document', async ({ page }) => {
@@ -588,8 +695,11 @@ test('video assets open the shared restyle modal and completed jobs return to th
   await page.locator('input[type=file]').setInputFiles(VIDEO);
   const card = page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ });
   await card.click({ button: 'right' });
-  await page.getByRole('button', { name: /Restyle video Transform look/ }).click();
+  await expect(page.getByTestId('studio-context-video-remove-background')).toBeVisible();
+  await page.getByTestId('studio-context-video-style-transfer').click();
   await expect(page.getByRole('heading', { name: 'Restyle video' })).toBeVisible();
+  await expect(page.getByText('Style prompt', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('studio-restyle-prompt')).toHaveValue(/Preserve the original subject, motion, timing, composition, and camera movement/);
   await expect(page.getByText('Transformation strength')).toBeVisible();
   await page.getByTestId('studio-restyle-prompt').fill('Turn Video 1 into luminous watercolor while preserving motion.');
   await page.getByTestId('studio-restyle-submit').click();
@@ -599,6 +709,35 @@ test('video assets open the shared restyle modal and completed jobs return to th
     num_frames: 81, frames_per_second: 16, resolution: '720p',
   });
   await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(2);
+});
+
+test('a timeline video context menu removes its background and adds the transparent result to Media', async ({ page }) => {
+  let submitted;
+  await installMocks(page);
+  await page.route('**/api/service', async (route) => {
+    submitted = route.request().postDataJSON();
+    await route.fulfill({ status: 202, json: { result: { job_id: 'video_background_test', status_url: '/api/video-jobs/video_background_test' } } });
+  });
+  await page.route('**/api/video-jobs/video_background_test', (route) => route.fulfill({ status: 200, json: {
+    job: { status: 'completed', result: { video_url: 'https://studio-result.example/background-removed.webm', has_alpha: true } },
+  } }));
+  await page.route('https://studio-result.example/background-removed.webm', (route) => route.fulfill({ status: 200, contentType: 'video/webm', body: fs.readFileSync(VIDEO) }));
+
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles(VIDEO);
+  await expect(page.getByTestId('studio-save-status')).toHaveText('Saved to cloud', { timeout: 20_000 });
+  const sourceClip = page.locator('[data-testid^="timeline-clip-"]').first();
+  await sourceClip.click({ button: 'right' });
+  await expect(page.getByTestId('studio-context-video-style-transfer')).toBeVisible();
+  await page.getByTestId('studio-context-video-remove-background').click();
+
+  await expect(page.getByText('Background-removed video added to Media')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus-background-removed\.webm/ })).toBeVisible();
+  expect(submitted).toMatchObject({
+    service: 'video_background_removal', background_color: 'transparent',
+    output_format: 'webm_vp9', preserve_audio: true,
+  });
+  expect(submitted.video_url).toContain('studio-media.example');
 });
 
 test('2K preview stays frame-driven on WebGL and export requests GPU and hardware codecs', async ({ page }) => {
@@ -1224,10 +1363,15 @@ test('Media Music searches real catalog-shaped results, imports a track, and gen
   await page.getByTestId('studio-music-create').click();
   await expect(page.getByRole('heading', { name: 'Generate music' })).toBeVisible();
   await page.getByTestId('studio-audio-prompt').fill('Warm analog synth pulse with glass harmonics');
+  await page.getByTestId('studio-music-lyrics').fill('[Verse]\nNeon on the water\n[Chorus]\nCarry us home');
   await page.getByTestId('studio-audio-generate').click();
   await expect(page.locator('[data-timeline-asset]')).toHaveCount(2);
-  expect(generationRequest).toEqual({ prompt: 'Warm analog synth pulse with glass harmonics', duration: 30 });
-  await expect(page.getByText('Music added · 80 credits')).toBeVisible();
+  expect(generationRequest).toEqual({
+    prompt: 'Warm analog synth pulse with glass harmonics',
+    lyrics: '[Verse]\nNeon on the water\n[Chorus]\nCarry us home',
+    duration: 30,
+  });
+  await expect(page.getByText('Music added · MiniMax-Music3')).toBeVisible();
 });
 
 test('licensed Netwrck catalog result imports as an editable audio clip for free', async ({ page }) => {

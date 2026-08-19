@@ -126,7 +126,13 @@ sync_asset_tree() {
   local remote_path="$2"
   local cache_control="$3"
   local manifest_name="$4"
+  local sync_mode="${5:-mirror}"
   local local_digest remote_digest manifest_url
+
+  if [ "$sync_mode" != "mirror" ] && [ "$sync_mode" != "additive" ]; then
+    echo "ERROR: unsupported asset sync mode: $sync_mode"
+    exit 1
+  fi
 
   local_digest=$(asset_tree_digest "$directory")
   manifest_url="s3://$R2_BUCKET/$(s3_key "$STATIC_PATH/.deploy/$manifest_name.sha256")"
@@ -137,8 +143,12 @@ sync_asset_tree() {
     return
   fi
 
+  local sync_delete=()
+  if [ "$sync_mode" = "mirror" ]; then
+    sync_delete=(--delete)
+  fi
   "${AWS[@]}" s3 sync "$directory" "s3://$R2_BUCKET/$(s3_key "$remote_path")" \
-    --delete \
+    "${sync_delete[@]}" \
     --only-show-errors \
     --cache-control "$cache_control"
   printf '%s\n' "$local_digest" | \
@@ -231,9 +241,9 @@ else
     /etc/nginx/ssl
   "${SUDO[@]}" install -d -o www-data -g www-data -m 755 "$DEPLOY_ROOT/logs"
 
-  "${SUDO[@]}" rsync -a --delete --chown=www-data:www-data \
+  "${SUDO[@]}" rsync -a --chown=www-data:www-data \
     "$OUT_DIR/" "$DEPLOY_ROOT/frontend/out/"
-  "${SUDO[@]}" rsync -a --delete --chown=www-data:www-data \
+  "${SUDO[@]}" rsync -a --chown=www-data:www-data \
     "$ROOT/emails/" "$DEPLOY_ROOT/emails/"
   "${SUDO[@]}" find "$DEPLOY_ROOT/frontend/out" \
     \( -name '*.fasthttp.gz' -o -name '*.fasthttp.br' \) -delete
@@ -276,6 +286,7 @@ else
 
   unit_changed=0
   socket_changed=0
+  farm_unit_changed=0
   nginx_changed=0
   if install_root_file_if_changed \
     "$ROOT/deploy/manifoldgen.service" \
@@ -286,6 +297,11 @@ else
     "$ROOT/deploy/manifoldgen.socket" \
     /etc/systemd/system/manifoldgen.socket 644; then
     socket_changed=1
+  fi
+  if install_root_file_if_changed \
+    "$ROOT/deploy/manifoldgen-h3-trajectory-farm.service" \
+    /etc/systemd/system/manifoldgen-h3-trajectory-farm.service 644; then
+    farm_unit_changed=1
   fi
   if install_root_file_if_changed \
     "$ROOT/deploy/nginx-manifoldgen.conf" \
@@ -309,7 +325,7 @@ else
     echo "  ✓ Issued self-signed origin TLS certificate"
   fi
 
-  if [ "$unit_changed" -eq 1 ] || [ "$socket_changed" -eq 1 ]; then
+  if [ "$unit_changed" -eq 1 ] || [ "$socket_changed" -eq 1 ] || [ "$farm_unit_changed" -eq 1 ]; then
     "${SUDO[@]}" systemctl daemon-reload
   fi
   "${SUDO[@]}" systemctl enable manifoldgen.service >/dev/null
@@ -398,11 +414,22 @@ if [ -d "$OUT_DIR/brand" ]; then
     "public, max-age=3600" brand
 fi
 
+# Keep the compact provider mark as an explicit, stable deployment artifact.
+# OpenPaths and other first-party surfaces link this URL directly.
+if [ ! -f "$OUT_DIR/brand/logo-64.webp" ]; then
+  echo "ERROR: expected frontend brand asset $OUT_DIR/brand/logo-64.webp"
+  exit 1
+fi
+echo "  ✓ Stable provider logo: $STATIC_PUBLIC_URL/$STATIC_PATH/brand/logo-64.webp"
+
 # The API records gallery files as originals/<file>. Publish that tree below
 # gallery/ so local development and production load the same remote URLs.
 if [ -d "$GALLERY_IMAGES_DIR/originals" ]; then
+  # Gallery originals have independent writers (the API and long-running
+  # generators can each publish directly to R2). Never mirror-delete this
+  # shared namespace from one writer's local spool.
   sync_asset_tree "$GALLERY_IMAGES_DIR/originals" "gallery/originals" \
-    "public, max-age=31536000, immutable" gallery-originals
+    "public, max-age=31536000, immutable" gallery-originals additive
 fi
 
 "${AWS[@]}" s3 sync "$OUT_DIR" "s3://$R2_BUCKET/$(s3_key "")" \

@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,14 +36,16 @@ var (
 )
 
 type videoBackgroundStoredRequest struct {
-	Input      ServiceUsageRequest `json:"input"`
-	RequestKey string              `json:"_request_key"`
+	Input          ServiceUsageRequest `json:"input"`
+	RequestKey     string              `json:"_request_key"`
+	QualityRetries int                 `json:"_quality_retries,omitempty"`
 }
 
 type videoBackgroundRunpodStatus struct {
 	ID            string `json:"id"`
 	Status        string `json:"status"`
 	Error         string `json:"error"`
+	DelayTime     int64  `json:"delayTime"`
 	ExecutionTime int64  `json:"executionTime"`
 	Output        struct {
 		VideoURL        string  `json:"video_url"`
@@ -105,8 +108,38 @@ func normalizeVideoBackgroundRequest(req *ServiceUsageRequest) error {
 		keep := true
 		req.PreserveAudio = &keep
 	}
+	if req.MaxQuality == nil {
+		off := false
+		req.MaxQuality = &off
+	}
+	req.MaskURL = strings.TrimSpace(req.MaskURL)
+	if req.MaskURL == "" {
+		req.MaskURL = strings.TrimSpace(req.ImageURL)
+	}
+	if req.MaskURL != "" {
+		if err := validateRestyleURL(req.MaskURL); err != nil {
+			return fmt.Errorf("mask_url: %w", err)
+		}
+	}
 	req.Service = "video_background_removal"
 	return nil
+}
+
+func videoBackgroundMaxQuality(req ServiceUsageRequest) bool {
+	return req.MaxQuality != nil && *req.MaxQuality
+}
+
+func videoBackgroundWorkerInput(req ServiceUsageRequest, uploadURL, publicURL string) map[string]interface{} {
+	keepAudio := req.PreserveAudio == nil || *req.PreserveAudio
+	input := map[string]interface{}{
+		"video_url": req.VideoURL, "preserve_audio": keepAudio,
+		"output_upload_url": uploadURL, "output_public_url": publicURL,
+		"max_quality": videoBackgroundMaxQuality(req),
+	}
+	if req.MaskURL != "" {
+		input["mask_url"] = req.MaskURL
+	}
+	return input
 }
 
 func videoBackgroundRequestKey(req ServiceUsageRequest) string {
@@ -114,6 +147,7 @@ func videoBackgroundRequestKey(req ServiceUsageRequest) string {
 	canonical, _ := json.Marshal(map[string]interface{}{
 		"video_url": req.VideoURL, "background_color": req.BackgroundColor,
 		"output_format": req.OutputFormat, "preserve_audio": keepAudio,
+		"max_quality": videoBackgroundMaxQuality(req), "mask_url": strings.TrimSpace(req.MaskURL),
 	})
 	digest := sha256.Sum256(canonical)
 	return hex.EncodeToString(digest[:])
@@ -167,9 +201,9 @@ func handleVideoBackgroundRemovalService(ctx *fasthttp.RequestCtx, req ServiceUs
 	}
 
 	providerID, err := submitPrivateVideoBackground(req, user)
-	if err != nil {
+	if err != nil && !videoBackgroundMaxQuality(req) {
 		log.Printf("[video-background] private submission unavailable: %v", err)
-		providerID, err = submitFalVideoBackground(req)
+		providerID, err = submitFalVideoBackground(req, user.ID)
 	}
 	if err != nil {
 		jsonError(ctx, http.StatusServiceUnavailable, "video background removal is temporarily unavailable")
@@ -202,8 +236,29 @@ func videoBackgroundEndpointID() string {
 	return strings.TrimSpace(os.Getenv("VIDEO_BACKGROUND_RUNPOD_ENDPOINT_ID"))
 }
 
+func videoBackgroundRunpodMaxWorkers() int {
+	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("VIDEO_BACKGROUND_RUNPOD_MAX_WORKERS"))); err == nil && configured > 0 {
+		return configured
+	}
+	return 3
+}
+
 func videoBackgroundNativeBaseURL() string {
 	return strings.TrimRight(strings.TrimSpace(os.Getenv("VIDEO_BACKGROUND_NATIVE_BASE_URL")), "/")
+}
+
+func videoBackgroundAllowsNative(req ServiceUsageRequest) bool {
+	return !videoBackgroundMaxQuality(req)
+}
+
+func recordVideoBackgroundNativeSubmissionFailure(base string, status int) {
+	// Saturation is successful admission control, not a worker outage. Keep the
+	// local circuit eligible while this job spills into the private RunPod lane.
+	if status == http.StatusTooManyRequests {
+		videoBackgroundCircuit.success(base)
+		return
+	}
+	videoBackgroundCircuit.failure(base)
 }
 
 func callVideoBackgroundNative(method, path string, payload interface{}, target interface{}) (int, error) {
@@ -265,20 +320,20 @@ func submitPrivateVideoBackground(req ServiceUsageRequest, user *User) (string, 
 	if err != nil {
 		return "", err
 	}
-	keepAudio := req.PreserveAudio == nil || *req.PreserveAudio
-	input := map[string]interface{}{
-		"video_url": req.VideoURL, "preserve_audio": keepAudio,
-		"output_upload_url": uploadURL, "output_public_url": publicURL,
-	}
-	if nativeBase := videoBackgroundNativeBaseURL(); nativeBase != "" && videoBackgroundCircuit.allow(nativeBase) {
+	input := videoBackgroundWorkerInput(req, uploadURL, publicURL)
+	if nativeBase := videoBackgroundNativeBaseURL(); nativeBase != "" && videoBackgroundAllowsNative(req) && videoBackgroundCircuit.allow(nativeBase) {
 		var queued videoBackgroundNativeStatus
-		_, nativeErr := callVideoBackgroundNative(http.MethodPost, "/v1/videos/background-removals/jobs", input, &queued)
+		status, nativeErr := callVideoBackgroundNative(http.MethodPost, "/v1/videos/background-removals/jobs", input, &queued)
 		if nativeErr == nil && queued.JobID != "" {
 			videoBackgroundCircuit.success(nativeBase)
 			return "native-bg:" + queued.JobID, nil
 		}
-		videoBackgroundCircuit.failure(nativeBase)
-		log.Printf("[video-background] dedicated native submission unavailable: %v", nativeErr)
+		recordVideoBackgroundNativeSubmissionFailure(nativeBase, status)
+		if status == http.StatusTooManyRequests {
+			log.Printf("[video-background] local queue full; spilling job to RunPod")
+		} else {
+			log.Printf("[video-background] dedicated native submission unavailable: %v", nativeErr)
+		}
 	}
 	endpointID := videoBackgroundEndpointID()
 	if endpointID == "" {
@@ -289,7 +344,7 @@ func submitPrivateVideoBackground(req ServiceUsageRequest, user *User) (string, 
 	}
 	input["workload"] = "video-matting"
 	var queued h3RunpodQueuedJob
-	status, err := callH3Runpod(endpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, &queued)
+	status, err := submitScaledVideoBackgroundRunpod(endpointID, input, &queued)
 	if err != nil || queued.ID == "" {
 		videoBackgroundCircuit.failure(endpointID)
 		if err != nil {
@@ -301,13 +356,48 @@ func submitPrivateVideoBackground(req ServiceUsageRequest, user *User) (string, 
 	return "runpod-bg:" + endpointID + ":" + queued.ID, nil
 }
 
-func submitFalVideoBackground(req ServiceUsageRequest) (string, error) {
+func submitScaledVideoBackgroundRunpod(endpointID string, input map[string]interface{}, queued *h3RunpodQueuedJob) (int, error) {
+	lock := h3EndpointScaleLock(endpointID)
+	lock.Lock()
+	defer lock.Unlock()
+	config, err := h3EndpointConfig(endpointID)
+	if err != nil {
+		return 0, err
+	}
+	// Once control-plane access succeeds, always attach a reaper—even a failed
+	// queue call may already have activated paid capacity.
+	defer scheduleH3ScaleToZero(endpointID)
+	desiredMax := videoBackgroundRunpodMaxWorkers()
+	if config.WorkersMax != desiredMax {
+		if err := h3SetWorkersMax(endpointID, desiredMax); err != nil {
+			return 0, err
+		}
+	}
+	var status int
+	for attempt := 0; attempt < 7; attempt++ {
+		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, queued)
+		if status != http.StatusConflict || err == nil || !strings.Contains(err.Error(), "ENDPOINT_PAUSED") {
+			return status, err
+		}
+		if err := h3SetWorkersMax(endpointID, desiredMax); err != nil {
+			return status, err
+		}
+		time.Sleep(h3ScalePropagationDelay)
+	}
+	return status, err
+}
+
+func submitFalVideoBackground(req ServiceUsageRequest, userID string) (string, error) {
 	if falAPIKey == "" {
 		return "", fmt.Errorf("standby video service is not configured")
 	}
+	compatibleURL, err := prepareFalVideoBackgroundInput(req.VideoURL, userID)
+	if err != nil {
+		return "", fmt.Errorf("prepare standby video input: %w", err)
+	}
 	keepAudio := req.PreserveAudio == nil || *req.PreserveAudio
 	payload := map[string]interface{}{
-		"video_url": req.VideoURL, "background_color": "Transparent",
+		"video_url": compatibleURL, "background_color": "Transparent",
 		"output_container_and_codec": "webm_vp9", "preserve_audio": keepAudio,
 	}
 	data, _, err := callFalQueue(http.MethodPost, "https://queue.fal.run/bria/video/background-removal", payload)
@@ -319,6 +409,46 @@ func submitFalVideoBackground(req ServiceUsageRequest) (string, error) {
 		return "", fmt.Errorf("standby video service returned no job")
 	}
 	return "fal-bg:" + queued.RequestID, nil
+}
+
+func falVideoBackgroundNeedsTranscode(sourceURL string) bool {
+	parsed, err := url.Parse(sourceURL)
+	return err == nil && strings.EqualFold(path.Ext(parsed.Path), ".webm")
+}
+
+// BRIA currently accepts H.264 MP4 reliably but can report COMPLETED and then
+// return HTTP 500 for AV1-in-WebM results. Normalize WebM only on the paid
+// standby path; the local RVM path retains the original source and its quality.
+func prepareFalVideoBackgroundInput(sourceURL, userID string) (string, error) {
+	if !falVideoBackgroundNeedsTranscode(sourceURL) {
+		return sourceURL, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	artifact, err := downloadVideoBackgroundArtifact(ctx, sourceURL)
+	if err != nil {
+		return "", err
+	}
+	command := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error",
+		"-i", "pipe:0", "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264",
+		"-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac",
+		"-b:a", "128k", "-movflags", "+frag_keyframe+empty_moov", "-f", "mp4", "pipe:1")
+	command.Stdin = bytes.NewReader(artifact)
+	var encoded, diagnostics bytes.Buffer
+	command.Stdout = &encoded
+	command.Stderr = &diagnostics
+	if err := command.Run(); err != nil {
+		return "", fmt.Errorf("ffmpeg H.264 normalization: %w: %s", err, tailOutput(diagnostics.Bytes()))
+	}
+	if encoded.Len() == 0 || encoded.Len() > maxGeneratedVideoBytes {
+		return "", fmt.Errorf("normalized standby input has invalid size %d", encoded.Len())
+	}
+	publicURL, err := uploadH3RunpodVideo(ctx, encoded.Bytes(), userID, "video/mp4")
+	if err != nil {
+		return "", err
+	}
+	log.Printf("[video-background] normalized WebM standby input user=%s bytes=%d", userID, encoded.Len())
+	return publicURL, nil
 }
 
 func parseRunpodVideoBackgroundJob(value string) (endpointID, jobID string, ok bool) {
@@ -343,12 +473,18 @@ func processVideoBackgroundRemovalJob(job *VideoJob) {
 		if processNativeVideoBackground(job, stored) {
 			return
 		}
+		if videoJobCancellationRequested(job.ID) {
+			return
+		}
 		if !moveVideoBackgroundToStandby(job, stored) {
 			return
 		}
 	}
 	if strings.HasPrefix(job.ProviderJobID, "runpod-bg:") {
 		if processPrivateVideoBackground(job, stored) {
+			return
+		}
+		if videoJobCancellationRequested(job.ID) {
 			return
 		}
 		if !moveVideoBackgroundToStandby(job, stored) {
@@ -359,7 +495,11 @@ func processVideoBackgroundRemovalJob(job *VideoJob) {
 }
 
 func moveVideoBackgroundToStandby(job *VideoJob, stored videoBackgroundStoredRequest) bool {
-	fallbackID, err := submitFalVideoBackground(stored.Input)
+	if videoBackgroundMaxQuality(stored.Input) {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "max_quality MatAnyone matting is unavailable")
+		return false
+	}
+	fallbackID, err := submitFalVideoBackground(stored.Input, job.UserID)
 	if err != nil {
 		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "video background removal could not be recovered")
 		return false
@@ -373,6 +513,34 @@ func moveVideoBackgroundToStandby(job *VideoJob, stored videoBackgroundStoredReq
 	return true
 }
 
+func videoBackgroundMatteQualityFailure(message string) bool {
+	value := strings.ToLower(strings.TrimSpace(message))
+	return strings.Contains(value, "matte rejected") || strings.Contains(value, "opaque pixels are black") || strings.Contains(value, "alpha coverage too low")
+}
+
+func retryMaxQualityVideoBackground(job *VideoJob, stored *videoBackgroundStoredRequest, message string) bool {
+	if job == nil || stored == nil || !videoBackgroundMaxQuality(stored.Input) || stored.QualityRetries >= 1 || !videoBackgroundMatteQualityFailure(message) {
+		return false
+	}
+	user, err := dbConn.GetUserByID(job.UserID)
+	if err != nil || user == nil {
+		return false
+	}
+	providerID, err := submitPrivateVideoBackground(stored.Input, user)
+	if err != nil || providerID == "" {
+		return false
+	}
+	stored.QualityRetries++
+	persisted, _ := json.Marshal(stored)
+	if dbConn.UpdateVideoJobProvider(job.ID, providerID, "processing", persisted) != nil {
+		return false
+	}
+	job.ProviderJobID = providerID
+	job.Result = persisted
+	job.Status = "processing"
+	return true
+}
+
 func processNativeVideoBackground(job *VideoJob, stored videoBackgroundStoredRequest) bool {
 	providerJobID := strings.TrimPrefix(job.ProviderJobID, "native-bg:")
 	if providerJobID == "" {
@@ -382,6 +550,9 @@ func processNativeVideoBackground(job *VideoJob, stored videoBackgroundStoredReq
 	deadline := time.Now().Add(45 * time.Minute)
 	consecutiveErrors := 0
 	for time.Now().Before(deadline) {
+		if videoJobCancellationRequested(job.ID) {
+			return false
+		}
 		var state videoBackgroundNativeStatus
 		_, err := callVideoBackgroundNative(http.MethodGet, "/v1/videos/background-removals/jobs/"+url.PathEscape(providerJobID), nil, &state)
 		if err != nil {
@@ -416,6 +587,10 @@ func processNativeVideoBackground(job *VideoJob, stored videoBackgroundStoredReq
 			}
 			return settleVideoBackground(job, stored, state.VideoURL, state.ContentType, duration, 0)
 		case "error":
+			if retryMaxQualityVideoBackground(job, &stored, state.Error) {
+				processVideoBackgroundRemovalJob(job)
+				return true
+			}
 			videoBackgroundCircuit.failure(base)
 			return false
 		}
@@ -435,11 +610,14 @@ func processPrivateVideoBackground(job *VideoJob, stored videoBackgroundStoredRe
 	deadline := time.Now().Add(45 * time.Minute)
 	consecutiveErrors := 0
 	for time.Now().Before(deadline) {
+		if videoJobCancellationRequested(job.ID) {
+			return false
+		}
 		var state videoBackgroundRunpodStatus
 		_, err := callH3Runpod(endpointID, "/status/"+url.PathEscape(providerJobID), http.MethodGet, nil, &state)
 		if err != nil {
 			consecutiveErrors++
-			if consecutiveErrors >= 5 {
+			if consecutiveErrors >= 30 {
 				videoBackgroundCircuit.failure(endpointID)
 				return false
 			}
@@ -482,9 +660,13 @@ func processPrivateVideoBackground(job *VideoJob, stored videoBackgroundStoredRe
 				}
 				duration = measured
 			}
-			providerUSD := videoBackgroundPrivateProviderUSD(state.ExecutionTime)
+			providerUSD := videoBackgroundPrivateProviderUSD(state.ExecutionTime, state.DelayTime)
 			return settleVideoBackground(job, stored, videoURL, contentType, duration, providerUSD)
 		case "FAILED", "CANCELLED", "TIMED_OUT":
+			if retryMaxQualityVideoBackground(job, &stored, state.Error) {
+				processVideoBackgroundRemovalJob(job)
+				return true
+			}
 			videoBackgroundCircuit.failure(endpointID)
 			return false
 		}
@@ -494,12 +676,23 @@ func processPrivateVideoBackground(job *VideoJob, stored videoBackgroundStoredRe
 	return false
 }
 
-func videoBackgroundPrivateProviderUSD(executionMS int64) float64 {
+func videoBackgroundPrivateProviderUSD(executionMS, delayMS int64) float64 {
 	rate, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("VIDEO_BACKGROUND_RUNPOD_GPU_USD_PER_HOUR")), 64)
 	if err != nil || rate <= 0 {
-		rate = 0.69
+		// Conservatively cover the most expensive 48 GB class allowed by the
+		// endpoint. A40/A6000 placements are cheaper, but under-reporting makes
+		// margin telemetry unsafe for scheduling decisions.
+		rate = 1.75
 	}
-	seconds := float64(executionMS) / 1000
+	// RunPod bills from worker start through stop, while executionTime excludes
+	// cold initialization. delayTime can include non-billed queue wait, so this
+	// is deliberately an upper-bound provider estimate until per-job billing is
+	// available from the provider API.
+	billedMS := executionMS
+	if delayMS > 0 {
+		billedMS += delayMS
+	}
+	seconds := float64(billedMS) / 1000
 	if seconds <= 0 {
 		seconds = 1
 	}
@@ -511,6 +704,9 @@ func processFalVideoBackground(job *VideoJob, stored videoBackgroundStoredReques
 	base := falVideoBackgroundRequestBase(requestID)
 	deadline := time.Now().Add(45 * time.Minute)
 	for time.Now().Before(deadline) {
+		if videoJobCancellationRequested(job.ID) {
+			return
+		}
 		data, _, err := callFalQueue(http.MethodGet, base+"/status", nil)
 		if err != nil {
 			time.Sleep(2500 * time.Millisecond)

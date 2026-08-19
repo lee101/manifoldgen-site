@@ -48,7 +48,7 @@ import {
 
 const API = '/api';
 const GALLERY_CDN = 'https://manifoldgenstatic.manifoldgen.com/gallery';
-const GALLERY_ASSET_VERSION = '20260813-mixed-aspect';
+const GALLERY_ASSET_VERSION = '20260817-gallery-index-refresh';
 const HOMEPAGE_HERO_PROMPT =
   'An obsidian lighthouse fractures moonlight into spectral fog while black waves climb upward, slow impossible crane shot; sub-bass surf, distant glass harmonics';
 const HOMEPAGE_HERO_VIDEO_URL =
@@ -128,7 +128,7 @@ interface VideoJobState {
   status?: string;
   result_url?: string;
   video_url?: string;
-  result?: { video_url?: string };
+  result?: { video_url?: string; stage?: string; music_video?: boolean };
   error?: string;
   charged_usd?: number;
   cost_usd?: number;
@@ -161,6 +161,8 @@ interface VideoHit {
   prompt: string;
   video_url?: string;
   service?: string;
+  music_video?: boolean;
+  music_audio_url?: string;
   similarity?: number;
 }
 
@@ -235,6 +237,7 @@ export default function HomePage() {
   const [format, setFormat] = useState<Format>('webm-av1');
   const [includeAudio, setIncludeAudio] = useState(true);
   const [loopMode, setLoopMode] = useState(false);
+  const [musicVideoMode, setMusicVideoMode] = useState(false);
   const [upscaleMode, setUpscaleMode] = useState(false);
   const [upscaleScale, setUpscaleScale] = useState<2 | 4>(2);
   const [busy, setBusy] = useState(false);
@@ -296,12 +299,21 @@ export default function HomePage() {
     if (next) applyUser(next);
   }, [applyUser]);
 
-  const loadGallery = useCallback(async (q = '') => {
+  const loadGallery = useCallback(async (q = '', attempt = 0): Promise<void> => {
     const url = q.trim()
       ? `${API}/images/semantic?q=${encodeURIComponent(q.trim())}&top_k=48`
       : `${API}/images?skip_total=true&varied=true&per_page=48&allow_nsfw=true`;
     const res = await fetch(url);
-    if (!res.ok) return;
+    if (!res.ok) {
+      // The public API can briefly be unavailable while the image/search
+      // indexes finish loading after a deploy. Retry so the gallery does not
+      // remain permanently stuck on “warming up” after one early 503.
+      if (attempt < 3) {
+        await new Promise((resolve) => window.setTimeout(resolve, 700 * (attempt + 1)));
+        return loadGallery(q, attempt + 1);
+      }
+      return;
+    }
     const data = await res.json();
     setGallery(normalizeImages(data.results || data.images || []));
   }, []);
@@ -457,8 +469,7 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Checkout failed');
+      const data = await parseJSONResponse<{ url?: string; client_secret?: string; publishable_key?: string }>(res, 'Checkout failed');
       if (data.url && !data.client_secret) {
         window.location.href = data.url;
         return;
@@ -606,11 +617,24 @@ export default function HomePage() {
           updateGenerationTask(taskID, { label: 'Starting loop video' });
         }
       }
+      if (musicVideoMode && !firstFrame) firstFrame = steeringFrameURLs[0] || '';
+      if (musicVideoMode && !firstFrame) {
+        updateGenerationTask(taskID, { label: 'Creating the opening frame' });
+        const [width, height] = h3Dimensions(aspect, size);
+        const imageRes = await fetch(`${API}/service`, {
+          method: 'POST',
+          headers: authHeaders(apiKey),
+          body: JSON.stringify({ service: 'zimage', prompt: `${taskPrompt}. Cinematic opening frame for a music video.`, width, height, n: 1 }),
+        });
+        const imageData = await parseJSONResponse<Parameters<typeof loopAnchorURL>[0]>(imageRes, 'Music video opening frame generation failed');
+        firstFrame = loopAnchorURL(imageData, window.location.origin);
+        updateGenerationTask(taskID, { label: 'Composing the soundtrack' });
+      }
       if (!firstFrame) firstFrame = steeringFrameURLs[0] || '';
-      const lastFrame = !loopMode && steeringFrameURLs.length > 1
+      const lastFrame = !loopMode && !musicVideoMode && steeringFrameURLs.length > 1
         ? steeringFrameURLs[steeringFrameURLs.length - 1]
         : '';
-      const orderedKeyframes = !loopMode && steeringFrameURLs.length > 2
+      const orderedKeyframes = !loopMode && !musicVideoMode && steeringFrameURLs.length > 2
         ? steeringFrameURLs
         : undefined;
       const res = await fetch(`${API}/service`, {
@@ -625,12 +649,14 @@ export default function HomePage() {
           num_steps: steps,
           output_format: format,
           include_audio: includeAudio,
+          music_video: musicVideoMode,
+          music_duration: musicVideoMode ? 30 : undefined,
           loop: loopMode,
           ...(firstFrame ? { first_frame: firstFrame } : {}),
           ...(lastFrame ? { last_frame: lastFrame } : {}),
           ...(orderedKeyframes ? { keyframes: orderedKeyframes } : {}),
           structured_prompt: true,
-          audio_url: steeringFrameURLs.length > 1 ? undefined : (overrides?.audio ?? audioAsset?.url),
+          audio_url: musicVideoMode || steeringFrameURLs.length > 1 ? undefined : (overrides?.audio ?? audioAsset?.url),
         }),
       });
       const data = await parseJSONResponse<Record<string, unknown> & {
@@ -645,7 +671,9 @@ export default function HomePage() {
         const resultURL = state.result_url || state.video_url || state.result?.video_url;
         updateGenerationTask(taskID, {
           status: state.status === 'queued' || state.status === 'pending' ? 'queued' : 'processing',
-          label: state.status === 'queued' || state.status === 'pending' ? 'Video queued' : 'Creating video',
+          label: musicVideoMode
+            ? (state.result?.stage === 'music' ? 'Composing soundtrack' : 'Creating music video')
+            : (state.status === 'queued' || state.status === 'pending' ? 'Video queued' : 'Creating video'),
           result_url: resultURL,
           cost_usd: state.charged_usd ?? state.cost_usd,
         });
@@ -856,12 +884,16 @@ export default function HomePage() {
   const activeGenerationTasks = generationTasks.filter((task) => !['completed', 'failed'].includes(task.status));
   // A local, cacheable poster protects LCP from slow API/gallery responses.
   const heroImage = '/brand/manifoldgen-og.webp';
-  const displayVideos = videoHits.length > 0 ? videoHits : featuredVideos;
+  const musicVideos = featuredVideos.filter((video) => video.music_video || video.service === 'music_video');
+  const displayVideos = videoHits.length > 0
+    ? videoHits
+    : featuredVideos.filter((video) => !video.music_video && video.service !== 'music_video');
   const imageFrames = useMemo(() => assets.filter((asset) => asset.kind === 'image'), [assets]);
   const audioAsset = useMemo(() => assets.find((asset) => asset.kind === 'audio'), [assets]);
   const transitionCount = Math.max(1, imageFrames.length - 1);
-  const loopAnchorUSD = loopMode && imageFrames.length === 0 ? imageCredits * creditPrice : 0;
-  const estimatedSequenceUSD = (estVideoUSD + estUpscaleUSD) * transitionCount + loopAnchorUSD;
+  const visualAnchorUSD = (loopMode || musicVideoMode) && imageFrames.length === 0 ? imageCredits * creditPrice : 0;
+  const musicVideoUSD = musicVideoMode ? 0.80 : 0;
+  const estimatedSequenceUSD = (estVideoUSD + estUpscaleUSD + musicVideoUSD) * transitionCount + visualAnchorUSD;
 
   useEffect(() => {
     if (imageFrames.length > 1 && loopMode) setLoopMode(false);
@@ -936,6 +968,12 @@ export default function HomePage() {
             </a>
             <Link href="/tools" className="glass hidden rounded-full px-3 py-2 text-sm text-[var(--color-mute)] hover:text-white md:block">
               Tools
+            </Link>
+            <Link href="/tools/h3-image" className="glass hidden rounded-full px-3 py-2 text-sm text-[var(--color-mute)] hover:text-white lg:block">
+              H3 Images
+            </Link>
+            <Link href="/tool/anima" className="glass hidden rounded-full px-3 py-2 text-sm text-[var(--color-mute)] hover:text-white xl:block">
+              Anima Art
             </Link>
             <a href="/studio" className="glass hidden items-center gap-2 rounded-full px-3 py-2 text-sm text-[var(--color-mute)] hover:text-white sm:flex">
               <Clapperboard size={14} />
@@ -1157,7 +1195,7 @@ export default function HomePage() {
                   type="button"
                   data-testid="home-loop-toggle"
                   aria-pressed={loopMode}
-                  disabled={generationMode === 'images' || imageFrames.length > 1}
+                  disabled={generationMode === 'images' || imageFrames.length > 1 || musicVideoMode}
                   onClick={() => setLoopMode((enabled) => !enabled)}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
                     loopMode
@@ -1168,6 +1206,30 @@ export default function HomePage() {
                 >
                   <Repeat2 size={14} />
                   Loop
+                </button>
+                <button
+                  type="button"
+                  data-testid="home-music-video-toggle"
+                  aria-pressed={musicVideoMode}
+                  disabled={generationMode === 'images'}
+                  onClick={() => setMusicVideoMode((enabled) => {
+                    const next = !enabled;
+                    if (next) {
+                      setLoopMode(false);
+                      setIncludeAudio(true);
+                      setDuration(15);
+                    }
+                    return next;
+                  })}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
+                    musicVideoMode
+                      ? 'bg-fuchsia-600 text-white'
+                      : 'bg-white/5 text-[var(--color-mute)] hover:text-white'
+                  }`}
+                  title="Compose a MiniMax soundtrack first, then use it to drive H3"
+                >
+                  <Music2 size={14} />
+                  Music video
                 </button>
                 <button
                   type="button"
@@ -1216,7 +1278,7 @@ export default function HomePage() {
                     className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
                   >
                     <Sparkles size={16} />
-                    {user ? (generationMode === 'images' ? 'Generate 4 images' : imageFrames.length > 2 ? `Generate ${transitionCount} transitions` : 'Generate video') : 'Sign up to generate'}
+                    {user ? (generationMode === 'images' ? 'Generate 4 images' : musicVideoMode ? 'Generate music video' : imageFrames.length > 2 ? `Generate ${transitionCount} transitions` : 'Generate video') : 'Sign up to generate'}
                   </button>
                 </div>
               </div>
@@ -1238,6 +1300,23 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {musicVideos.length > 0 && <section className="relative z-10 border-t border-fuchsia-300/10 bg-[linear-gradient(180deg,#100817,#050508)] py-6" data-testid="home-music-videos">
+        <div className="flex items-end justify-between px-3 pb-4 md:px-6">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[.18em] text-fuchsia-300">MiniMax score → H3 reference video</p>
+            <h2 className="mt-1 font-display text-xl tracking-wide text-white md:text-2xl">Music videos</h2>
+          </div>
+          <Link href="/studio" className="rounded-full border border-fuchsia-200/20 bg-fuchsia-300/10 px-4 py-2 text-xs font-semibold text-fuchsia-100 transition hover:bg-fuchsia-300/20">Create one in Studio</Link>
+        </div>
+        <div className="reel-scroll flex snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-2 md:px-6">
+          {musicVideos.map((hit, index) => <button key={hit.job_id} type="button" onClick={() => playVideo(hit)} className="group relative aspect-video h-[48vw] max-h-[420px] min-h-[220px] shrink-0 snap-start overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left sm:h-[32vw] lg:h-[24vw]" aria-label="Play music video">
+            {hit.video_url && <video src={hit.video_url} muted loop playsInline preload={index < 2 ? 'metadata' : 'none'} className="h-full w-full object-cover transition duration-700 group-hover:scale-[1.03]" onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)} onMouseLeave={(event) => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} />}
+            <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-md"><Music2 size={13} /> Music video</span>
+            <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/70 to-transparent p-4 pt-14 text-sm leading-snug text-white md:text-base">{hit.prompt}</span>
+          </button>)}
+        </div>
+      </section>}
 
       {/* Search + videos full width */}
       <section className="relative z-10 w-full border-t border-white/5 bg-[#050508]">
@@ -1457,6 +1536,7 @@ export default function HomePage() {
                 max={60}
                 step={1}
                 value={duration}
+                disabled={musicVideoMode}
                 onChange={(e) => setDuration(Number(e.target.value))}
                 className="mt-5 w-full accent-[var(--color-accent)]"
               />
@@ -1466,12 +1546,14 @@ export default function HomePage() {
                   <button
                     key={seconds}
                     type="button"
+                    disabled={musicVideoMode}
                     onClick={() => setDuration(seconds)}
                     aria-pressed={duration === seconds}
                     className={`rounded-xl px-2 py-2 text-xs font-medium transition ${duration === seconds ? 'bg-[var(--color-accent)] text-white' : 'bg-white/5 text-white/55 hover:bg-white/10 hover:text-white'}`}
                   >{seconds}s</button>
                 ))}
               </div>
+              {musicVideoMode ? <p className="mt-3 text-xs text-fuchsia-300">Music videos use H3’s fixed 15-second reference-audio window.</p> : null}
               {duration > 15 ? <p className="mt-3 text-xs text-[var(--color-accent-2)]">Multi-segment generation enabled for this length.</p> : null}
             </div>
             <label className="mb-3 block text-sm text-[var(--color-mute)]">

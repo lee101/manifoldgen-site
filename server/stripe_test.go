@@ -20,6 +20,25 @@ func TestStripeCreatorPriceIDsMigrateRetiredLegacyPrices(t *testing.T) {
 	}
 }
 
+func TestStripeCheckoutUIModeNormalizesLegacyAndInvalidValues(t *testing.T) {
+	t.Setenv("STRIPE_CHECKOUT_UI_MODE", "embedded_page")
+	if got := stripeCheckoutUIMode(); got != "embedded_page" {
+		t.Fatalf("checkout UI mode = %q, want embedded_page", got)
+	}
+	t.Setenv("STRIPE_CHECKOUT_UI_MODE", "embedded")
+	if got := stripeCheckoutUIMode(); got != "embedded_page" {
+		t.Fatalf("embedded checkout UI mode = %q, want embedded_page", got)
+	}
+	t.Setenv("STRIPE_CHECKOUT_UI_MODE", "not-a-stripe-mode")
+	if got := stripeCheckoutUIMode(); got != "embedded_page" {
+		t.Fatalf("invalid checkout UI mode = %q, want embedded_page", got)
+	}
+	t.Setenv("STRIPE_CHECKOUT_UI_MODE", "hosted")
+	if got := stripeCheckoutUIMode(); got != "hosted" {
+		t.Fatalf("hosted checkout UI mode = %q, want hosted", got)
+	}
+}
+
 func TestCreateBillingPortalSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

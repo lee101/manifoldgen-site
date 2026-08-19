@@ -1,0 +1,20 @@
+[Unit]
+Description=ManifoldGen single-GPU H3 trajectory and gallery farm
+After=network-online.target postgresql.service manifoldgen.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=administrator
+Group=administrator
+WorkingDirectory=/nvme0n1-disk/code/manifoldgen-site
+EnvironmentFile=-/etc/manifoldgen/h3-trajectory-farm.env
+ExecStart=/nvme0n1-disk/code/manifoldgen-site/scripts/run_h3_trajectory_stages.sh
+Restart=on-failure
+RestartSec=300
+TimeoutStartSec=infinity
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

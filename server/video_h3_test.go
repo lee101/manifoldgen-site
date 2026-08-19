@@ -399,14 +399,14 @@ func TestH3VideoPricingTiersExposeResolutionAndDurationMatrix(t *testing.T) {
 			t.Fatalf("%s price matrix = %#v", tier.Size, tier.Prices)
 		}
 	}
-	if got := tiers[0].Prices[0].PriceUSD; got != 0.46 {
-		t.Fatalf("5s preview = %.2f, want 0.46", got)
+	if got := tiers[0].Prices[0].PriceUSD; got != 0.77 {
+		t.Fatalf("5s preview = %.2f, want 0.77", got)
 	}
-	if got := tiers[1].Prices[1].PriceUSD; got != 1.42 {
-		t.Fatalf("10s balanced = %.2f, want 1.42", got)
+	if got := tiers[1].Prices[1].PriceUSD; got != 2.39 {
+		t.Fatalf("10s balanced = %.2f, want 2.39", got)
 	}
-	if got := tiers[2].Prices[4].PriceUSD; got != 12.10 {
-		t.Fatalf("60s native = %.2f, want 12.10", got)
+	if got := tiers[2].Prices[4].PriceUSD; got != 20.48 {
+		t.Fatalf("60s native = %.2f, want 20.48", got)
 	}
 }
 

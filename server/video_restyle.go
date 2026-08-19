@@ -429,6 +429,9 @@ func processVideoRestyleJob(job *VideoJob) {
 		if processPrivateVideoRestyle(job, stored.Input) {
 			return
 		}
+		if videoJobCancellationRequested(job.ID) {
+			return
+		}
 		if stored.Input.Model == "wan-animate-2" {
 			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "animation transfer failed; your credits were not charged")
 			return
@@ -453,6 +456,9 @@ func processPrivateVideoRestyle(job *VideoJob, input ServiceUsageRequest) bool {
 	providerID := strings.TrimPrefix(job.ProviderJobID, "private:")
 	deadline := time.Now().Add(60 * time.Minute)
 	for time.Now().Before(deadline) {
+		if videoJobCancellationRequested(job.ID) {
+			return false
+		}
 		envelope, _, err := callAppNZH3(http.MethodGet, "/api/cogs/predictions/"+url.PathEscape(providerID), nil)
 		if err != nil {
 			return false
@@ -483,6 +489,9 @@ func processFalVideoRestyle(job *VideoJob, input ServiceUsageRequest) {
 	base := "https://queue.fal.run/" + falRestyleRequestBase(input) + "/requests/" + url.PathEscape(requestID)
 	deadline := time.Now().Add(60 * time.Minute)
 	for time.Now().Before(deadline) {
+		if videoJobCancellationRequested(job.ID) {
+			return
+		}
 		data, _, err := callFalQueue(http.MethodGet, base+"/status", nil)
 		if err != nil {
 			time.Sleep(2500 * time.Millisecond)

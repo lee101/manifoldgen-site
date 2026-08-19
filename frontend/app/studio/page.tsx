@@ -77,6 +77,7 @@ import {
 } from '../../lib/studio-renderer';
 import {
   STUDIO_PROJECT_VERSION,
+  cacheLocalStudioFiles,
   loadLocalStudioProject,
   saveLocalStudioProject,
   type LocalStudioProject,
@@ -208,6 +209,89 @@ function ProjectAudioThumb({ asset }: { asset: Pick<StudioAsset, 'id' | 'name' |
     }} />
     <span className={styles.audioThumbWave} aria-hidden="true">{waveform.map((height, index) => <i key={index} style={{ height: `${height}%`, opacity: index / waveform.length <= progress ? 1 : .28 }} />)}</span>
     <span className={styles.audioThumbPlay}>{playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}</span>
+  </span>;
+}
+
+function HoverVideoPreview({
+  src,
+  fallbackSrc,
+  duration: initialDuration,
+  label,
+  testID,
+}: {
+  src: string;
+  fallbackSrc?: string;
+  duration?: number;
+  label: string;
+  testID?: string;
+}) {
+  const video = useRef<HTMLVideoElement>(null);
+  const [active, setActive] = useState(false);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [duration, setDuration] = useState(Math.max(0, initialDuration || 0));
+  const [currentTime, setCurrentTime] = useState(0);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const currentSource = previewFailed && fallbackSrc ? fallbackSrc : src;
+  const maxTime = Math.max(0.01, duration || initialDuration || 0.01);
+
+  useEffect(() => {
+    setPreviewFailed(false);
+    setCurrentTime(0);
+  }, [src]);
+
+  useEffect(() => {
+    const element = video.current;
+    if (!element) return;
+    if (!active || scrubbing) {
+      element.pause();
+      return;
+    }
+    const play = () => void element.play().catch(() => undefined);
+    if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) play();
+    else element.addEventListener('loadeddata', play, { once: true });
+    return () => {
+      element.removeEventListener('loadeddata', play);
+      element.pause();
+    };
+  }, [active, currentSource, scrubbing]);
+
+  const activate = () => setActive(true);
+  const stop = () => { setActive(false); setScrubbing(false); };
+  const seek = (value: number) => {
+    const next = Math.max(0, Math.min(maxTime, value));
+    const element = video.current;
+    if (element) element.currentTime = next;
+    setCurrentTime(next);
+  };
+
+  return <span className={styles.hoverVideoPreview} data-preview-active={active || scrubbing ? 'true' : 'false'} onPointerEnter={activate} onPointerLeave={stop} onFocus={activate} onBlur={stop}>
+    <video
+      ref={video}
+      src={currentSource}
+      muted
+      playsInline
+      preload="metadata"
+      aria-label={`${label} preview`}
+      onLoadedMetadata={(event) => setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : Math.max(0, initialDuration || 0))}
+      onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+      onEnded={(event) => { event.currentTarget.currentTime = 0; setCurrentTime(0); if (active && !scrubbing) void event.currentTarget.play().catch(() => undefined); }}
+      onError={() => { if (!previewFailed && fallbackSrc && fallbackSrc !== src) setPreviewFailed(true); }}
+    />
+    <span className={styles.hoverVideoScrub} onPointerDown={(event) => { event.stopPropagation(); setScrubbing(true); }} onPointerUp={(event) => { event.stopPropagation(); setScrubbing(false); }} onPointerCancel={(event) => { event.stopPropagation(); setScrubbing(false); }} onClick={(event) => event.stopPropagation()}>
+      <input
+        data-testid={testID ? `${testID}-preview-scrub` : undefined}
+        type="range"
+        min="0"
+        max={maxTime}
+        step="0.01"
+        value={Math.min(maxTime, currentTime)}
+        aria-label={`Scrub ${label} preview`}
+        onChange={(event) => seek(Number(event.target.value))}
+        onKeyDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+      />
+      <output>{formatTime(currentTime).slice(3)} / {formatTime(duration || initialDuration || 0).slice(3)}</output>
+    </span>
   </span>;
 }
 
@@ -446,6 +530,8 @@ type StudioAsset = {
   adjustments: StudioAdjustments;
   cloudURL?: string;
   objectKey?: string;
+  previewURL?: string;
+  previewStatus?: 'queued' | 'processing' | 'ready' | 'failed';
   text?: StudioTextStyle;
 };
 
@@ -657,7 +743,7 @@ function portableAsset(asset: StudioAsset): PortableStudioAsset {
     sourceAudioMuted: asset.sourceAudioMuted,
     stageX: asset.stageX, stageY: asset.stageY, attribution: asset.attribution,
     stageScale: asset.stageScale, stageRotation: asset.stageRotation,
-    adjustments: asset.adjustments, cloudURL: asset.cloudURL, objectKey: asset.objectKey,
+    adjustments: asset.adjustments, cloudURL: asset.cloudURL, objectKey: asset.objectKey, previewURL: asset.previewURL,
     text: asset.text,
     contentType: asset.file.type || 'application/octet-stream', size: asset.file.size,
     lastModified: asset.file.lastModified,
@@ -698,7 +784,10 @@ async function materializeProject(document: PortableStudioDocument, localFiles =
     const mediaID = stored.mediaID || stored.id;
     let file = localFiles.get(mediaID);
     if (!file && stored.cloudURL) {
-      const response = await fetchWithRetry(stored.cloudURL);
+      // Project playback is intentionally fed from a local Blob URL. On a
+      // cold restore, use the same-origin gallery proxy before materializing
+      // that Blob so a CDN CORS response can never leak into playback.
+      const response = await fetchWithRetry(galleryImportURL(stored.cloudURL), { cache: 'force-cache' }, { attempts: 4, baseDelayMs: 500 });
       if (!response.ok) throw new Error(`Could not download ${stored.name}`);
       const blob = await response.blob();
       file = new File([blob], stored.name, { type: stored.contentType || blob.type, lastModified: stored.lastModified });
@@ -789,6 +878,34 @@ function PassiveStageMedia({ asset, playhead, playing }: { asset: StudioAsset; p
   return <video ref={video} className={styles.stageLayerMedia} src={asset.url} muted playsInline preload="auto" />;
 }
 
+// Keep only the current/next few timeline videos warm. The source is always a
+// local blob URL backed by the project's IndexedDB File cache, so this primes
+// decode/read-ahead without creating another CDN request or retaining every
+// clip's decoded frames in memory.
+function TimelineVideoPrebuffer({ asset }: { asset: StudioAsset }) {
+  const video = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const element = video.current;
+    if (!element) return;
+    const seek = () => {
+      if (Number.isFinite(element.duration) && element.duration > 0) {
+        element.currentTime = asset.trimStart;
+      }
+    };
+    element.addEventListener('loadedmetadata', seek, { once: true });
+    element.load();
+    if (element.readyState >= HTMLMediaElement.HAVE_METADATA) seek();
+    return () => {
+      element.pause();
+      element.removeAttribute('src');
+      element.load();
+    };
+  }, [asset.trimEnd, asset.trimStart, asset.url]);
+
+  return <video className={styles.playbackPrebuffer} ref={video} src={asset.url} muted playsInline preload="auto" aria-hidden="true" tabIndex={-1} />;
+}
+
 function mediaKindForFile(file: File): MediaKind | null {
   if (file.type.startsWith('video/') || /\.(mp4|webm|mov|m4v|mkv)$/i.test(file.name)) return 'video';
   if (file.type.startsWith('audio/') || /\.(wav|mp3|ogg|oga|opus|m4a|aac|flac)$/i.test(file.name)) return 'audio';
@@ -825,6 +942,23 @@ async function fetchWithRetry(
     await new Promise((resolve) => window.setTimeout(resolve, baseDelayMs * (2 ** attempt)));
   }
   throw lastError instanceof Error ? lastError : new Error('Network request failed');
+}
+
+function waitForLocalMediaReady(media: HTMLMediaElement, timeoutMs = 8_000) {
+  if (media.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const finish = (reason?: Error) => {
+      window.clearTimeout(timeout);
+      media.removeEventListener('canplay', ready);
+      media.removeEventListener('error', failed);
+      if (reason) reject(reason); else resolve();
+    };
+    const ready = () => finish();
+    const failed = () => finish(new Error('The locally cached media could not be decoded'));
+    const timeout = window.setTimeout(() => finish(new Error('The locally cached media is still preparing')), timeoutMs);
+    media.addEventListener('canplay', ready, { once: true });
+    media.addEventListener('error', failed, { once: true });
+  });
 }
 
 function resultURL(payload: unknown): string {
@@ -1124,12 +1258,14 @@ export default function StudioPage() {
   const [videoHits, setVideoHits] = useState<StudioVideoHit[]>([]);
   const [imagePrompt, setImagePrompt] = useState('Editorial portrait lit by soft window light, tactile detail, restrained color palette');
   const [imageEngine, setImageEngine] = useState<ImageGenerationEngine>('images3');
+  const [imageUseGPT2, setImageUseGPT2] = useState(false);
   const [imageAspect, setImageAspect] = useState<H3Aspect>('1:1');
   const [imageCount, setImageCount] = useState<1 | 4>(4);
   const [textDraft, setTextDraft] = useState<StudioTextStyle>({ content: 'Your story starts here', fontSize: 112, fontFamily: 'DM Sans', fontWeight: 800, color: '#ffffff', align: 'center' });
   const [editingTextID, setEditingTextID] = useState('');
   const [fontSearch, setFontSearch] = useState('');
   const [creditPrice, setCreditPrice] = useState(0.01);
+  const [gptImagePriceUSD, setGPTImagePriceUSD] = useState(0.24);
   const [extendRates, setExtendRates] = useState({ input: 0.012, output: 0.084 });
   const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
   const [playhead, setPlayhead] = useState(0);
@@ -1156,6 +1292,7 @@ export default function StudioPage() {
   const [videoGenerateFormat, setVideoGenerateFormat] = useState<H3Format>('webm-av1');
   const [videoGenerateAudio, setVideoGenerateAudio] = useState(true);
   const [videoGenerateLoop, setVideoGenerateLoop] = useState(false);
+  const [videoGenerateMusicVideo, setVideoGenerateMusicVideo] = useState(false);
   const [videoGenerateUseSelected, setVideoGenerateUseSelected] = useState(false);
   const [videoGenerateQueueStatus, setVideoGenerateQueueStatus] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
@@ -1188,6 +1325,7 @@ export default function StudioPage() {
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const [audioMode, setAudioMode] = useState<'music' | 'sfx' | 'speech'>('music');
   const [audioPrompt, setAudioPrompt] = useState('Dreamlike ambient score with glass harmonics, soft pulse, and a seamless ending');
+  const [audioLyrics, setAudioLyrics] = useState('');
   const [audioDuration, setAudioDuration] = useState(10);
   const [speechText, setSpeechText] = useState('Welcome to Manifold Studio. Shape the picture, sound, and story in one place.');
   const [speechVoice, setSpeechVoice] = useState<SpeechVoice>('M1');
@@ -1219,6 +1357,7 @@ export default function StudioPage() {
   const stageRef = useRef<HTMLDivElement>(null);
   const stageDragRef = useRef<StageDrag | null>(null);
   const uploadInFlightRef = useRef(new Set<File>());
+  const videoPreviewInFlightRef = useRef(new Set<string>());
   const uploadFailuresRef = useRef(0);
   const saveFailuresRef = useRef(0);
   const uploadRetryTimerRef = useRef(0);
@@ -1229,6 +1368,7 @@ export default function StudioPage() {
   const historyMergeRef = useRef<{ key: string; at: number } | null>(null);
   const textRenderRevisionRef = useRef(new Map<string, number>());
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
+  const playbackRequestRef = useRef(0);
 
   const startBackgroundActivity = useCallback((label: string) => {
     const id = uid();
@@ -1289,6 +1429,14 @@ export default function StudioPage() {
   const stageVisualAssets = useMemo(() => assets
     .filter((asset) => asset.kind !== 'audio' && (asset.id === selectedID || (playhead >= asset.timelineStart && playhead < clipEnd(asset))))
     .sort((left, right) => left.visualTrack - right.visualTrack), [assets, playhead, selectedID]);
+  const timelinePlaybackBuffers = useMemo(() => assets
+    .filter((asset) => asset.kind === 'video' && clipEnd(asset) > playhead - 0.25 && asset.timelineStart < playhead + 12)
+    .sort((left, right) => {
+      const leftDistance = Math.max(0, left.timelineStart - playhead);
+      const rightDistance = Math.max(0, right.timelineStart - playhead);
+      return leftDistance - rightDistance || left.timelineStart - right.timelineStart;
+    })
+    .slice(0, 3), [assets, playhead]);
   const timelineVisuals = useMemo(() => assets.filter((asset) => asset.kind !== 'audio'), [assets]);
   const compositionBase = useMemo(() => [...timelineVisuals].sort((left, right) => left.timelineStart - right.timelineStart || left.visualTrack - right.visualTrack)[0] || null, [timelineVisuals]);
   const selectedExportSize = compositionBase ? exportSize(compositionBase.width, compositionBase.height, exportSettings.resolution) : null;
@@ -1318,14 +1466,17 @@ export default function StudioPage() {
     .slice(0, 12), [videoGeneratePrompt]);
   const videoGenerateUnitUSD = useMemo(() => {
     const sizeFactor = videoGenerateSize === 'preview' ? 0.45 : videoGenerateSize === 'balanced' ? 0.7 : 1;
-    return Math.max(0.1, Math.ceil(h3AudioEstimateUSD * (videoGenerateDuration / 5) * (videoGenerateSteps / 20) * sizeFactor * 100) / 100);
-  }, [h3AudioEstimateUSD, videoGenerateDuration, videoGenerateSize, videoGenerateSteps]);
+    const videoUSD = Math.max(0.1, Math.ceil(h3AudioEstimateUSD * (videoGenerateDuration / 5) * (videoGenerateSteps / 20) * sizeFactor * 100) / 100);
+    return videoUSD + (videoGenerateMusicVideo ? 0.80 : 0);
+  }, [h3AudioEstimateUSD, videoGenerateDuration, videoGenerateMusicVideo, videoGenerateSize, videoGenerateSteps]);
   const videoGenerateBatchCount = Math.max(1, videoGeneratePrompts.length);
   const videoGenerateBatchUSD = videoGenerateUnitUSD * videoGenerateBatchCount;
   const videoGenerateBatchCredits = Math.ceil(videoGenerateBatchUSD / creditPrice);
   const audioEstimateUSD = Math.max(0.1, Math.ceil(sfxFiveSecondEstimateUSD * audioDuration / 5 * 100) / 100);
   const speechUSD = Math.max(ttsPer100USD * 0.1, Math.ceil(Math.max(1, speechText.trim().length) / 100 * ttsPer100USD * 10000) / 10000);
   const speechCredits = speechUSD / creditPrice;
+  const gptImageCredits = Math.ceil(gptImagePriceUSD / creditPrice);
+  const gptImageBatchCredits = gptImageCredits * imageCount;
   const restyleEstimateUSD = useMemo(() => {
     if (restyleModel === 'wan-animate-2') {
       const rate = restyleResolution === 'high' ? .60 : restyleResolution === 'balanced' ? .32 : .20;
@@ -1350,6 +1501,47 @@ export default function StudioPage() {
     editHistoryRef.current = value;
     setEditHistory(value);
   }, []);
+
+  function updateStudioVideoPreview(asset: Pick<StudioAsset, 'mediaID' | 'file'>, preview: { status?: string; preview_url?: string }) {
+    const status = preview.status === 'queued' || preview.status === 'processing' || preview.status === 'ready' || preview.status === 'failed'
+      ? preview.status
+      : undefined;
+    const apply = (item: StudioAsset) => item.mediaID === asset.mediaID && item.file === asset.file
+      ? { ...item, previewURL: status === 'ready' ? preview.preview_url || item.previewURL : item.previewURL, previewStatus: status || item.previewStatus }
+      : item;
+    setAssets((current) => current.map(apply));
+    replaceEditHistory((current) => ({
+      undo: current.undo.map((state) => ({ ...state, assets: state.assets.map(apply) })),
+      redo: current.redo.map((state) => ({ ...state, assets: state.assets.map(apply) })),
+    }));
+  }
+
+  async function queueStudioVideoPreview(asset: StudioAsset, objectKey: string) {
+    if (asset.kind !== 'video' || !user?.api_key || !projectID || videoPreviewInFlightRef.current.has(objectKey)) return;
+    videoPreviewInFlightRef.current.add(objectKey);
+    const params = new URLSearchParams({ project_id: projectID, asset_id: asset.mediaID, object_key: objectKey });
+    try {
+      let response = await fetchWithRetry('/api/studio/assets/preview', {
+        method: 'POST', headers: authHeaders(user.api_key), body: JSON.stringify({ project_id: projectID, asset_id: asset.mediaID, object_key: objectKey }),
+      }, { attempts: 2 });
+      let preview = await parseJSONResponse<{ status?: string; preview_url?: string }>(response, 'Preview request failed');
+      updateStudioVideoPreview(asset, preview);
+      // Encoding runs server-side after the source upload. Poll quietly: the
+      // full-resolution local blob remains available until the tiny derivative
+      // is ready, so preview generation never blocks editing or saving.
+      for (let attempt = 0; attempt < 240 && (preview.status === 'queued' || preview.status === 'processing'); attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
+        response = await fetchWithRetry(`/api/studio/assets/preview?${params}`, { headers: authHeaders(user.api_key, false) }, { attempts: 2 });
+        preview = await parseJSONResponse<{ status?: string; preview_url?: string }>(response, 'Preview status failed');
+        updateStudioVideoPreview(asset, preview);
+      }
+    } catch {
+      // The derivative is an enhancement. Keep the source clip usable and let
+      // a future upload/reopen request retry without showing a hard editor error.
+    } finally {
+      videoPreviewInFlightRef.current.delete(objectKey);
+    }
+  }
 
   const snapshotEditor = useCallback((): EditorHistoryState => ({
     assets: assets.map((asset) => ({ ...asset, adjustments: { ...asset.adjustments } })),
@@ -1448,9 +1640,13 @@ export default function StudioPage() {
   }, [assets, selectedID, timelineDuration]);
 
   const applyProject = useCallback(async (id: string, name: string, document: PortableStudioDocument, files?: Map<string, File>) => {
-    const restored = await materializeProject(document, files);
+    // A cloud-only project may reference the same immutable source in its
+    // live timeline and several undo snapshots. One shared cache map makes
+    // that a single proxied download, then every playback path uses its Blob.
+    const restoredFiles = files || new Map<string, File>();
+    const restored = await materializeProject(document, restoredFiles);
     const restoreHistoryState = async (state: PortableStudioHistoryState): Promise<EditorHistoryState> => ({
-      assets: await materializeProject({ version: document.version, selectedID: state.selectedID, assets: state.assets }, files),
+      assets: await materializeProject({ version: document.version, selectedID: state.selectedID, assets: state.assets }, restoredFiles),
       selectedID: state.selectedID,
       selectedIDs: state.selectedIDs?.filter((assetID) => state.assets.some((asset) => asset.id === assetID)) || (state.selectedID ? [state.selectedID] : []),
       playhead: Number.isFinite(state.playhead) ? Math.max(0, state.playhead) : 0,
@@ -1460,6 +1656,10 @@ export default function StudioPage() {
       undo: await Promise.all((storedHistory?.undo || []).slice(-HISTORY_LIMIT).map(restoreHistoryState)),
       redo: await Promise.all((storedHistory?.redo || []).slice(-HISTORY_LIMIT).map(restoreHistoryState)),
     };
+    // Make freshly restored cloud media durable before the debounced document
+    // save runs. A subsequent play operation therefore never fetches a CDN
+    // source again, and the browser can release transient network buffers.
+    void cacheLocalStudioFiles(id, restoredFiles).catch(() => undefined);
     setAssets((current) => {
       current.forEach((asset) => URL.revokeObjectURL(asset.url));
       return restored;
@@ -1526,6 +1726,7 @@ export default function StudioPage() {
     }
     fetch('/api/pricing').then((response) => response.json()).then((data) => {
       if (data.credit_price_usd) setCreditPrice(data.credit_price_usd);
+      if (data.gpt_image_price_usd) setGPTImagePriceUSD(data.gpt_image_price_usd);
       if (data.studio?.extend_input_second_usd && data.studio?.extend_output_second_usd) {
         setExtendRates({ input: data.studio.extend_input_second_usd, output: data.studio.extend_output_second_usd });
       }
@@ -1762,6 +1963,7 @@ export default function StudioPage() {
             undo: current.undo.map((state) => ({ ...state, assets: state.assets.map((item) => item.mediaID === asset.mediaID && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
             redo: current.redo.map((state) => ({ ...state, assets: state.assets.map((item) => item.mediaID === asset.mediaID && item.file === asset.file ? { ...item, cloudURL: prepared.public_url, objectKey: prepared.object_key } : item) })),
           }));
+          if (asset.kind === 'video') void queueStudioVideoPreview(asset, prepared.object_key);
           return true;
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : `Could not upload ${asset.name}`);
@@ -1791,6 +1993,17 @@ export default function StudioPage() {
       if (!started && timerID !== undefined) window.clearTimeout(timerID);
     };
   }, [assets, editHistory, projectID, projectReady, replaceEditHistory, uploadRetry, user]);
+
+  useEffect(() => {
+    if (!projectReady || !projectID || !user?.api_key) return;
+    // Older projects and a reopened browser have no in-memory preview job.
+    // Ask the server to resume/check only assets that do not already have a
+    // durable derivative; in-flight statuses prevent render-loop requests.
+    assets.filter((asset) => asset.kind === 'video' && asset.cloudURL && asset.objectKey && !asset.previewURL && !asset.previewStatus)
+      .forEach((asset) => void queueStudioVideoPreview(asset, asset.objectKey!));
+  // queueStudioVideoPreview intentionally reads the latest user/project state
+  // and is guarded by videoPreviewInFlightRef.
+  }, [assets, projectID, projectReady, user?.api_key]);
 
   useEffect(() => {
     if (!projectReady || !projectID) return;
@@ -2026,6 +2239,11 @@ export default function StudioPage() {
     }
     if (next.length) rememberEdit();
     setAssets((current) => [...current, ...next]);
+    if (next.length && projectID) {
+      // Cache imported bytes immediately rather than waiting for the regular
+      // project-save debounce. The stage still reads the same local Blob URL.
+      void cacheLocalStudioFiles(projectID, new Map(next.map((asset) => [asset.mediaID, asset.file]))).catch(() => undefined);
+    }
     if (next[0]) {
       if (timelinePlacement === undefined) {
         selectOnly(next[0].id);
@@ -2044,7 +2262,11 @@ export default function StudioPage() {
     if (!url) return;
     setError('');
     try {
-      const response = await fetchWithRetry(url);
+      // Generated gallery artifacts are served from the public CDN. Fetching
+      // their bytes directly works only when that host happens to include the
+      // current Studio origin in its CORS response (www and the apex are
+      // different origins). Keep imports on our origin just like URL handoffs.
+      const response = await fetchWithRetry(galleryImportURL(url));
       if (!response.ok) throw new Error('Could not download this generated video');
       const blob = await response.blob();
       const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
@@ -2056,7 +2278,11 @@ export default function StudioPage() {
   }
 
   async function addRemoteMedia(url: string, name: string, kind: 'image' | 'video', attribution: string) {
-    const response = await fetchWithRetry(url);
+    // Discovery cards can preview a CDN video without CORS, but importing it
+    // requires reading the bytes into a File. Route our gallery CDN through
+    // the same-origin proxy so clicking an "Add" thumbnail is not dependent
+    // on a bucket's transient/browser-specific CORS policy.
+    const response = await fetchWithRetry(galleryImportURL(url));
     if (!response.ok) throw new Error(`Could not download this ${kind}`);
     const blob = await response.blob();
     const fallback = kind === 'image' ? 'webp' : 'mp4';
@@ -2112,7 +2338,8 @@ export default function StudioPage() {
     const prompt = imagePrompt.trim();
     if (!prompt) return;
     const styleSource = imageStyleTransferSource;
-    const activityID = startBackgroundActivity(styleSource ? 'Styling image' : `Creating ${imageCount} image${imageCount === 1 ? '' : 's'}`);
+    const premiumGPT = !styleSource && imageUseGPT2;
+    const activityID = startBackgroundActivity(styleSource ? 'Styling image' : premiumGPT ? `Creating ${imageCount} GPT Image 2 result${imageCount === 1 ? '' : 's'}` : `Creating ${imageCount} image${imageCount === 1 ? '' : 's'}`);
     setError('');
     setNotice(styleSource ? 'Style transfer started' : 'Images started');
     setMediaBrowserMode('images');
@@ -2141,7 +2368,9 @@ export default function StudioPage() {
         method: 'POST', headers: authHeaders(user.api_key),
         body: JSON.stringify(styleSource
           ? { service: 'image_edit', prompt, width, height, n: 1, num_images: 1, image_url: imageURL, model: 'gpt-image-2' }
-          : { service: 'zimage', prompt, width, height, n: imageCount, num_images: imageCount, image_backend: imageEngine }),
+          : premiumGPT
+            ? { service: 'gpt-image-2', prompt, width, height, n: imageCount, num_images: imageCount, model: 'gpt-image-2' }
+            : { service: 'zimage', prompt, width, height, n: imageCount, num_images: imageCount, image_backend: imageEngine }),
       });
       const data = await parseJSONResponse<unknown>(response, 'Image generation failed');
       const generated = generatedImageItems(data).slice(0, imageCount);
@@ -2150,9 +2379,9 @@ export default function StudioPage() {
       for (const [index, item] of generated.entries()) {
         if (item.base64) {
           const file = base64File(item.base64.replace(/^data:[^,]+,/, ''), 'image/webp', `generated-${index + 1}.webp`);
-          imported.push(await addGeneratedFile(file, 'image', `${styleSource ? 'GPT Image 2 · Style transfer' : imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
+          imported.push(await addGeneratedFile(file, 'image', `${styleSource ? 'GPT Image 2 · Style transfer' : premiumGPT ? 'GPT Image 2 · OpenPaths' : imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
         } else if (item.url) {
-          imported.push(await addRemoteMedia(item.url, `generated-${index + 1}`, 'image', `${styleSource ? 'GPT Image 2 · Style transfer' : imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
+          imported.push(await addRemoteMedia(item.url, `generated-${index + 1}`, 'image', `${styleSource ? 'GPT Image 2 · Style transfer' : premiumGPT ? 'GPT Image 2 · OpenPaths' : imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
         }
       }
       if (!imported.length) throw new Error('Generated images could not be imported');
@@ -2169,15 +2398,29 @@ export default function StudioPage() {
     }
   }
 
-  async function deleteGeneration(jobID: string) {
+  async function removeGeneration(job: GenerationJob) {
     if (!user?.api_key) return;
+    const active = isActiveGeneration(job);
+    const confirmed = window.confirm(active
+      ? 'Cancel this generation? Credits already used will not be refunded.'
+      : 'Delete this generation from your media library?');
+    if (!confirmed) return;
+    setError('');
     try {
-      const response = await fetch(`/api/video-jobs/${encodeURIComponent(jobID)}`, { method: 'DELETE', headers: authHeaders(user.api_key, false) });
-      await parseJSONResponse(response, 'Could not delete generation');
-      setGenerationJobs((current) => current.filter((job) => job.job_id !== jobID));
-      setNotice('Generation removed from your media library');
+      const endpoint = `/api/video-jobs/${encodeURIComponent(job.job_id)}${active ? '/cancel' : ''}`;
+      const response = await fetch(endpoint, { method: active ? 'POST' : 'DELETE', headers: authHeaders(user.api_key, false) });
+      const data = await parseJSONResponse<{ job?: GenerationJob }>(response, active ? 'Could not cancel generation' : 'Could not delete generation');
+      if (active) {
+        setGenerationJobs((current) => current.map((item) => item.job_id === job.job_id
+          ? (data.job || { ...item, status: 'cancelled', error: 'generation cancelled by user', updated_at: new Date().toISOString() })
+          : item));
+        setNotice('Generation cancelled. Credits were not refunded.');
+      } else {
+        setGenerationJobs((current) => current.filter((item) => item.job_id !== job.job_id));
+        setNotice('Generation removed from your media library');
+      }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not delete generation');
+      setError(reason instanceof Error ? reason.message : active ? 'Could not cancel generation' : 'Could not delete generation');
     }
   }
 
@@ -2220,6 +2463,23 @@ export default function StudioPage() {
       setNotice('Generation prompt copied');
     } catch {
       setError('Could not copy the prompt');
+    }
+  }
+
+  async function downloadGeneration(job: GenerationJob) {
+    const url = resultURL(job.result);
+    if (!url) return;
+    try {
+      const response = await fetchWithRetry(url);
+      if (!response.ok) throw new Error('Could not download this generated video');
+      const blob = await response.blob();
+      const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
+      downloadBlob(blob, `manifold-generation-${job.job_id.slice(-8)}.${extension}`);
+      setNotice('Generated video downloaded');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not download this generated video');
+    } finally {
+      setGenerationContextMenu(null);
     }
   }
 
@@ -2322,6 +2582,7 @@ export default function StudioPage() {
     };
     rememberEdit();
     setAssets((current) => stackOverlappingVisuals([...current, asset]));
+    if (projectID) void cacheLocalStudioFiles(projectID, new Map([[asset.mediaID, asset.file]])).catch(() => undefined);
     selectOnly(asset.id);
     setPlayhead(asset.timelineStart);
     return asset;
@@ -2824,8 +3085,20 @@ export default function StudioPage() {
       if (audioRef.current.paused) {
         const sourceTime = selected.trimStart + Math.max(0, Math.min(clipDuration(selected), playhead - selected.timelineStart));
         audioRef.current.currentTime = sourceTime >= selected.trimEnd ? selected.trimStart : sourceTime;
-        void audioRef.current.play(); setPlaying(true);
+        const request = ++playbackRequestRef.current;
+        void waitForLocalMediaReady(audioRef.current).then(() => {
+          if (request !== playbackRequestRef.current) return undefined;
+          return audioRef.current?.play();
+        }).then(() => {
+          if (request === playbackRequestRef.current) setPlaying(true);
+        }).catch((reason) => {
+          if (request === playbackRequestRef.current) {
+            setPlaying(false);
+            setError(reason instanceof Error ? reason.message : 'Audio playback could not start');
+          }
+        });
       } else {
+        playbackRequestRef.current += 1;
         audioRef.current.pause(); setPlaying(false);
       }
       return;
@@ -2836,9 +3109,21 @@ export default function StudioPage() {
       perf.previewFrames = 0; perf.previewStartedAt = 0; perf.previewLastAt = 0;
       const sourceTime = selected.trimStart + Math.max(0, Math.min(clipDuration(selected), playhead - selected.timelineStart));
       videoRef.current.currentTime = sourceTime >= selected.trimEnd ? selected.trimStart : sourceTime;
-      void videoRef.current.play();
-      setPlaying(true);
+      const request = ++playbackRequestRef.current;
+      if (videoRef.current.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) setNotice('Preparing locally cached playback…');
+      void waitForLocalMediaReady(videoRef.current).then(() => {
+        if (request !== playbackRequestRef.current) return undefined;
+        return videoRef.current?.play();
+      }).then(() => {
+        if (request === playbackRequestRef.current) setPlaying(true);
+      }).catch((reason) => {
+        if (request === playbackRequestRef.current) {
+          setPlaying(false);
+          setError(reason instanceof Error ? reason.message : 'Video playback could not start');
+        }
+      });
     } else {
+      playbackRequestRef.current += 1;
       videoRef.current.pause();
       setPlaying(false);
     }
@@ -2936,6 +3221,16 @@ export default function StudioPage() {
       const imageData = await parseJSONResponse<Parameters<typeof loopAnchorURL>[0]>(imageResponse, 'Loop keyframe generation failed');
       firstFrame = loopAnchorURL(imageData, window.location.origin);
     }
+    if (videoGenerateMusicVideo && !firstFrame) {
+      const [width, height] = h3Dimensions(videoGenerateAspect, videoGenerateSize);
+      const imageResponse = await fetch('/api/service', {
+        method: 'POST',
+        headers: authHeaders(user.api_key),
+        body: JSON.stringify({ service: 'zimage', prompt: `${prompt}. Cinematic opening frame for a music video.`, width, height, n: 1 }),
+      });
+      const imageData = await parseJSONResponse<Parameters<typeof loopAnchorURL>[0]>(imageResponse, 'Music video opening frame generation failed');
+      firstFrame = loopAnchorURL(imageData, window.location.origin);
+    }
     const response = await fetch('/api/service', {
       method: 'POST',
       headers: authHeaders(user.api_key),
@@ -2949,6 +3244,8 @@ export default function StudioPage() {
         output_format: videoGenerateFormat,
         include_audio: videoGenerateAudio,
         loop: videoGenerateLoop,
+        music_video: videoGenerateMusicVideo,
+        music_duration: videoGenerateMusicVideo ? 30 : undefined,
         structured_prompt: true,
         ...(firstFrame ? { first_frame: firstFrame } : {}),
       }),
@@ -3010,6 +3307,10 @@ export default function StudioPage() {
     selectOnly(asset.id);
     setPlayhead(asset.timelineStart);
     setRestyleSourceID(asset.id);
+    setRestyleModel('wan-2.2');
+    setRestyleResolution('720p');
+    setRestyleAspect('auto');
+    setRestylePrompt('Restyle this video as a cinematic hand-painted animation. Preserve the original subject, motion, timing, composition, and camera movement.');
     setRestyleOpen(true);
     setContextMenu(null);
   }
@@ -3130,6 +3431,65 @@ export default function StudioPage() {
       throw new Error('Video transformation is still running and remains available in your account.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Video transformation failed');
+    } finally {
+      finishBackgroundActivity(activityID);
+    }
+  }
+
+  async function removeVideoBackground(source: StudioAsset) {
+    if (source.kind !== 'video') return;
+    if (!user) {
+      setContextMenu(null);
+      setError('Sign in to remove a video background');
+      return;
+    }
+    setContextMenu(null);
+    const activityID = startBackgroundActivity('Removing video background');
+    setError(''); setNotice('Video background removal started');
+    try {
+      const videoURL = source.cloudURL || await uploadPublic(source.file);
+      updateBackgroundActivity(activityID, 'Removing video background');
+      const response = await fetch('/api/service', {
+        method: 'POST', headers: authHeaders(user.api_key),
+        body: JSON.stringify({
+          service: 'video_background_removal', video_url: videoURL,
+          duration: Math.max(1, Math.min(30, Math.ceil(clipDuration(source)))),
+          background_color: 'transparent', output_format: 'webm_vp9', preserve_audio: true,
+        }),
+      });
+      const queued = await parseJSONResponse<{ result?: { job_id?: string; status_url?: string }; job_id?: string; status_url?: string }>(response, 'Could not start video background removal');
+      const jobID = queued.result?.job_id || queued.job_id;
+      const statusURL = queued.result?.status_url || queued.status_url || `/api/video-jobs/${jobID}`;
+      if (!jobID) throw new Error('Video background removal returned no job');
+
+      for (let attempts = 0; attempts < 1440; attempts += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+        const poll = await fetch(statusURL, { headers: authHeaders(user.api_key, false) });
+        const payload = await parseJSONResponse<{ job?: { status?: string; result?: unknown; error?: string } }>(poll, 'Video background removal status failed');
+        const status = payload.job?.status?.toLowerCase() || '';
+        if (status === 'failed' || status === 'payment_required' || status === 'cancelled' || status === 'canceled') {
+          throw new Error(payload.job?.error || 'Video background removal failed');
+        }
+        if (status === 'completed') {
+          const outputURL = resultURL(payload.job?.result);
+          if (!outputURL) throw new Error('Video background removal completed without a video');
+          updateBackgroundActivity(activityID, 'Adding transparent video to Media');
+          const result = await fetchWithRetry(galleryImportURL(outputURL));
+          if (!result.ok) throw new Error('Could not download the background-removed video');
+          const blob = await result.blob();
+          const file = new File([blob], `${source.name.replace(/\.[^.]+$/, '')}-background-removed.webm`, { type: blob.type || 'video/webm' });
+          await addGeneratedFile(file, 'video', 'Video background removed');
+          setMediaBrowserMode('project');
+          const refreshed = await refreshUser(user.api_key).catch(() => null);
+          if (refreshed) { setUser(refreshed); saveUser(refreshed); }
+          setNotice('Background-removed video added to Media');
+          return;
+        }
+        setNotice(status === 'processing' ? 'Removing video background…' : 'Video background removal queued…');
+      }
+      throw new Error('Video background removal is still running and remains available in your account.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Video background removal failed');
     } finally {
       finishBackgroundActivity(activityID);
     }
@@ -3410,16 +3770,18 @@ export default function StudioPage() {
 		if (audioMode === 'music') {
 		  setNotice('Generating music…');
 		  const response = await fetch('/api/studio/generate-music', {
-			method: 'POST', headers: authHeaders(user.api_key), body: JSON.stringify({ prompt: audioPrompt.trim(), duration: audioDuration }),
+			method: 'POST', headers: authHeaders(user.api_key), body: JSON.stringify({ prompt: audioPrompt.trim(), lyrics: audioLyrics.trim(), duration: audioDuration }),
 		  });
-		  const data = await parseJSONResponse<{ audio_url?: string; credits_used?: number; credits_remain?: number }>(response, 'Music generation failed');
-		  if (!data.audio_url) throw new Error('Music generation returned no audio');
-		  const media = await fetch(data.audio_url);
+		  const data = await parseJSONResponse<{ audio_url?: string; credits_used?: number; credits_remain?: number; result?: { job_id?: string } }>(response, 'Music generation failed');
+		  const jobID = data.result?.job_id;
+		  const audioURL = data.audio_url || (jobID ? await pollGeneratedAudio(jobID) : '');
+		  if (!audioURL) throw new Error('Music generation returned no audio');
+		  const media = await fetch(audioURL);
 		  if (!media.ok) throw new Error('Could not download generated music');
 		  const blob = await media.blob();
 		  await addGeneratedFile(new File([blob], `music-${Date.now()}.wav`, { type: blob.type || 'audio/wav' }), 'audio', 'Generated music');
 		  if (typeof data.credits_remain === 'number') { const next = { ...user, credits: data.credits_remain }; setUser(next); saveUser(next); }
-		  setNotice(data.credits_used === 0 ? 'Music added · unlimited' : `Music added · ${data.credits_used ?? 80} credits`);
+		  setNotice(data.credits_used === 0 ? 'Music added · unlimited' : 'Music added · MiniMax-Music3');
 		} else {
 		  setNotice('Starting sound generation…');
 		  const prompt = audioPrompt.trim();
@@ -3795,6 +4157,10 @@ export default function StudioPage() {
         openStudioContextMenu(event);
       }}
     >
+      {timelinePlaybackBuffers.map((asset) => <TimelineVideoPrebuffer
+        key={`playback-buffer-${asset.id}-${asset.url}`}
+        asset={asset}
+      />)}
       <header className={styles.topbar}>
         <div className={styles.brandGroup}>
           <button type="button" className={styles.iconButton} aria-label="Menu" aria-expanded={menuOpen} aria-controls="studio-navigation" onClick={() => setMenuOpen((open) => !open)}><Menu size={17} /></button>
@@ -3873,7 +4239,7 @@ export default function StudioPage() {
               </div>
               <div className={styles.assetGrid}>
                 {assets.map((asset) => <article role="button" tabIndex={0} key={asset.id} onContextMenu={(event) => openStudioContextMenu(event, asset)} onClick={(event) => { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); }} onKeyDown={(event) => { if (event.key === 'Enter') { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); } }} className={`${styles.assetCard} ${selectedIDs.includes(asset.id) ? styles.assetSelected : ''}`}>
-                  {asset.kind === 'image' ? <img src={asset.url} alt="" /> : asset.kind === 'video' ? <video src={asset.url} muted preload="metadata" /> : <ProjectAudioThumb asset={asset} />}
+                  {asset.kind === 'image' ? <img src={asset.url} alt="" /> : asset.kind === 'video' ? <HoverVideoPreview src={((asset.previewStatus === 'queued' || asset.previewStatus === 'processing') ? asset.url : asset.previewURL) || asset.url} fallbackSrc={asset.url} duration={asset.duration} label={asset.name} testID={`studio-asset-${asset.id}`} /> : <ProjectAudioThumb asset={asset} />}
                   <span className={styles.assetType}>{asset.text ? <Type size={11} /> : asset.kind === 'video' ? <Film size={11} /> : asset.kind === 'audio' ? <Volume2 size={11} /> : <ImageIcon size={11} />}</span>
                   <span className={styles.assetName}>{asset.text?.content || asset.name}</span>
                 </article>)}
@@ -3887,15 +4253,15 @@ export default function StudioPage() {
                 const pending = isActiveGeneration(generation);
                 const failed = ['failed', 'error', 'payment_required', 'cancelled', 'canceled'].includes(status);
                 return <article key={generation.job_id} data-testid={`studio-generation-${generation.job_id}`} className={styles.generationCard} onContextMenu={(event) => {
-                  if (!ready || !generation.prompt?.trim()) return;
+                  if (!generation.prompt?.trim()) return;
                   event.preventDefault();
                   setGenerationContextMenu({ jobID: generation.job_id, x: event.clientX, y: event.clientY });
                 }}>
                   <button className={styles.generationMain} aria-disabled={!ready && !failed} onClick={() => failed ? void retryGeneration(generation.job_id) : ready ? void addGenerationToTimeline(generation) : undefined} title={ready ? 'Add to timeline' : failed ? 'Retry generation' : undefined}>
-                    <span className={styles.generationPreview}>{ready && readyURL ? <video src={readyURL} muted playsInline preload="metadata" /> : pending ? <ManifoldLoader compact label="Generating" /> : <span className={styles.generationThumb}>{failed ? <RotateCcw size={20} /> : <X size={20} />}</span>}{ready && <span className={styles.generationAdd}><Plus size={13} /> Add</span>}</span>
+                    <span className={styles.generationPreview}>{ready && readyURL ? <HoverVideoPreview src={readyURL} label={generation.prompt || 'Generated video'} testID={`studio-generation-${generation.job_id}`} /> : pending ? <ManifoldLoader compact label="Generating" /> : <span className={styles.generationThumb}>{failed ? <RotateCcw size={20} /> : <X size={20} />}</span>}{ready && <span className={styles.generationAdd}><Plus size={13} /> Add</span>}</span>
                     <span className={styles.generationMeta}><b>{ready ? 'Ready' : pending ? 'Generating' : failed ? 'Retry' : 'Unavailable'}</b><small>{generation.prompt || generation.error || 'Manifold video'}</small></span>
                   </button>
-                  <button className={styles.deleteGeneration} aria-label="Delete generation" onClick={() => void deleteGeneration(generation.job_id)}><Trash2 size={13} /></button>
+                  <button data-testid={`studio-generation-${pending ? 'cancel' : 'delete'}-${generation.job_id}`} className={styles.deleteGeneration} aria-label={pending ? 'Cancel generation' : 'Delete generation'} title={pending ? 'Cancel generation' : 'Delete generation'} onClick={() => void removeGeneration(generation)}><Trash2 size={13} /></button>
                 </article>;
               })}
             </section>}
@@ -3907,7 +4273,7 @@ export default function StudioPage() {
               <div className={styles.discoveryLabel}><span>VIDEOS FROM THE COMMUNITY</span><small>Semantic search</small></div>
               <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('videos')} placeholder="Search motion, subjects, styles…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('videos')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
               <div className={styles.discoveryGrid}>{videoHits.map((hit) => <button data-testid={`studio-video-hit-${hit.job_id}`} className={styles.discoveryCard} key={hit.job_id} disabled={!hit.video_url || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'video', hit.prompt, { url: hit.video_url || '', name: hit.prompt || 'community-video', prompt: hit.prompt, kind: 'video' })} onClick={() => void addDiscoveredMedia(hit.video_url || '', hit.prompt, 'video')}>
-                <span className={styles.discoveryPreview}>{hit.video_url && <video src={hit.video_url} muted playsInline preload="metadata" />}<span><Plus size={13} /> Add</span></span>
+                <span className={styles.discoveryPreview}>{hit.video_url && <HoverVideoPreview src={hit.video_url} label={hit.prompt || 'Community video'} testID={`studio-video-hit-${hit.job_id}`} />}<span className={styles.discoveryAdd}><Plus size={13} /> Add</span></span>
                 <b>{hit.prompt || 'Community video'}</b><small>{hit.service || 'H3'}{typeof hit.similarity === 'number' ? ` · ${Math.round(hit.similarity * 100)}% match` : ''}</small>
               </button>)}</div>
               {!mediaSearchBusy && !videoHits.length && <p className={styles.discoveryEmpty}>No matches. Try fewer words.</p>}
@@ -3918,14 +4284,15 @@ export default function StudioPage() {
                 <div className={styles.imageComposerTitle}><span><Sparkles size={15} /></span><div><b>Generate images</b><small>Related work loads alongside</small></div></div>
                 <textarea data-testid="studio-image-prompt" value={imagePrompt} maxLength={2000} rows={4} onChange={(event) => setImagePrompt(event.target.value)} placeholder="Describe the image you want…" />
                 <div className={styles.engineChoices}>
-                  <button data-testid="studio-image-engine-images3" className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
-                  <button data-testid="studio-image-engine-omniserve" className={imageEngine === 'omniserve' ? styles.engineActive : ''} onClick={() => setImageEngine('omniserve')}><b>Z-Image</b><small>OmniServe Native</small></button>
+                  <button disabled={imageUseGPT2} data-testid="studio-image-engine-images3" className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
+                  <button disabled={imageUseGPT2} data-testid="studio-image-engine-omniserve" className={imageEngine === 'omniserve' ? styles.engineActive : ''} onClick={() => setImageEngine('omniserve')}><b>Z-Image</b><small>OmniServe Native</small></button>
                 </div>
+                <label className={styles.premiumImageToggle}><input data-testid="studio-image-gpt2" type="checkbox" checked={imageUseGPT2} onChange={(event) => setImageUseGPT2(event.target.checked)} /><span><b>Use GPT Image 2</b><small>{gptImageCredits} credits per image · always paid, including unlimited plans</small></span></label>
                 <div className={styles.imageSettings}>
                   <label><span>Aspect</span><select data-testid="studio-image-aspect" value={imageAspect} onChange={(event) => setImageAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
                   <label><span>Outputs</span><select data-testid="studio-image-count" value={imageCount} onChange={(event) => setImageCount(Number(event.target.value) as 1 | 4)}><option value="1">1 image</option><option value="4">4 images</option></select></label>
                 </div>
-                <button data-testid="studio-image-generate" className={styles.imageGenerateButton} disabled={!imagePrompt.trim()} onClick={() => void generateStudioImages()}><Sparkles size={15} /> Generate {imageCount}</button>
+                <button data-testid="studio-image-generate" className={styles.imageGenerateButton} disabled={!imagePrompt.trim()} onClick={() => void generateStudioImages()}><Sparkles size={15} /> Generate {imageCount}{imageUseGPT2 ? ` · ${gptImageBatchCredits} credits` : ''}</button>
               </section>
               <div className={styles.discoveryLabel}><span>SIMILAR IMAGES</span><small>From everyone</small></div>
               <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('images')} placeholder="Search subjects, lighting, composition…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('images')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
@@ -4035,7 +4402,7 @@ export default function StudioPage() {
           {tool === 'audio' && <>
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>SOUND</span><h2>Audio</h2></div></div>
             <div className={styles.quickGenerate}>
-              <button onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><Music2 size={17} /><span><b>Music</b><small>AI music · 80 cr</small></span></button>
+              <button onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><Music2 size={17} /><span><b>Music</b><small>MiniMax-Music3 · from $0.50</small></span></button>
               <button onClick={() => { setAudioMode('sfx'); setAudioGenerateOpen(true); }}><AudioLines size={17} /><span><b>Sound</b><small>AI · metered</small></span></button>
               <button onClick={() => { setAudioMode('speech'); setAudioGenerateOpen(true); }}><Mic2 size={17} /><span><b>Speech</b><small>from {speechCredits.toFixed(2)} cr</small></span></button>
             </div>
@@ -4221,13 +4588,14 @@ export default function StudioPage() {
         <div className={styles.generateSettings}>
           <label><span>Aspect</span><select data-testid="studio-video-generate-aspect" value={videoGenerateAspect} onChange={(event) => setVideoGenerateAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
           <label><span>Canvas</span><select data-testid="studio-video-generate-size" value={videoGenerateSize} onChange={(event) => setVideoGenerateSize(event.target.value as H3Size)}><option value="preview">Preview</option><option value="balanced">Balanced</option><option value="native">Native</option></select></label>
-          <label><span>Duration</span><select data-testid="studio-video-generate-duration" value={videoGenerateDuration} onChange={(event) => { const duration = Number(event.target.value); setVideoGenerateDuration(duration); if (duration > 15) { setVideoGenerateLoop(false); setVideoGenerateAudio(false); } }}><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds · single shot</option><option value="30">30 seconds · chained</option><option value="45">45 seconds · chained</option><option value="60">60 seconds · chained</option></select></label>
+          <label><span>Duration</span><select data-testid="studio-video-generate-duration" disabled={videoGenerateMusicVideo} value={videoGenerateDuration} onChange={(event) => { const duration = Number(event.target.value); setVideoGenerateDuration(duration); if (duration > 15) { setVideoGenerateLoop(false); setVideoGenerateMusicVideo(false); setVideoGenerateAudio(false); } }}><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds · single shot</option><option value="30">30 seconds · chained</option><option value="45">45 seconds · chained</option><option value="60">60 seconds · chained</option></select></label>
           <label><span>Steps</span><select data-testid="studio-video-generate-steps" value={videoGenerateSteps} onChange={(event) => setVideoGenerateSteps(Number(event.target.value))}><option value="12">12 · Fast</option><option value="20">20 · Standard</option><option value="28">28 · Detailed</option></select></label>
           <label><span>Output</span><select data-testid="studio-video-generate-format" value={videoGenerateFormat} onChange={(event) => setVideoGenerateFormat(event.target.value as H3Format)}><option value="webm-av1">WebM · AV1</option><option value="webm-vp9">WebM · VP9</option><option value="mp4-h264">MP4 · H.264</option></select></label>
         </div>
         <div className={styles.generateToggles}>
-          <label className={videoGenerateDuration > 15 ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-audio" type="checkbox" disabled={videoGenerateDuration > 15} checked={videoGenerateAudio} onChange={(event) => setVideoGenerateAudio(event.target.checked)} /><span><b>Native audio</b><small>{videoGenerateDuration > 15 ? 'Add one continuous soundtrack in Audio after generation' : 'Generate synchronized sound with the video'}</small></span></label>
-          <label className={videoGenerateDuration > 15 ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-loop" type="checkbox" disabled={videoGenerateDuration > 15} checked={videoGenerateLoop} onChange={(event) => setVideoGenerateLoop(event.target.checked)} /><span><b>Match start + end</b><small>{videoGenerateDuration > 15 ? 'Available for single shots up to 15 seconds' : 'Create and reuse one keyframe for a seamless loop'}</small></span></label>
+          <label className={videoGenerateDuration > 15 || videoGenerateMusicVideo ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-audio" type="checkbox" disabled={videoGenerateDuration > 15 || videoGenerateMusicVideo} checked={videoGenerateAudio} onChange={(event) => setVideoGenerateAudio(event.target.checked)} /><span><b>Native audio</b><small>{videoGenerateMusicVideo ? 'The MiniMax soundtrack becomes H3 reference audio' : videoGenerateDuration > 15 ? 'Add one continuous soundtrack in Audio after generation' : 'Generate synchronized sound with the video'}</small></span></label>
+          <label className={videoGenerateDuration > 15 || videoGenerateMusicVideo ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-loop" type="checkbox" disabled={videoGenerateDuration > 15 || videoGenerateMusicVideo} checked={videoGenerateLoop} onChange={(event) => setVideoGenerateLoop(event.target.checked)} /><span><b>Match start + end</b><small>{videoGenerateMusicVideo ? 'Audio-driven H3 uses one opening frame' : videoGenerateDuration > 15 ? 'Available for single shots up to 15 seconds' : 'Create and reuse one keyframe for a seamless loop'}</small></span></label>
+          <label className={videoGenerateDuration > 15 ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-music-video" type="checkbox" disabled={videoGenerateDuration > 15} checked={videoGenerateMusicVideo} onChange={(event) => { const enabled = event.target.checked; setVideoGenerateMusicVideo(enabled); if (enabled) { setVideoGenerateDuration(15); setVideoGenerateLoop(false); setVideoGenerateAudio(true); } }} /><span><b>Music video</b><small>Compose a MiniMax score, then drive H3 through a 15-second reference window</small></span></label>
           <label className={selected?.kind !== 'image' ? styles.generateToggleDisabled : ''}><input data-testid="studio-video-generate-selected-image" type="checkbox" disabled={selected?.kind !== 'image' || videoGenerateLoop} checked={videoGenerateUseSelected && selected?.kind === 'image' && !videoGenerateLoop} onChange={(event) => setVideoGenerateUseSelected(event.target.checked)} /><span><b>Use selected image</b><small>{selected?.kind === 'image' ? selected.name : 'Select an image on the timeline first'}</small></span></label>
         </div>
         {videoGenerateDuration > 15 && <p className={styles.generateHint}>Long videos chain shots. Add one soundtrack across the result.</p>}
@@ -4240,15 +4608,16 @@ export default function StudioPage() {
         {imageStyleTransferSource && <div className={styles.styleTransferSource}><span className={styles.styleTransferPreview}>{imageStyleTransferSource.thumbURL ? <img src={imageStyleTransferSource.thumbURL} alt="" /> : <ImageIcon size={18} />}</span><span><small>SOURCE IMAGE</small><b>{imageStyleTransferSource.name}</b></span></div>}
         <label className={styles.field}><span>Prompt</span><textarea data-testid="studio-image-modal-prompt" value={imagePrompt} maxLength={2000} rows={5} onChange={(event) => setImagePrompt(event.target.value)} placeholder="Describe the image you want…" /></label>
         <div className={styles.engineChoices}>
-          <button className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
-          <button className={imageEngine === 'omniserve' ? styles.engineActive : ''} onClick={() => setImageEngine('omniserve')}><b>Z-Image</b><small>OmniServe Native</small></button>
+          <button disabled={imageUseGPT2 || !!imageStyleTransferSource} className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
+          <button disabled={imageUseGPT2 || !!imageStyleTransferSource} className={imageEngine === 'omniserve' ? styles.engineActive : ''} onClick={() => setImageEngine('omniserve')}><b>Z-Image</b><small>OmniServe Native</small></button>
         </div>
+        {!imageStyleTransferSource && <label className={styles.premiumImageToggle}><input data-testid="studio-image-modal-gpt2" type="checkbox" checked={imageUseGPT2} onChange={(event) => setImageUseGPT2(event.target.checked)} /><span><b>Use GPT Image 2</b><small>{gptImageCredits} credits per image · always paid, including unlimited plans</small></span></label>}
         <div className={styles.imageSettings}>
           <label><span>Aspect</span><select value={imageAspect} onChange={(event) => setImageAspect(event.target.value as H3Aspect)}>{(['16:9', '9:16', '1:1', '4:3', '3:4'] as H3Aspect[]).map((aspect) => <option key={aspect}>{aspect}</option>)}</select></label>
           <label><span>Outputs</span><select value={imageCount} onChange={(event) => setImageCount(Number(event.target.value) as 1 | 4)}><option value="1">1 image</option><option value="4">4 images</option></select></label>
         </div>
-        <p className={styles.generateHint}>{imageStyleTransferSource ? 'Describe the new look. The styled variation will be added to your Media.' : 'Related work appears while yours renders.'}</p>
-        <button data-testid="studio-image-modal-generate" className={styles.modalPrimary} disabled={!imagePrompt.trim()} onClick={() => void generateStudioImages()}>{imageStyleTransferSource ? <><WandSparkles size={15} /> Create styled image</> : <><Sparkles size={15} /> Generate {imageCount}</>}</button>
+        <p className={styles.generateHint}>{imageStyleTransferSource ? 'Describe the new look. This GPT Image 2 edit always uses credits.' : imageUseGPT2 ? `${gptImageBatchCredits} credits total. OpenPaths falls back to Google image generation if GPT Image 2 is unavailable.` : 'Related work appears while yours renders.'}</p>
+        <button data-testid="studio-image-modal-generate" className={styles.modalPrimary} disabled={!imagePrompt.trim()} onClick={() => void generateStudioImages()}>{imageStyleTransferSource ? <><WandSparkles size={15} /> Create styled image</> : <><Sparkles size={15} /> Generate {imageCount}{imageUseGPT2 ? ` · ${gptImageBatchCredits} credits` : ''}</>}</button>
       </Modal>}
 
       {helpOpen && <Modal title="Keyboard shortcuts" onClose={() => setHelpOpen(false)}>
@@ -4326,7 +4695,7 @@ export default function StudioPage() {
         <div className={styles.restyleSource}>
           <Film size={16} /><span><small>SOURCE VIDEO</small><b>{assets.find((asset) => asset.id === restyleSourceID)?.name || 'Selected clip'}</b></span>
         </div>
-        <label className={styles.field}><span>{restyleModel === 'wan-animate-2' ? 'Describe the reference subject and scene' : 'Prompt'}</span><textarea data-testid="studio-restyle-prompt" value={restylePrompt} onChange={(event) => setRestylePrompt(event.target.value)} rows={5} placeholder={restyleModel === 'wan-animate-2' ? 'A full-body dancer matching the reference image, detailed clothing, clean background…' : 'Describe the new visual style while calling references Image 1, Video 1, or Audio 1…'} /></label>
+        <label className={styles.field}><span>{restyleModel === 'wan-animate-2' ? 'Describe the reference subject and scene' : 'Style prompt'}</span><textarea data-testid="studio-restyle-prompt" value={restylePrompt} onChange={(event) => setRestylePrompt(event.target.value)} rows={5} placeholder={restyleModel === 'wan-animate-2' ? 'A full-body dancer matching the reference image, detailed clothing, clean background…' : 'Describe the new visual style while calling references Image 1, Video 1, or Audio 1…'} /></label>
         {restyleModel === 'wan-2.2' && <label className={styles.field}><span>Negative prompt</span><textarea value={restyleNegativePrompt} onChange={(event) => setRestyleNegativePrompt(event.target.value)} rows={2} /></label>}
 
         {restyleModel === 'wan-2.2' ? <>
@@ -4388,10 +4757,11 @@ export default function StudioPage() {
           <div className={styles.priceLine}><span>Price</span><b>${speechUSD.toFixed(4)}</b></div>
         </> : <>
           <label className={styles.field}><span>{audioMode === 'music' ? 'Describe the track' : 'Describe the sound'}</span><textarea data-testid="studio-audio-prompt" value={audioPrompt} onChange={(event) => setAudioPrompt(event.target.value)} rows={4} maxLength={2000} /></label>
+          {audioMode === 'music' && <label className={styles.field}><span>Lyrics <em>optional · use [Verse], [Chorus], [Bridge]</em></span><textarea data-testid="studio-music-lyrics" value={audioLyrics} onChange={(event) => setAudioLyrics(event.target.value)} rows={5} maxLength={5000} placeholder={'[Verse]\nWrite each section on its own lines…\n[Chorus]\nLeave blank for instrumental'} /></label>}
           <div className={styles.durationChoices}>{(audioMode === 'music' ? [30, 45, 60, 90, 180] : [5, 10, 20, 30, 45]).map((duration) => <button key={duration} className={audioDuration === duration ? styles.durationActive : ''} onClick={() => setAudioDuration(duration)}>{duration}s</button>)}</div>
-          <div className={styles.priceLine}><span>{audioMode === 'music' ? 'Price' : 'Estimate'}</span><b>{audioMode === 'music' ? '$0.80' : `~$${audioEstimateUSD.toFixed(2)}`}</b></div>
+          <div className={styles.priceLine}><span>{audioMode === 'music' ? 'Price' : 'Estimate'}</span><b>{audioMode === 'music' ? `$${Math.max(.5, Math.ceil((.4 + .2 * audioDuration / 60) * 100) / 100).toFixed(2)}` : `~$${audioEstimateUSD.toFixed(2)}`}</b></div>
         </>}
-        <p className={styles.billingNote}>Search and editing are free. You only pay for generation.</p>
+        <p className={styles.billingNote}>{audioMode === 'music' ? 'Built with MiniMax-Music3 · AI-generated audio. ' : ''}Search and editing are free. You only pay for successful generation.</p>
         <button data-testid="studio-audio-generate" className={styles.modalPrimary} disabled={audioMode === 'speech' ? !speechText.trim() : !audioPrompt.trim()} onClick={() => void generateAudio()}><Sparkles size={16} /> Generate</button>
       </Modal>}
 
@@ -4416,7 +4786,8 @@ export default function StudioPage() {
             {asset.kind === 'video' && <button data-testid="studio-context-animation-transfer" onClick={() => openAnimationTransfer(asset)}><Clapperboard size={15} /><span><b>Animation Transfer</b><small>Drive a reference character with this performance</small></span></button>}
             {asset.kind === 'image' && <button onClick={() => void removeBackground()}><ImageIcon size={15} /><span><b>Remove background</b><small>Add a transparent cutout to Media</small></span></button>}
             {asset.kind === 'image' && <button onClick={() => openImageStyleTransfer({ url: asset.url, thumbURL: asset.url, name: asset.name, prompt: promptForAsset(asset), kind: 'image', file: asset.file, cloudURL: asset.cloudURL })}><WandSparkles size={15} /><span><b>Style transfer</b><small>Create a styled image variation</small></span></button>}
-            {asset.kind === 'video' && <button onClick={() => openRestyle(asset)}><WandSparkles size={15} /><span><b>Restyle video</b><small>Transform look, preserve motion</small></span></button>}
+            {asset.kind === 'video' && <button data-testid="studio-context-video-remove-background" onClick={() => void removeVideoBackground(asset)}><ImageIcon size={15} /><span><b>Remove video background</b><small>Create a transparent video and add it to Media</small></span></button>}
+            {asset.kind === 'video' && <button data-testid="studio-context-video-style-transfer" onClick={() => openRestyle(asset)}><WandSparkles size={15} /><span><b>Prompt style transfer</b><small>Restyle video · transform look, preserve motion</small></span></button>}
             <button onClick={() => { duplicateSelected(); setContextMenu(null); }}><Copy size={15} /><span><b>Duplicate clip</b><small>Add a copy to the timeline</small></span></button>
             <button className={styles.contextMenuDanger} onClick={() => { removeSelected(); setContextMenu(null); }}><Trash2 size={15} /><span><b>Delete clip</b><small>Undo restores it</small></span></button>
           </> : contextMenu.remoteMedia ? <>
@@ -4439,10 +4810,11 @@ export default function StudioPage() {
           </>}
         </>;
       })()}</div></div>}
-      {generationContextMenu && <div className={styles.contextMenuBackdrop} onPointerDown={() => setGenerationContextMenu(null)} onContextMenu={(event) => { event.preventDefault(); setGenerationContextMenu(null); }}><div className={styles.contextMenu} style={{ left: Math.min(generationContextMenu.x, window.innerWidth - 210), top: Math.min(generationContextMenu.y, window.innerHeight - 130) }} onPointerDown={(event) => event.stopPropagation()}>{(() => {
+      {generationContextMenu && <div className={styles.contextMenuBackdrop} onPointerDown={() => setGenerationContextMenu(null)} onContextMenu={(event) => { event.preventDefault(); setGenerationContextMenu(null); }}><div className={styles.contextMenu} style={{ left: Math.min(generationContextMenu.x, window.innerWidth - 210), top: Math.min(generationContextMenu.y, window.innerHeight - 190) }} onPointerDown={(event) => event.stopPropagation()}>{(() => {
         const generation = generationJobs.find((job) => job.job_id === generationContextMenu.jobID);
         if (!generation) return null;
-        return <><span className={styles.contextMenuLabel}>BROWSER</span><div className={styles.contextMenuRow}><button title="Back" onClick={() => { setGenerationContextMenu(null); window.history.back(); }}><ArrowLeft size={15} /><span><b>Back</b></span></button><button title="Forward" onClick={() => { setGenerationContextMenu(null); window.history.forward(); }}><ArrowRight size={15} /><span><b>Forward</b></span></button><button title="Reload" onClick={() => window.location.reload()}><RotateCw size={15} /><span><b>Reload</b></span></button></div><span className={styles.contextMenuSeparator} /><span className={styles.contextMenuLabel}>GENERATION</span><button data-testid="studio-generation-copy-prompt" onClick={() => void copyGenerationPrompt(generation)}><Copy size={15} /><span><b>Copy prompt</b><small>Copy the exact text used</small></span></button><button data-testid="studio-generation-similar" onClick={() => generateSimilar(generation)}><Sparkles size={15} /><span><b>Make similar video</b><small>Open Generate with this prompt</small></span></button></>;
+        const ready = READY_GENERATION_STATUSES.has(generationStatus(generation)) && Boolean(resultURL(generation.result));
+        return <><span className={styles.contextMenuLabel}>BROWSER</span><div className={styles.contextMenuRow}><button title="Back" onClick={() => { setGenerationContextMenu(null); window.history.back(); }}><ArrowLeft size={15} /><span><b>Back</b></span></button><button title="Forward" onClick={() => { setGenerationContextMenu(null); window.history.forward(); }}><ArrowRight size={15} /><span><b>Forward</b></span></button><button title="Reload" onClick={() => window.location.reload()}><RotateCw size={15} /><span><b>Reload</b></span></button></div><span className={styles.contextMenuSeparator} /><span className={styles.contextMenuLabel}>GENERATION</span><button data-testid="studio-generation-copy-prompt" onClick={() => void copyGenerationPrompt(generation)}><Copy size={15} /><span><b>Copy prompt</b><small>Copy the exact text used</small></span></button><button data-testid="studio-generation-similar" onClick={() => generateSimilar(generation)}><Sparkles size={15} /><span><b>Make similar video</b><small>Open Generate with this prompt</small></span></button><button data-testid="studio-generation-download" disabled={!ready} onClick={() => void downloadGeneration(generation)}><Download size={15} /><span><b>Download video</b><small>{ready ? 'Save the generated file' : 'Available when generation is ready'}</small></span></button></>;
       })()}</div></div>}
     </main>
   );

@@ -136,6 +136,34 @@ test('ordinary H3 generation does not spend an image request', async ({ page }) 
   expect(requests[0]).not.toHaveProperty('first_frame');
 });
 
+test('homepage music video flag queues a MiniMax soundtrack before audio-driven H3', async ({ page }) => {
+  const requests = [];
+  await installStudioMocks(page, async (route) => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    if (body.service === 'zimage') {
+      await route.fulfill({ status: 200, json: { saved_image_url: 'https://manifoldgen.com/images/music-video-opening.webp' } });
+      return;
+    }
+    await route.fulfill({ status: 202, json: { service: 'music_video', result: { job_id: 'job-loop-e2e', stage: 'music' } } });
+  });
+
+  await page.goto('/');
+  const toggle = page.getByTestId('home-music-video-toggle');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('home-loop-toggle')).toBeDisabled();
+  await page.getByRole('button', { name: /^Generate music video$/ }).click();
+  await expect(page.getByTestId('home-job-cost')).toContainText('completed');
+
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toMatchObject({ service: 'zimage', n: 1 });
+  expect(requests[1]).toMatchObject({
+    service: 'h3_video', music_video: true, music_duration: 30, duration: 15,
+    first_frame: 'https://manifoldgen.com/images/music-video-opening.webp', include_audio: true,
+  });
+});
+
 test('three ordered frames request two locked transitions ending on the final frame', async ({ page }) => {
   const requests = [];
   await installStudioMocks(page, async (route) => {
