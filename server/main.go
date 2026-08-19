@@ -316,6 +316,10 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	case path == "/api/pricing" && method == "GET":
 		handleGetPricing(ctx)
 
+	// The MCP server answers its own method check, so both verbs route here.
+	case path == "/api/mcp":
+		handleMCP(ctx)
+
 	case path == "/api/anima/status" && method == "GET":
 		handleAnimaStatus(ctx)
 
