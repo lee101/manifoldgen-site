@@ -502,6 +502,10 @@ func studioMediaURL(body []byte) string {
 const studioMusicEndpoint = "https://fal.run/fal-ai/minimax-music/v2.6"
 const studioMusicMinDuration = 30
 
+// MiniMax-Music3 caps a render at 9000 frames (25 per second), so five minutes
+// leaves headroom under the model's own limit.
+const studioMusicMaxDuration = 300
+
 func studioMusicEndpointURL() string {
 	return strings.TrimSpace(getEnv("STUDIO_MUSIC_FAL_ENDPOINT", studioMusicEndpoint))
 }
@@ -735,8 +739,8 @@ func normalizeMusicGenerationInput(prompt string, duration int) (string, int, er
 	if duration == 0 {
 		duration = studioMusicMinDuration
 	}
-	if duration < studioMusicMinDuration || duration > 180 {
-		return "", 0, fmt.Errorf("music duration must be 30–180 seconds")
+	if duration < studioMusicMinDuration || duration > studioMusicMaxDuration {
+		return "", 0, fmt.Errorf("music duration must be %d–%d seconds", studioMusicMinDuration, studioMusicMaxDuration)
 	}
 	return prompt, duration, nil
 }

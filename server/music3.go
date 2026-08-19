@@ -187,8 +187,8 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int) (*VideoJob
 		"workload": "minimax-music3", "prompt": prompt, "duration_seconds": duration,
 		"seed": seed, "output_upload_url": uploadURL, "output_public_url": publicURL,
 	}
-	if strings.TrimSpace(lyrics) != "" {
-		input["lyrics"] = strings.TrimSpace(lyrics)
+	if structured := music3StructureLyrics(lyrics); structured != "" {
+		input["lyrics"] = structured
 	}
 	var queued h3RunpodQueuedJob
 	status, err := callH3Runpod(endpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, &queued)

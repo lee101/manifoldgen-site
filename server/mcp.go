@@ -199,7 +199,7 @@ func manifoldGenerateSchema() map[string]interface{} {
 		"seed":            map[string]string{"type": "integer"},
 		"n":               map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 8},
 		"image_backend":   map[string]interface{}{"type": "string", "enum": []string{"auto", "omniserve", "images3", "r1"}},
-		"duration":        map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 180},
+		"duration":        map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 300},
 		"aspect_ratio":    map[string]interface{}{"type": "string", "enum": []string{"16:9", "9:16", "1:1", "4:3", "3:4", "21:9"}},
 		"size":            map[string]interface{}{"type": "string", "enum": []string{"preview", "balanced", "native", "audio"}},
 		"resolution":      map[string]string{"type": "string"},

@@ -17,10 +17,10 @@ type JobPayload = {
 
 const EXAMPLE_PROMPT = 'House remix, EDM techno at 128 BPM, old-school electro bass, saxophone hook, electric guitar stabs, wide club production';
 const EXAMPLE_LYRICS = '[Verse]\nThere is a house in New Orleans\nThey call the Rising Sun\n[Chorus]\nOh mother tell your children\nNot to do what I have done';
-const DURATIONS = [30, 60, 90, 120, 150, 180];
+const DURATIONS = [30, 60, 90, 120, 180, 240, 300];
 
 function priceUSD(duration: number) {
-  return Math.max(0.5, Math.round((0.4 + (0.2 * duration) / 60) * 100) / 100);
+  return Math.max(0.35, Math.round((0.25 + (0.15 * duration) / 60) * 100) / 100);
 }
 
 async function jsonResponse<T>(response: Response, fallback: string): Promise<T> {
@@ -100,7 +100,7 @@ export default function MusicTool() {
     <section className={styles.hero}>
       <div className={styles.eyebrow}><Music4 size={14} /> MINIMAX MUSIC 3 · SONG GENERATOR</div>
       <h1>Write the song.<br /><span>Get the record.</span></h1>
-      <p>Vocals and instrumental together, 32 kHz stereo, up to three minutes. The style caption decides the arrangement; the lyrics decide what gets sung.</p>
+      <p>Vocals and instrumental together, 32 kHz stereo, up to five minutes. The style caption decides the arrangement; the lyrics decide what gets sung.</p>
     </section>
     <section className={styles.workspace}>
       <div className={styles.controls}>
@@ -112,7 +112,7 @@ export default function MusicTool() {
         <label className={styles.promptLabel}>Lyrics <span className={styles.optional}>optional</span>
           <textarea data-testid="music-lyrics" value={lyrics} disabled={busy} maxLength={8000} rows={8}
             onChange={(event) => setLyrics(event.target.value)} placeholder={EXAMPLE_LYRICS} />
-          <small>Keep [Verse], [Chorus], [Bridge] and [Outro] on their own lines. Leave empty for an instrumental.</small>
+          <small>Section tags are added for you if you leave them out, so the whole lyric gets sung. Leave empty for an instrumental.</small>
         </label>
         <div className={styles.options}>
           <label>Length<select data-testid="music-duration" value={duration} disabled={busy}

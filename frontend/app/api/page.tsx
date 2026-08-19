@@ -144,7 +144,7 @@ POST \`/api/service\` with \`{"service":"image","prompt":"...","width":1024,"hei
 For anime-native character art, first check \`GET /api/anima/status\`, then POST \`{"service":"anima","prompt":"an adult ...","width":768,"height":1024,"num_steps":28,"guidance":4,"seed":18467291}\`. Anima is one asynchronous image per request at a fixed $0.04; poll the returned \`result.status_url\`. The route remains unavailable until ManifoldGen's commercial model license is active.
 
 ## Generate audio
-Use \`{"service":"music","prompt":"...","duration":30}\` for MiniMax-Music3 generation, or \`{"service":"sfx","prompt":"...","duration":5}\` for a sound-effect job. Both return a job to poll at \`GET /api/audio-jobs/{job_id}\`. Music accepts optional \`lyrics\` with section tags and 30–180 seconds; SFX accepts 4–45 seconds. Completed assets include a durable \`audio_url\` and \`audio_id\` and are searchable with \`GET /api/audio/search?q=...&kind=music|sfx&top_k=20\`.
+Use \`{"service":"music","prompt":"...","duration":30}\` for MiniMax-Music3 generation, or \`{"service":"sfx","prompt":"...","duration":5}\` for a sound-effect job. Both return a job to poll at \`GET /api/audio-jobs/{job_id}\`. Music accepts optional \`lyrics\` with section tags and 30–300 seconds; lyrics without tags are structured into verses and choruses automatically so the model sings all of them; SFX accepts 4–45 seconds. Completed assets include a durable \`audio_url\` and \`audio_id\` and are searchable with \`GET /api/audio/search?q=...&kind=music|sfx&top_k=20\`.
 
 ## Generate voices
 POST \`/api/voice/generate\` with a model ID, text, and optional delivery/audio controls. Discover the live model catalog at \`GET /api/voice/models\`. Batch size is 1–4. Successful results contain durable private \`audio_url\` values and exact usage charges.
@@ -287,7 +287,7 @@ export default function ApiDocsPage() {
             </p>
             <h3 className="mb-3 text-sm font-semibold text-white/80">Audio umbrella</h3>
             <CodeBlock>{createAudio}</CodeBlock>
-            <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">Music · synchronous · 30–180 seconds</h3>
+            <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">Music · synchronous · 30–300 seconds</h3>
             <CodeBlock>{createMusic}</CodeBlock>
             <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">200 OK</h3>
             <CodeBlock>{audioResponse}</CodeBlock>

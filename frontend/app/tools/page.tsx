@@ -19,7 +19,7 @@ export const metadata = {
 export default function ToolsPage() {
   return <main className={styles.page}>
     <header><Link href="/"><ArrowLeft size={16} /> ManifoldGen</Link><span><Sparkles size={13} /> CREATIVE SPACES</span><Link href="/account">Account</Link></header>
-    <section className={styles.intro}><p>TOOLS / 05</p><h1>One focused space<br />for every creative job.</h1><span>Every card below shows a real output from the tool—not a stock placeholder.</span></section>
+    <section className={styles.intro}><p>TOOLS / 06</p><h1>One focused space<br />for every creative job.</h1><span>Every card below shows a real output from the tool—not a stock placeholder.</span></section>
     <section className={styles.grid}>{tools.map((tool, index) => <Link key={tool.href} href={tool.href} className={`${styles.card} ${index === 0 ? styles.featured : ''}`}>
       <div className={styles.media}>{tool.kind === 'video' ? <video src={tool.src} muted autoPlay loop playsInline /> : <img src={tool.src} alt={`${tool.name} real output`} />}
         <span className={styles.real}><Check size={11} /> REAL OUTPUT</span>

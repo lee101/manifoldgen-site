@@ -376,7 +376,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"character_animation":      "five-second standard clip; fixed before dispatch (fast 2x, xfast 4x)",
 		"video_background_removal": "per second of source video (30 seconds maximum)",
 		"audio_generation":         "per music track by default; set kind to music or sfx",
-		"music_generation":         "per generated music track (30–180 seconds)",
+		"music_generation":         "per generated music track (30–300 seconds)",
 		"sfx_generation":           "estimated 5-second sound effect; final price follows measured generation time",
 		"flux_image":               "per image",
 	}
