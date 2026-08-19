@@ -1,0 +1,14 @@
+{
+  "name": "manifold-image-editor-sam2-sdxl",
+  "template": "image-editor-sam2-sdxl",
+  "workersMin": 0,
+  "workersMax": 2,
+  "idleTimeout": 30,
+  "flashboot": true,
+  "scalerType": "QUEUE_DELAY",
+  "scalerValue": 4,
+  "executionTimeout": 900,
+  "modelCache": "network-volume",
+  "billingMarkup": 2.0,
+  "notes": "SAM 2.1 Hiera Small runs object selection, then unloads before SDXL Inpainting runs. Use a 24 GB or larger GPU and a shared Hugging Face cache volume."
+}

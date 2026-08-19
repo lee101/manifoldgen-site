@@ -2,20 +2,13 @@ package main
 
 import "testing"
 
-func TestAnimaCommercialLicenseFailsClosed(t *testing.T) {
-	t.Setenv("APPNZ_ANIMA_COMMERCIAL_LICENSE_ACCEPTED", "")
-	t.Setenv("ANIMA_RUNPOD_ENDPOINT_ID", "anima-endpoint")
-	if animaAvailable() || animaUnavailableReason() != "commercial_license_required" {
-		t.Fatal("Anima must remain unavailable without explicit commercial acceptance")
+func TestAnimaUsesOmniServeNativeCapacity(t *testing.T) {
+	t.Setenv("ANIMA_NATIVE_URL", "http://127.0.0.1:8791")
+	if !animaAvailable() || animaUnavailableReason() != "" {
+		t.Fatal("Anima should use the configured OmniServe native capacity")
 	}
-	t.Setenv("APPNZ_ANIMA_COMMERCIAL_LICENSE_ACCEPTED", "1")
-	t.Setenv("ANIMA_RUNPOD_ENDPOINT_ID", "")
-	if animaAvailable() || animaUnavailableReason() != "capacity_not_configured" {
-		t.Fatal("Anima must remain unavailable without an endpoint")
-	}
-	t.Setenv("ANIMA_RUNPOD_ENDPOINT_ID", "anima-endpoint")
-	if !animaAvailable() {
-		t.Fatal("Anima should be available only when both gates are present")
+	if animaModelName() == "" {
+		t.Fatal("Anima should report the configured native model")
 	}
 }
 

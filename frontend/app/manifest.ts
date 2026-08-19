@@ -4,9 +4,9 @@ export const dynamic = 'force-static';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'ManifoldGen — AI Video Generator',
+    name: 'ManifoldGen | AI Video Creator',
     short_name: 'ManifoldGen',
-    description: 'Create cinematic AI video from a text prompt.',
+    description: 'Create and edit cinematic AI video from text, images, and reference media.',
     start_url: '/',
     display: 'standalone',
     background_color: '#07070a',

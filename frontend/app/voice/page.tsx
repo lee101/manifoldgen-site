@@ -306,7 +306,6 @@ export default function VoiceStudioPage() {
 
     <section className={styles.hero}>
       <div><span className={styles.eyebrow}>TEXT TO PERFORMANCE</span><h1>Give every line a voice.</h1><p>Natural narration, expressive delivery, and full cinematic audio scenes—all in one workspace.</p></div>
-      <div className={styles.marginBadge}><Check size={15} /><span><b>Usage pricing</b><small>Provider cost + 20%</small></span></div>
     </section>
 
     <div className={styles.workspace}>
@@ -360,7 +359,7 @@ export default function VoiceStudioPage() {
         {error && <div className={styles.error} role="alert">{error}</div>}
         {notice && <div className={styles.notice}>{notice}</div>}
         <div className={styles.generateBar}>
-          <div><span>Estimated usage</span><b>{estimatedUSD ? `$${estimatedUSD.toFixed(4)} · ${(estimatedUSD / creditPrice).toFixed(2)} cr` : 'Add a script to estimate'}</b><small>Includes 20% service margin</small></div>
+          <div><span>Estimated usage</span><b>{estimatedUSD ? `$${estimatedUSD.toFixed(4)} · ${(estimatedUSD / creditPrice).toFixed(2)} cr` : 'Add a script to estimate'}</b></div>
           <button disabled={busy || !text.trim() || characterCount > (selected?.max_characters || 5000)} onClick={() => void generate()}>{busy ? <Loader2 className={styles.spin} size={17} /> : <Sparkles size={17} />}{busy ? 'Generating…' : `Generate${settings.batchSize > 1 ? ` ${settings.batchSize} voices` : ' voice'}`}</button>
         </div>
       </section>

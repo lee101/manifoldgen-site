@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "result": "pass",
+  "input": {
+    "result_url": "https://manifoldgenstatic.manifoldgen.com/gallery/service_netw/video-background/6f378c9b-1c0d-4aad-9f1a-e41f9436fca5.webm",
+    "source_url": "https://manifoldgenstatic.manifoldgen.com/gallery/videos/astronaut-flower-field.webm",
+    "result_sha256": "9ed9d4b683f4cc0ce114ab201ad05b17cab7ebca00dbf50861f50d1bc94c3af3",
+    "source_sha256": "4112e1bdd6604da79c24b66bdeec08dba1497715a76ac930b115aeee5f3df973"
+  },
+  "video": {
+    "codec": "vp9",
+    "container_reported_pixel_format": "yuv420p",
+    "alpha_mode": "1",
+    "width": 1184,
+    "height": 672,
+    "fps": 24.0,
+    "duration_seconds": 5.168,
+    "frames": 124,
+    "bytes": 2709759,
+    "source_width": 1184,
+    "source_height": 672
+  },
+  "decoder": "FFmpeg libvpx-vp9 (explicit; required to expose the WebM alpha plane)",
+  "sample_decode_and_composite_seconds": 9.357042,
+  "frames": [
+    {
+      "timestamp_seconds": 0.5,
+      "frame_number": 12,
+      "alpha_min": 0,
+      "alpha_max": 255,
+      "alpha_mean": 56.538527,
+      "alpha_unique_levels": 256,
+      "transparent_percent": 77.073404,
+      "opaque_percent": 21.228483,
+      "soft_edge_percent": 1.698113,
+      "opaque_source_rgb_mae_255": 1.859013,
+      "opaque_source_rgb_p99_error_255": 7.0,
+      "transparent_green_max_error_255": 0
+    },
+    {
+      "timestamp_seconds": 2.584,
+      "frame_number": 62,
+      "alpha_min": 0,
+      "alpha_max": 255,
+      "alpha_mean": 47.99679,
+      "alpha_unique_levels": 256,
+      "transparent_percent": 80.065305,
+      "opaque_percent": 17.384446,
+      "soft_edge_percent": 2.550248,
+      "opaque_source_rgb_mae_255": 1.648872,
+      "opaque_source_rgb_p99_error_255": 6.0,
+      "transparent_green_max_error_255": 0
+    },
+    {
+      "timestamp_seconds": 4.668,
+      "frame_number": 112,
+      "alpha_min": 0,
+      "alpha_max": 255,
+      "alpha_mean": 49.92653,
+      "alpha_unique_levels": 256,
+      "transparent_percent": 77.545975,
+      "opaque_percent": 14.205779,
+      "soft_edge_percent": 8.248245,
+      "opaque_source_rgb_mae_255": 1.604573,
+      "opaque_source_rgb_p99_error_255": 6.0,
+      "transparent_green_max_error_255": 0
+    }
+  ],
+  "assertions": {
+    "vp9_codec": true,
+    "alpha_mode_metadata": true,
+    "all_frames_have_8bit_alpha_range": true,
+    "foreground_and_background_present": true,
+    "soft_edges_present": true,
+    "opaque_rgb_fidelity": true,
+    "green_recomposition_exact_on_clear_pixels": true
+  }
+}

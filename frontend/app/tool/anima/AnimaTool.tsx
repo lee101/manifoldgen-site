@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Check, Download, KeyRound, LoaderCircle, ShieldCheck, Sparkles, WandSparkles } from 'lucide-react';
+import { ArrowLeft, Check, Download, LoaderCircle, ShieldCheck, Sparkles, WandSparkles } from 'lucide-react';
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '../../../lib/auth';
 import styles from './page.module.css';
 
@@ -48,18 +48,17 @@ export default function AnimaTool() {
   const launchCopy = useMemo(() => {
     if (availability.reason === 'checking') return 'Checking Anima capacity…';
     if (availability.available) return user ? 'Generate Anima character' : 'Sign in to generate';
-    if (availability.reason === 'commercial_license_required') return 'Commercial launch pending';
     return 'Capacity is being prepared';
   }, [availability, user]);
 
   async function generate() {
-    if (!availability.available) { setPhase('error'); setMessage('Anima API activation requires the commercial model license'); return; }
+    if (!availability.available) { setPhase('error'); setMessage('Anima native capacity is temporarily unavailable'); return; }
     if (!user?.api_key) { setPhase('error'); setMessage('Sign in before generating'); return; }
     if (!prompt.trim()) { setPhase('error'); setMessage('Describe the character or illustration'); return; }
     const parsedSeed = Number(seed);
     if (!Number.isInteger(parsedSeed) || parsedSeed < 0 || parsedSeed > 2147483647) { setPhase('error'); setMessage('Seed must be an integer from 0 to 2147483647'); return; }
     const [width, height] = CANVASES[canvas];
-    setOutputURL(''); setCharged(null); setPrivateResult(false); setPhase('queued'); setMessage('Starting scale-to-zero Anima capacity…');
+    setOutputURL(''); setCharged(null); setPrivateResult(false); setPhase('queued'); setMessage('Starting OmniServe native image capacity…');
     try {
       const queued = await jsonResponse<{ result?: { job_id?: string; status_url?: string }; estimated_cost_usd?: number }>(
         await fetch('/api/service', {
@@ -84,7 +83,7 @@ export default function AnimaTool() {
         }
         if (status === 'failed' || status === 'payment_required') throw new Error(payload.job?.error || (status === 'payment_required' ? 'Top up to release this image' : 'Anima generation failed'));
         setPhase(status === 'processing' ? 'processing' : 'queued');
-        setMessage(status === 'processing' ? 'Painting the final Anima frame…' : 'Waiting for cached Anima capacity…');
+        setMessage(status === 'processing' ? 'Painting the final Anima frame…' : 'Waiting for OmniServe native capacity…');
         await new Promise((resolve) => window.setTimeout(resolve, 2500));
       }
       throw new Error('The job remains available in your account');
@@ -133,7 +132,7 @@ export default function AnimaTool() {
           {busy ? <LoaderCircle className={styles.spin} size={19} /> : <WandSparkles size={18} />}{busy ? message : launchCopy}
         </button>
         <div className={styles.price}><span>Fixed $0.04 per successful image</span><span>Output classified before gallery indexing</span></div>
-        {!availability.available && availability.reason !== 'checking' && <div className={styles.license}><KeyRound size={17} /><span><b>Integration ready; paid inference locked.</b> CircleStone’s commercial license and a licensed endpoint must be configured before this paid API can accept jobs.</span></div>}
+        {!availability.available && availability.reason !== 'checking' && <div className={styles.license}><span><b>Native capacity unavailable.</b> OmniServe’s licensed image lane is not currently ready to accept jobs.</span></div>}
         {phase === 'error' && <div className={styles.error}>{message}</div>}
       </div>
 
@@ -162,6 +161,6 @@ Authorization: Bearer $MANIFOLDGEN_API_KEY
   "seed": 18467291
 }`}</code></pre>
     </section>
-    <section className={styles.notes}><div><ShieldCheck size={18} /><span><b>Classifier-routed</b>Every generated image passes the production NSFW classifier. Adult results remain private and out of public search.</span></div><div><Sparkles size={18} /><span><b>Cached, then drained</b>The production contract uses model caching and one-worker bursts, then forces the endpoint back to zero after the queue clears.</span></div><div><KeyRound size={18} /><span><b>License-gated</b>The server fails closed unless commercial Anima acceptance and licensed capacity are both explicitly configured.</span></div></section>
+    <section className={styles.notes}><div><ShieldCheck size={18} /><span><b>Classifier-routed</b>Every generated image passes the production NSFW classifier. Adult results remain private and out of public search.</span></div><div><Sparkles size={18} /><span><b>Native GPU lane</b>Requests run through the licensed OmniServe native image gateway with durable job status.</span></div><div><Sparkles size={18} /><span><b>Gallery-safe</b>Only classified, successfully stored outputs are settled and indexed.</span></div></section>
   </main>;
 }

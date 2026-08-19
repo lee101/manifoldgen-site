@@ -1,0 +1,50 @@
+[
+  {
+    "name": "jackyhate-text-to-image-1024-10k",
+    "filename": "jackyhate-1024-10k.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_1024_10K/data_000000.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-0",
+    "filename": "jackyhate-512-10k-0.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000000.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-1",
+    "filename": "jackyhate-512-10k-1.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000001.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-2",
+    "filename": "jackyhate-512-10k-2.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000002.jsonl?download=true"
+  },
+  {
+    "name": "danielrosehill-architecture",
+    "filename": "danielrosehill-architecture.md",
+    "license": "Apache-2.0",
+    "url": "https://huggingface.co/datasets/danielrosehill/Text-To-Image-Test-Prompts/resolve/main/architectural-renders/prompts.md?download=true"
+  },
+  {
+    "name": "danielrosehill-lighting",
+    "filename": "danielrosehill-lighting.md",
+    "license": "Apache-2.0",
+    "url": "https://huggingface.co/datasets/danielrosehill/Text-To-Image-Test-Prompts/resolve/main/lighting-instructions/prompts.md?download=true"
+  },
+  {
+    "name": "danielrosehill-landmarks",
+    "filename": "danielrosehill-landmarks.md",
+    "license": "Apache-2.0",
+    "url": "https://huggingface.co/datasets/danielrosehill/Text-To-Image-Test-Prompts/resolve/main/landmarks/prompts.md?download=true"
+  },
+  {
+    "name": "danielrosehill-painters",
+    "filename": "danielrosehill-painters.md",
+    "license": "Apache-2.0",
+    "url": "https://huggingface.co/datasets/danielrosehill/Text-To-Image-Test-Prompts/resolve/main/stylistic-following/painters.md?download=true"
+  }
+]

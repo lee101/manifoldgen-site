@@ -34,7 +34,7 @@ export default function H3ImageTool({ editing = false }: Props) {
   const [steps, setSteps] = useState<12 | 20>(12);
   const [fidelity, setFidelity] = useState(.75);
   const [phase, setPhase] = useState<Phase>('idle');
-  const [status, setStatus] = useState(editing ? 'Add an image to edit' : 'Describe an image');
+  const [status, setStatus] = useState(editing ? 'Add a source image to begin' : 'Describe a finished still image');
   const [outputURL, setOutputURL] = useState('');
   const [cost, setCost] = useState<number | null>(null);
   const [privateResult, setPrivateResult] = useState(false);
@@ -51,7 +51,7 @@ export default function H3ImageTool({ editing = false }: Props) {
     if (!user?.api_key) throw new Error('Sign in before uploading an image');
     if (!file.type.startsWith('image/')) throw new Error('Choose an image file');
     if (file.size > 32 * 1024 * 1024) throw new Error('Images must be 32 MB or smaller');
-    setPhase('uploading'); setStatus('Uploading…');
+    setPhase('uploading'); setStatus('Uploading image…');
     const query = new URLSearchParams({ filename: file.name, content_type: file.type, dataset: 'h3-image-edit' });
     const target = await jsonResponse<{ upload_url: string; public_url: string }>(
       await fetch(`/api/uploads/presign?${query}`, { headers: { Authorization: `Bearer ${user.api_key}` } }),
@@ -62,7 +62,7 @@ export default function H3ImageTool({ editing = false }: Props) {
     const asset = { url: target.public_url, preview: URL.createObjectURL(file), name: file.name };
     const setter = kind === 'source' ? setSource : setReference;
     setter((current) => { if (current?.preview.startsWith('blob:')) URL.revokeObjectURL(current.preview); return asset; });
-    setPhase('idle'); setStatus('Ready');
+    setPhase('idle'); setStatus('Ready to edit');
   }
 
   async function choose(files: FileList | null, kind: 'source' | 'reference') {
@@ -80,10 +80,10 @@ export default function H3ImageTool({ editing = false }: Props) {
 
   async function generate() {
     if (!user?.api_key) { setPhase('error'); setStatus('Sign in to generate an image'); return; }
-    if (editing && !source) { setPhase('error'); setStatus('Add an image to edit'); return; }
-    if (!prompt.trim()) { setPhase('error'); setStatus(editing ? 'Describe the edit' : 'Describe the image'); return; }
+    if (editing && !source) { setPhase('error'); setStatus('Add a source image'); return; }
+    if (!prompt.trim()) { setPhase('error'); setStatus(editing ? 'Describe the final edited image' : 'Describe the image to create'); return; }
     const [width, height] = CANVASES[canvas];
-    setOutputURL(''); setCost(null); setPrivateResult(false); setPhase('queued'); setStatus('Job added');
+    setOutputURL(''); setCost(null); setPrivateResult(false); setPhase('queued'); setStatus('Checking references and finding the best H3 lane…');
     try {
       const queued = await jsonResponse<{ result?: { job_id?: string; status_url?: string }; estimated_cost_usd?: number }>(
         await fetch('/api/service', {
@@ -106,13 +106,13 @@ export default function H3ImageTool({ editing = false }: Props) {
           const url = payload.job?.result?.image_url;
           if (!url) throw new Error('Generation completed without an image');
           setOutputURL(url); setCost(payload.job?.result?.charged_usd ?? queued.estimated_cost_usd ?? null);
-          setPrivateResult(Boolean(payload.job?.result?.is_nsfw)); setPhase('done'); setStatus(editing ? 'Edit ready' : 'Image ready');
+          setPrivateResult(Boolean(payload.job?.result?.is_nsfw)); setPhase('done'); setStatus(editing ? 'Your edit is ready' : 'Your image is ready');
           void refreshUser(user.api_key).then((fresh) => { if (fresh) { setUser(fresh); saveUser(fresh); } });
           return;
         }
         if (next === 'failed' || next === 'payment_required') throw new Error(payload.job?.error || (next === 'payment_required' ? 'Top up to release this image' : 'H3 image generation failed'));
         setPhase(next === 'processing' ? 'processing' : 'queued');
-        setStatus(next === 'processing' ? 'Generating…' : 'Job added');
+        setStatus(next === 'processing' ? (editing ? 'Regenerating the requested edit…' : 'Denoising the H3 still packet…') : 'Waiting for a shared H3 GPU…');
         await new Promise((resolve) => window.setTimeout(resolve, 2500));
       }
       throw new Error('The job remains available in your account');
@@ -129,19 +129,19 @@ export default function H3ImageTool({ editing = false }: Props) {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}><Sparkles size={14} /> MINIMAX H3 · {editing ? 'IMAGE EDITOR' : 'IMAGE GENERATOR'}</div>
-      <h1>{editing ? <>Edit with H3.<br /><span>Keep what matters.</span></> : <>H3 image generation.<br /><span>Make a finished frame.</span></>}</h1>
-      <p>{editing ? 'Edit a source image with H3. Keep the subject, change the look.' : 'Generate a finished image with H3. For video, use any image as the first frame.'}</p>
+      <div className={styles.eyebrow}><Sparkles size={14} /> MINIMAX H3 · {editing ? 'REF2VA' : 'FL2VA'}</div>
+      <h1>{editing ? <>Edit with references.<br /><span>Keep what matters.</span></> : <>H3, held still.<br /><span>Create a finished frame.</span></>}</h1>
+      <p>{editing ? 'Regenerate a source with identity, composition, and geometry preservation—optionally borrowing details from a second reference.' : 'Use H3’s visual world model as a high-detail text-to-image engine, with a short hidden temporal packet distilled into one selected still.'}</p>
     </section>
     <section className={styles.workspace}>
       <div className={styles.controls}>
         {editing && <div className={styles.inputGrid}>
-          <ImageDrop title="Source image" hint="The image to edit" asset={source} busy={busy} input={sourceInput} onChoose={(files) => void choose(files, 'source')} onDrop={(event) => drop(event, 'source')} />
-          <ImageDrop title="Reference image" hint="Optional style or detail" asset={reference} busy={busy} input={referenceInput} onChoose={(files) => void choose(files, 'reference')} onDrop={(event) => drop(event, 'reference')} />
+          <ImageDrop title="Source · Picture 1" hint="The image to edit" asset={source} busy={busy} input={sourceInput} onChoose={(files) => void choose(files, 'source')} onDrop={(event) => drop(event, 'source')} />
+          <ImageDrop title="Optional · Picture 2" hint="Style, garment, object…" asset={reference} busy={busy} input={referenceInput} onChoose={(files) => void choose(files, 'reference')} onDrop={(event) => drop(event, 'reference')} />
         </div>}
-        <label className={styles.promptLabel}>{editing ? 'Describe the edit' : 'Describe the image'}
-          <textarea value={prompt} disabled={busy} maxLength={2400} onChange={(event) => setPrompt(event.target.value)} placeholder={editing ? 'Keep the person and room. Use the silver jacket from the reference.' : 'A cinematic editorial portrait, sharp eyes, Rembrandt light, dark background.'} />
-          <small>{editing ? 'The source image is required. Add a reference for style or details.' : 'Describe the final frame. Motion instructions are not needed.'}</small>
+        <label className={styles.promptLabel}>{editing ? 'Describe the final edit' : 'Describe the finished image'}
+          <textarea value={prompt} disabled={busy} maxLength={2400} onChange={(event) => setPrompt(event.target.value)} placeholder={editing ? 'Keep the person, face, pose, and room from <Picture 1>, but use the structured silver jacket from <Picture 2>. One sharp finished fashion photograph.' : 'A finished cinematic editorial portrait, precise facial detail, controlled Rembrandt studio lighting, sharp eyes, clean dark background, premium fashion photography.'} />
+          <small>{editing ? 'Picture 1 is always the source. If supplied, call the optional reference Picture 2.' : 'Describe a final still—composition, light, material, lens, and style. Motion instructions are unnecessary.'}</small>
         </label>
         <div className={styles.options}>
           <label>Canvas<select value={canvas} disabled={busy} onChange={(event) => setCanvas(event.target.value as Canvas)}>{Object.entries(CANVASES).map(([key, value]) => <option key={key} value={key}>{key} · {value[2]}</option>)}</select></label>
@@ -151,16 +151,16 @@ export default function H3ImageTool({ editing = false }: Props) {
         <button data-testid="h3-image-run" className={styles.run} type="button" disabled={busy || !prompt.trim() || (editing && !source)} onClick={() => void generate()}>
           {busy ? <LoaderCircle className={styles.spin} size={19} /> : editing ? <WandSparkles size={18} /> : <Sparkles size={18} />}{busy ? status : editing ? 'Generate edit' : 'Create H3 image'}
         </button>
-        <div className={styles.price}><span>GPU-time estimate · ${estimate.toFixed(2)}</span><span>12 steps · ~0.98 MP max</span></div>
+        <div className={styles.price}><span>Measured GPU-time billing · ${estimate.toFixed(2)} current estimate</span><span>12-step default · native ~0.98 MP cap</span></div>
         {phase === 'error' && <div className={styles.error}>{status}</div>}
       </div>
       <div className={styles.previewPanel}>
-        <div className={styles.previewHeader}><span>{outputURL ? (editing ? 'H3 EDIT OUTPUT' : 'H3 IMAGE OUTPUT') : 'H3 EXAMPLE'}</span>{phase === 'done' && <span className={styles.ready}><Check size={13} /> READY</span>}</div>
-        <div className={styles.preview}><img src={displayedURL} alt={outputURL ? 'Generated H3 result' : 'H3 example output'} />{busy && <div className={styles.emptyOutput}><LoaderCircle className={styles.spin} size={35} /><b>{status}</b><span>You can refresh this page while it runs.</span></div>}</div>
-        <div className={styles.resultFooter}><div><b>{privateResult ? 'Private adult result' : phase === 'done' ? 'Saved to your gallery' : editing ? 'H3 edit example' : 'H3 image example'}</b><span>{cost === null ? 'Example output' : `$${cost.toFixed(4)} charged`}</span></div>{outputURL && <a href={outputURL} download><Download size={16} /> Download</a>}</div>
+        <div className={styles.previewHeader}><span>{outputURL ? (editing ? 'EDIT OUTPUT' : 'IMAGE OUTPUT') : 'REAL H3 EXAMPLE'}</span>{phase === 'done' && <span className={styles.ready}><Check size={13} /> READY</span>}</div>
+        <div className={styles.preview}><img src={displayedURL} alt={outputURL ? 'Generated H3 result' : 'Real H3 example output'} />{busy && <div className={styles.emptyOutput}><LoaderCircle className={styles.spin} size={35} /><b>{status}</b><span>The durable job can survive a browser refresh while H3 capacity starts.</span></div>}</div>
+        <div className={styles.resultFooter}><div><b>{privateResult ? 'Private adult result' : phase === 'done' ? 'Saved to your gallery' : editing ? 'Real REF2VA edit' : 'Real H3 generation'}</b><span>{cost === null ? 'Classifier-verified example output' : `$${cost.toFixed(4)} charged`}</span></div>{outputURL && <a href={outputURL} download><Download size={16} /> Download</a>}</div>
       </div>
     </section>
-    <section className={styles.notes}><div><ShieldCheck size={17} /><span><strong>Safety checked</strong>Adult work uses a private H3 lane.</span></div><div><Sparkles size={17} /><span><strong>Shared H3 models</strong>Images and video share core model weights.</span></div><div><WandSparkles size={17} /><span><strong>Usage-based</strong>You pay for the GPU time used.</span></div></section>
+    <section className={styles.notes}><div><ShieldCheck size={17} /><span><strong>Classifier-routed</strong>Every source and output is classified; adult inputs use the compatible H3 lane and adult outputs stay out of public search.</span></div><div><Sparkles size={17} /><span><strong>Shared model residency</strong>Text-to-image shares FL2VA, Qwen, and VAE weights with video. REF2VA is loaded only when editing needs it.</span></div><div><WandSparkles size={17} /><span><strong>Measured, then drained</strong>Final price follows actual execution; the RunPod endpoint scales back to zero after its queue empties.</span></div></section>
   </main>;
 }
 

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -19,33 +21,36 @@ import (
 
 const animaMaxPixels = 1024 * 1024
 
-func animaCommercialLicenseAccepted() bool {
-	return strings.TrimSpace(os.Getenv("APPNZ_ANIMA_COMMERCIAL_LICENSE_ACCEPTED")) == "1"
+func animaNativeURL() string {
+	return strings.TrimRight(getEnv("ANIMA_NATIVE_URL", getEnv("OMNISERVE_NATIVE_URL", "http://127.0.0.1:8791")), "/")
 }
 
+// Kept for polling jobs created by the previous RunPod-backed implementation.
 func animaEndpointID() string {
 	return strings.TrimSpace(os.Getenv("ANIMA_RUNPOD_ENDPOINT_ID"))
 }
 
 func animaAvailable() bool {
-	return animaCommercialLicenseAccepted() && animaEndpointID() != ""
+	return animaNativeURL() != ""
 }
 
 func animaUnavailableReason() string {
-	if !animaCommercialLicenseAccepted() {
-		return "commercial_license_required"
-	}
-	if animaEndpointID() == "" {
+	if animaNativeURL() == "" {
 		return "capacity_not_configured"
 	}
 	return ""
 }
 
+func animaModelName() string {
+	return getEnv("ANIMA_MODEL_NAME", "z_image_turbo-Q4_K")
+}
+
 func handleAnimaStatus(ctx *fasthttp.RequestCtx) {
 	jsonResponse(ctx, http.StatusOK, map[string]interface{}{
 		"available": animaAvailable(), "reason": animaUnavailableReason(),
-		"model": "Anima-2.9B", "price_usd": servicePricesUSD["anima"],
+		"model": animaModelName(), "price_usd": servicePricesUSD["anima"],
 		"billing": "fixed price per successful illustration",
+		"backend": "omniserve-native",
 	})
 }
 
@@ -78,8 +83,9 @@ func normalizeAnimaRequest(req *ServiceUsageRequest) error {
 	if req.Width < 512 || req.Width > 1536 || req.Height < 512 || req.Height > 1536 {
 		return fmt.Errorf("width and height must be between 512 and 1536")
 	}
-	req.Width = max(512, (req.Width/16)*16)
-	req.Height = max(512, (req.Height/16)*16)
+	// OmniServe's native diffusion parser requires 64-pixel increments.
+	req.Width = max(512, (req.Width/64)*64)
+	req.Height = max(512, (req.Height/64)*64)
 	if req.Width*req.Height > animaMaxPixels {
 		return fmt.Errorf("Anima images may contain at most 1048576 pixels")
 	}
@@ -150,9 +156,139 @@ func animaEstimate() (float64, float64) {
 	return usd, credits
 }
 
+type animaNativeImageResponse struct {
+	Model  string `json:"model"`
+	Format string `json:"format"`
+	Data   []struct {
+		B64JSON string `json:"b64_json"`
+	} `json:"data"`
+}
+
+func animaNativeSecret() string {
+	return strings.TrimSpace(getEnv("OMNISERVE_NATIVE_SECRET", getEnv("OMNISERVE_SECRET", "")))
+}
+
+func callAnimaNative(input map[string]interface{}) ([]byte, string, error) {
+	body, err := json.Marshal(input)
+	if err != nil {
+		return nil, "", err
+	}
+	endpoint := animaNativeURL() + "/v1/images/generations"
+	request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, "", err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Omniserve-Tier", "paid")
+	if secret := animaNativeSecret(); secret != "" {
+		request.Header.Set("Authorization", "Bearer "+secret)
+	}
+	client := *backendClient
+	client.Timeout = 45 * time.Minute
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, "", err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, h3ImageMaxBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if response.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("OmniServe image generation returned %d: %s", response.StatusCode, tailOutput(responseBody))
+	}
+	var decoded animaNativeImageResponse
+	if err := json.Unmarshal(responseBody, &decoded); err != nil {
+		return nil, "", fmt.Errorf("OmniServe returned invalid image JSON: %w", err)
+	}
+	if len(decoded.Data) == 0 || strings.TrimSpace(decoded.Data[0].B64JSON) == "" {
+		return nil, "", fmt.Errorf("OmniServe returned no image data")
+	}
+	artifact, err := base64.StdEncoding.DecodeString(decoded.Data[0].B64JSON)
+	if err != nil || len(artifact) == 0 || len(artifact) > h3ImageMaxBytes {
+		return nil, "", fmt.Errorf("OmniServe returned an invalid image artifact")
+	}
+	contentType := "image/png"
+	if strings.EqualFold(strings.TrimSpace(decoded.Format), "webp") || strings.EqualFold(strings.TrimSpace(decoded.Format), "image/webp") {
+		contentType = "image/webp"
+	}
+	return artifact, contentType, nil
+}
+
+func processAnimaNativeJob(job *VideoJob) {
+	var input map[string]interface{}
+	if err := json.Unmarshal(job.Result, &input); err != nil {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "saved Anima request is invalid")
+		return
+	}
+	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
+	started := time.Now()
+	artifact, contentType, err := callAnimaNative(input)
+	if err != nil {
+		log.Printf("[anima] OmniServe generation failed job=%s: %v", job.ID, err)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "Anima illustration failed")
+		return
+	}
+	completeAnimaJob(job, input, artifact, contentType, time.Since(started).Seconds(), 0, "omniserve-native")
+}
+
+func completeAnimaJob(job *VideoJob, input map[string]interface{}, artifact []byte, contentType string, executionSeconds, providerUSD float64, provider string) {
+	outputNSFW, outputScore, err := classifyH3Image(artifact)
+	if err != nil {
+		log.Printf("[anima] output moderation unavailable job=%s: %v", job.ID, err)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image safety check is temporarily unavailable")
+		return
+	}
+	uploadContext, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	imageURL, relPath, err := uploadGeneratedImageArtifact(uploadContext, artifact, job.UserID, contentType, "anima")
+	cancel()
+	if err != nil {
+		log.Printf("[anima] output upload failed job=%s: %v", job.ID, err)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image storage is temporarily unavailable")
+		return
+	}
+	chargedUSD, _ := animaEstimate()
+	cutePrice := getCUTEPriceUSD()
+	if cutePrice <= 0 || math.IsNaN(cutePrice) || math.IsInf(cutePrice, 0) {
+		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "credit pricing unavailable; retry status")
+		return
+	}
+	width := intFromInterface(input["width"], 768)
+	height := intFromInterface(input["height"], 1024)
+	steps := intFromInterface(input["num_inference_steps"], 28)
+	seed := intFromInterface(input["seed"], 0)
+	result, _ := json.Marshal(map[string]interface{}{
+		"image_url": imageURL, "gallery_file_path": relPath, "image_id": "anima_" + newUUID(),
+		"width": width, "height": height, "steps": steps, "seed": seed, "bytes": len(artifact),
+		"is_nsfw": outputNSFW, "nsfw_score": outputScore, "provider": provider,
+		"provider_cost_usd": providerUSD, "charged_usd": chargedUSD,
+		"cute_price_usd": cutePrice, "credits_used": chargedUSD / cutePrice,
+	})
+	_, _, settleErr := dbConn.SettleGeneratedVideoJob(job.ID, result, providerUSD, chargedUSD, cutePrice)
+	if settleErr == ErrVideoPaymentRequired {
+		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", result, fmt.Sprintf("top up to release completed image; $%.2f required", chargedUSD))
+		return
+	}
+	if settleErr != nil {
+		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", result, "settlement unavailable; retry status")
+		return
+	}
+	job.Result = result
+	job.Status = "completed"
+	if err := persistH3ImageJobResult(job); err != nil {
+		log.Printf("[anima] gallery persistence failed job=%s: %v", job.ID, err)
+	}
+	margin := 0.0
+	if chargedUSD > 0 {
+		margin = (chargedUSD - providerUSD) / chargedUSD
+	}
+	log.Printf("[anima] provider=%s charged_usd=%.4f metered_execution_usd=%.4f execution_seconds=%.3f metered_margin=%.1f%%", provider, chargedUSD, providerUSD, executionSeconds, margin*100)
+	maybeTriggerAutoTopup(job.UserID)
+}
+
 func handleAnimaService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User) {
 	if !animaAvailable() {
-		jsonError(ctx, http.StatusServiceUnavailable, "Anima is awaiting commercial model licensing")
+		jsonError(ctx, http.StatusServiceUnavailable, "Anima native image capacity is temporarily unavailable")
 		return
 	}
 	if err := normalizeAnimaRequest(&req); err != nil {
@@ -178,24 +314,13 @@ func handleAnimaService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user 
 		}
 	}
 	input := animaWorkerInput(req)
-	var queued h3RunpodQueuedJob
-	status, err := submitAnimaRunpod(input, &queued)
-	if err != nil || queued.ID == "" {
-		log.Printf("[anima] submission failed status=%d: %v", status, err)
-		jsonError(ctx, http.StatusServiceUnavailable, "Anima illustration capacity is temporarily unavailable")
-		return
-	}
-	endpointID := animaEndpointID()
-	scheduleH3ScaleToZero(endpointID)
-	job, err := dbConn.CreateVideoJobForService(user.ID, "runpod:"+endpointID+":"+queued.ID, "anima", req.Prompt)
+	job, err := dbConn.CreateVideoJobForService(user.ID, "native:"+newUUID(), "anima", req.Prompt)
 	if err != nil {
-		_, _ = callH3Runpod(endpointID, "/cancel/"+url.PathEscape(queued.ID), http.MethodPost, nil, nil)
 		jsonError(ctx, http.StatusInternalServerError, "failed to create Anima job")
 		return
 	}
 	stored, _ := json.Marshal(input)
 	if err := dbConn.UpdateVideoJob(job.ID, "queued", stored, ""); err != nil {
-		_, _ = callH3Runpod(endpointID, "/cancel/"+url.PathEscape(queued.ID), http.MethodPost, nil, nil)
 		jsonError(ctx, http.StatusInternalServerError, "failed to persist Anima job")
 		return
 	}
@@ -219,6 +344,10 @@ func animaGPUHourlyUSD() float64 {
 }
 
 func processAnimaJob(job *VideoJob) {
+	if strings.HasPrefix(job.ProviderJobID, "native:") {
+		processAnimaNativeJob(job)
+		return
+	}
 	endpointID, providerJobID, ok := parseRunpodH3ProviderJob(job.ProviderJobID)
 	if !ok {
 		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "Anima provider job is invalid")

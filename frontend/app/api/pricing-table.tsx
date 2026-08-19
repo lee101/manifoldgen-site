@@ -21,6 +21,9 @@ type PricingResponse = {
   image_credits?: number;
   image_high_step_price_usd?: number;
   image_high_step_credits?: number;
+  gpt_image_price_usd?: number;
+  gpt_image_credits?: number;
+  gpt_image_metered?: boolean;
   video_pricing?: {
     basis_steps?: number;
     billing?: string;
@@ -42,9 +45,12 @@ const FALLBACK: PricingResponse = {
   image_credits: 4,
   image_high_step_price_usd: .10,
   image_high_step_credits: 10,
+  gpt_image_price_usd: .24,
+  gpt_image_credits: 24,
+  gpt_image_metered: true,
   video_pricing: { basis_steps: 20, tiers: FALLBACK_TIERS },
   pricing: [{ service: 'speech', price_usd: .005, price_cute: .5, unit: 'per 100 characters' }],
-	studio: { music_generation_credits: 50, music_generation_base_usd: .40, music_generation_minimum_usd: .50, music_generation_minute_usd: .20 },
+  studio: { music_generation_credits: 80, music_generation_base_usd: .40, music_generation_minimum_usd: .50, music_generation_minute_usd: .20 },
 };
 
 function money(value: number, minimumDigits = 2) {
@@ -70,8 +76,8 @@ export function PricingTable() {
   const tiers = pricing.video_pricing?.tiers?.length ? pricing.video_pricing.tiers : FALLBACK_TIERS;
   const durations = tiers[0]?.prices.map((point) => point.duration_seconds) || [5, 10, 15, 30, 60];
   const creditPrice = pricing.credit_price_usd || .01;
-	const musicMinimum = pricing.studio?.music_generation_minimum_usd || .50;
-	const musicPerMinute = pricing.studio?.music_generation_minute_usd || .20;
+  const musicMinimum = pricing.studio?.music_generation_minimum_usd || .50;
+  const musicPerMinute = pricing.studio?.music_generation_minute_usd || .20;
   const tts = pricing.pricing?.find((item) => item.service === 'speech');
 
   return (
@@ -125,18 +131,24 @@ export function PricingTable() {
 
       <section>
         <h3 className="text-base font-semibold">Images and audio</h3>
-        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
             <div className="text-sm text-white/45">Image generation</div>
             <div className="mt-2 text-2xl font-semibold">{money(pricing.image_price_usd || .04)}</div>
             <div className="mt-1 text-sm text-white/50">{credits(pricing.image_credits || 4)} credits per image</div>
             <div className="mt-3 border-t border-white/10 pt-3 text-xs leading-5 text-white/35">20+ steps: {money(pricing.image_high_step_price_usd || .10)} · {credits(pricing.image_high_step_credits || 10)} credits</div>
           </div>
+          <div className="rounded-2xl border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/[0.07] p-5">
+            <div className="text-sm text-white/45">GPT Image 2</div>
+            <div className="mt-2 text-2xl font-semibold">{money(pricing.gpt_image_price_usd || .24)}</div>
+            <div className="mt-1 text-sm text-white/50">{credits(pricing.gpt_image_credits || 24)} credits per image</div>
+            <div className="mt-3 border-t border-white/10 pt-3 text-xs leading-5 text-white/35">Opt-in only · always metered, including unlimited image plans</div>
+          </div>
           <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
             <div className="text-sm text-white/45">Music generation</div>
-			<div className="mt-2 text-2xl font-semibold">from {money(musicMinimum)}</div>
-			<div className="mt-1 text-sm text-white/50">{money(musicPerMinute)}/minute + base</div>
-			<div className="mt-3 border-t border-white/10 pt-3 text-xs leading-5 text-white/35">Built with MiniMax-Music3 · successful generations only</div>
+            <div className="mt-2 text-2xl font-semibold">from {money(musicMinimum)}</div>
+            <div className="mt-1 text-sm text-white/50">{money(musicPerMinute)}/minute + base</div>
+            <div className="mt-3 border-t border-white/10 pt-3 text-xs leading-5 text-white/35">Built with MiniMax-Music3 · successful generations only</div>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
             <div className="text-sm text-white/45">Text to speech</div>

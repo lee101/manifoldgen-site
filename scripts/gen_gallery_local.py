@@ -18,6 +18,7 @@ import json
 import os
 import random
 import re
+import socket
 import subprocess
 import tempfile
 import time
@@ -29,10 +30,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONTAINER = os.environ.get("H3_LOCAL_CONTAINER", "h3-gallery-local")
 IMAGE = os.environ.get("H3_LOCAL_IMAGE", "ghcr.io/lee101/h3-cog:accel-test")
-PORT = int(os.environ.get("H3_LOCAL_PORT", "18089"))
+PORT = int(os.environ.get("H3_LOCAL_PORT", "18289"))
+COMFY_PORT = int(os.environ.get("H3_LOCAL_COMFY_PORT", "18290"))
 WEIGHTS = Path(os.environ.get("H3_WEIGHTS_DIR", "/nvme0n1-disk/h3-w4a8-weights"))
 PATCH = Path(os.environ.get("H3_PATCH_DIR", "/tmp/h3-accel-patch"))
 ACCEL_PROFILE = os.environ.get("H3_ACCEL_PROFILE", "off")
+FACE_REFINE = os.environ.get("H3_LOCAL_FACE_REFINE", "0")
+TRAJECTORY_CAPTURE = os.environ.get("H3_TRAJECTORY_CAPTURE", "off").strip().lower()
+TRAJECTORY_ROOT = Path(os.environ.get("H3_TRAJECTORY_ROOT", "/sdb-disk/h3-trajectories"))
+TRAJECTORY_DATASET = os.environ.get("H3_TRAJECTORY_DATASET", "h3-popular-concepts-v1")
+CONDITIONING_CACHE = os.environ.get(
+    "H3_CONDITIONING_CACHE",
+    "1" if TRAJECTORY_CAPTURE in {"full", "sketch"} else "0",
+).strip().lower() in {"1", "true", "yes"}
 COG_URL = f"http://127.0.0.1:{PORT}"
 API = os.environ.get("MANIFOLDGEN_API", "http://127.0.0.1:8116").rstrip("/")
 DATABASE_URL = os.environ.get(
@@ -42,6 +52,25 @@ DATABASE_URL = os.environ.get(
 R2_ACCOUNT_ID = "f76d25b8b86cfa5638f43016510d8f77"
 R2_BUCKET = "manifoldgenstatic"
 R2_PUBLIC = "manifoldgenstatic.manifoldgen.com"
+PATCH_MODULES = (
+    "h3_workflow.py",
+    "h3_runtime.py",
+    "h3_face_refine.py",
+    "rp_handler.py",
+    "predict.py",
+    "weights.py",
+    "h3_media.py",
+    "h3_tuning.py",
+    "h3_sweep.py",
+    "h3_prompt.py",
+    "h3_serverless.py",
+    "h3_chain.py",
+    "h3_benchmark.py",
+    "h3_trajectory.py",
+    "h3_conditioning_cache.py",
+    "h3_model_profile.py",
+    "h3_moderation.py",
+)
 
 PROMPTS = [
     (
@@ -95,6 +124,14 @@ PROMPTS = [
 ]
 
 
+class PredictionCanceled(RuntimeError):
+    """The caller canceled a generation before it completed."""
+
+
+class PredictionCapacityUnavailable(RuntimeError):
+    """The worker could not obtain its required brokered GPU capacity."""
+
+
 def load_dotenv() -> None:
     mg_db = "postgres://manifoldgen:manifoldgen@localhost:5432/manifoldgen?sslmode=disable"
     mg = ROOT / ".env"
@@ -132,19 +169,7 @@ def load_dotenv() -> None:
 def sync_patch() -> None:
     PATCH.mkdir(parents=True, exist_ok=True)
     src = Path("/nvme0n1-disk/code/h3-cog")
-    for name in (
-        "h3_workflow.py",
-        "h3_runtime.py",
-        "rp_handler.py",
-        "predict.py",
-        "weights.py",
-        "h3_media.py",
-        "h3_tuning.py",
-        "h3_sweep.py",
-        "h3_prompt.py",
-        "h3_serverless.py",
-        "h3_chain.py",
-    ):
+    for name in PATCH_MODULES:
         p = src / name
         if p.exists():
             subprocess.check_call(["cp", str(p), str(PATCH / name)])
@@ -166,6 +191,18 @@ def sync_patch() -> None:
         if dest.exists():
             subprocess.call(["rm", "-rf", str(dest)])
         subprocess.check_call(["cp", "-a", str(spectrum), str(dest)])
+    turbo = src / "vendor" / "ComfyUI-MiniMax-H3-Turbo"
+    if turbo.exists():
+        dest = PATCH / "ComfyUI-MiniMax-H3-Turbo"
+        if dest.exists():
+            subprocess.call(["rm", "-rf", str(dest)])
+        subprocess.check_call(["cp", "-a", str(turbo), str(dest)])
+    adaptive = src / "vendor" / "ComfyUI-MiniMaxH3-AdaptiveTaylor"
+    if adaptive.exists():
+        dest = PATCH / "ComfyUI-MiniMaxH3-AdaptiveTaylor"
+        if dest.exists():
+            subprocess.call(["rm", "-rf", str(dest)])
+        subprocess.check_call(["cp", "-a", str(adaptive), str(dest)])
     # Gallery T2V does not need Ref2VA; skip the multi-GB HF fetch on cold start.
     predict = PATCH / "predict.py"
     text = predict.read_text()
@@ -210,10 +247,40 @@ def docker_running() -> bool:
     return CONTAINER in out.splitlines()
 
 
+def container_matches_configuration() -> bool:
+    try:
+        output = subprocess.check_output(
+            ["docker", "inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", CONTAINER],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError:
+        return False
+    environment = set(output.splitlines())
+    expected = {
+        f"PORT={PORT}",
+        f"H3_COMFY_PORT={COMFY_PORT}",
+        f"H3_TRAJECTORY_CAPTURE={TRAJECTORY_CAPTURE}",
+        f"H3_TRAJECTORY_DATASET={TRAJECTORY_DATASET}",
+        f"H3_CONDITIONING_CACHE={1 if CONDITIONING_CACHE else 0}",
+    }
+    return expected <= environment
+
+
+def port_available(port: int = PORT) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
+        connection.settimeout(0.25)
+        return connection.connect_ex(("127.0.0.1", port)) != 0
+
+
 def ensure_container() -> None:
-    if docker_running():
+    if docker_running() and container_matches_configuration():
         print(f"container {CONTAINER} already up")
         return
+    if not port_available(PORT):
+        raise SystemExit(f"port {PORT} is already owned by another service")
+    if not port_available(COMFY_PORT):
+        raise SystemExit(f"Comfy port {COMFY_PORT} is already owned by another service")
     if not WEIGHTS.exists():
         raise SystemExit(f"missing weights dir {WEIGHTS}")
     sync_patch()
@@ -222,19 +289,19 @@ def ensure_container() -> None:
         "-v",
         f"{WEIGHTS}:/weights",
     ]
-    for name in (
-        "h3_workflow.py",
-        "h3_runtime.py",
-        "rp_handler.py",
-        "predict.py",
-        "weights.py",
-        "h3_media.py",
-        "h3_tuning.py",
-        "h3_sweep.py",
-        "h3_prompt.py",
-        "h3_serverless.py",
-        "h3_chain.py",
-    ):
+    turbo_lora = WEIGHTS / "MiniMax-H3" / "loras" / "minimax_h3_turbo_v4_step600_ema.safetensors"
+    if turbo_lora.exists():
+        mounts += [
+            "-v",
+            f"{turbo_lora}:/opt/ComfyUI/models/loras/minimax_h3_turbo_v4_step600_ema.safetensors:ro",
+        ]
+    if TRAJECTORY_CAPTURE not in {"", "off", "none", "0", "false"}:
+        if TRAJECTORY_CAPTURE not in {"full", "sketch"}:
+            raise SystemExit("H3_TRAJECTORY_CAPTURE must be off, full, or sketch")
+    if TRAJECTORY_CAPTURE in {"full", "sketch"} or CONDITIONING_CACHE:
+        TRAJECTORY_ROOT.mkdir(parents=True, exist_ok=True)
+        mounts += ["-v", f"{TRAJECTORY_ROOT}:/trajectories"]
+    for name in PATCH_MODULES:
         mounts += ["-v", f"{PATCH / name}:/src/{name}:ro"]
     schema = PATCH / ".cog" / "openapi_schema.json"
     if schema.exists():
@@ -245,16 +312,28 @@ def ensure_container() -> None:
     spectrum = PATCH / "ComfyUI-Spectrum-MiniMax-H3"
     if spectrum.exists():
         mounts += ["-v", f"{spectrum}:/opt/ComfyUI/custom_nodes/ComfyUI-Spectrum-MiniMax-H3:ro"]
+    turbo = PATCH / "ComfyUI-MiniMax-H3-Turbo"
+    if turbo.exists():
+        mounts += ["-v", f"{turbo}:/opt/ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-Turbo:ro"]
+    adaptive = PATCH / "ComfyUI-MiniMaxH3-AdaptiveTaylor"
+    if adaptive.exists():
+        mounts += ["-v", f"{adaptive}:/opt/ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-AdaptiveTaylor:ro"]
     cmd = [
         "docker",
         "run",
         "-d",
         "--gpus",
         "all",
+        "--network",
+        "host",
         "--name",
         CONTAINER,
-        "-p",
-        f"{PORT}:5000",
+        "--restart",
+        "unless-stopped",
+        "-e",
+        f"PORT={PORT}",
+        "-e",
+        f"H3_COMFY_PORT={COMFY_PORT}",
         "-e",
         "MINIMAX_H3_LICENSE_ACCEPTED=1",
         "-e",
@@ -266,7 +345,35 @@ def ensure_container() -> None:
         "-e",
         "H3_INCLUDE_REF2VA=0",
         "-e",
+        f"H3_FACE_REFINE_ENABLED={FACE_REFINE}",
+        "-e",
+        f"H3_TRAJECTORY_ENABLED={1 if TRAJECTORY_CAPTURE in {'full', 'sketch'} else 0}",
+        "-e",
+        f"H3_TRAJECTORY_CAPTURE={TRAJECTORY_CAPTURE}",
+        "-e",
+        f"H3_TRAJECTORY_DATASET={TRAJECTORY_DATASET}",
+        "-e",
+        "H3_TRAJECTORY_ROOT=/trajectories",
+        "-e",
+        f"H3_CONDITIONING_CACHE={1 if CONDITIONING_CACHE else 0}",
+        "-e",
         "H3_RESERVE_VRAM_GB=2",
+        "-e",
+        "H3_VRAM_BROKER_URL=http://127.0.0.1:8791",
+        "-e",
+        "H3_VRAM_BROKER_REQUIRED=1",
+        "-e",
+        "H3_VRAM_LEASE_MB=14336",
+        "-e",
+        "H3_VRAM_LEASE_MIN_MB=12288",
+        "-e",
+        "H3_VRAM_LEASE_TTL_SECONDS=3600",
+        "-e",
+        "H3_VRAM_LEASE_WAIT_SECONDS=900",
+        "-e",
+        "H3_GPU_PEER_URL=http://127.0.0.1:8100",
+        "-e",
+        "H3_GPU_PEER_REQUIRED=1",
         "-e",
         "H3_IDLE_UNLOAD_SECONDS=30",
         "-e",
@@ -291,6 +398,13 @@ def wait_healthy(timeout: int = 900) -> None:
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
+            running = subprocess.check_output(
+                ["docker", "inspect", "--format", "{{.State.Running}}", CONTAINER],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            if running != "true":
+                raise RuntimeError(f"container {CONTAINER} is not running")
             with urllib.request.urlopen(f"{COG_URL}/health-check", timeout=5) as resp:
                 body = resp.read().decode()
                 data = json.loads(body) if body else {}
@@ -354,8 +468,20 @@ def generate(prompt: str, *, size: str, steps: int, duration: float, seed: int |
                 "cog returned an async prediction but this build has no poll route; "
                 "omit Prefer: respond-async and wait on POST"
             )
-        if st in ("failed", "canceled", "cancelled"):
-            raise RuntimeError(f"prediction failed: {poll.get('error') or poll}")
+        if st in ("canceled", "cancelled"):
+            raise PredictionCanceled(f"prediction canceled: {poll.get('error') or poll}")
+        if st == "failed":
+            detail = str(poll.get("error") or poll)
+            if any(
+                marker in detail
+                for marker in (
+                    "GPU capacity unavailable",
+                    "VRAM broker unavailable",
+                    "GPU peer handoff unavailable",
+                )
+            ):
+                raise PredictionCapacityUnavailable(detail)
+            raise RuntimeError(f"prediction failed: {detail}")
     print(f"  done in {time.time() - t0:.0f}s")
     output = poll.get("output")
     # Cog may return file path, URL, or {url: …}
@@ -439,7 +565,16 @@ def psql(sql: str) -> str:
     return subprocess.check_output(["psql", os.environ.get("DATABASE_URL", DATABASE_URL), "-At", "-c", sql], text=True).strip()
 
 
-def upsert(job_id: str, user_id: str, prompt: str, video_url: str, *, size: str, quant: str) -> None:
+def upsert(
+    job_id: str,
+    user_id: str,
+    prompt: str,
+    video_url: str,
+    *,
+    size: str,
+    quant: str,
+    metadata: dict | None = None,
+) -> None:
     result = json.dumps(
         {
             "video_url": video_url,
@@ -452,6 +587,7 @@ def upsert(job_id: str, user_id: str, prompt: str, video_url: str, *, size: str,
             "featured": True,
             "output_codec": "webm-av1",
             "encode_quality": 22,
+            **(metadata or {}),
         }
     )
     prompt_lit = prompt.replace("'", "''")
@@ -466,9 +602,11 @@ def upsert(job_id: str, user_id: str, prompt: str, video_url: str, *, size: str,
     subprocess.check_call(["psql", os.environ.get("DATABASE_URL", DATABASE_URL), "-c", sql], stdout=subprocess.DEVNULL)
 
 
-def reindex() -> None:
+def reindex(api_key: str = "") -> None:
     try:
         req = urllib.request.Request(f"{API}/api/search/reindex", method="POST")
+        if api_key:
+            req.add_header("Authorization", f"Bearer {api_key}")
         urllib.request.urlopen(req, timeout=15).read()
         print("reindex requested")
     except Exception as e:
@@ -561,8 +699,8 @@ def main() -> None:
     ap.add_argument(
         "--actual-quant",
         choices=("int8_convrot", "w4a8"),
-        default=os.environ.get("H3_LOCAL_ACTUAL_QUANT", "w4a8"),
-        help="quant actually exposed by the running cog schema (the accel-test image currently defaults to w4a8)",
+        default=os.environ.get("H3_LOCAL_ACTUAL_QUANT", "int8_convrot"),
+        help="quant recorded in gallery metadata (stable int8_convrot unless explicitly overridden)",
     )
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--stop", action="store_true", help="stop local container and exit")

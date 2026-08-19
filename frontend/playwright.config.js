@@ -37,7 +37,7 @@ module.exports = defineConfig({
   webServer: skipWebServer
     ? undefined
     : {
-        command: `bunx next dev --turbopack --hostname 127.0.0.1 --port ${port}`,
+        command: `bunx next dev --hostname 127.0.0.1 --port ${port}`,
         url: baseURL,
         reuseExistingServer: true,
         timeout: 120_000,

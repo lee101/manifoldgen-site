@@ -469,8 +469,7 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Checkout failed');
+      const data = await parseJSONResponse<{ url?: string; client_secret?: string; publishable_key?: string }>(res, 'Checkout failed');
       if (data.url && !data.client_secret) {
         window.location.href = data.url;
         return;
@@ -1059,7 +1058,7 @@ export default function HomePage() {
             <div className="mb-4 max-w-3xl drop-shadow-[0_3px_18px_rgba(0,0,0,.7)]">
               <p className="text-xs font-semibold uppercase tracking-[.18em] text-[var(--color-accent-2)]">AI video creator</p>
               <h1 className="mt-2 font-display text-2xl font-700 tracking-tight text-white sm:text-3xl md:text-4xl">Create AI video from text, images, and reference media.</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/75 md:text-base">Generate video from text, or use an image as the first frame.</p>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/75 md:text-base">ManifoldGen is an AI video generator and editor for cinematic text-to-video, image-to-video, motion, audio, and finishing.</p>
             </div>
             <div
               className={`glass prompt-glow rounded-3xl p-3 transition md:p-4 ${draggingAsset ? 'ring-2 ring-[var(--color-accent-2)]' : ''}`}
@@ -1146,13 +1145,13 @@ export default function HomePage() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 rows={2}
-                placeholder="Describe the shot, or paste an image for frame 1"
+                placeholder="Describe the shot, camera, light, motion… Paste an image to set frame 1"
                 className="w-full resize-none bg-transparent px-2 py-1 text-base outline-none placeholder:text-white/35 md:text-lg"
               />
               {imageFrames.length === 0 ? (
                 <div className="flex items-center gap-2 px-2 pb-1 text-[11px] text-white/35">
                   <ClipboardPaste size={13} className="text-[var(--color-accent-2)]/80" />
-                  Paste an image for frame 1
+                  Paste an image here to use it as the first video frame
                 </div>
               ) : null}
               <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">

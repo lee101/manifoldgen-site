@@ -10,9 +10,17 @@ import {
   PAYMENT_REQUIRED_EVENT,
   type PaymentDialogDetail,
 } from '../lib/payments';
+import { parseJSONResponse } from '../lib/http';
 import styles from './payment-provider.module.css';
 
-type CheckoutKind = 'credits' | 'monthly' | 'annual';
+type CheckoutKind = 'credits' | 'creator_monthly' | 'creator_annual' | 'pro_monthly' | 'pro_annual';
+
+const planLabels: Record<Exclude<CheckoutKind, 'credits'>, string> = {
+  creator_monthly: 'Creator monthly · $14.99/month',
+  creator_annual: 'Creator annual · $149/year',
+  pro_monthly: 'Pro monthly · $49/month',
+  pro_annual: 'Pro annual · $490/year',
+};
 type DialogStep = 'choose' | 'checkout' | 'success';
 
 interface StripeEmbeddedCheckout {
@@ -99,6 +107,17 @@ export default function PaymentProvider({ children }: { children: React.ReactNod
   }, [open]);
 
   useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      close();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [close, open]);
+
+  useEffect(() => {
     if (!clientSecret || !publishableKey || !checkoutMountRef.current) return;
     let cancelled = false;
     const mount = async () => {
@@ -153,14 +172,13 @@ export default function PaymentProvider({ children }: { children: React.ReactNod
           ? { type: 'credits', amount_usd: amountUSD, return_url: window.location.href }
           : { type: 'subscription', plan: kind, return_url: window.location.href }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Checkout failed');
+	      const data = await parseJSONResponse<{ url?: string; client_secret?: string; publishable_key?: string }>(response, 'Checkout failed');
       if (data.url && !data.client_secret) {
         window.location.assign(data.url);
         return;
       }
       if (!data.client_secret || !data.publishable_key) throw new Error('Secure checkout is unavailable');
-      setCheckoutLabel(kind === 'credits' ? `$${amountUSD} credit top-up` : `${kind === 'monthly' ? 'Monthly' : 'Annual'} Creator plan`);
+      setCheckoutLabel(kind === 'credits' ? `$${amountUSD} credit top-up` : planLabels[kind]);
       setPublishableKey(data.publishable_key);
       setClientSecret(data.client_secret);
       setStep('checkout');
@@ -182,11 +200,17 @@ export default function PaymentProvider({ children }: { children: React.ReactNod
         <div className={styles.body}>
           {step === 'choose' && <>
             <div className={styles.plans}>
-              <button type="button" className={`${styles.plan} ${styles.planRecommended}`} disabled={busy} onClick={() => void startCheckout('monthly')}>
-                <span className={styles.tag}>Recommended</span><b>Creator monthly</b><small>Unlimited images plus $25 of rollover generation credits each month.</small>
+              <button type="button" className={`${styles.plan} ${styles.planRecommended}`} disabled={busy} onClick={() => void startCheckout('creator_monthly')}>
+                <span className={styles.tag}>Recommended</span><b>Creator monthly · $14.99/month</b><small>Unlimited images plus $25 of rollover generation credits each month.</small>
               </button>
-              <button type="button" className={styles.plan} disabled={busy} onClick={() => void startCheckout('annual')}>
-                <b>Creator annual</b><small>Unlimited images plus $300 of generation credits for the year.</small>
+              <button type="button" className={styles.plan} disabled={busy} onClick={() => void startCheckout('creator_annual')}>
+                <b>Creator · $149/year</b><small>Two months free, plus $300 of rollover generation credits for the year.</small>
+              </button>
+              <button type="button" className={styles.plan} disabled={busy} onClick={() => void startCheckout('pro_monthly')}>
+                <b>Pro · $49/month</b><small>Unlimited images and a higher-volume creator workspace.</small>
+              </button>
+              <button type="button" className={styles.plan} disabled={busy} onClick={() => void startCheckout('pro_annual')}>
+                <b>Pro · $490/year</b><small>Two months free on a full year of Pro.</small>
               </button>
             </div>
             <div className={styles.divider}>Or make a one-time top-up</div>

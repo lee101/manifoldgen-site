@@ -1,5 +1,30 @@
 const { test, expect } = require('@playwright/test');
 
+const PNG_FIXTURE = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+test('homepage gallery cache-busts restored originals after additive deployment', async ({ page }) => {
+  await page.route('**/api/pricing', (route) => route.fulfill({ status: 200, json: {} }));
+  await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route('**/api/images?**', (route) => route.fulfill({ status: 200, json: { images: [{
+    id: 'restored-gallery-image',
+    prompt: 'Restored gallery image',
+    file_path: 'originals/restored-gallery-image.webp',
+  }] } }));
+
+  let galleryRequestURL = '';
+  await page.route('https://manifoldgenstatic.manifoldgen.com/gallery/originals/restored-gallery-image.webp?**', (route) => {
+    galleryRequestURL = route.request().url();
+    return route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE });
+  });
+
+  await page.goto('/');
+  await expect(page.getByAltText('Restored gallery image')).toBeVisible();
+  expect(galleryRequestURL).toContain('?v=20260814-restored-gallery');
+});
+
 test('homepage search interleaves matching images and videos', async ({ page }) => {
   await page.route('**/api/pricing', (route) => route.fulfill({ status: 200, json: {} }));
   await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));

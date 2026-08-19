@@ -40,7 +40,6 @@ docs-only pushes skip Chromium. The GPU/WebGL export benchmarks remain in the
 full browser suite run by CI. Use `make check-fast` or `make verify` to run
 those fast gates manually; `make test-studio-full` runs the complete browser
 suite.
-
 Built on the same Go fasthttp + Postgres + Stripe stack as CuteDSL / app.nz,
 focused on H3 video (app.nz cogs) with optional omniserve-native LTX.
 
@@ -145,7 +144,7 @@ python3 scripts/build_gallery_catalog.py --kind image --count 100000 --seed 2026
 nice -n 19 python3 scripts/generate_gallery_art.py \
   --prompts scripts/prompts/manifold-gallery-100k.jsonl --limit 500 \
   --images-dir /sdb-disk/manifoldgen-images \
-  --low-priority --upload-r2 --min-free-gib 80 \
+  --mixed-aspect --webp-quality 85 --low-priority --upload-r2 --min-free-gib 80 \
   --moderate-before-index --reindex-after
 
 # Motion-specific catalog for bounded, resumable API video batches
@@ -161,7 +160,9 @@ semantic search and the public gallery, and NSFW/child content is excluded from
 the public gallery. Multiple local workers can safely share the same database:
 each prompt is protected by a PostgreSQL advisory claim, so DAISY, Leetop, and
 the production GPU can consume different slices without duplicate renders.
-Catalog rows are deterministically shuffled across subject, style, light,
+Catalog rows carry a deterministic mix of square, portrait, and landscape
+dimensions; older prompt files can opt into the same mix with
+`--mixed-aspect`. Catalog rows are deterministically shuffled across subject, style, light,
 palette, motion, camera, and sound axes, so small batches remain visually
 varied. Video queueing skips prompts that are already queued, running, or
 completed.
@@ -172,10 +173,35 @@ When RunPod `workersMax` quota is hit, set `H3_LOCAL_COG_URL=http://127.0.0.1:18
 after `gen_gallery_local.py` has started the cog.
 
 The two direct H3 endpoints follow `config/runpod-h3.json`: zero minimum
-workers, five-second idle shutdown, FlashBoot, a bounded one-hour execution
-window, and `/src/rp_handler.py` as the native queue handler. Do not run the Cog
+workers, one worker per queued request up to each endpoint's cap, five-second
+idle shutdown, FlashBoot, a bounded one-hour execution window, and
+`/src/rp_handler.py` as the native queue handler. Do not run the Cog
 HTTP command on a queue endpoint; provider cancellation can mark that wrapper
 canceled while its inner prediction continues consuming a GPU.
+
+Deploy an H3 image with the checked-in endpoint contract:
+
+```bash
+# Prints the image, templates, worker limits, and allowed GPU pools.
+python3 scripts/deploy-h3-runpod.py
+
+# Refuses active queues, drains warm workers, updates both templates, then
+# leaves endpoints paused for request-time activation. RUNPOD_API_KEY must be set.
+python3 scripts/deploy-h3-runpod.py --apply
+```
+
+The worker drain is required: changing a RunPod template does not replace an
+already warm process. Face refinement is production-tested on L40S and H100;
+A40 is excluded because its ComfyUI child exited during the second H3 pass.
+
+H3 outputs are encoded with GPU AV1 by default and uploaded directly from the
+worker to a unique, short-lived R2 PUT target. RunPod returns metadata rather
+than base64 video, which avoids holding several copies of a large result in the
+worker and Go server heaps. The CPU SVT fallback is capped at eight logical
+processors after 2K stress testing. Studio's on-device exporter keeps requested
+2K/4K output when WebCodecs exposes hardware encoding and safely caps all
+software-only codecs to 1080p. Detailed codec timings and quality measurements
+live in the sibling `h3-cog/experiments/codec-bench` report.
 
 `gen_gallery_local.py --prompts` accepts JSONL rows with `prompt`, optional
 `slug`, and optional `seed`, or one plain prompt per line. Catalog IDs are
@@ -196,28 +222,13 @@ with a 20% multiplier. Configure the private endpoint from
 FlashBoot, and shared cached weights keep idle spend at zero without mixing the Wan
 weights into the warm 32 GB H3 process.
 
-## Character animation
-
-`/tools/character-animator` sends a character image and a one-person driving
-video to Wan-Animate-2 through the shared OmniServe endpoint. The default is the
-official 10-step distilled checkpoint; OmniServe chooses NF4/offload or the
-larger compiled BF16 lane from current global GPU headroom.
-
-Set `WAN_ANIMATE_RUNPOD_ENDPOINT_ID` to the OmniServe endpoint (falling back to
-`OMNISERVE_RUNPOD_ENDPOINT_ID` and then the video-background endpoint).
-`WAN_ANIMATE_GPU_HOURLY_USD` controls measured-time settlement and
-`WAN_ANIMATE_ESTIMATE_USD` controls the public five-second estimate. Results
-upload directly to a per-job presigned R2 target.
-
 ## Video background removal
 
 `video_background_removal` accepts a public source URL up to 30 seconds and
-returns a durable transparent VP9 WebM job. When
-`VIDEO_BACKGROUND_NATIVE_BASE_URL` is configured, the API submits to the local
-OmniServe video queue first, spills a full local queue to RunPod without opening
-the health circuit, and finally uses FAL BRIA as the general-matting standby.
-Without a native worker it starts at `VIDEO_BACKGROUND_RUNPOD_ENDPOINT_ID`.
-Two genuine submission/status failures open a 90-second circuit.
+returns a durable transparent VP9 WebM job. The API submits to
+`VIDEO_BACKGROUND_RUNPOD_ENDPOINT_ID` first. Two submission/status failures
+open a 90-second circuit; only then (or when the private endpoint is not
+configured) does the same public job move to the FAL BRIA standby queue.
 
 The GPU worker and endpoint definition live in the sibling `omniserve-native`
 repository. Manifold submits its explicit `video-matting` workload and retains

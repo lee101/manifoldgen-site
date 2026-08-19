@@ -248,6 +248,8 @@ export class StudioRenderer {
       : source instanceof HTMLImageElement
         ? [source.naturalWidth, source.naturalHeight]
         : 'displayWidth' in source && 'displayHeight' in source
+          // WebCodecs VideoFrame uses display/coded dimensions rather than
+          // the width/height fields exposed by canvas and bitmap sources.
           ? [Number(source.displayWidth), Number(source.displayHeight)]
           : ['width' in source && 'height' in source ? Number(source.width) : 0, 'width' in source && 'height' in source ? Number(source.height) : 0];
     if (dimensions[0] !== this.textureWidth || dimensions[1] !== this.textureHeight) {
@@ -264,6 +266,35 @@ export class StudioRenderer {
     gl.uniform1f(this.uniforms.seed, seed);
     gl.uniform1f(this.uniforms.fxaa, options.fxaa ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  /**
+   * Copy the completed WebGL frame into a 2D canvas. Export uses this instead
+   * of relying on drawImage(WebGLCanvas), which can capture a cleared/default
+   * framebuffer on browsers with an asynchronous compositor.
+   */
+  copyToCanvas(target: CanvasRenderingContext2D) {
+    const { gl, canvas } = this;
+    // WebGL error flags are sticky and may have been set by a prior texture
+    // upload or browser compositor operation. Drain those flags before the
+    // readback so a successful frame copy is not rejected as if readPixels
+    // itself had failed (notably on subsequent slideshow images).
+    for (let pending = gl.getError(), attempts = 0; pending !== gl.NO_ERROR && attempts < 8; attempts += 1, pending = gl.getError()) {
+      // Drain the context's existing error queue without spinning forever if
+      // the browser reports a lost context until it can be restored.
+    }
+    gl.finish();
+    const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+    gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    if (gl.getError() !== gl.NO_ERROR) throw new Error('Could not read the rendered video frame');
+    const image = target.createImageData(canvas.width, canvas.height);
+    const rowSize = canvas.width * 4;
+    for (let row = 0; row < canvas.height; row += 1) {
+      const sourceStart = row * rowSize;
+      const targetStart = (canvas.height - row - 1) * rowSize;
+      image.data.set(pixels.subarray(sourceStart, sourceStart + rowSize), targetStart);
+    }
+    target.putImageData(image, 0, 0);
   }
 
   destroy() {

@@ -78,7 +78,7 @@ test('loop toggle generates a native-sized anchor before H3 and reuses it', asyn
   const toggle = page.getByTestId('home-loop-toggle');
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('home-video-cost')).toContainText('~14 credits');
+  await expect(page.getByTestId('home-video-cost')).toContainText('~$0.14');
   await page.getByRole('button', { name: /^Generate video$/ }).click();
   await expect(page.getByTestId('home-job-cost')).toContainText('completed');
 
@@ -134,6 +134,78 @@ test('ordinary H3 generation does not spend an image request', async ({ page }) 
   expect(requests).toHaveLength(1);
   expect(requests[0]).toMatchObject({ service: 'h3_video', loop: false });
   expect(requests[0]).not.toHaveProperty('first_frame');
+});
+
+test('homepage music video flag queues a MiniMax soundtrack before audio-driven H3', async ({ page }) => {
+  const requests = [];
+  await installStudioMocks(page, async (route) => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    if (body.service === 'zimage') {
+      await route.fulfill({ status: 200, json: { saved_image_url: 'https://manifoldgen.com/images/music-video-opening.webp' } });
+      return;
+    }
+    await route.fulfill({ status: 202, json: { service: 'music_video', result: { job_id: 'job-loop-e2e', stage: 'music' } } });
+  });
+
+  await page.goto('/');
+  const toggle = page.getByTestId('home-music-video-toggle');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('home-loop-toggle')).toBeDisabled();
+  await page.getByRole('button', { name: /^Generate music video$/ }).click();
+  await expect(page.getByTestId('home-job-cost')).toContainText('completed');
+
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toMatchObject({ service: 'zimage', n: 1 });
+  expect(requests[1]).toMatchObject({
+    service: 'h3_video', music_video: true, music_duration: 30, duration: 15,
+    first_frame: 'https://manifoldgen.com/images/music-video-opening.webp', include_audio: true,
+  });
+});
+
+test('three ordered frames request two locked transitions ending on the final frame', async ({ page }) => {
+  const requests = [];
+  await installStudioMocks(page, async (route) => {
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({ status: 202, json: { result: { job_id: 'job-loop-e2e' } } });
+  });
+  await page.route('**/api/uploads/presign**', async (route) => {
+    const filename = new URL(route.request().url()).searchParams.get('filename');
+    await route.fulfill({
+      status: 200,
+      json: {
+        upload_url: `https://upload.example/${filename}`,
+        public_url: `https://cdn.example/${filename}`,
+      },
+    });
+  });
+  await page.route('https://upload.example/**', (route) => route.fulfill({ status: 200, body: '' }));
+
+  await page.goto('/');
+  await page.locator('input[type="file"]').setInputFiles([
+    { name: 'start.png', mimeType: 'image/png', buffer: Buffer.from('start') },
+    { name: 'middle.png', mimeType: 'image/png', buffer: Buffer.from('middle') },
+    { name: 'stop.png', mimeType: 'image/png', buffer: Buffer.from('stop') },
+  ]);
+  await expect(page.getByTestId('home-frame-tray').locator('img')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Move frame 1 right' }).click();
+  await page.getByRole('button', { name: 'Generate 2 transitions' }).click();
+  await expect(page.getByTestId('home-job-cost')).toContainText('completed');
+
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toMatchObject({
+    service: 'h3_video',
+    duration: 5,
+    first_frame: 'https://cdn.example/middle.png',
+    last_frame: 'https://cdn.example/stop.png',
+    keyframes: [
+      'https://cdn.example/middle.png',
+      'https://cdn.example/start.png',
+      'https://cdn.example/stop.png',
+    ],
+  });
+  expect(requests[0]).not.toHaveProperty('audio_url');
 });
 
 test('image mode always requests a four-image batch', async ({ page }) => {

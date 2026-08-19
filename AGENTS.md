@@ -2,7 +2,7 @@ ManifoldGen production is the same host used by the site deploy:
 
     ssh -o StrictHostKeyChecking=no administrator@93.127.141.100
 
-The application checkout on production is /nvme0n1-disk/code/manifold-site.
+The application checkout on production is /nvme0n1-disk/code/manifoldgen-site.
 From this checkout, ./deploy.sh builds the frontend and server, installs the
 service, syncs the static site and gallery assets to the manifoldgenstatic R2
 bucket, and purges the ManifoldGen Cloudflare zone. Run it after frontend,

@@ -24,7 +24,7 @@ import (
 // Service pricing in USD (converted to $CUTE at current rate)
 var servicePricesUSD = map[string]float64{
 	"zimage":                   0.04,  // per generation
-	"anima":                    0.04,  // per Anima illustration; commercial-license gated
+	"anima":                    0.04,  // per Anima illustration through OmniServe native
 	"gpt_image":                0.24,  // GPT Image 2 via OpenPaths; always metered, including subscriptions
 	"image_edit":               0.24,  // GPT Image 2 image-to-image edit; falls back to Kontext/Google routing
 	"chronos2":                 0.002, // per forecast (Chronos-2, our own ~120M model, ms-scale call)
@@ -358,7 +358,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 
 	units := map[string]string{
 		"zimage":                   fmt.Sprintf("per generation (base); $%.2f for 20+ steps", zimageHighStepPriceUSD),
-		"anima":                    "per illustration; available only with a commercial Anima license",
+		"anima":                    "per illustration; generated through the licensed OmniServe native image lane",
 		"gpt_image":                "per image; always metered and excluded from unlimited image plans",
 		"image_edit":               "per GPT Image 2 edit; always metered",
 		"chronos2":                 "per forecast",

@@ -3,10 +3,10 @@
 @theme {
   --font-display: "Syne", sans-serif;
   --font-body: "DM Sans", sans-serif;
-  --color-ink: #07070a;
-  --color-panel: #101018;
-  --color-line: #232334;
-  --color-mute: #8b8ba3;
+  --color-ink: #0b0d12;
+  --color-panel: #151824;
+  --color-line: #2b3040;
+  --color-mute: #a3a8ba;
   --color-accent: #7c6cff;
   --color-accent-2: #37d6c5;
 }
@@ -15,7 +15,7 @@ html,
 body {
   height: 100%;
   background: var(--color-ink);
-  color: #f4f4f8;
+  color: #f5f6fb;
   font-family: var(--font-body);
   text-size-adjust: 100%;
 }
@@ -29,8 +29,8 @@ body {
 }
 
 .glass {
-  background: color-mix(in oklab, #12121c 72%, transparent);
-  border: 1px solid color-mix(in oklab, white 10%, transparent);
+  background: color-mix(in oklab, #171b28 78%, transparent);
+  border: 1px solid color-mix(in oklab, white 14%, transparent);
   backdrop-filter: blur(18px);
 }
 
@@ -41,14 +41,14 @@ body {
 
 .dark-select {
   color-scheme: dark;
-  background-color: #181822;
-  color: #f4f4f8;
-  border: 1px solid color-mix(in oklab, white 14%, transparent);
+  background-color: #171b27;
+  color: #f5f6fb;
+  border: 1px solid color-mix(in oklab, white 18%, transparent);
 }
 
 .dark-select option {
-  background-color: #181822;
-  color: #f4f4f8;
+  background-color: #171b27;
+  color: #f5f6fb;
 }
 
 @keyframes drift {
@@ -78,6 +78,10 @@ body {
 
 .gallery-bleed img {
   will-change: transform;
+}
+
+.gallery-bleed {
+  column-gap: 1px;
 }
 
 .reel-scroll {

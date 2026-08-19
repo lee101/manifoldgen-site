@@ -81,6 +81,13 @@ export default function AccountPage() {
   const checkoutMountRef = useRef<HTMLDivElement | null>(null);
   const embeddedCheckoutRef = useRef<StripeEmbeddedCheckout | null>(null);
 
+  const closeCheckout = useCallback(() => {
+    embeddedCheckoutRef.current?.destroy();
+    embeddedCheckoutRef.current = null;
+    setClientSecret('');
+    setPublishableKey('');
+  }, []);
+
   const refreshSession = useCallback(async (key: string) => {
     const next = await refreshUser(key);
     if (!next) return null;
@@ -151,6 +158,17 @@ export default function AccountPage() {
     };
   }, [apiKey, clientSecret, publishableKey, refreshSession]);
 
+  useEffect(() => {
+    if (!clientSecret) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      closeCheckout();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [clientSecret, closeCheckout]);
+
   async function submitAuth(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -169,7 +187,7 @@ export default function AccountPage() {
         if (data.reset_token) {
           setResetToken(data.reset_token);
           setAuthMode('reset');
-          setMessage('Dev reset token ready — set a new password.');
+          setMessage('Dev reset token ready. Set a new password.');
         }
         return;
       }
@@ -188,8 +206,7 @@ export default function AccountPage() {
         saveUser(next);
         setApiKey(next.api_key);
         setEmail(next.email || email);
-        const price = next.credit_price_usd || 0.01;
-        setCreditsUsd(next.credits_usd ?? 0);
+		setCreditsUsd(next.credits_usd ?? 0);
         setPassword('');
         setResetToken('');
         setAuthMode('signin');
@@ -214,7 +231,6 @@ export default function AccountPage() {
       saveUser(next);
       setApiKey(next.api_key);
       setEmail(next.email || email);
-      const price = next.credit_price_usd || 0.01;
       setCreditsUsd(next.credits_usd ?? 0);
       setMessage(data.created ? 'Account created.' : 'Signed in.');
       setPassword('');
@@ -239,7 +255,7 @@ export default function AccountPage() {
     embeddedCheckoutRef.current = null;
   }
 
-  async function buyCredits(kind: 'credits' | 'monthly' | 'annual') {
+  async function buyCredits(kind: 'credits' | 'creator_monthly' | 'creator_annual' | 'pro_monthly' | 'pro_annual') {
     if (!apiKey) {
       setError('Sign in first');
       return;
@@ -262,8 +278,7 @@ export default function AccountPage() {
         },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Checkout failed');
+      const data = await parseJSONResponse<{ url?: string; client_secret?: string; publishable_key?: string }>(res, 'Checkout failed');
       if (data.url && !data.client_secret) {
         window.location.href = data.url;
         return;
@@ -271,9 +286,7 @@ export default function AccountPage() {
       if (!data.client_secret || !data.publishable_key) {
         throw new Error('Stripe checkout response missing client_secret');
       }
-      setCheckoutMeta(
-        kind === 'credits' ? `Credits: $${Number(amount).toFixed(0)}` : `Plan: ${kind}`,
-      );
+      setCheckoutMeta(kind === 'credits' ? `Credits: $${Number(amount).toFixed(0)}` : `Plan: ${kind.replace('_', ' ')}`);
       setPublishableKey(data.publishable_key);
       setClientSecret(data.client_secret);
     } catch (err) {
@@ -522,19 +535,35 @@ export default function AccountPage() {
                 type="button"
                 disabled={busy}
                 data-testid="account-buy-monthly"
-                onClick={() => buyCredits('monthly')}
+                onClick={() => buyCredits('creator_monthly')}
                 className="rounded-full border border-white/15 px-4 py-2 text-sm"
               >
-                Monthly · $25 video + ∞ images
+                Creator · $14.99/mo + ∞ images
               </button>
               <button
                 type="button"
                 disabled={busy}
                 data-testid="account-buy-annual"
-                onClick={() => buyCredits('annual')}
+                onClick={() => buyCredits('creator_annual')}
                 className="rounded-full border border-white/15 px-4 py-2 text-sm"
               >
-                Annual · $300 video + ∞ images
+                Creator annual · $149/yr
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => buyCredits('pro_monthly')}
+                className="rounded-full border border-white/15 px-4 py-2 text-sm"
+              >
+                Pro · $49/mo
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => buyCredits('pro_annual')}
+                className="rounded-full border border-white/15 px-4 py-2 text-sm"
+              >
+                Pro annual · $490/yr
               </button>
             </div>
 
@@ -553,13 +582,13 @@ export default function AccountPage() {
             <pre
               className="mt-2 overflow-x-auto rounded-2xl border border-white/10 bg-black/40 p-3 text-[11px] leading-relaxed text-white/80"
               data-testid="account-api-snippet"
-            >{`# Image gen — $0.04 (4 credits), n images at once
+            >{`# Image gen: $0.04 (4 credits), n images at once
 curl -X POST https://manifoldgen.com/api/service \\
   -H "Authorization: Bearer ${apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{"service":"zimage","prompt":"teal ribbon logo","n":2,"width":1024,"height":1024}'
 
-# Native video — price shown before rendering
+# Native video: price shown before rendering
 curl -X POST https://manifoldgen.com/api/service \\
   -H "Authorization: Bearer ${apiKey}" \\
   -H "Content-Type: application/json" \\
@@ -586,10 +615,13 @@ curl -X POST https://manifoldgen.com/api/service \\
       </div>
 
       {clientSecret && (
-        <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/80 p-0 backdrop-blur-sm md:items-center md:p-6">
+        <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/80 p-0 backdrop-blur-sm md:items-center md:p-6" onMouseDown={(event) => event.target === event.currentTarget && closeCheckout()}>
           <div
             className="relative flex h-full w-full max-w-xl flex-col overflow-hidden bg-white text-black md:h-auto md:max-h-[92dvh] md:rounded-3xl"
             data-testid="embedded-checkout-container"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Checkout"
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
@@ -598,12 +630,7 @@ curl -X POST https://manifoldgen.com/api/service \\
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  embeddedCheckoutRef.current?.destroy();
-                  embeddedCheckoutRef.current = null;
-                  setClientSecret('');
-                  setPublishableKey('');
-                }}
+                onClick={closeCheckout}
                 className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-black"
                 aria-label="Close checkout"
               >

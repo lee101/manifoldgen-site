@@ -107,6 +107,17 @@ PALETTES = [
     "rust and sage", "ice blue and warm cedar", "garnet and warm grey", "seafoam and copper",
 ]
 
+# Keep the gallery visually varied without asking the image worker to render
+# unusually large canvases. Every dimension is a multiple of 64, and each
+# entry has roughly the same pixel count as the 1024px square baseline.
+DIMENSIONS = [
+    (1024, 1024),
+    (768, 1344),   # 9:16 portrait
+    (1344, 768),   # 16:9 landscape
+    (768, 1024),   # 3:4 portrait
+    (1024, 768),   # 4:3 landscape
+]
+
 VIDEO_SUBJECTS = [
     "a glass hummingbird above trumpet flowers", "a cliffside observatory above a storm sea",
     "a lunar greenhouse filled with floating pollen", "a chrome koi swimming through the air",
@@ -176,7 +187,11 @@ def image_row(index: int) -> dict[str, object]:
         "family-safe, no text, no logo, no watermark"
     )
     digest = hashlib.sha256(prompt.encode()).hexdigest()
-    return {"prompt": prompt, "category": category, "slug": f"{category}-{digest[:14]}", "seed": int(digest[:8], 16) % (2**31)}
+    width, height = DIMENSIONS[index % len(DIMENSIONS)]
+    return {
+        "prompt": prompt, "category": category, "slug": f"{category}-{digest[:14]}",
+        "seed": int(digest[:8], 16) % (2**31), "width": width, "height": height,
+    }
 
 
 def video_row(index: int) -> dict[str, object]:
@@ -189,7 +204,6 @@ def video_row(index: int) -> dict[str, object]:
     )
     digest = hashlib.sha256(prompt.encode()).hexdigest()
     return {"prompt": prompt, "category": "video", "slug": f"motion-{digest[:14]}", "seed": int(digest[:8], 16) % (2**31)}
-
 
 def main() -> None:
     parser = argparse.ArgumentParser()

@@ -36,15 +36,12 @@ func handleGalleryAsset(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, fasthttp.StatusInternalServerError, "could not request gallery asset")
 		return
 	}
-	if value := string(ctx.Request.Header.Peek("Range")); value != "" {
-		request.Header.Set("Range", value)
-	}
 	response, err := galleryHTTPClient.Do(request)
 	if err != nil {
 		jsonError(ctx, fasthttp.StatusBadGateway, "could not load gallery asset")
 		return
 	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
 		jsonError(ctx, fasthttp.StatusBadGateway, fmt.Sprintf("gallery asset returned %d", response.StatusCode))
 		return
@@ -63,16 +60,11 @@ func handleGalleryAsset(ctx *fasthttp.RequestCtx) {
 	}
 
 	ctx.Response.Header.SetContentType(contentType)
-	for _, header := range []string{"Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
-		if value := response.Header.Get(header); value != "" {
-			ctx.Response.Header.Set(header, value)
-		}
-	}
 	// Object keys are immutable Studio media IDs, so this browser cache entry
 	// survives project reloads while IndexedDB keeps the authoritative local
 	// File used by playback.
 	ctx.Response.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
-	ctx.SetStatusCode(response.StatusCode)
+	ctx.SetStatusCode(fasthttp.StatusOK)
 	// fasthttp closes response.Body after it has copied the stream to the
 	// browser. The known length is validated above, so this remains bounded
 	// without buffering a full source video in the backend process.
