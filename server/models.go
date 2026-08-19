@@ -178,13 +178,28 @@ type ServiceUsageRequest struct {
 	OutputFormat       string   `json:"output_format,omitempty"`
 	FirstFrame         string   `json:"first_frame,omitempty"`
 	LastFrame          string   `json:"last_frame,omitempty"`
+	Keyframes          []string `json:"keyframes,omitempty"`
 	Size               string   `json:"size,omitempty"`
 	Loop               bool     `json:"loop,omitempty"`
 	IncludeAudio       *bool    `json:"include_audio,omitempty"`
 	Structured         *bool    `json:"structured_prompt,omitempty"`
 	EncodeQuality      int      `json:"encode_quality,omitempty"`
+	BackgroundColor    string   `json:"background_color,omitempty"`
+	PreserveAudio      *bool    `json:"preserve_audio,omitempty"`
+	MaxQuality         *bool    `json:"max_quality,omitempty"`
+	MaskURL            string   `json:"mask_url,omitempty"`
+	AddTransparency    *bool    `json:"add_transparency,omitempty"`
+	// MusicVideo asks ManifoldGen to compose a MiniMax soundtrack first, then
+	// use that persisted track as H3's driving reference audio.
+	MusicVideo    bool   `json:"music_video,omitempty"`
+	MusicPrompt   string `json:"music_prompt,omitempty"`
+	MusicDuration int    `json:"music_duration,omitempty"`
 	// H3 weight profile: int8_convrot (stable default) or w4a8 (experimental opt-in).
 	Quant string `json:"quant,omitempty"`
+	// GPU execution lane selected by OmniServe: auto, small, balanced, or throughput.
+	ExecutionProfile string `json:"execution_profile,omitempty"`
+	// User-facing latency/capacity class: standard, fast, or xfast.
+	ServiceTier string `json:"service_tier,omitempty"`
 	// zimage fields
 	Width    int     `json:"width,omitempty"`
 	Height   int     `json:"height,omitempty"`

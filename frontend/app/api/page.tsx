@@ -5,7 +5,7 @@ import { PricingTable } from './pricing-table';
 
 export const metadata = {
   title: 'API Documentation',
-  description: 'Build image, native video, and music generation into your product with the ManifoldGen API.',
+  description: 'Build image, native video, music, and AI voice generation into your product with the ManifoldGen API.',
 };
 
 const createVideo = `curl https://manifoldgen.com/api/service \\
@@ -48,6 +48,21 @@ const createImage = `curl https://manifoldgen.com/api/service \\
     "num_steps": 12
   }'`;
 
+const createAnima = `curl https://manifoldgen.com/api/service \\
+  -X POST \\
+  -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "service": "anima",
+    "prompt": "An adult celestial cartographer, midnight-blue hair, brass astrolabe",
+    "negative_prompt": "text, watermark, low detail",
+    "width": 768,
+    "height": 1024,
+    "num_steps": 28,
+    "guidance": 4,
+    "seed": 18467291
+  }'`;
+
 const createAudio = `curl https://manifoldgen.com/api/service \\
   -X POST \\
   -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\
@@ -63,7 +78,7 @@ const createMusic = `curl https://manifoldgen.com/api/service \\
   -X POST \\
   -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"service":"music","prompt":"Slow cinematic strings at dawn","duration":45}'`;
+  -d '{"service":"music","prompt":"Slow cinematic strings at dawn","lyrics":"[Verse]\\nNeon rain over the harbour","duration":45}'`;
 
 const createSFX = `curl https://manifoldgen.com/api/service \\
   -X POST \\
@@ -98,6 +113,24 @@ const searchAudio = `curl --get https://manifoldgen.com/api/audio/search \\
   --data-urlencode "kind=music" \\
   --data-urlencode "top_k=20"`;
 
+const createVoice = `curl https://manifoldgen.com/api/voice/generate \
+  -X POST \
+  -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "seed-speech",
+    "text": "The future sounds closer than you think.",
+    "voice": "stokie_en",
+    "voice_details": "Warm, confident, cinematic delivery",
+    "mood": "happy",
+    "batch_size": 1,
+    "speed": 1,
+    "pitch": 0,
+    "volume": 1,
+    "output_format": "mp3",
+    "sample_rate": 24000
+  }'`;
+
 const llmMarkdown = `# ManifoldGen API integration
 
 Use \`Authorization: Bearer $MANIFOLDGEN_API_KEY\` on every protected request. Never expose the key in browser code.
@@ -108,8 +141,13 @@ POST \`https://manifoldgen.com/api/service\` with JSON: \`{"service":"video","pr
 ## Generate images
 POST \`/api/service\` with \`{"service":"image","prompt":"...","width":1024,"height":1024,"num_steps":12,"n":1}\`. Image generation returns synchronously. Use \`n\` for batches.
 
+For anime-native character art, first check \`GET /api/anima/status\`, then POST \`{"service":"anima","prompt":"an adult ...","width":768,"height":1024,"num_steps":28,"guidance":4,"seed":18467291}\`. Anima is one asynchronous image per request at a fixed $0.04; poll the returned \`result.status_url\`. The route remains unavailable until ManifoldGen's commercial model license is active.
+
 ## Generate audio
-Use \`{"service":"music","prompt":"...","duration":30}\` for synchronous music generation, or \`{"service":"sfx","prompt":"...","duration":5}\` for an asynchronous sound-effect job. The umbrella form is \`{"service":"audio","kind":"music|sfx",...}\`. Music accepts 30–180 seconds; SFX accepts 4–45 seconds. Completed assets include a durable \`audio_url\` and \`audio_id\` and are searchable with \`GET /api/audio/search?q=...&kind=music|sfx&top_k=20\`.
+Use \`{"service":"music","prompt":"...","duration":30}\` for MiniMax-Music3 generation, or \`{"service":"sfx","prompt":"...","duration":5}\` for a sound-effect job. Both return a job to poll at \`GET /api/audio-jobs/{job_id}\`. Music accepts optional \`lyrics\` with section tags and 30–180 seconds; SFX accepts 4–45 seconds. Completed assets include a durable \`audio_url\` and \`audio_id\` and are searchable with \`GET /api/audio/search?q=...&kind=music|sfx&top_k=20\`.
+
+## Generate voices
+POST \`/api/voice/generate\` with a model ID, text, and optional delivery/audio controls. Discover the live model catalog at \`GET /api/voice/models\`. Batch size is 1–4. Successful results contain durable private \`audio_url\` values and exact usage charges.
 
 ## Extend video
 POST \`/api/studio/extend-video\` with \`{"video_url":"https://...","prompt":"continue the camera move","duration":5}\`. Authenticate with the same Bearer key, then poll the returned job/status URL if supplied.
@@ -145,7 +183,9 @@ export default function ApiDocsPage() {
             <a href="#video" className="block py-1.5 hover:text-white">Generate video</a>
             <a href="#jobs" className="block py-1.5 hover:text-white">Poll a job</a>
             <a href="#images" className="block py-1.5 hover:text-white">Generate images</a>
+            <a href="#anima" className="block py-1.5 hover:text-white">Anima character art</a>
             <a href="#audio" className="block py-1.5 hover:text-white">Generate audio</a>
+            <a href="#voice" className="block py-1.5 hover:text-white">Generate voices</a>
             <a href="#pricing" className="block py-1.5 hover:text-white">Pricing</a>
             <a href="#errors" className="block py-1.5 hover:text-white">Errors</a>
           </nav>
@@ -230,6 +270,15 @@ export default function ApiDocsPage() {
             <CodeBlock>{createImage}</CodeBlock>
           </section>
 
+          <section id="anima" className="scroll-mt-28 border-t border-white/10 py-10">
+            <h2 className="font-display text-2xl font-700">Generate Anima character art</h2>
+            <p className="mb-5 mt-3 leading-7 text-white/55">
+              One anime-native illustration per asynchronous request for a fixed $0.04. Check <code>GET /api/anima/status</code> before dispatch; the route fails closed until commercial model licensing and GPU capacity are both active.
+            </p>
+            <CodeBlock>{createAnima}</CodeBlock>
+            <p className="mt-4 text-sm leading-6 text-white/45">Canvas sides are 512–1536 pixels, divisible by 16, with at most 1,048,576 total pixels. Poll the returned video-job status URL; the completed result contains <code>image_url</code>.</p>
+          </section>
+
           <section id="audio" className="scroll-mt-28 border-t border-white/10 py-10">
             <h2 className="font-display text-2xl font-700">Generate music and sound effects</h2>
             <p className="mb-5 mt-3 leading-7 text-white/55">
@@ -252,6 +301,15 @@ export default function ApiDocsPage() {
               Search needs no key for public assets. Add your Bearer key to include your private audio in the results.
             </p>
             <CodeBlock>{searchAudio}</CodeBlock>
+          </section>
+
+          <section id="voice" className="scroll-mt-28 border-t border-white/10 py-10">
+            <h2 className="font-display text-2xl font-700">Generate voices</h2>
+            <p className="mb-5 mt-3 leading-7 text-white/55">
+              Generate one to four durable voice takes with Seed Audio, ElevenLabs, Qwen, MiniMax, Seed Speech, Google, or Grok.
+              Call <code>GET /api/voice/models</code> for live pricing and model-specific controls.
+            </p>
+            <CodeBlock>{createVoice}</CodeBlock>
           </section>
 
           <section id="pricing" className="scroll-mt-28 border-t border-white/10 py-10">

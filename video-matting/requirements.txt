@@ -1,0 +1,6 @@
+# PyTorch with CUDA is installed from the platform-specific PyTorch index.
+opencv-python-headless>=4.8
+numpy>=1.24
+
+# Optional zero-host-frame-copy backend (Python >= 3.10):
+# PyNvVideoCodec>=2.2

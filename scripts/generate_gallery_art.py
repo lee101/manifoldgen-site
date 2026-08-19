@@ -31,6 +31,7 @@ import boto3
 import psycopg2
 from botocore.config import Config
 from PIL import Image
+import requests
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,8 +58,8 @@ def load_dotenv() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def read_prompts(path: Path) -> list[str]:
-    prompts: list[str] = []
+def read_prompts(path: Path) -> list[tuple[str, int | None]]:
+    prompts: list[tuple[str, int | None]] = []
     seen: set[str] = set()
     for raw in path.read_text().splitlines():
         raw = raw.strip()
@@ -67,11 +68,14 @@ def read_prompts(path: Path) -> list[str]:
         try:
             value = json.loads(raw)
             prompt = value.get('prompt', '') if isinstance(value, dict) else ''
+            seed_value = value.get('seed') if isinstance(value, dict) else None
         except json.JSONDecodeError:
             prompt = raw
+            seed_value = None
         prompt = str(prompt).strip()
         if 12 <= len(prompt) <= 900 and prompt not in seen:
-            prompts.append(prompt)
+            seed = seed_value if isinstance(seed_value, int) and not isinstance(seed_value, bool) else None
+            prompts.append((prompt, seed))
             seen.add(prompt)
     return prompts
 
@@ -131,6 +135,39 @@ def r2_client() -> object:
                         aws_secret_access_key=secret, region_name="auto", config=Config(s3={"addressing_style": "path"}))
 
 
+def moderate_image(endpoint: str, path: Path, threshold: float, secret_env: str) -> tuple[bool, float]:
+    secret = os.getenv(secret_env, os.getenv("OMNISERVE_SECRET", os.getenv("IMAGE_API_SECRET", "")))
+    params = {"secret": secret} if secret else {}
+    with path.open("rb") as image:
+        response = requests.post(
+            endpoint.rstrip("/") + "/nsfw_detect_file",
+            params=params,
+            files={"image_file": (path.name, image, "image/webp")},
+            timeout=120,
+        )
+    response.raise_for_status()
+    payload = response.json()
+    score = float(payload.get("nsfw_score", payload.get("score", 0)))
+    return score >= threshold, score
+
+
+def claim_prompt(conn: object, prompt: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (prompt,))
+        claimed = bool(cur.fetchone()[0])
+    conn.commit()
+    return claimed
+
+
+def release_prompt(conn: object, prompt: str) -> None:
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (prompt,))
+        conn.commit()
+    except psycopg2.Error:
+        conn.rollback()
+
+
 def reindex(database_url: str) -> None:
     api_key = subprocess.check_output(
         ["psql", database_url, "-At", "-c", "SELECT api_key FROM users WHERE api_key <> '' ORDER BY created_at ASC LIMIT 1;"],
@@ -167,6 +204,10 @@ def main() -> None:
     parser.add_argument('--min-free-gib', type=float, default=80.0, help='stop before the local spool gets too full')
     parser.add_argument('--retries', type=int, default=8, help='retries per prompt for busy/temporarily unavailable workers')
     parser.add_argument('--retry-delay', type=float, default=15.0, help='initial retry delay; exponential backoff is capped at 5 minutes')
+    parser.add_argument('--moderate-before-index', action='store_true', help='classify locally before publishing or indexing; unsafe output is quarantined locally')
+    parser.add_argument('--nsfw-threshold', type=float, default=0.5)
+    parser.add_argument('--moderation-secret-env', default='OMNISERVE_NATIVE_SECRET')
+    parser.add_argument('--reindex-every', type=int, default=0, help='request a search rebuild after each N indexed rows; 0 means only at the end when --reindex-after is set')
     parser.add_argument('--moderate-after', action='store_true', help='moderate this bounded batch after generation')
     parser.add_argument('--reindex-after', action='store_true', help='request authenticated search reindexing after moderation')
     args = parser.parse_args()
@@ -181,23 +222,29 @@ def main() -> None:
     with conn.cursor() as cur:
         cur.execute('SELECT prompt FROM generated_images')
         existing = {row[0] for row in cur}
-    pending = [prompt for prompt in prompts if prompt not in existing]
+    conn.commit()
+    pending = [(prompt, seed) for prompt, seed in prompts if prompt not in existing]
     if args.limit:
         pending = pending[:args.limit]
     print(f'{len(prompts)} prompts, {len(existing)} indexed, {len(pending)} pending', flush=True)
 
     originals = args.images_dir / 'originals'
     originals.mkdir(parents=True, exist_ok=True)
+    ensure_free_space(args.images_dir, args.min_free_gib)
     client = r2_client() if args.upload_r2 else None
     bucket = os.getenv("R2_BUCKET", "")
     prefix = os.getenv("R2_PATH_PREFIX", "gallery").strip("/")
     generated = 0
-    for number, prompt in enumerate(pending, 1):
+    for number, (prompt, prompt_seed) in enumerate(pending, 1):
         if STOP:
             print('stop requested; current work is indexed and the next run will resume', flush=True)
             break
         digest = hashlib.sha256(prompt.encode()).hexdigest()[:16]
-        seed = int(digest[:8], 16) % (2**31)
+        seed = prompt_seed if prompt_seed is not None else int(digest[:8], 16) % (2**31)
+        if not claim_prompt(conn, prompt):
+            print(f'[{number}/{len(pending)}] claimed by another worker; skipping', flush=True)
+            continue
+        object_key = ''
         try:
             ensure_free_space(args.images_dir, args.min_free_gib)
             raw = b''
@@ -217,7 +264,12 @@ def main() -> None:
             destination = args.images_dir / relpath
             image.save(destination, 'WEBP', quality=85, method=6)
             size = destination.stat().st_size
-            if client:
+            is_nsfw = None
+            score = None
+            if args.moderate_before_index:
+                is_nsfw, score = moderate_image(args.endpoint, destination, args.nsfw_threshold, args.moderation_secret_env)
+                print(f'[{number}/{len(pending)}] nsfw_score={score:.4f} flagged={is_nsfw}', flush=True)
+            if client and is_nsfw is not True:
                 object_key = f"{prefix}/{relpath}"
                 client.upload_file(str(destination), bucket, object_key, ExtraArgs={"ContentType": "image/webp", "CacheControl": "public, max-age=31536000, immutable"})
                 # Do not put a broken URL in the catalog when an endpoint,
@@ -226,16 +278,30 @@ def main() -> None:
             with conn.cursor() as cur:
                 cur.execute(
                     '''INSERT INTO generated_images
-                       (id, prompt, width, height, file_path, thumb_path, med_path, file_size, model, seed, steps, created_by_user_id)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, '')''',
-                    (image_id, prompt, image.width, image.height, relpath, relpath, relpath, size, 'zimage-turbo-native', seed, 4),
+                       (id, prompt, width, height, file_path, thumb_path, med_path, file_size, model, seed, steps, is_nsfw, created_by_user_id)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, '')''',
+                    (image_id, prompt, image.width, image.height, relpath, relpath, relpath, size, 'zimage-turbo-native', seed, 4, is_nsfw),
                 )
             conn.commit()
             generated += 1
-            print(f'[{number}/{len(pending)}] indexed {relpath}', flush=True)
-        except (OSError, RuntimeError, urllib.error.URLError, urllib.error.HTTPError) as error:
+            if is_nsfw is True:
+                print(f'[{number}/{len(pending)}] quarantined {relpath}', flush=True)
+            else:
+                print(f'[{number}/{len(pending)}] indexed {relpath}', flush=True)
+            if args.reindex_every and generated % args.reindex_every == 0:
+                reindex(args.database_url)
+        except (OSError, RuntimeError, urllib.error.URLError, urllib.error.HTTPError, requests.RequestException, ValueError, psycopg2.Error) as error:
             conn.rollback()
+            if object_key and client:
+                try:
+                    client.delete_object(Bucket=bucket, Key=object_key)
+                except Exception:
+                    pass
             print(f'[{number}/{len(pending)}] failed: {error}', flush=True)
+            if isinstance(error, RuntimeError) and str(error).startswith('stopping safely:'):
+                break
+        finally:
+            release_prompt(conn, prompt)
         if args.delay:
             time.sleep(args.delay)
 

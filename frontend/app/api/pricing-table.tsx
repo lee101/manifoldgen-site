@@ -44,7 +44,7 @@ const FALLBACK: PricingResponse = {
   image_high_step_credits: 10,
   video_pricing: { basis_steps: 20, tiers: FALLBACK_TIERS },
   pricing: [{ service: 'speech', price_usd: .005, price_cute: .5, unit: 'per 100 characters' }],
-	studio: { music_generation_credits: 190, music_generation_base_usd: 1.50, music_generation_minimum_usd: 1.80, music_generation_minute_usd: .80 },
+	studio: { music_generation_credits: 50, music_generation_base_usd: .40, music_generation_minimum_usd: .50, music_generation_minute_usd: .20 },
 };
 
 function money(value: number, minimumDigits = 2) {
@@ -70,8 +70,8 @@ export function PricingTable() {
   const tiers = pricing.video_pricing?.tiers?.length ? pricing.video_pricing.tiers : FALLBACK_TIERS;
   const durations = tiers[0]?.prices.map((point) => point.duration_seconds) || [5, 10, 15, 30, 60];
   const creditPrice = pricing.credit_price_usd || .01;
-	const musicMinimum = pricing.studio?.music_generation_minimum_usd || 1.80;
-	const musicPerMinute = pricing.studio?.music_generation_minute_usd || .80;
+	const musicMinimum = pricing.studio?.music_generation_minimum_usd || .50;
+	const musicPerMinute = pricing.studio?.music_generation_minute_usd || .20;
   const tts = pricing.pricing?.find((item) => item.service === 'speech');
 
   return (

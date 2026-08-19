@@ -156,11 +156,7 @@ func handleStudioAssetPresign(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
-	userShort := strings.ReplaceAll(user.ID, "-", "")
-	if len(userShort) > 16 {
-		userShort = userShort[:16]
-	}
-	objectKey := fmt.Sprintf("%s/studio/%s/%s/%s/%s", strings.TrimSuffix(r2PathPrefix, "/"), userShort, input.ProjectID, input.AssetID, input.Filename)
+	objectKey := studioAssetObjectPrefix(user, input.ProjectID, input.AssetID) + input.Filename
 	uploadURL, err := presignR2PutObject(objectKey, input.ContentType, 3600)
 	if err != nil {
 		jsonError(ctx, http.StatusInternalServerError, "could not prepare asset upload")

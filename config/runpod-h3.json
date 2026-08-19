@@ -1,35 +1,50 @@
 {
-  "image": "ghcr.io/lee101/h3-cog:cu130-20260810-r5",
+  "image": "ghcr.io/lee101/h3-cog:cu130-20260816-image-r5",
   "dockerStartCmd": ["python", "-u", "/src/rp_handler.py"],
+  "env": {
+    "H3_ACCEL_PROFILE": "balanced",
+    "H3_ATTENTION_BACKEND": "ck",
+    "H3_FACE_REFINE_ENABLED": "1",
+    "H3_FACE_REFINE_REQUIRED": "0",
+    "H3_MODEL_SET": "fl2va,ref2va",
+    "H3_LAZY_REF2VA": "1"
+  },
   "workersMin": 0,
   "idleTimeout": 5,
   "executionTimeoutMs": 14400000,
   "flashboot": true,
-  "scalerType": "QUEUE_DELAY",
-  "scalerValue": 4,
+  "scalerType": "REQUEST_COUNT",
+  "scalerValue": 1,
   "endpoints": [
     {
+      "id": "snzfeqekxdmw1v",
+      "templateId": "8f03l2lyj6",
       "name": "cog-manifold-h3-normal",
       "workersMax": 2,
       "gpuTypeIds": [
-        "NVIDIA A40",
-        "NVIDIA RTX A6000",
-        "NVIDIA RTX 6000 Ada Generation",
-        "NVIDIA L40",
-        "NVIDIA L40S"
-      ]
+        "NVIDIA H100 PCIe",
+        "NVIDIA H100 80GB HBM3",
+        "NVIDIA H100 NVL"
+      ],
+      "unsetEnv": ["H3_FACE_REFINE_LORA", "H3_FACE_REFINE_STEPS"]
     },
     {
+      "id": "811c0jb28shcnr",
+      "templateId": "tod8ekrmft",
       "name": "cog-manifold-h3-pinkcherry",
       "workersMax": 1,
+	  "env": {
+		"H3_FL2VA_REPO": "SexGod1979/PinkCherry_MiniMax-H3",
+		"H3_FL2VA_HF_FILENAME": "beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors",
+		"H3_FL2VA_MODEL": "PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors",
+		"H3_FL2VA_REVISION": "f71e0eee7c0414904b66c4efa617c34548dd2bb0"
+	  },
       "gpuTypeIds": [
-        "NVIDIA A100 80GB PCIe",
-        "NVIDIA A100-SXM4-80GB",
         "NVIDIA H100 PCIe",
         "NVIDIA H100 80GB HBM3",
         "NVIDIA H100 NVL"
       ]
     }
   ],
-  "notes": "Both variants must use the native RunPod handler, never the Cog HTTP command. The native handler lets RunPod cancellation terminate active work so canceled jobs do not leave billed orphan workers. Five-second idle shutdown is below the 30-second cost ceiling."
+  "notes": "Both variants use the native handler and scale to zero after five idle seconds. H100 remains the validated default; REF2VA is an allowed lazy capability so text/video cold starts do not pay its load cost, while image edits load it on demand. r5 can link RunPod's endpoint-level Hugging Face cache directly and pins PinkCherry beta-0.6 to an immutable revision. Enable Comfy-Org/MiniMax-H3 as the normal endpoint's cached model before considering a fixed-cost network volume. A40 remains excluded after second-pass crashes."
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -11,15 +10,20 @@ import (
 )
 
 const (
-	galleryCDNHost      = "manifoldgenstatic.manifoldgen.com"
-	galleryAssetMaxSize = 32 << 20
+	galleryCDNHost = "manifoldgenstatic.manifoldgen.com"
+	// Studio can retain original timeline clips locally, not merely a tiny
+	// thumbnail. Stream them through the CORS-safe proxy rather than reading a
+	// whole video into backend RAM; the cap still prevents a bad object from
+	// turning one import into an unbounded transfer.
+	galleryAssetMaxSize = 512 << 20
 )
 
-var galleryHTTPClient = &http.Client{Timeout: 30 * time.Second}
+var galleryHTTPClient = &http.Client{Timeout: 5 * time.Minute}
 
-// handleGalleryAsset proxies only files from our public gallery bucket. Studio
-// imports need the image bytes, and a same-origin request avoids depending on
-// the bucket's CORS configuration (or an intermediary cache preserving it).
+// handleGalleryAsset proxies image, video, and audio files from our public
+// gallery bucket. Studio imports need the media bytes, and a same-origin
+// request avoids depending on the bucket's CORS configuration (including www
+// vs apex origin).
 func handleGalleryAsset(ctx *fasthttp.RequestCtx) {
 	objectKey := strings.TrimPrefix(string(ctx.Path()), "/api/gallery-assets/")
 	if !validGalleryObjectKey(objectKey) {
@@ -32,32 +36,47 @@ func handleGalleryAsset(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, fasthttp.StatusInternalServerError, "could not request gallery asset")
 		return
 	}
+	if value := string(ctx.Request.Header.Peek("Range")); value != "" {
+		request.Header.Set("Range", value)
+	}
 	response, err := galleryHTTPClient.Do(request)
 	if err != nil {
 		jsonError(ctx, fasthttp.StatusBadGateway, "could not load gallery asset")
 		return
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		response.Body.Close()
 		jsonError(ctx, fasthttp.StatusBadGateway, fmt.Sprintf("gallery asset returned %d", response.StatusCode))
 		return
 	}
 	contentType := response.Header.Get("Content-Type")
-	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
-		jsonError(ctx, fasthttp.StatusBadGateway, "gallery asset is not an image")
+	mediaType := strings.ToLower(contentType)
+	if !strings.HasPrefix(mediaType, "image/") && !strings.HasPrefix(mediaType, "video/") && !strings.HasPrefix(mediaType, "audio/") {
+		response.Body.Close()
+		jsonError(ctx, fasthttp.StatusBadGateway, "gallery asset is not supported media")
 		return
 	}
-
-	asset, err := io.ReadAll(io.LimitReader(response.Body, galleryAssetMaxSize+1))
-	if err != nil || len(asset) == 0 || len(asset) > galleryAssetMaxSize {
+	if response.ContentLength <= 0 || response.ContentLength > galleryAssetMaxSize {
+		response.Body.Close()
 		jsonError(ctx, fasthttp.StatusBadGateway, "gallery asset is empty or too large")
 		return
 	}
 
 	ctx.Response.Header.SetContentType(contentType)
-	ctx.Response.Header.Set("Cache-Control", "public, max-age=86400")
-	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetBody(asset)
+	for _, header := range []string{"Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
+		if value := response.Header.Get(header); value != "" {
+			ctx.Response.Header.Set(header, value)
+		}
+	}
+	// Object keys are immutable Studio media IDs, so this browser cache entry
+	// survives project reloads while IndexedDB keeps the authoritative local
+	// File used by playback.
+	ctx.Response.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
+	ctx.SetStatusCode(response.StatusCode)
+	// fasthttp closes response.Body after it has copied the stream to the
+	// browser. The known length is validated above, so this remains bounded
+	// without buffering a full source video in the backend process.
+	ctx.SetBodyStream(response.Body, int(response.ContentLength))
 }
 
 func validGalleryObjectKey(key string) bool {

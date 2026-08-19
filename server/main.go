@@ -143,6 +143,13 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
+	// The video-generator documentation is a static Next.js route nested under
+	// /api. Serve its HTML and RSC payloads before the JSON API router, which
+	// otherwise turns Link prefetches such as /api/video-generators.txt into 404s.
+	if (method == "GET" || method == "HEAD") && isStaticAPIDocsPath(path) && serveStaticFile(ctx, path) {
+		return
+	}
+
 	// API routes
 	if strings.HasPrefix(path, "/api/") {
 		routeAPI(ctx, path, method)
@@ -237,6 +244,12 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 	serveStatic(ctx, path)
 }
 
+func isStaticAPIDocsPath(path string) bool {
+	return path == "/api/video-generators" ||
+		path == "/api/video-generators.txt" ||
+		strings.HasPrefix(path, "/api/video-generators/")
+}
+
 func setCORSHeaders(ctx *fasthttp.RequestCtx) {
 	origin := string(ctx.Request.Header.Peek("Origin"))
 	if origin == "" {
@@ -303,6 +316,9 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	case path == "/api/pricing" && method == "GET":
 		handleGetPricing(ctx)
 
+	case path == "/api/anima/status" && method == "GET":
+		handleAnimaStatus(ctx)
+
 	// Wallet balance
 	case path == "/api/balance" && method == "GET":
 		handleGetBalance(ctx)
@@ -316,6 +332,14 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleServiceRequest(ctx)
 	case path == "/api/studio/remove-background" && method == "POST":
 		handleStudioRemoveBackground(ctx)
+	case path == "/api/image-editor/background" && method == "POST":
+		handleImageEditorBackground(ctx)
+	case path == "/api/image-editor/select" && method == "POST":
+		handleImageEditorSelect(ctx)
+	case path == "/api/image-editor/text" && method == "POST":
+		handleImageEditorText(ctx)
+	case path == "/api/image-editor/edit" && method == "POST":
+		handleImageEditorEdit(ctx)
 	case path == "/api/studio/generate-music" && method == "POST":
 		handleStudioGenerateMusic(ctx)
 	case path == "/api/studio/extend-video" && method == "POST":
@@ -324,6 +348,14 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStudioUpscaleVideo(ctx)
 	case path == "/api/studio/audio-search" && method == "GET":
 		handleStudioAudioSearch(ctx)
+	case path == "/api/voice/models" && method == "GET":
+		handleVoiceModels(ctx)
+	case path == "/api/voice/generate" && method == "POST":
+		handleVoiceGenerate(ctx)
+	case path == "/api/voice/generations" && method == "GET":
+		handleVoiceGenerations(ctx)
+	case strings.HasPrefix(path, "/api/voice/generations/") && method == "DELETE":
+		handleDeleteVoiceGeneration(ctx, strings.TrimPrefix(path, "/api/voice/generations/"))
 	case path == "/api/studio/audio-proxy" && (method == "GET" || method == "HEAD"):
 		handleStudioAudioProxy(ctx)
 	case path == "/api/studio/projects" && method == "GET":
@@ -332,12 +364,21 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStudioProject(ctx, strings.TrimPrefix(path, "/api/studio/projects/"), method)
 	case path == "/api/studio/assets/presign" && method == "POST":
 		handleStudioAssetPresign(ctx)
+	case path == "/api/studio/assets/preview" && (method == "GET" || method == "POST"):
+		handleStudioVideoPreview(ctx)
 	case path == "/api/video-jobs" && method == "GET":
 		handleListVideoJobs(ctx)
 	case path == "/api/audio-jobs" && method == "GET":
 		handleListAudioJobs(ctx)
 	case strings.HasPrefix(path, "/api/video-jobs/") && strings.HasSuffix(path, "/retry") && method == "POST":
-		handleRetryVideoJob(ctx, strings.TrimSuffix(strings.TrimPrefix(path, "/api/video-jobs/"), "/retry"))
+		jobID := strings.TrimSuffix(strings.TrimPrefix(path, "/api/video-jobs/"), "/retry")
+		handleRetryVideoJob(ctx, jobID)
+	case strings.HasPrefix(path, "/api/video-jobs/") && strings.HasSuffix(path, "/cancel") && method == "POST":
+		jobID := strings.TrimSuffix(strings.TrimPrefix(path, "/api/video-jobs/"), "/cancel")
+		handleCancelVideoJob(ctx, jobID)
+	case strings.HasPrefix(path, "/api/audio-jobs/") && strings.HasSuffix(path, "/cancel") && method == "POST":
+		jobID := strings.TrimSuffix(strings.TrimPrefix(path, "/api/audio-jobs/"), "/cancel")
+		handleCancelVideoJob(ctx, jobID)
 	case strings.HasPrefix(path, "/api/audio-jobs/") && method == "DELETE":
 		handleDeleteVideoJob(ctx, strings.TrimPrefix(path, "/api/audio-jobs/"))
 	case strings.HasPrefix(path, "/api/audio-jobs/") && method == "GET":
@@ -1449,7 +1490,7 @@ func handleSemanticImageSearch(ctx *fasthttp.RequestCtx) {
 		ids = append(ids, r.ImageID)
 		sim[r.ImageID] = r.Similarity
 	}
-	images, err := dbConn.GetImagesByIDs(ids, true)
+	images, err := dbConn.GetImagesByIDs(ids, false)
 	if err != nil {
 		jsonError(ctx, 500, "hydrate failed")
 		return

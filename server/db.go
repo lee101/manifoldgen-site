@@ -638,7 +638,11 @@ func (db *DB) CreateVideoJobForService(userID, providerJobID, service, prompt st
 	return &job, nil
 }
 
-var ErrVideoPaymentRequired = errors.New("insufficient credits for completed video")
+var (
+	ErrVideoPaymentRequired  = errors.New("insufficient credits for completed video")
+	ErrVideoJobNotCancelable = errors.New("video job is not active")
+	ErrVideoJobCancelled     = errors.New("video job was cancelled")
+)
 
 func (db *DB) SettleH3VideoJob(jobID string, result []byte, providerCostUSD, chargedUSD, cutePrice float64) (float64, float64, error) {
 	return db.SettleGeneratedVideoJob(jobID, result, providerCostUSD, chargedUSD, cutePrice)
@@ -662,6 +666,9 @@ func (db *DB) SettleGeneratedVideoJob(jobID string, result []byte, providerCostU
 	if err := tx.QueryRow(`SELECT user_id, status, COALESCE(service, 'video_generate'), COALESCE(settled, FALSE) FROM video_jobs WHERE id = $1 FOR UPDATE`, jobID).Scan(&userID, &status, &service, &settled); err != nil {
 		return 0, 0, err
 	}
+	if status == "cancelled" || status == "canceled" {
+		return 0, 0, ErrVideoJobCancelled
+	}
 	if settled || status == "completed" {
 		var balance, creditsUsed float64
 		if err := tx.QueryRow(`SELECT credits FROM users WHERE id = $1`, userID).Scan(&balance); err != nil {
@@ -674,19 +681,8 @@ func (db *DB) SettleGeneratedVideoJob(jobID string, result []byte, providerCostU
 	}
 	creditsUsed := chargedUSD / cutePrice
 	var currentBalance float64
-	var unlimitedAPI bool
-	if err := tx.QueryRow(`SELECT credits, COALESCE(unlimited_api, FALSE) FROM users WHERE id = $1`, userID).Scan(&currentBalance, &unlimitedAPI); err != nil {
+	if err := tx.QueryRow(`SELECT credits FROM users WHERE id = $1`, userID).Scan(&currentBalance); err != nil {
 		return 0, creditsUsed, err
-	}
-	if unlimitedAPI {
-		if _, err := tx.Exec(`UPDATE video_jobs SET status = 'completed', result_json = $2::jsonb, error = '', provider_cost_usd = $3, charged_usd = 0, credits_used = 0, settled = TRUE, updated_at = NOW() WHERE id = $1`,
-			jobID, string(result), providerCostUSD); err != nil {
-			return 0, 0, err
-		}
-		if err := tx.Commit(); err != nil {
-			return 0, 0, err
-		}
-		return currentBalance, 0, nil
 	}
 	var balance float64
 	if err := tx.QueryRow(`UPDATE users SET credits = credits - $1, updated_at = NOW() WHERE id = $2 AND credits >= $1 RETURNING credits`, creditsUsed, userID).Scan(&balance); err != nil {
@@ -773,12 +769,60 @@ func (db *DB) DeleteVideoJob(jobID, userID string) error {
 	return nil
 }
 
+// CancelVideoJob atomically claims an active job for cancellation. Credits are
+// intentionally untouched: async providers may already have incurred the cost.
+func (db *DB) CancelVideoJob(jobID, userID string) (*VideoJob, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	var job VideoJob
+	err := scanVideoJob(db.conn.QueryRow(
+		`UPDATE video_jobs
+		 SET status = 'cancelled', error = 'generation cancelled by user', updated_at = NOW()
+		 WHERE id = $1 AND user_id = $2
+		   AND LOWER(status) IN ('queued', 'pending', 'processing', 'running', 'accepted')
+		 RETURNING `+videoJobSelectColumns,
+		jobID, userID,
+	), &job)
+	if err == nil {
+		return &job, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
+	var exists bool
+	if lookupErr := db.conn.QueryRow(`SELECT EXISTS(SELECT 1 FROM video_jobs WHERE id = $1 AND user_id = $2)`, jobID, userID).Scan(&exists); lookupErr != nil {
+		return nil, lookupErr
+	}
+	if !exists {
+		return nil, sql.ErrNoRows
+	}
+	return nil, ErrVideoJobNotCancelable
+}
+
 func (db *DB) GetVideoJobInternal(jobID string) (*VideoJob, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	var job VideoJob
 	err := scanVideoJob(db.conn.QueryRow(
 		`SELECT `+videoJobSelectColumns+` FROM video_jobs WHERE id = $1`, jobID,
+	), &job)
+	if err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+func (db *DB) FindVideoBackgroundJob(userID, requestKey string) (*VideoJob, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	var job VideoJob
+	err := scanVideoJob(db.conn.QueryRow(
+		`SELECT `+videoJobSelectColumns+` FROM video_jobs
+		 WHERE user_id = $1 AND service = 'video_background_removal'
+		   AND result_json->>'_request_key' = $2
+		   AND status IN ('queued', 'processing', 'completed', 'payment_required')
+		 ORDER BY created_at DESC LIMIT 1`,
+		userID, requestKey,
 	), &job)
 	if err != nil {
 		return nil, err
@@ -794,7 +838,8 @@ func (db *DB) UpdateVideoJob(jobID, status string, result []byte, jobErr string)
 		resultJSON = string(result)
 	}
 	_, err := db.conn.Exec(
-		`UPDATE video_jobs SET status = $2, result_json = COALESCE($3::jsonb, result_json), error = $4, updated_at = NOW() WHERE id = $1`,
+		`UPDATE video_jobs SET status = $2, result_json = COALESCE($3::jsonb, result_json), error = $4, updated_at = NOW()
+		 WHERE id = $1 AND LOWER(status) NOT IN ('cancelled', 'canceled')`,
 		jobID, status, resultJSON, jobErr,
 	)
 	return err
@@ -820,10 +865,42 @@ func (db *DB) UpdateVideoJobProvider(jobID, providerJobID, status string, result
 	if len(result) > 0 {
 		resultJSON = string(result)
 	}
-	_, err := db.conn.Exec(
-		`UPDATE video_jobs SET provider_job_id = $2, status = $3, result_json = COALESCE($4::jsonb, result_json), error = '', updated_at = NOW() WHERE id = $1`,
+	updated, err := db.conn.Exec(
+		`UPDATE video_jobs SET provider_job_id = $2, status = $3, result_json = COALESCE($4::jsonb, result_json), error = '', updated_at = NOW()
+		 WHERE id = $1 AND LOWER(status) NOT IN ('cancelled', 'canceled')`,
 		jobID, providerJobID, status, resultJSON,
 	)
+	if err != nil {
+		return err
+	}
+	rows, err := updated.RowsAffected()
+	if err == nil && rows == 0 {
+		return ErrVideoJobCancelled
+	}
+	return err
+}
+
+// RequeueVideoJobProvider is the explicit user retry path. Unlike provider
+// fallback, it is allowed to revive a cancelled row after confirmation.
+func (db *DB) RequeueVideoJobProvider(jobID, providerJobID string, result []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	var resultJSON interface{}
+	if len(result) > 0 {
+		resultJSON = string(result)
+	}
+	updated, err := db.conn.Exec(
+		`UPDATE video_jobs SET provider_job_id = $2, status = 'queued', result_json = COALESCE($3::jsonb, result_json), error = '', updated_at = NOW()
+		 WHERE id = $1 AND LOWER(status) IN ('failed', 'error', 'cancelled', 'canceled') AND COALESCE(settled, FALSE) = FALSE`,
+		jobID, providerJobID, resultJSON,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := updated.RowsAffected()
+	if err == nil && rows == 0 {
+		return fmt.Errorf("video job cannot be retried")
+	}
 	return err
 }
 
@@ -834,7 +911,7 @@ func (db *DB) StreamCompletedVideoPrompts(cb func(jobID, prompt, videoURL, servi
 		FROM video_jobs
 		WHERE status = 'completed'
 		  AND COALESCE(prompt, '') <> ''
-		  AND COALESCE(service, '') <> 'sfx_generation'
+		  AND COALESCE(service, '') NOT IN ('sfx_generation', 'music_generation')
 		  AND COALESCE(result_json->>'kind', '') <> 'sfx'
 	`)
 	if err != nil {
@@ -882,10 +959,12 @@ func extractVideoURLFromResultJSON(raw string) string {
 
 // FeaturedVideo is a completed gallery clip for the landing page.
 type FeaturedVideo struct {
-	JobID    string `json:"job_id"`
-	Prompt   string `json:"prompt"`
-	VideoURL string `json:"video_url"`
-	Service  string `json:"service"`
+	JobID         string `json:"job_id"`
+	Prompt        string `json:"prompt"`
+	VideoURL      string `json:"video_url"`
+	Service       string `json:"service"`
+	MusicVideo    bool   `json:"music_video,omitempty"`
+	MusicAudioURL string `json:"music_audio_url,omitempty"`
 }
 
 // ListFeaturedVideos returns recent, full-quality completed clips with a playable URL.
@@ -908,7 +987,7 @@ func (db *DB) ListFeaturedVideos(limit int) ([]FeaturedVideo, error) {
 			AND COALESCE(result_json->>'meta', '') NOT ILIKE '%w4a8%'
 			AND prompt NOT ILIKE '%Ferry cutting through morning harbor fog%'
 		ORDER BY
-			CASE WHEN service = 'h3_video' THEN 0 ELSE 1 END,
+			CASE WHEN service = 'music_video' THEN 0 WHEN service = 'h3_video' THEN 1 ELSE 2 END,
 			created_at DESC
 		LIMIT $1`, limit*3)
 	if err != nil {
@@ -925,7 +1004,16 @@ func (db *DB) ListFeaturedVideos(limit int) ([]FeaturedVideo, error) {
 		if videoURL == "" {
 			continue
 		}
-		out = append(out, FeaturedVideo{JobID: id, Prompt: prompt, VideoURL: videoURL, Service: service})
+		var metadata struct {
+			MusicVideo    bool   `json:"music_video"`
+			MusicAudioURL string `json:"music_audio_url"`
+		}
+		_ = json.Unmarshal([]byte(resultText), &metadata)
+		out = append(out, FeaturedVideo{
+			JobID: id, Prompt: prompt, VideoURL: videoURL, Service: service,
+			MusicVideo:    metadata.MusicVideo || service == musicVideoService,
+			MusicAudioURL: metadata.MusicAudioURL,
+		})
 		if len(out) >= limit {
 			break
 		}
@@ -1653,11 +1741,11 @@ func (db *DB) InsertGeneratedImage(img *GeneratedImage) error {
 	}
 
 	_, err := db.conn.Exec(
-		`INSERT INTO generated_images (id, prompt, width, height, file_path, thumb_path, med_path, file_size, model, seed, steps, created_by_user_id, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		`INSERT INTO generated_images (id, prompt, width, height, file_path, thumb_path, med_path, file_size, model, seed, steps, is_nsfw, created_by_user_id, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		 ON CONFLICT (id) DO NOTHING`,
 		img.ID, img.Prompt, img.Width, img.Height, img.FilePath, img.ThumbPath, img.MedPath,
-		img.FileSize, img.Model, img.Seed, img.Steps, img.CreatedByUserID, img.CreatedAt,
+		img.FileSize, img.Model, img.Seed, img.Steps, img.IsNSFW, img.CreatedByUserID, img.CreatedAt,
 	)
 	if err == nil && promptSearch != nil && img.Prompt != "" {
 		// Best-effort incremental update to the semantic index
@@ -1698,6 +1786,71 @@ func (db *DB) InsertGeneratedAudio(asset *GeneratedAudio) error {
 	return nil
 }
 
+// ListGeneratedAudio returns a user's durable audio assets newest first.
+func (db *DB) ListGeneratedAudio(userID, kind string, limit int) ([]GeneratedAudio, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	rows, err := db.conn.Query(`
+		SELECT id, user_id, kind, prompt, title, audio_url, duration_seconds, public, created_at
+		FROM generated_audio
+		WHERE user_id = $1 AND ($2 = '' OR kind = $2)
+		ORDER BY created_at DESC
+		LIMIT $3`, userID, kind, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	assets := make([]GeneratedAudio, 0)
+	for rows.Next() {
+		var asset GeneratedAudio
+		if err := rows.Scan(&asset.ID, &asset.UserID, &asset.Kind, &asset.Prompt, &asset.Title,
+			&asset.AudioURL, &asset.DurationSeconds, &asset.Public, &asset.CreatedAt); err != nil {
+			return nil, err
+		}
+		assets = append(assets, asset)
+	}
+	return assets, rows.Err()
+}
+
+func (db *DB) GetGeneratedAudio(userID, assetID string) (*GeneratedAudio, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	var asset GeneratedAudio
+	err := db.conn.QueryRow(`
+		SELECT id, user_id, kind, prompt, title, audio_url, duration_seconds, public, created_at
+		FROM generated_audio WHERE id = $1 AND user_id = $2`, assetID, userID).Scan(
+		&asset.ID, &asset.UserID, &asset.Kind, &asset.Prompt, &asset.Title,
+		&asset.AudioURL, &asset.DurationSeconds, &asset.Public, &asset.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &asset, nil
+}
+
+func (db *DB) DeleteGeneratedAudio(userID, assetID string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	result, err := db.conn.Exec(`DELETE FROM generated_audio WHERE id = $1 AND user_id = $2`, assetID, userID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return sql.ErrNoRows
+	}
+	if audioSearch != nil {
+		audioSearch.Remove(assetID)
+	}
+	return nil
+}
+
 // StreamAllAudioPrompts feeds durable generated audio to the semantic index.
 func (db *DB) StreamAllAudioPrompts(cb func(*GeneratedAudio) error) error {
 	rows, err := db.conn.Query(`
@@ -1730,7 +1883,7 @@ func (db *DB) SearchImagesByUser(userID string, page, perPage int, allowNSFW boo
 	offset := (page - 1) * perPage
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 
 	var total int
@@ -1784,7 +1937,7 @@ func (db *DB) ListImages(page, perPage int, allowNSFW bool) ([]GeneratedImage, e
 	offset := (page - 1) * perPage
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 
 	rows, err := db.conn.Query(
@@ -1836,7 +1989,7 @@ func (db *DB) BrowseImagesVaried(seed float64, after *float64, wrapped bool, per
 
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 
 	const cols = `id, prompt, width, height, file_path, thumb_path, med_path, file_size, model, seed, steps, is_nsfw, latent_path, created_at, random_sort`
@@ -1921,7 +2074,7 @@ func (db *DB) BrowseImagesVaried(seed float64, after *float64, wrapped bool, per
 func (db *DB) StreamAllImagePrompts(allowNSFW bool, cb func(id, prompt string) error) error {
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 	rows, err := db.conn.Query(
 		`SELECT id, prompt FROM generated_images WHERE prompt <> ''` + nsfwFilter,
@@ -1963,7 +2116,7 @@ func (db *DB) GetImagesByIDs(ids []string, allowNSFW bool) ([]GeneratedImage, er
 
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 
 	query := `SELECT id, prompt, width, height, file_path, thumb_path, med_path, file_size, model, seed, steps, is_nsfw, latent_path, created_at
@@ -2006,7 +2159,7 @@ func (db *DB) SearchImages(query string, page, perPage int, allowNSFW bool) (*Im
 	// Build NSFW filter clause
 	nsfwFilter := ""
 	if !allowNSFW {
-		nsfwFilter = " AND (is_nsfw = FALSE OR is_nsfw IS NULL)"
+		nsfwFilter = " AND is_nsfw = FALSE"
 	}
 
 	var total int

@@ -18,6 +18,7 @@ module.exports = defineConfig({
   reporter: [['list']],
   use: {
     baseURL,
+    ignoreHTTPSErrors: baseURL.startsWith('https://'),
     trace: 'retain-on-failure',
     headless: !gpuRun,
     launchOptions: {

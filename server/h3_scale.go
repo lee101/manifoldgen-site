@@ -20,10 +20,17 @@ import (
 // bursts, activate it immediately before submission, then force it back to
 // zero after the last queued/running job finishes.
 var (
-	h3ScaleControlClient = &http.Client{Timeout: 30 * time.Second}
-	h3ScaleMu            sync.Mutex
-	h3ScaleReapers       sync.Map
+	h3ScaleControlClient    = &http.Client{Timeout: 30 * time.Second}
+	h3ScaleLocks            sync.Map
+	h3ScaleReapers          sync.Map
+	h3ScalePropagationDelay = 5 * time.Second
 )
+
+type h3ScaleReaperState struct {
+	mu         sync.Mutex
+	generation uint64
+	running    bool
+}
 
 type h3ScaleEndpoint struct {
 	WorkersMax int `json:"workersMax"`
@@ -35,6 +42,14 @@ type h3ScaleHealth struct {
 		InQueue    int `json:"inQueue"`
 	} `json:"jobs"`
 	Workers map[string]int `json:"workers"`
+}
+
+// h3EndpointScaleLock keeps pause/unpause atomic for one endpoint without
+// making an unrelated endpoint wait through its control-plane propagation or
+// 30-second worker drain.
+func h3EndpointScaleLock(endpointID string) *sync.Mutex {
+	value, _ := h3ScaleLocks.LoadOrStore(endpointID, &sync.Mutex{})
+	return value.(*sync.Mutex)
 }
 
 func h3DesiredWorkersMax(route h3WorkerRoute) int {
@@ -115,8 +130,9 @@ func h3SetWorkersMax(endpointID string, workersMax int) error {
 }
 
 func submitScaledH3RunpodJob(route h3WorkerRoute, input map[string]interface{}, queued *h3RunpodQueuedJob) (int, error) {
-	h3ScaleMu.Lock()
-	defer h3ScaleMu.Unlock()
+	lock := h3EndpointScaleLock(route.RunpodEndpointID)
+	lock.Lock()
+	defer lock.Unlock()
 	desiredMax := h3DesiredWorkersMax(route)
 	config, err := h3EndpointConfig(route.RunpodEndpointID)
 	if err != nil {
@@ -143,7 +159,7 @@ func submitScaledH3RunpodJob(route h3WorkerRoute, input map[string]interface{}, 
 			}
 			reasserted = true
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(h3ScalePropagationDelay)
 	}
 	return status, err
 }
@@ -152,43 +168,96 @@ func scheduleH3ScaleToZero(endpointID string) {
 	if strings.TrimSpace(endpointID) == "" {
 		return
 	}
-	if _, loaded := h3ScaleReapers.LoadOrStore(endpointID, struct{}{}); loaded {
+	value, _ := h3ScaleReapers.LoadOrStore(endpointID, &h3ScaleReaperState{})
+	state := value.(*h3ScaleReaperState)
+	state.mu.Lock()
+	state.generation++
+	if state.running {
+		state.mu.Unlock()
 		return
 	}
-	go func() {
-		defer h3ScaleReapers.Delete(endpointID)
-		deadline := time.Now().Add(65 * time.Minute)
-		for time.Now().Before(deadline) {
-			h3ScaleMu.Lock()
-			var health h3ScaleHealth
-			_, err := callH3Runpod(endpointID, "/health", http.MethodGet, nil, &health)
-			if err == nil && health.Jobs.InProgress == 0 && health.Jobs.InQueue == 0 {
-				err = h3SetWorkersMax(endpointID, 0)
-				if err == nil {
-					drainDeadline := time.Now().Add(30 * time.Second)
-					for time.Now().Before(drainDeadline) {
-						var drained h3ScaleHealth
-						if _, healthErr := callH3Runpod(endpointID, "/health", http.MethodGet, nil, &drained); healthErr == nil {
-							live := 0
-							for _, count := range drained.Workers {
-								live += count
-							}
-							if live == 0 {
-								log.Printf("[h3] endpoint=%s scaled to zero", endpointID)
-								h3ScaleMu.Unlock()
-								return
-							}
-						}
-						time.Sleep(3 * time.Second)
-					}
-					log.Printf("[h3] endpoint=%s scale-to-zero still draining after 30s", endpointID)
-				}
-			}
-			h3ScaleMu.Unlock()
-			if err != nil {
-				log.Printf("[h3] endpoint=%s scale-to-zero check failed: %v", endpointID, err)
-			}
-			time.Sleep(5 * time.Second)
+	state.running = true
+	state.mu.Unlock()
+	go reapH3Endpoint(endpointID, state)
+}
+
+func h3ReaperGeneration(state *h3ScaleReaperState) uint64 {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.generation
+}
+
+func finishH3Reaper(state *h3ScaleReaperState, generation uint64) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.generation != generation {
+		return false
+	}
+	state.running = false
+	return true
+}
+
+func reapH3Endpoint(endpointID string, state *h3ScaleReaperState) {
+	generation := h3ReaperGeneration(state)
+	deadline := time.Now().Add(65 * time.Minute)
+	for {
+		currentGeneration := h3ReaperGeneration(state)
+		if currentGeneration != generation {
+			generation = currentGeneration
+			deadline = time.Now().Add(65 * time.Minute)
 		}
-	}()
+		if time.Now().After(deadline) {
+			if finishH3Reaper(state, generation) {
+				return
+			}
+			continue
+		}
+
+		// Serialize only the idle recheck and the update. Worker drain polling is
+		// deliberately outside this lock, so a new request can immediately
+		// reactivate this endpoint and other endpoints never wait behind it.
+		lock := h3EndpointScaleLock(endpointID)
+		lock.Lock()
+		var health h3ScaleHealth
+		_, err := callH3Runpod(endpointID, "/health", http.MethodGet, nil, &health)
+		requestedZero := false
+		if err == nil && health.Jobs.InProgress == 0 && health.Jobs.InQueue == 0 {
+			err = h3SetWorkersMax(endpointID, 0)
+			requestedZero = err == nil
+		}
+		lock.Unlock()
+		if err != nil {
+			log.Printf("[h3] endpoint=%s scale-to-zero check failed: %v", endpointID, err)
+		}
+
+		if requestedZero {
+			drainDeadline := time.Now().Add(30 * time.Second)
+			for time.Now().Before(drainDeadline) {
+				if h3ReaperGeneration(state) != generation {
+					break
+				}
+				var drained h3ScaleHealth
+				if _, healthErr := callH3Runpod(endpointID, "/health", http.MethodGet, nil, &drained); healthErr == nil {
+					// A request can arrive after the zero update. Queue state is
+					// authoritative even before a replacement worker appears.
+					if drained.Jobs.InProgress > 0 || drained.Jobs.InQueue > 0 {
+						break
+					}
+					live := 0
+					for _, count := range drained.Workers {
+						live += count
+					}
+					if live == 0 && finishH3Reaper(state, generation) {
+						log.Printf("[h3] endpoint=%s scaled to zero", endpointID)
+						return
+					}
+				}
+				time.Sleep(3 * time.Second)
+			}
+			if h3ReaperGeneration(state) == generation {
+				log.Printf("[h3] endpoint=%s scale-to-zero still draining after 30s", endpointID)
+			}
+		}
+		time.Sleep(5 * time.Second)
+	}
 }

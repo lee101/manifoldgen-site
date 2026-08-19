@@ -103,7 +103,7 @@ func (ps *PromptSearchEngine) loadAndIndex() {
 
 	var imageIDs, prompts []string
 	if dbConn != nil {
-		err = dbConn.StreamAllImagePrompts(true, func(id, prompt string) error {
+		err = dbConn.StreamAllImagePrompts(false, func(id, prompt string) error {
 			imageIDs = append(imageIDs, id)
 			prompts = append(prompts, prompt)
 			return nil
@@ -412,6 +412,23 @@ func (as *AudioSearchEngine) IndexIncremental(asset *GeneratedAudio) {
 	as.assets = append(as.assets, *asset)
 }
 
+// Remove makes a deleted asset immediately invisible. The vector slot stays in
+// place until the next index rebuild so existing hit IDs remain stable.
+func (as *AudioSearchEngine) Remove(assetID string) {
+	if as == nil || assetID == "" {
+		return
+	}
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for index := range as.assets {
+		if as.assets[index].ID == assetID {
+			as.assets[index].AudioURL = ""
+			as.assets[index].Prompt = ""
+			return
+		}
+	}
+}
+
 func (as *AudioSearchEngine) IsReady() bool {
 	as.mu.RLock()
 	defer as.mu.RUnlock()
@@ -456,6 +473,9 @@ func (as *AudioSearchEngine) Search(query, kind, userID string, topK int) ([]Aud
 			continue
 		}
 		asset := as.assets[hit.ID]
+		if asset.AudioURL == "" {
+			continue
+		}
 		if kind != "" && asset.Kind != kind {
 			continue
 		}

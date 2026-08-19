@@ -19,7 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_env() -> None:
-    for raw in (ROOT / ".env").read_text().splitlines():
+    env_file = ROOT / ".env"
+    if not env_file.exists():
+        return
+    for raw in env_file.read_text().splitlines():
         if "=" in raw and not raw.lstrip().startswith("#"):
             key, value = raw.split("=", 1)
             os.environ.setdefault(key.strip(), value.strip().strip("\"'") )
@@ -33,6 +36,11 @@ def main() -> None:
     parser.add_argument("--endpoint", default=os.getenv("GALLERY_IMAGE_WORKER_URL", "http://127.0.0.1:8100"))
     parser.add_argument("--database-url", default=os.getenv("DATABASE_URL"))
     parser.add_argument("--images-dir", type=Path, default=Path(os.getenv("IMAGES_DIR", "/sdb-disk/manifoldgen-images")))
+    parser.add_argument(
+        "--secret-env",
+        default="OMNISERVE_NATIVE_SECRET",
+        help="environment variable containing the worker secret; it is sent as a query parameter",
+    )
     args = parser.parse_args()
     if not args.database_url:
         raise SystemExit("DATABASE_URL is required")
@@ -41,18 +49,21 @@ def main() -> None:
         cur.execute("SELECT id, file_path FROM generated_images WHERE is_nsfw IS NULL ORDER BY created_at ASC LIMIT %s", (args.limit,))
         rows = cur.fetchall()
     safe = nsfw = failed = 0
+    secret = os.getenv(args.secret_env, os.getenv("OMNISERVE_SECRET", os.getenv("IMAGE_API_SECRET", "")))
     for number, (image_id, relpath) in enumerate(rows, 1):
         path = args.images_dir / relpath
         if not path.exists():
             failed += 1
             continue
         try:
-            headers = {}
-            secret = os.getenv("OMNISERVE_NATIVE_SECRET", os.getenv("OMNISERVE_SECRET", ""))
-            if secret:
-                headers["Authorization"] = "Bearer " + secret
+            params = {"secret": secret} if secret else {}
             with path.open("rb") as image:
-                response = requests.post(args.endpoint.rstrip("/") + "/nsfw_detect_file", headers=headers, files={"image_file": (path.name, image, "image/webp")}, timeout=90)
+                response = requests.post(
+                    args.endpoint.rstrip("/") + "/nsfw_detect_file",
+                    params=params,
+                    files={"image_file": (path.name, image, "image/webp")},
+                    timeout=90,
+                )
             response.raise_for_status()
             payload = response.json()
             score = float(payload.get("nsfw_score", payload.get("score", 0)))

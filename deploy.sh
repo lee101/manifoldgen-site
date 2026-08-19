@@ -398,6 +398,14 @@ if [ -d "$OUT_DIR/brand" ]; then
     "public, max-age=3600" brand
 fi
 
+# Keep the compact provider mark as an explicit, stable deployment artifact.
+# OpenPaths and other first-party surfaces link this URL directly.
+if [ ! -f "$OUT_DIR/brand/logo-64.webp" ]; then
+  echo "ERROR: expected frontend brand asset $OUT_DIR/brand/logo-64.webp"
+  exit 1
+fi
+echo "  ✓ Stable provider logo: $STATIC_PUBLIC_URL/$STATIC_PATH/brand/logo-64.webp"
+
 # The API records gallery files as originals/<file>. Publish that tree below
 # gallery/ so local development and production load the same remote URLs.
 if [ -d "$GALLERY_IMAGES_DIR/originals" ]; then

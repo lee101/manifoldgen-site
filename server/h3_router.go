@@ -101,6 +101,20 @@ func h3RouteForPrompt(prompt string) h3WorkerRoute {
 	return h3WorkerRoute{Variant: h3NormalVariant, CogURL: normalURL, RunpodEndpointID: normalEndpoint}
 }
 
+// h3RouteForContent lets the image classifier choose the compatible weight
+// lane without turning model routing into policy enforcement.
+func h3RouteForContent(prompt string, inputNSFW bool) h3WorkerRoute {
+	if !inputNSFW {
+		return h3RouteForPrompt(prompt)
+	}
+	pinkURL := strings.TrimRight(strings.TrimSpace(os.Getenv("H3_PINKCHERRY_COG_URL")), "/")
+	pinkEndpoint := strings.TrimSpace(os.Getenv("H3_PINKCHERRY_RUNPOD_ENDPOINT"))
+	if pinkURL != "" || pinkEndpoint != "" {
+		return h3WorkerRoute{Variant: h3PinkCherryVariant, CogURL: pinkURL, RunpodEndpointID: pinkEndpoint}
+	}
+	return h3RouteForPrompt(prompt)
+}
+
 func logH3Route(prompt string, route h3WorkerRoute) {
 	// Do not log raw prompt text: this is operational routing telemetry only.
 	log.Printf("[h3] selected worker variant=%s configured=%t serverless=%t prompt_bytes=%d", route.Variant, route.CogURL != "" || route.RunpodEndpointID != "", route.RunpodEndpointID != "", len(prompt))

@@ -29,7 +29,7 @@ const (
 	studioUpscaleBaseUSD     = 0.10
 	studioUpscaleOutputMPUSD = 0.012
 	studioAudioSearchLimit   = 24
-	studioMusicCredits       = 190.0
+	studioMusicCredits       = 80.0
 	studioAudioLibraryHost   = "netwrckstatic.netwrck.com"
 )
 
@@ -482,7 +482,7 @@ func studioMediaURL(body []byte) string {
 			// Fal's music endpoint returns {"audio_file":{"url":"…"}}.
 			// Keep this list explicit so an arbitrary string in a provider response
 			// can never be mistaken for a media URL.
-			for _, key := range []string{"image_url", "audio_file", "video", "url", "data_url", "image", "result", "output"} {
+			for _, key := range []string{"image_url", "audio_file", "audio", "video", "url", "data_url", "image", "result", "output"} {
 				if found := visit(typed[key]); found != "" {
 					return found
 				}
@@ -499,15 +499,34 @@ func studioMediaURL(body []byte) string {
 	return visit(payload)
 }
 
-const studioMusicEndpoint = "https://fal.run/CassetteAI/music-generator"
+const studioMusicEndpoint = "https://fal.run/fal-ai/minimax-music/v2.6"
 const studioMusicMinDuration = 30
+
+func studioMusicEndpointURL() string {
+	return strings.TrimSpace(getEnv("STUDIO_MUSIC_FAL_ENDPOINT", studioMusicEndpoint))
+}
 
 func studioFalMusic(prompt string, duration int) (string, error) {
 	if falAPIKey == "" {
 		return "", fmt.Errorf("music generation is not configured")
 	}
-	body, _ := json.Marshal(map[string]interface{}{"prompt": prompt, "duration": duration})
-	req, err := http.NewRequest(http.MethodPost, studioMusicEndpoint, bytes.NewReader(body))
+	suffix := fmt.Sprintf(". Target duration approximately %d seconds.", duration)
+	promptRunes := []rune(strings.TrimSuffix(prompt, "."))
+	maxPromptRunes := 2000 - len([]rune(suffix))
+	if len(promptRunes) > maxPromptRunes {
+		promptRunes = promptRunes[:maxPromptRunes]
+	}
+	providerPrompt := string(promptRunes) + suffix
+	body, _ := json.Marshal(map[string]interface{}{
+		"prompt":          providerPrompt,
+		"is_instrumental": true,
+		"audio_setting": map[string]interface{}{
+			"sample_rate": 44100,
+			"bitrate":     256000,
+			"format":      "mp3",
+		},
+	})
+	req, err := http.NewRequest(http.MethodPost, studioMusicEndpointURL(), bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -529,6 +548,62 @@ func studioFalMusic(prompt string, duration int) (string, error) {
 		return url, nil
 	}
 	return "", fmt.Errorf("music generator returned no audio")
+}
+
+func studioAppNZMusic(prompt string, duration int) (string, error) {
+	template := strings.TrimSpace(os.Getenv("STUDIO_MUSIC_APPNZ_TEMPLATE"))
+	if template == "" {
+		template = "music-diffusion-native"
+	}
+	envelope, _, err := callAppNZH3(http.MethodPost, "/api/cogs/run", map[string]interface{}{
+		"template": template,
+		"name":     "studio-music-shared",
+		"input": map[string]interface{}{
+			"prompt": prompt, "lyrics": "[Instrumental]", "duration": duration,
+			"seed": 17, "steps": 8, "format": "mp3",
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if envelope.Prediction.ID == "" {
+		return "", fmt.Errorf("native music service returned no job")
+	}
+	deadline := time.Now().Add(20 * time.Minute)
+	for time.Now().Before(deadline) {
+		envelope, _, err = callAppNZH3(http.MethodGet, "/api/cogs/predictions/"+url.PathEscape(envelope.Prediction.ID), nil)
+		if err != nil {
+			return "", err
+		}
+		switch strings.ToLower(strings.TrimSpace(envelope.Prediction.Status)) {
+		case "succeeded", "completed":
+			body, _ := json.Marshal(envelope.Prediction.Output)
+			if result := studioMediaURL(body); result != "" {
+				return result, nil
+			}
+			return "", fmt.Errorf("native music service returned no audio")
+		case "failed", "cancelled", "canceled":
+			message := strings.TrimSpace(envelope.Prediction.Error)
+			if message == "" {
+				message = "generation failed"
+			}
+			return "", fmt.Errorf("native music service: %s", message)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return "", fmt.Errorf("native music generation timed out")
+}
+
+func studioGenerateMusic(prompt string, duration int) (string, error) {
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv("STUDIO_MUSIC_PROVIDER")))
+	if provider == "appnz" || provider == "native" {
+		result, err := studioAppNZMusic(prompt, duration)
+		if err == nil {
+			return result, nil
+		}
+		log.Printf("native studio music unavailable; using managed fallback: %v", err)
+	}
+	return studioFalMusic(prompt, duration)
 }
 
 func studioGeneratedAudioFormat(contentType, rawURL string) (string, string, error) {
@@ -653,8 +728,9 @@ func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 
 func normalizeMusicGenerationInput(prompt string, duration int) (string, int, error) {
 	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return "", 0, fmt.Errorf("a music prompt is required")
+	promptLength := len([]rune(prompt))
+	if promptLength < 10 || promptLength > 2000 {
+		return "", 0, fmt.Errorf("a music prompt must contain 10–2000 characters")
 	}
 	if duration == 0 {
 		duration = studioMusicMinDuration
@@ -686,11 +762,11 @@ func handleMusicGenerationAs(ctx *fasthttp.RequestCtx, user *User, prompt string
 	} else {
 		balance, err = dbConn.DeductUserCredits(user.ID, studioMusicCredits)
 		if err != nil {
-			jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: music generation costs 190 credits")
+			jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: music generation costs 80 credits")
 			return
 		}
 	}
-	audioURL, err := studioFalMusic(prompt, duration)
+	audioURL, err := studioGenerateMusic(prompt, duration)
 	if err != nil {
 		log.Printf("studio music generation failed: %v", err)
 		if creditsUsed > 0 {
@@ -914,6 +990,9 @@ func studioExtensionCredits(job *VideoJob) float64 {
 }
 
 func studioRefundExtension(job *VideoJob, reason string) {
+	if videoJobWasCancelled(job.ID) {
+		return
+	}
 	credits := studioExtensionCredits(job)
 	if credits > 0 {
 		balance, err := dbConn.AddUserCredits(job.UserID, credits)
@@ -1083,6 +1162,9 @@ func studioUpscaleCredits(job *VideoJob) float64 {
 }
 
 func studioRefundUpscale(job *VideoJob, reason string) {
+	if videoJobWasCancelled(job.ID) {
+		return
+	}
 	credits := studioUpscaleCredits(job)
 	if credits > 0 {
 		balance, err := dbConn.AddUserCredits(job.UserID, credits)
@@ -1099,6 +1181,9 @@ func studioRefundUpscale(job *VideoJob, reason string) {
 func processStudioUpscaleJob(job *VideoJob) {
 	studioUpscaleWorkerMu.Lock()
 	defer studioUpscaleWorkerMu.Unlock()
+	if videoJobCancellationRequested(job.ID) {
+		return
+	}
 	endpoint := studioUpscaleEndpoint()
 	if endpoint == "" {
 		studioRefundUpscale(job, "video upscaler is not configured")
@@ -1127,10 +1212,10 @@ func processStudioUpscaleJob(job *VideoJob) {
 		return
 	}
 	defer cleanupOutput()
-	payload, _ := json.Marshal(map[string]interface{}{"input": map[string]interface{}{
+	payload, _ := json.Marshal(map[string]interface{}{"id": job.ID, "input": map[string]interface{}{
 		"video": input.VideoURL, "scale": input.Scale, "model": "general", "face_enhance": false, "preserve_audio": true,
 	}})
-	req, err := http.NewRequest(http.MethodPost, endpoint+"/predictions", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(activeVideoJobContext(job.ID), http.MethodPost, endpoint+"/predictions", bytes.NewReader(payload))
 	if err != nil {
 		studioRefundUpscale(job, "could not prepare upscale")
 		return
@@ -1142,6 +1227,9 @@ func processStudioUpscaleJob(job *VideoJob) {
 	client := &http.Client{Timeout: 45 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
+		if videoJobCancellationRequested(job.ID) {
+			return
+		}
 		studioRefundUpscale(job, "video upscale service unavailable")
 		return
 	}
@@ -1165,12 +1253,18 @@ func processStudioUpscaleJob(job *VideoJob) {
 		return
 	}
 	if status := strings.ToLower(strings.TrimSpace(prediction.Status)); status == "failed" || status == "canceled" || status == "cancelled" {
+		if videoJobCancellationRequested(job.ID) {
+			return
+		}
 		studioRefundUpscale(job, "video upscale failed: "+strings.TrimSpace(prediction.Error))
 		return
 	}
 	outputURL := studioUpscaleOutputURL(prediction.Output, endpoint)
 	if outputURL == "" {
 		studioRefundUpscale(job, "video upscaler returned no video")
+		return
+	}
+	if videoJobCancellationRequested(job.ID) {
 		return
 	}
 	predictTime := prediction.PredictTime

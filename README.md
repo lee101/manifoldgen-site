@@ -22,6 +22,15 @@ The rotate endpoint returns the replacement once and immediately invalidates the
 
 Dark-mode AI video studio at [manifoldgen.com](https://manifoldgen.com).
 
+## MCP and Codex skill
+
+The hosted Streamable HTTP MCP endpoint is `https://manifoldgen.com/api/mcp`.
+It exposes pricing, semantic media search, credit-backed generation, and durable
+job retrieval using the same `MANIFOLDGEN_API_KEY` as the REST API. This
+repository includes a project MCP configuration, and Codex Infinity bundles a
+`manifoldgen-platform` system skill with repository and spend-safety guidance.
+See [the MCP and skill guide](docs/manifoldgen-mcp-and-skill.md).
+
 ## Local checks
 
 Install the tracked Git hooks once with `make hooks`. Commits run fast Go
@@ -125,12 +134,19 @@ floor. Publish before indexing so every searchable image is immediately CDN
 loadable; run moderation continuously in a second process.
 
 ```bash
+# Optional licensed prompt augmentation. This downloads prompt text only and
+# drops explicit, child-related, branded, watermark, and URL-heavy rows before
+# they reach an image worker.
+python3 scripts/import_prompt_sources.py \
+  --out scripts/prompts/manifold-gallery-augmented.jsonl
+
 python3 scripts/build_gallery_catalog.py --kind image --count 100000 --seed 20260810 \
   --out scripts/prompts/manifold-gallery-100k.jsonl
 nice -n 19 python3 scripts/generate_gallery_art.py \
   --prompts scripts/prompts/manifold-gallery-100k.jsonl --limit 500 \
+  --images-dir /sdb-disk/manifoldgen-images \
   --low-priority --upload-r2 --min-free-gib 80 \
-  --moderate-after --reindex-after
+  --moderate-before-index --reindex-after
 
 # Motion-specific catalog for bounded, resumable API video batches
 python3 scripts/build_gallery_catalog.py --kind video --count 10000 --seed 20260810 \
@@ -141,11 +157,14 @@ python3 scripts/backfill_seed.py --images 0 --videos 8 \
 
 The scripts are deliberately bounded by `--limit`; schedule repeated batches
 after confirming the first set looks good. Unclassified files are held out of
-semantic search once moderation starts, and NSFW/child content is excluded from
-the public gallery. Catalog rows are deterministically shuffled across subject,
-style, light, palette, motion, camera, and sound axes, so small batches remain
-visually varied. Video queueing skips prompts that are already queued, running,
-or completed.
+semantic search and the public gallery, and NSFW/child content is excluded from
+the public gallery. Multiple local workers can safely share the same database:
+each prompt is protected by a PostgreSQL advisory claim, so DAISY, Leetop, and
+the production GPU can consume different slices without duplicate renders.
+Catalog rows are deterministically shuffled across subject, style, light,
+palette, motion, camera, and sound axes, so small batches remain visually
+varied. Video queueing skips prompts that are already queued, running, or
+completed.
 
 Gallery CDN: `https://manifoldgenstatic.manifoldgen.com/gallery/videos/…`
 
@@ -176,6 +195,49 @@ with a 20% multiplier. Configure the private endpoint from
 `config/runpod-video-restyle.json`: zero minimum workers, 30-second idle scale-down,
 FlashBoot, and shared cached weights keep idle spend at zero without mixing the Wan
 weights into the warm 32 GB H3 process.
+
+## Character animation
+
+`/tools/character-animator` sends a character image and a one-person driving
+video to Wan-Animate-2 through the shared OmniServe endpoint. The default is the
+official 10-step distilled checkpoint; OmniServe chooses NF4/offload or the
+larger compiled BF16 lane from current global GPU headroom.
+
+Set `WAN_ANIMATE_RUNPOD_ENDPOINT_ID` to the OmniServe endpoint (falling back to
+`OMNISERVE_RUNPOD_ENDPOINT_ID` and then the video-background endpoint).
+`WAN_ANIMATE_GPU_HOURLY_USD` controls measured-time settlement and
+`WAN_ANIMATE_ESTIMATE_USD` controls the public five-second estimate. Results
+upload directly to a per-job presigned R2 target.
+
+## Video background removal
+
+`video_background_removal` accepts a public source URL up to 30 seconds and
+returns a durable transparent VP9 WebM job. When
+`VIDEO_BACKGROUND_NATIVE_BASE_URL` is configured, the API submits to the local
+OmniServe video queue first, spills a full local queue to RunPod without opening
+the health circuit, and finally uses FAL BRIA as the general-matting standby.
+Without a native worker it starts at `VIDEO_BACKGROUND_RUNPOD_ENDPOINT_ID`.
+Two genuine submission/status failures open a 90-second circuit.
+
+The GPU worker and endpoint definition live in the sibling `omniserve-native`
+repository. Manifold submits its explicit `video-matting` workload and retains
+only durable product-job identity, billing, presigned uploads, circuit breaking,
+and FAL standby. OmniServe keeps source RGB pixels and infers only the recurrent
+alpha field; it also provides content-addressed cache locking and a generic
+native queue shared with other workload kinds. The compatibility command
+`scripts/deploy-video-background-runpod.sh` delegates to OmniServe; set
+`OMNISERVE_NATIVE_ROOT` when the repositories are not adjacent. Netwrck can
+retain its existing $0.10/second customer price by setting
+`VIDEO_BACKGROUND_REMOVAL_RATE_USD_PER_SECOND=0.10` on the ManifoldGen service
+account used by that route.
+
+The serverless endpoint uses request-count scaling with one worker per queued or
+active job, a three-worker ceiling, and zero minimum workers. This avoids
+queue-delay overscaling during a long cold start while preserving bounded
+parallel throughput.
+
+RVM is GPL-3.0 research software; replace it with an appropriately licensed
+matting engine or complete the licensing review before commercial deployment.
 
 ## Deploy
 

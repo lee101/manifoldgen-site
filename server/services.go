@@ -23,23 +23,29 @@ import (
 
 // Service pricing in USD (converted to $CUTE at current rate)
 var servicePricesUSD = map[string]float64{
-	"zimage":           0.04,  // per generation
-	"image_edit":       0.24,  // GPT Image 2 image-to-image edit; falls back to Kontext/Google routing
-	"chronos2":         0.002, // per forecast (Chronos-2, our own ~120M model, ms-scale call)
-	"tts":              0.005, // per 100 chars
-	"stt":              0.02,  // per minute
-	"gemma4":           0.01,  // per request
-	"caption":          0.01,  // per image
-	"lora_training":    5.00,
-	"ltx_video":        0.30,  // per ~6s 1080p video via fal.ai
-	"video_generate":   0.15,  // OpenPaths auto-video base price; model overrides below
-	"h3_video":         2.688, // per GPU-hour reference rate; exact execution is settled asynchronously
-	"video_restyle":    0.48,  // estimated five-second 720p ceiling; async settlement uses the selected backend
-	"audio_generation": 1.80,  // MiniMax-Music3 H100 minimum; final price follows duration
-	"music_generation": 1.80,  // $1.50 base + $0.80/output minute, $1.80 minimum
-	"sfx_generation":   2.688, // per GPU-hour reference; exact SFX execution is settled asynchronously
-	"flux_image":       0.04,  // per image via fal.ai or netwrck
-	"nsfw_detect":      0.001, // per image classification
+	"zimage":                   0.04,  // per generation
+	"anima":                    0.04,  // per Anima illustration; commercial-license gated
+	"gpt_image":                0.24,  // GPT Image 2 via OpenPaths; always metered, including subscriptions
+	"image_edit":               0.24,  // GPT Image 2 image-to-image edit; falls back to Kontext/Google routing
+	"chronos2":                 0.002, // per forecast (Chronos-2, our own ~120M model, ms-scale call)
+	"tts":                      0.005, // per 100 chars
+	"stt":                      0.02,  // per minute
+	"gemma4":                   0.01,  // per request
+	"caption":                  0.01,  // per image
+	"lora_training":            5.00,
+	"ltx_video":                0.30,   // per ~6s 1080p video via fal.ai
+	"video_generate":           0.15,   // OpenPaths auto-video base price; model overrides below
+	"h3_video":                 4.55,   // current H100 PRO flex GPU-hour ceiling; exact execution is settled asynchronously
+	"h3_image":                 0.30,   // conservative 12-step estimate; async settlement uses measured execution
+	"h3_image_edit":            0.35,   // conservative 12-step REF2VA estimate; measured execution is final
+	"video_restyle":            0.48,   // estimated five-second 720p ceiling; async settlement uses the selected backend
+	"character_animation":      0.75,   // five-second Wan-Animate-2 standard lane; fast/xfast are exact 2x/4x multipliers
+	"video_background_removal": 0.0252, // five-second estimate at the public per-second rate
+	"audio_generation":         0.35,   // MiniMax-Music3 minimum; final price follows duration
+	"music_generation":         0.35,   // $0.25 base + $0.15/output minute, $0.35 minimum
+	"sfx_generation":           2.688,  // per GPU-hour reference; exact SFX execution is settled asynchronously
+	"flux_image":               0.04,   // per image via fal.ai or netwrck
+	"nsfw_detect":              0.001,  // per image classification
 }
 
 var zimageDefaultSteps = 8
@@ -48,7 +54,7 @@ var zimageHighStepPriceUSD = 0.10
 // First-party services run on our hardware — priced at ATH rate to reward early holders.
 // If you bought $MANIFOLD at $0.001 and ATH is $0.01, you pay 10x fewer tokens.
 var firstPartyServices = map[string]bool{
-	"zimage": true, "chronos2": true, "tts": true,
+	"zimage": true, "anima": true, "chronos2": true, "tts": true,
 	"stt": true, "gemma4": true, "caption": true, "lora_training": true,
 	"nsfw_detect": true,
 }
@@ -60,10 +66,23 @@ var openPathsAPIKey string
 var openPathsBaseURL string
 
 var videoModelPricesUSD = map[string]float64{
-	"auto-video":             0.15,
-	"ltx-video":              0.08,
-	"ltx-2":                  0.12,
-	"ltx-2.3-image-to-video": 1.85,
+	"auto-video": 0.15,
+	"ltx-video":  0.05,
+	"ltx-2":      0.072,
+	"ra2v":       1.00,
+}
+
+const downstreamVideoPriceMultiplier = 1.20
+
+var videoModelPricesPerSecondUSD = map[string]float64{
+	"seedance-2.0-fast-text-to-video":      0.26609,
+	"seedance-2.0-text-to-video":           0.33374,
+	"seedance-2.0-image-to-video":          0.33264,
+	"seedance-2.0-fast-reference-to-video": 0.26609,
+	"seedance-2.0-reference-to-video":      0.33264,
+	"alibaba/happy-horse/image-to-video":   0.28,
+	"ltx-2.3-image-to-video":               0.28,
+	"wan":                                  0.15,
 }
 
 // Reusable HTTP client with connection pooling
@@ -87,6 +106,7 @@ func initServices() {
 	nativeGatewayURL := getEnv("OMNISERVE_NATIVE_URL", "http://127.0.0.1:8791")
 
 	serviceBackends["zimage"] = getEnv("ZIMAGE_BACKEND_URL", nativeGatewayURL)
+	serviceBackends["gpt_image"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
 	serviceBackends["image_edit"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
 	serviceBackends["chronos2"] = getEnv("CHRONOS_BACKEND_URL", nativeGatewayURL)
 	serviceBackends["tts"] = getEnv("TTS_BACKEND_URL", textGeneratorURL)
@@ -114,20 +134,27 @@ func initServices() {
 
 	// Load custom prices from env
 	envPriceMap := map[string]string{
-		"zimage":           "ZIMAGE_PRICE_USD",
-		"chronos2":         "CHRONOS_PRICE_USD",
-		"tts":              "TTS_PRICE_USD_PER_100CHARS",
-		"stt":              "STT_PRICE_USD_PER_MINUTE",
-		"gemma4":           "GEMMA4_PRICE_USD",
-		"caption":          "CAPTION_PRICE_USD",
-		"lora_training":    "LORA_TRAINING_PRICE_USD",
-		"ltx_video":        "LTX_VIDEO_PRICE_USD",
-		"video_generate":   "VIDEO_GENERATE_PRICE_USD",
-		"h3_video":         "H3_VIDEO_PRICE_USD_PER_GPU_HOUR",
-		"video_restyle":    "VIDEO_RESTYLE_ESTIMATE_USD",
-		"music_generation": "MUSIC_GENERATION_PRICE_USD",
-		"flux_image":       "FLUX_IMAGE_PRICE_USD",
-		"nsfw_detect":      "NSFW_DETECT_PRICE_USD",
+		"zimage":                   "ZIMAGE_PRICE_USD",
+		"anima":                    "ANIMA_PRICE_USD",
+		"gpt_image":                "GPT_IMAGE_PRICE_USD",
+		"image_edit":               "GPT_IMAGE_EDIT_PRICE_USD",
+		"chronos2":                 "CHRONOS_PRICE_USD",
+		"tts":                      "TTS_PRICE_USD_PER_100CHARS",
+		"stt":                      "STT_PRICE_USD_PER_MINUTE",
+		"gemma4":                   "GEMMA4_PRICE_USD",
+		"caption":                  "CAPTION_PRICE_USD",
+		"lora_training":            "LORA_TRAINING_PRICE_USD",
+		"ltx_video":                "LTX_VIDEO_PRICE_USD",
+		"video_generate":           "VIDEO_GENERATE_PRICE_USD",
+		"h3_video":                 "H3_VIDEO_PRICE_USD_PER_GPU_HOUR",
+		"h3_image":                 "H3_IMAGE_ESTIMATE_USD",
+		"h3_image_edit":            "H3_IMAGE_EDIT_ESTIMATE_USD",
+		"video_restyle":            "VIDEO_RESTYLE_ESTIMATE_USD",
+		"character_animation":      "WAN_ANIMATE_ESTIMATE_USD",
+		"video_background_removal": "VIDEO_BACKGROUND_REMOVAL_ESTIMATE_USD",
+		"music_generation":         "MUSIC_GENERATION_PRICE_USD",
+		"flux_image":               "FLUX_IMAGE_PRICE_USD",
+		"nsfw_detect":              "NSFW_DETECT_PRICE_USD",
 	}
 	for svc, envKey := range envPriceMap {
 		if p := os.Getenv(envKey); p != "" {
@@ -183,11 +210,18 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 		usdPrice = zimageHighStepPriceUSD
 	}
 	if req.Service == "video_generate" {
-		if price, exists := videoModelPricesUSD[normalizeVideoModel(req.Model)]; exists {
-			usdPrice = price
+		model := normalizeVideoModel(req.Model)
+		if price, exists := videoModelPricesUSD[model]; exists {
+			usdPrice = price * downstreamVideoPriceMultiplier
+		} else if price, exists := videoModelPricesPerSecondUSD[model]; exists {
+			duration := req.Duration
+			if duration <= 0 {
+				duration = 5
+			}
+			usdPrice = price * float64(duration) * downstreamVideoPriceMultiplier
 		}
 	}
-	if req.Service == "zimage" || req.Service == "flux_image" {
+	if req.Service == "zimage" || req.Service == "gpt_image" || req.Service == "flux_image" {
 		usdPrice *= float64(getImageCount(req))
 	}
 	return usdPrice
@@ -273,7 +307,11 @@ type publicServiceAlias struct {
 
 var publicServiceAliases = []publicServiceAlias{
 	{Public: "image", Internal: "zimage"},
+	{Public: "anima", Internal: "anima"},
+	{Public: "gpt-image-2", Internal: "gpt_image"},
 	{Public: "video", Internal: "h3_video"},
+	{Public: "h3-image", Internal: "h3_image"},
+	{Public: "h3-image-edit", Internal: "h3_image_edit"},
 	{Public: "audio", Internal: "audio_generation"},
 	{Public: "music", Internal: "music_generation"},
 	{Public: "sfx", Internal: "sfx_generation"},
@@ -284,6 +322,8 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "text", Internal: "gemma4"},
 	{Public: "training", Internal: "lora_training"},
 	{Public: "video_restyle", Internal: "video_restyle"},
+	{Public: "character_animation", Internal: "character_animation"},
+	{Public: "video_background_removal", Internal: "video_background_removal"},
 	{Public: "safety", Internal: "nsfw_detect"},
 }
 
@@ -317,21 +357,28 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 	})
 
 	units := map[string]string{
-		"zimage":           fmt.Sprintf("per generation (base); $%.2f for 20+ steps", zimageHighStepPriceUSD),
-		"chronos2":         "per forecast",
-		"tts":              "per 100 characters",
-		"stt":              "per minute",
-		"gemma4":           "per request",
-		"caption":          "per image",
-		"lora_training":    "per training job",
-		"ltx_video":        "per ~6s video",
-		"video_generate":   "per generated video (model dependent)",
-		"h3_video":         "per video; final price follows measured generation time",
-		"video_restyle":    "estimated default clip; final price follows length and quality",
-		"audio_generation": "per music track by default; set kind to music or sfx",
-		"music_generation": "per generated music track (30–180 seconds)",
-		"sfx_generation":   "estimated 5-second sound effect; final price follows measured generation time",
-		"flux_image":       "per image",
+		"zimage":                   fmt.Sprintf("per generation (base); $%.2f for 20+ steps", zimageHighStepPriceUSD),
+		"anima":                    "per illustration; available only with a commercial Anima license",
+		"gpt_image":                "per image; always metered and excluded from unlimited image plans",
+		"image_edit":               "per GPT Image 2 edit; always metered",
+		"chronos2":                 "per forecast",
+		"tts":                      "per 100 characters",
+		"stt":                      "per minute",
+		"gemma4":                   "per request",
+		"caption":                  "per image",
+		"lora_training":            "per training job",
+		"ltx_video":                "per ~6s video",
+		"video_generate":           "per generated video (model dependent)",
+		"h3_video":                 "per video; final price follows measured generation time",
+		"h3_image":                 "per still; final price follows measured generation time",
+		"h3_image_edit":            "per REF2VA edit; final price follows measured generation time",
+		"video_restyle":            "estimated default clip; final price follows length and quality",
+		"character_animation":      "five-second standard clip; fixed before dispatch (fast 2x, xfast 4x)",
+		"video_background_removal": "per second of source video (30 seconds maximum)",
+		"audio_generation":         "per music track by default; set kind to music or sfx",
+		"music_generation":         "per generated music track (30–180 seconds)",
+		"sfx_generation":           "estimated 5-second sound effect; final price follows measured generation time",
+		"flux_image":               "per image",
 	}
 
 	pricing := make([]ServicePricing, 0, len(publicServiceAliases))
@@ -345,8 +392,20 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 			usdPrice = h3EstimateUSD
 			cuteCost = h3EstimateCredits
 		}
+		if alias.Internal == "h3_image" || alias.Internal == "h3_image_edit" {
+			service := alias.Internal
+			usdPrice, cuteCost = h3ImageEstimate(ServiceUsageRequest{
+				Service: service, Width: 992, Height: 992, NumSteps: 12,
+			})
+		}
 		if alias.Internal == "sfx_generation" {
 			usdPrice, cuteCost, _ = h3Estimate(ServiceUsageRequest{Service: "sfx_generation", Size: "audio", Duration: 5, NumSteps: 20})
+		}
+		if alias.Internal == "video_background_removal" {
+			usdPrice = videoBackgroundPublicRateUSD()
+			if cutePrice > 0 {
+				cuteCost = usdPrice / cutePrice
+			}
 		}
 		pricing = append(pricing, ServicePricing{
 			Service:   alias.Public,
@@ -368,6 +427,9 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"image_credits":             servicePricesUSD["zimage"] / cutePrice,
 		"image_high_step_price_usd": zimageHighStepPriceUSD,
 		"image_high_step_credits":   zimageHighStepPriceUSD / cutePrice,
+		"gpt_image_price_usd":       servicePricesUSD["gpt_image"],
+		"gpt_image_credits":         servicePricesUSD["gpt_image"] / cutePrice,
+		"gpt_image_metered":         true,
 		"video_estimate": map[string]interface{}{
 			"size": "native", "duration_seconds": 5, "steps": 20,
 			"estimated_cost_usd": h3EstimateUSD, "estimated_credits": h3EstimateCredits,
@@ -387,9 +449,10 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"studio": map[string]interface{}{
 			"background_removal_credits":   studioBackgroundCredits,
 			"music_generation_credits":     studioMusicCredits,
-			"music_generation_base_usd":    1.50,
-			"music_generation_minimum_usd": 1.80,
-			"music_generation_minute_usd":  0.80,
+			"music_generation_base_usd":    0.25,
+			"music_generation_minimum_usd": music3PublicPriceUSD(30),
+			"music_generation_minute_usd":  0.15,
+			"music_generation_capacity":    music3CapacitySnapshot(),
 			"extend_input_second_usd":      studioExtendInputPerSec,
 			"extend_output_second_usd":     studioExtendOutputPerSec,
 			"upscale_base_usd":             studioUpscaleBaseUSD,
@@ -440,8 +503,24 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		handleH3VideoService(ctx, req, user)
 		return
 	}
+	if req.Service == "h3_image" || req.Service == "h3_image_edit" {
+		handleH3ImageService(ctx, req, user)
+		return
+	}
+	if req.Service == "anima" {
+		handleAnimaService(ctx, req, user)
+		return
+	}
 	if req.Service == "video_restyle" {
 		handleVideoRestyleService(ctx, req, user)
+		return
+	}
+	if req.Service == "character_animation" {
+		handleCharacterAnimationService(ctx, req, user)
+		return
+	}
+	if req.Service == "video_background_removal" {
+		handleVideoBackgroundRemovalService(ctx, req, user)
 		return
 	}
 	if req.Service == "audio_generation" {
@@ -623,7 +702,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 }
 
 func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) ([]byte, *GeneratedImage) {
-	if (req.Service != "zimage" && req.Service != "image_edit") || req.Prompt == "" || user == nil {
+	if (req.Service != "zimage" && req.Service != "gpt_image" && req.Service != "image_edit") || req.Prompt == "" || user == nil {
 		return result, nil
 	}
 
@@ -684,6 +763,11 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 	}
 	seed := int64(intFromPayload(payload, "seed", req.Seed))
 	steps := getZImageSteps(req)
+	modelName := "zimage"
+	if req.Service == "gpt_image" || req.Service == "image_edit" {
+		modelName = "gpt-image-2"
+		steps = 0
+	}
 	img := &GeneratedImage{
 		ID:              imageID,
 		Prompt:          req.Prompt,
@@ -693,12 +777,17 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 		ThumbPath:       relPath,
 		MedPath:         relPath,
 		FileSize:        int64(len(imageBytes)),
-		Model:           "zimage",
+		Model:           modelName,
 		Seed:            seed,
 		Steps:           steps,
 		CreatedByUserID: user.ID,
 		CreatedAt:       time.Now(),
 	}
+	// GPT Image 2 (and its edit path) is already safety-filtered by the
+	// upstream hosted provider. Mark it explicitly safe so the gallery and
+	// semantic-search hydrator do not hide it as an unclassified local image.
+	// Locally generated Z-Image output remains nil until our classifier runs.
+	img.IsNSFW = generatedImageSafetyStatus(req.Service)
 	if err := dbConn.InsertGeneratedImage(img); err != nil {
 		log.Printf("zimage persist db insert failed: %v", err)
 		return result, nil
@@ -710,6 +799,14 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 		return result, img
 	}
 	return updated, img
+}
+
+func generatedImageSafetyStatus(service string) *bool {
+	if service != "gpt_image" && service != "image_edit" {
+		return nil
+	}
+	isNSFW := false
+	return &isNSFW
 }
 
 // persistAdditionalZImages stores the remaining members of a batched image
@@ -921,6 +1018,9 @@ func proxyToBackend(req ServiceUsageRequest, backendURL string) ([]byte, error) 
 	case "zimage":
 		return proxyZImageWithFallbacks(req, backendURL)
 
+	case "gpt_image":
+		return proxyOpenPathsImageGeneration(req)
+
 	case "chronos2":
 		endpoint = fmt.Sprintf("%s/forecast", backendURL)
 		payload := map[string]interface{}{
@@ -1054,6 +1154,45 @@ func proxyToBackend(req ServiceUsageRequest, backendURL string) ([]byte, error) 
 	}
 
 	return respBody, nil
+}
+
+// proxyOpenPathsImageGeneration sends explicit premium image requests through
+// OpenPaths. This service is separate from zimage so subscription entitlements
+// can never accidentally turn a paid GPT Image 2 request into an unlimited one.
+func proxyOpenPathsImageGeneration(req ServiceUsageRequest) ([]byte, error) {
+	if strings.TrimSpace(openPathsAPIKey) == "" {
+		return nil, fmt.Errorf("GPT Image 2 generation requires OPENPATHS_API_KEY")
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		return nil, fmt.Errorf("image prompt is required")
+	}
+
+	size := "1024x1024"
+	if req.Width > 0 && req.Height > 0 {
+		size = fmt.Sprintf("%dx%d", req.Width, req.Height)
+	}
+	// Keep this paid SKU pinned. Allowing callers to pass arbitrary OpenPaths
+	// models here would make the fixed public price inaccurate.
+	model := "gpt-image-2"
+	payload, _ := json.Marshal(map[string]interface{}{
+		"model":  model,
+		"prompt": strings.TrimSpace(req.Prompt),
+		"size":   size,
+		"n":      getImageCount(req),
+	})
+	result, err := callOpenPathsImageEdit(openPathsBaseURL+"/v1/images/generations", payload)
+	if err != nil {
+		return nil, err
+	}
+	var normalized map[string]interface{}
+	if err := json.Unmarshal(result, &normalized); err != nil {
+		return nil, fmt.Errorf("OpenPaths returned invalid image JSON")
+	}
+	normalized["engine"] = model
+	normalized["prompt"] = req.Prompt
+	normalized["width"] = req.Width
+	normalized["height"] = req.Height
+	return json.Marshal(normalized)
 }
 
 func isOmniserveNativeURL(backendURL string) bool {

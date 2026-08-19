@@ -38,6 +38,36 @@ func TestParseRunpodH3ProviderJob(t *testing.T) {
 	}
 }
 
+func TestResolveH3RunpodArtifactPrefersExpectedDirectURL(t *testing.T) {
+	artifact := h3RunpodArtifact{
+		URL: "https://cdn.example/output.webm", ContentType: "video/webm", Bytes: 1234,
+	}
+	url, inline, size, err := resolveH3RunpodArtifact(artifact, artifact.URL)
+	if err != nil || url != artifact.URL || inline != nil || size != 1234 {
+		t.Fatalf("direct artifact = url=%q inline=%v size=%d err=%v", url, inline, size, err)
+	}
+	if _, _, _, err := resolveH3RunpodArtifact(artifact, "https://cdn.example/other.webm"); err == nil {
+		t.Fatal("expected mismatched direct URL to fail")
+	}
+}
+
+func TestResolveH3RunpodArtifactRetainsInlineCompatibility(t *testing.T) {
+	artifact := h3RunpodArtifact{Data: "dmlkZW8=", ContentType: "video/webm"}
+	url, inline, size, err := resolveH3RunpodArtifact(artifact, "")
+	if err != nil || url != "" || string(inline) != "video" || size != 5 {
+		t.Fatalf("inline artifact = url=%q inline=%q size=%d err=%v", url, inline, size, err)
+	}
+}
+
+func TestH3OutputContentTypeTracksRequestedContainer(t *testing.T) {
+	if got := h3OutputContentType(map[string]interface{}{"output_codec": "mp4-h264"}); got != "video/mp4" {
+		t.Fatalf("mp4 content type = %q", got)
+	}
+	if got := h3OutputContentType(map[string]interface{}{"output_codec": "webm-av1"}); got != "video/webm" {
+		t.Fatalf("webm content type = %q", got)
+	}
+}
+
 func TestNormalizeH3VideoRequestDefaults(t *testing.T) {
 	req := ServiceUsageRequest{Prompt: "neon alley rain"}
 	if err := normalizeH3VideoRequest(&req); err != nil {
@@ -279,6 +309,59 @@ func TestH3ArtifactFormat(t *testing.T) {
 	}
 }
 
+func TestVideoDataURLContentType(t *testing.T) {
+	if got := videoDataURLContentType("data:video/mp4;base64,AAAA"); got != "video/mp4" {
+		t.Fatalf("mp4 content type = %q", got)
+	}
+	if got := videoDataURLContentType("data:video/webm;base64,AAAA"); got != "video/webm" {
+		t.Fatalf("webm content type = %q", got)
+	}
+}
+
+func TestNormalizeH3OrderedKeyframesPreservesSequence(t *testing.T) {
+	req := ServiceUsageRequest{
+		Service: "h3_video", Prompt: "move through all three moments", Duration: 5,
+		Keyframes: []string{
+			" https://cdn.example/start.png ",
+			"https://cdn.example/middle.png",
+			"https://cdn.example/stop.png",
+		},
+	}
+	if err := normalizeH3VideoRequest(&req); err != nil {
+		t.Fatalf("normalize ordered keyframes: %v", err)
+	}
+	if req.FirstFrame != "https://cdn.example/start.png" || req.LastFrame != "https://cdn.example/stop.png" {
+		t.Fatalf("first/last = %q/%q", req.FirstFrame, req.LastFrame)
+	}
+	input := appNZH3Input(req)
+	frames, ok := input["keyframes"].([]string)
+	if !ok || len(frames) != 3 || frames[1] != "https://cdn.example/middle.png" {
+		t.Fatalf("keyframes = %#v", input["keyframes"])
+	}
+}
+
+func TestNormalizeH3OrderedKeyframesRejectsIncompatibleModes(t *testing.T) {
+	base := ServiceUsageRequest{
+		Service: "h3_video", Prompt: "transition", Duration: 5,
+		Keyframes: []string{"https://cdn.example/start.png", "https://cdn.example/stop.png"},
+	}
+	withLoop := base
+	withLoop.Loop = true
+	if err := normalizeH3VideoRequest(&withLoop); err == nil {
+		t.Fatal("multiple keyframes with loop should fail")
+	}
+	withAudio := base
+	withAudio.AudioURL = "https://cdn.example/drive.wav"
+	if err := normalizeH3VideoRequest(&withAudio); err == nil {
+		t.Fatal("multiple keyframes with driving audio should fail")
+	}
+	tooLong := base
+	tooLong.Keyframes = append(tooLong.Keyframes, "https://cdn.example/third.png")
+	tooLong.Duration = 16
+	if err := normalizeH3VideoRequest(&tooLong); err == nil {
+		t.Fatal("ordered keyframes over 15 seconds per transition should fail")
+	}
+}
 func TestIsRunPodWorkersQuotaErr(t *testing.T) {
 	if !isRunPodWorkersQuotaErr(fmtError("serverless: Max workers across all endpoints must not exceed your workers quota (5)")) {
 		t.Fatal("expected quota match")
@@ -316,14 +399,14 @@ func TestH3VideoPricingTiersExposeResolutionAndDurationMatrix(t *testing.T) {
 			t.Fatalf("%s price matrix = %#v", tier.Size, tier.Prices)
 		}
 	}
-	if got := tiers[0].Prices[0].PriceUSD; got != 0.46 {
-		t.Fatalf("5s preview = %.2f, want 0.46", got)
+	if got := tiers[0].Prices[0].PriceUSD; got != 0.77 {
+		t.Fatalf("5s preview = %.2f, want 0.77", got)
 	}
-	if got := tiers[1].Prices[1].PriceUSD; got != 1.42 {
-		t.Fatalf("10s balanced = %.2f, want 1.42", got)
+	if got := tiers[1].Prices[1].PriceUSD; got != 2.39 {
+		t.Fatalf("10s balanced = %.2f, want 2.39", got)
 	}
-	if got := tiers[2].Prices[4].PriceUSD; got != 12.10 {
-		t.Fatalf("60s native = %.2f, want 12.10", got)
+	if got := tiers[2].Prices[4].PriceUSD; got != 20.48 {
+		t.Fatalf("60s native = %.2f, want 20.48", got)
 	}
 }
 

@@ -17,7 +17,7 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-const music3DefaultGPUUSDPerHour = 4.55
+const music3DefaultGPUUSDPerHour = 4.59
 
 var music3EventMu sync.Mutex
 
@@ -99,11 +99,46 @@ func music3GPUUSDPerHour() float64 {
 	return value
 }
 
-// Price from output length while preserving margin after a normal cached cold start.
+// Measured on H200: MiniMax-Music3 renders about 2.2x faster than real time.
+func music3RealtimeFactor() float64 {
+	if value, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("MUSIC3_REALTIME_FACTOR")), 64); err == nil && value > 0 {
+		return value
+	}
+	return 0.46
+}
+
+// A cold start is shared by the tracks that arrive before the worker idles out,
+// so only a share of it belongs to any one track.
+func music3ColdStartAmortization() float64 {
+	if value, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("MUSIC3_COLD_START_AMORTIZATION")), 64); err == nil && value >= 1 {
+		return value
+	}
+	return 2
+}
+
+func music3PriceMarginMultiple() float64 {
+	if value, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("MUSIC3_PRICE_MARGIN")), 64); err == nil && value >= 1 {
+		return value
+	}
+	return 1.5
+}
+
+// music3FloorPriceUSD is what the GPU time behind one track costs, plus margin.
+// It is a guard rather than the headline price: if GPU rates move, the public
+// price follows rather than quietly going underwater.
+func music3FloorPriceUSD(duration int) float64 {
+	gpuSeconds := float64(duration)*music3RealtimeFactor() + music3ColdStartSeconds()/music3ColdStartAmortization()
+	return gpuSeconds * music3GPUUSDPerHour() / 3600 * music3PriceMarginMultiple()
+}
+
+// Price from output length, never below what the render costs to produce.
 func music3PublicPriceUSD(duration int) float64 {
-	price := 1.50 + 0.80*float64(duration)/60
-	if price < 1.80 {
-		price = 1.80
+	price := 0.25 + 0.15*float64(duration)/60
+	if floor := music3FloorPriceUSD(duration); price < floor {
+		price = floor
+	}
+	if price < 0.35 {
+		price = 0.35
 	}
 	return math.Round(price*100) / 100
 }
@@ -146,6 +181,7 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int) (*VideoJob
 	if err != nil {
 		return nil, err
 	}
+	music3TuneCapacity(endpointID)
 	seed := time.Now().UnixNano() & math.MaxInt64
 	input := map[string]interface{}{
 		"workload": "minimax-music3", "prompt": prompt, "duration_seconds": duration,

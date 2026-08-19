@@ -62,8 +62,17 @@ func initUploads() {
 // presignR2PutObject builds an SigV4 query-string-signed PUT URL for R2.
 // expires is in seconds (max 7 days).
 func presignR2PutObject(objectKey, contentType string, expires int) (string, error) {
+	return presignR2Object(http.MethodPut, objectKey, expires)
+}
+
+// presignR2Object signs one object operation without exposing R2 credentials.
+// PUT is used for uploads and DELETE is used by authenticated asset cleanup.
+func presignR2Object(method, objectKey string, expires int) (string, error) {
 	if r2AccountID == "" || r2AccessKeyID == "" || r2SecretAccessKey == "" {
 		return "", fmt.Errorf("R2 credentials not configured")
+	}
+	if method != http.MethodPut && method != http.MethodDelete {
+		return "", fmt.Errorf("unsupported R2 object method")
 	}
 	if expires <= 0 || expires > 604800 {
 		expires = 900
@@ -72,7 +81,6 @@ func presignR2PutObject(objectKey, contentType string, expires int) (string, err
 	host := fmt.Sprintf("%s.r2.cloudflarestorage.com", r2AccountID)
 	region := "auto"
 	service := "s3"
-	method := "PUT"
 	now := time.Now().UTC()
 	amzDate := now.Format("20060102T150405Z")
 	dateStamp := now.Format("20060102")

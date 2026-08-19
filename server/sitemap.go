@@ -31,7 +31,7 @@ func handleSitemapPages(ctx *fasthttp.RequestCtx) {
 	var b strings.Builder
 	b.WriteString(xml.Header)
 	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`)
-	for _, path := range []string{"/", "/api", "/studio"} {
+	for _, path := range []string{"/", "/tools", "/tool/animate-video", "/tool/image-editor", "/api", "/api/video-generators", "/studio", "/voice"} {
 		fmt.Fprintf(&b, `<url><loc>%s%s</loc></url>`, sitemapSiteURL, path)
 	}
 	b.WriteString(`</urlset>`)
@@ -49,7 +49,7 @@ func handleSitemapImages(ctx *fasthttp.RequestCtx, _ string) {
 		rows, err := dbConn.conn.Query(`
 			SELECT file_path, COALESCE(prompt, ''), created_at
 			FROM generated_images
-			WHERE is_nsfw IS NOT TRUE AND COALESCE(file_path, '') <> ''
+			WHERE is_nsfw = FALSE AND COALESCE(file_path, '') <> ''
 			ORDER BY created_at DESC
 			LIMIT 50000`)
 		if err == nil {

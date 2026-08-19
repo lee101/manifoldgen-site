@@ -284,6 +284,16 @@ test('signed-in projects autosave locally while assets upload and save to the ac
   expect(presigns).toHaveLength(1);
 });
 
+test('project audio tiles play directly from the media pane', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles({ name: 'preview-tone.wav', mimeType: 'audio/wav', buffer: wavFixture(1) });
+  const preview = page.getByTestId('studio-panel').getByRole('button', { name: 'Play preview-tone.wav', exact: true });
+  await expect(preview).toBeVisible();
+  await preview.click();
+  await expect(page.getByTestId('studio-panel').getByRole('button', { name: 'Pause preview-tone.wav', exact: true })).toBeVisible();
+});
+
 test('homepage gallery art imports through the same-origin gallery endpoint', async ({ page }) => {
   await installMocks(page);
   const assetPath = 'originals/homepage-art.webp';
@@ -579,6 +589,7 @@ test('video assets open the shared restyle modal and completed jobs return to th
   await page.locator('input[type=file]').setInputFiles(VIDEO);
   const card = page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ });
   await card.click({ button: 'right' });
+  await expect(page.getByTestId('studio-context-video-remove-background')).toBeVisible();
   await page.getByRole('button', { name: /Restyle video Transform look/ }).click();
   await expect(page.getByRole('heading', { name: 'Restyle video' })).toBeVisible();
   await expect(page.getByText('Transformation strength')).toBeVisible();
@@ -685,6 +696,8 @@ test('timeline supports grouped dragging, click seeking, keyboard split, and han
   expect(Math.abs((after[0] - before[0]) - (after[1] - before[1]))).toBeLessThan(1);
 
   await clips.nth(0).click({ position: { x: 100, y: 30 } });
+  const splitAt = await clips.nth(0).evaluate((item) => Number.parseFloat(item.style.left) + 100);
+  await page.getByTestId('studio-timeline-ruler').click({ position: { x: splitAt, y: 8 } });
   await page.keyboard.press('s');
   await expect(clips).toHaveCount(3);
 
@@ -723,6 +736,8 @@ test('common timeline edits participate in undo and redo history', async ({ page
   await expect(clips).toHaveCount(3);
 
   await clips.nth(0).click({ position: { x: 100, y: 30 } });
+  const historySplitAt = await clips.nth(0).evaluate((item) => Number.parseFloat(item.style.left) + 100);
+  await page.getByTestId('studio-timeline-ruler').click({ position: { x: historySplitAt, y: 8 } });
   await page.keyboard.press('s');
   await expect(clips).toHaveCount(4);
   await page.getByRole('button', { name: 'Undo' }).click();
@@ -1008,6 +1023,90 @@ test('spacebar toggles timeline playback even after the file input had focus', a
   await expect(page.getByRole('button', { name: 'Play' })).toBeVisible();
 });
 
+test('timeline play continues past the selected clip', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles(VIDEO);
+  await expect(page.getByRole('button', { name: 'Play' })).toBeEnabled();
+  await page.getByTestId('studio-timeline-ruler').click({ position: { x: 32, y: 8 } });
+  await page.keyboard.press('s');
+  await page.locator('[data-testid^="timeline-clip-"]').first().click();
+  await page.getByTestId('studio-timeline-ruler').click({ position: { x: 2, y: 8 } });
+  await page.getByRole('button', { name: 'Play' }).click();
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  await expect.poll(async () => {
+    const text = await page.getByTestId('studio-transport-time').innerText();
+    const current = text.split('/')[0].trim();
+    const [minutes, seconds] = current.split(':');
+    return Number(minutes) * 60 + Number(seconds);
+  }, { timeout: 8_000 }).toBeGreaterThan(0.7);
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+});
+
+test('nearby clip edges snap together and export offers to squash real gaps', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'snap-a.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'snap-b.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+  ]);
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  await expect(clips).toHaveCount(2);
+  const joined = await clips.nth(1).evaluate((item) => Number.parseFloat(item.style.left));
+  const box = await clips.nth(1).boundingBox();
+  await page.mouse.move(box.x + Math.min(80, box.width / 2), box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + Math.min(80, box.width / 2) + 6, box.y + box.height / 2, { steps: 3 });
+  await page.mouse.up();
+  expect(await clips.nth(1).evaluate((item) => Number.parseFloat(item.style.left))).toBeCloseTo(joined, 0);
+
+  await page.mouse.move(box.x + Math.min(80, box.width / 2), box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + Math.min(80, box.width / 2) + 80, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.up();
+  expect(await clips.nth(1).evaluate((item) => Number.parseFloat(item.style.left))).toBeGreaterThan(joined + 50);
+
+  await page.getByTestId('studio-export').click();
+  await expect(page.getByRole('heading', { name: 'Gaps detected' })).toBeVisible();
+  await page.getByTestId('studio-squash-gaps').click();
+  await expect(page.getByRole('heading', { name: 'Export' })).toBeVisible();
+  expect(await clips.nth(1).evaluate((item) => Number.parseFloat(item.style.left))).toBeCloseTo(joined, 0);
+});
+
+test('Home seeks the playhead and Control+D duplicates the selected clip', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles({ name: 'shortcut-clip.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
+  await page.getByTestId('studio-timeline-ruler').click({ position: { x: 96, y: 8 } });
+  await expect(page.getByTestId('studio-transport-time')).not.toHaveText(/00:00\.00/);
+  await page.keyboard.press('Home');
+  await expect(page.getByTestId('studio-transport-time')).toContainText('00:00.00');
+  await page.keyboard.press('Control+d');
+  await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(2);
+});
+
+test('arrow keys move the playhead and Shift jumps 0.5s while the stage is focused', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles({ name: 'seek-clip.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
+  const element = page.getByTestId('studio-stage-element');
+  await expect(element).toBeVisible();
+  await element.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(async () => {
+    const text = await page.getByTestId('studio-transport-time').innerText();
+    const [minutes, seconds] = text.split('/')[0].trim().split(':');
+    return Number(minutes) * 60 + Number(seconds);
+  }).toBeCloseTo(1 / 30, 2);
+  expect(await element.getAttribute('data-position-x')).toBe('0.0000');
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect.poll(async () => {
+    const text = await page.getByTestId('studio-transport-time').innerText();
+    const [minutes, seconds] = text.split('/')[0].trim().split(':');
+    return Number(minutes) * 60 + Number(seconds);
+  }).toBeCloseTo(0.5 + 1 / 30, 2);
+});
+
 test('visual elements can be dragged and nudged around the stage', async ({ page }) => {
   await installMocks(page);
   await page.goto('/studio');
@@ -1030,9 +1129,9 @@ test('visual elements can be dragged and nudged around the stage', async ({ page
   expect(Number(await element.getAttribute('data-position-x'))).toBeGreaterThan(0.05);
   expect(Number(await element.getAttribute('data-position-y'))).toBeGreaterThan(0.03);
   await element.focus();
-  const beforeNudge = Number(await element.getAttribute('data-position-x'));
-  await page.keyboard.press('ArrowRight');
-  expect(Number(await element.getAttribute('data-position-x'))).toBeGreaterThan(beforeNudge);
+  const beforeNudge = Number(await element.getAttribute('data-position-y'));
+  await page.keyboard.press('ArrowDown');
+  expect(Number(await element.getAttribute('data-position-y'))).toBeGreaterThan(beforeNudge);
   await element.dblclick();
   await expect(element).toHaveAttribute('data-position-x', '0.0000');
   await expect(element).toHaveAttribute('data-position-y', '0.0000');
@@ -1215,7 +1314,7 @@ test('Media Music searches real catalog-shaped results, imports a track, and gen
   await page.getByTestId('studio-audio-generate').click();
   await expect(page.locator('[data-timeline-asset]')).toHaveCount(2);
   expect(generationRequest).toEqual({ prompt: 'Warm analog synth pulse with glass harmonics', duration: 30 });
-  await expect(page.getByText('Music added · 80 credits')).toBeVisible();
+  await expect(page.getByText('Music added · MiniMax-Music3')).toBeVisible();
 });
 
 test('licensed Netwrck catalog result imports as an editable audio clip for free', async ({ page }) => {

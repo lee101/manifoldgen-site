@@ -16,7 +16,10 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-const falRestyleMarkup = 1.20
+const (
+	falRestyleMarkup = 1.20
+	wanAnimateMarkup = 2.00
+)
 
 type restyleStoredRequest struct {
 	Input ServiceUsageRequest `json:"input"`
@@ -35,8 +38,11 @@ func normalizeVideoRestyleRequest(req *ServiceUsageRequest) error {
 	if req.Model == "" {
 		req.Model = "wan-2.2"
 	}
-	if req.Model != "wan-2.2" && req.Model != "h3-reference" {
-		return fmt.Errorf("model must be wan-2.2 or h3-reference")
+	if req.Model == "wan-animate" {
+		req.Model = "wan-animate-2"
+	}
+	if req.Model != "wan-2.2" && req.Model != "h3-reference" && req.Model != "wan-animate-2" {
+		return fmt.Errorf("model must be wan-2.2, h3-reference, or wan-animate-2")
 	}
 	if req.Prompt == "" {
 		return fmt.Errorf("prompt is required")
@@ -47,7 +53,45 @@ func normalizeVideoRestyleRequest(req *ServiceUsageRequest) error {
 	if err := validateRestyleURL(req.VideoURL); err != nil {
 		return fmt.Errorf("video_url: %w", err)
 	}
-	if req.Model == "h3-reference" {
+	if req.Model == "wan-animate-2" {
+		req.ImageURL = strings.TrimSpace(req.ImageURL)
+		if req.ImageURL == "" {
+			return fmt.Errorf("image_url is required for animation transfer")
+		}
+		if err := validateRestyleURL(req.ImageURL); err != nil {
+			return fmt.Errorf("image_url: %w", err)
+		}
+		if req.Duration == 0 {
+			req.Duration = 5
+		}
+		if req.Duration < 1 || req.Duration > 15 {
+			return fmt.Errorf("duration must be between 1 and 15 seconds")
+		}
+		if req.FramesPerSecond == 0 {
+			req.FramesPerSecond = 24
+		}
+		if !videoIntIn(req.FramesPerSecond, 12, 16, 24, 30) {
+			return fmt.Errorf("frames_per_second must be 12, 16, 24, or 30")
+		}
+		if req.NumFrames == 0 {
+			req.NumFrames = 37
+		}
+		if req.NumFrames < 17 || req.NumFrames > 81 || (req.NumFrames-1)%4 != 0 {
+			return fmt.Errorf("num_frames must be 17 to 81 and equal 4n+1")
+		}
+		if req.NumSteps == 0 {
+			req.NumSteps = 10
+		}
+		if req.NumSteps < 6 || req.NumSteps > 20 {
+			return fmt.Errorf("num_steps must be between 6 and 20")
+		}
+		if req.Resolution == "" {
+			req.Resolution = "preview"
+		}
+		if !videoStringIn(req.Resolution, "preview", "balanced", "high") {
+			return fmt.Errorf("resolution must be preview, balanced, or high")
+		}
+	} else if req.Model == "h3-reference" {
 		if req.Duration == 0 {
 			req.Duration = 10
 		}
@@ -110,6 +154,15 @@ func normalizeVideoRestyleRequest(req *ServiceUsageRequest) error {
 	return nil
 }
 
+func videoIntIn(value int, choices ...int) bool {
+	for _, choice := range choices {
+		if value == choice {
+			return true
+		}
+	}
+	return false
+}
+
 func validateRestyleURL(value string) error {
 	parsed, err := url.Parse(strings.TrimSpace(value))
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
@@ -130,6 +183,11 @@ func prependUniqueURL(first string, rest []string) []string {
 }
 
 func restyleFalProviderCost(req ServiceUsageRequest) float64 {
+	if req.Model == "wan-animate-2" {
+		base := restyleEnvFloat("WAN_ANIMATE_ESTIMATED_PROVIDER_USD_PER_SECOND", 0.10)
+		factor := map[string]float64{"preview": 1, "balanced": 1.6, "high": 3}[req.Resolution]
+		return base * factor * float64(req.Duration)
+	}
 	if req.Model == "h3-reference" {
 		rate := map[string]float64{"768p": 0.08, "2K": 0.13, "4K": 0.16}[req.Resolution]
 		return rate*float64(req.Duration) + math.Max(0, float64(len(req.ReferenceImageURLs)-5))*0.08
@@ -139,7 +197,11 @@ func restyleFalProviderCost(req ServiceUsageRequest) float64 {
 }
 
 func restyleEstimate(req ServiceUsageRequest) (float64, float64) {
-	charged := math.Ceil(restyleFalProviderCost(req)*falRestyleMarkup*100) / 100
+	markup := falRestyleMarkup
+	if req.Model == "wan-animate-2" {
+		markup = wanAnimateMarkup
+	}
+	charged := math.Ceil(restyleFalProviderCost(req)*markup*100) / 100
 	credits := 0.0
 	if price := getCUTEPriceUSD(); price > 0 {
 		credits = math.Ceil(charged / price)
@@ -152,9 +214,14 @@ func handleVideoRestyleService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
+	estimatedUSD, estimatedCredits := restyleEstimate(req)
+	if req.Model == "wan-animate-2" && !user.UnlimitedAPI && user.Credits < estimatedCredits {
+		jsonError(ctx, http.StatusPaymentRequired, fmt.Sprintf("insufficient credits: animation transfer needs about %.0f credits ($%.2f)", estimatedCredits, estimatedUSD))
+		return
+	}
 	stored, _ := json.Marshal(restyleStoredRequest{Input: req})
 	providerID, err := submitPrivateVideoRestyle(req)
-	if err != nil {
+	if err != nil && allowsFalVideoRestyle(req) {
 		providerID, err = submitFalVideoRestyle(req)
 	}
 	if err != nil {
@@ -170,7 +237,6 @@ func handleVideoRestyleService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 		jsonError(ctx, http.StatusInternalServerError, "failed to persist video restyle input")
 		return
 	}
-	estimatedUSD, estimatedCredits := restyleEstimate(req)
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"result":             map[string]interface{}{"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID},
@@ -179,7 +245,14 @@ func handleVideoRestyleService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 	})
 }
 
+func allowsFalVideoRestyle(req ServiceUsageRequest) bool {
+	return req.Model != "wan-animate-2"
+}
+
 func privateRestyleTemplate(req ServiceUsageRequest) string {
+	if req.Model == "wan-animate-2" {
+		return strings.TrimSpace(getEnv("VIDEO_ANIMATE_APPNZ_TEMPLATE", "wan-animate-2"))
+	}
 	if req.Model == "h3-reference" {
 		return strings.TrimSpace(getEnv("VIDEO_REFERENCE_APPNZ_TEMPLATE", "minimax-h3-reference"))
 	}
@@ -187,6 +260,9 @@ func privateRestyleTemplate(req ServiceUsageRequest) string {
 }
 
 func privateRestyleModelID(req ServiceUsageRequest) string {
+	if req.Model == "wan-animate-2" {
+		return strings.TrimSpace(os.Getenv("VIDEO_ANIMATE_APPNZ_MODEL_ID"))
+	}
 	if req.Model == "h3-reference" {
 		return strings.TrimSpace(os.Getenv("VIDEO_REFERENCE_APPNZ_MODEL_ID"))
 	}
@@ -216,6 +292,23 @@ func submitPrivateVideoRestyle(req ServiceUsageRequest) (string, error) {
 }
 
 func privateRestyleProviderInput(req ServiceUsageRequest) map[string]interface{} {
+	if req.Model == "wan-animate-2" {
+		preserveAudio := true
+		if req.IncludeAudio != nil {
+			preserveAudio = *req.IncludeAudio
+		}
+		input := map[string]interface{}{
+			"image": req.ImageURL, "driving_video": req.VideoURL, "prompt": req.Prompt,
+			"quality": req.Resolution, "max_seconds": req.Duration,
+			"fps": req.FramesPerSecond, "frames_per_segment": req.NumFrames,
+			"steps": req.NumSteps, "preserve_audio": preserveAudio,
+			"cgtaylor": false,
+		}
+		if req.Seed != 0 {
+			input["seed"] = req.Seed
+		}
+		return input
+	}
 	if req.Model == "h3-reference" {
 		input := map[string]interface{}{
 			"prompt": req.Prompt, "duration": req.Duration, "resolution": req.Resolution,
@@ -336,6 +429,13 @@ func processVideoRestyleJob(job *VideoJob) {
 		if processPrivateVideoRestyle(job, stored.Input) {
 			return
 		}
+		if videoJobCancellationRequested(job.ID) {
+			return
+		}
+		if stored.Input.Model == "wan-animate-2" {
+			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "animation transfer failed; your credits were not charged")
+			return
+		}
 		fallbackID, err := submitFalVideoRestyle(stored.Input)
 		if err != nil {
 			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "video generation could not be recovered")
@@ -356,6 +456,9 @@ func processPrivateVideoRestyle(job *VideoJob, input ServiceUsageRequest) bool {
 	providerID := strings.TrimPrefix(job.ProviderJobID, "private:")
 	deadline := time.Now().Add(60 * time.Minute)
 	for time.Now().Before(deadline) {
+		if videoJobCancellationRequested(job.ID) {
+			return false
+		}
 		envelope, _, err := callAppNZH3(http.MethodGet, "/api/cogs/predictions/"+url.PathEscape(providerID), nil)
 		if err != nil {
 			return false
@@ -367,7 +470,11 @@ func processPrivateVideoRestyle(job *VideoJob, input ServiceUsageRequest) bool {
 			}
 			resultMap := h3Result(envelope.Prediction)
 			providerUSD := float64(envelope.Prediction.CostMicros) / 1_000_000
-			chargedUSD := float64(h3DownstreamMicros(envelope.Prediction.CostMicros)) / 1_000_000
+			chargedMicros := h3DownstreamMicros(envelope.Prediction.CostMicros)
+			if input.Model == "wan-animate-2" {
+				chargedMicros = int64(math.Ceil(float64(envelope.Prediction.CostMicros) * wanAnimateMarkup))
+			}
+			chargedUSD := float64(chargedMicros) / 1_000_000
 			return settleVideoRestyle(job, input, resultMap, providerUSD, chargedUSD)
 		case "failed", "cancelled", "canceled":
 			return false
@@ -382,6 +489,9 @@ func processFalVideoRestyle(job *VideoJob, input ServiceUsageRequest) {
 	base := "https://queue.fal.run/" + falRestyleRequestBase(input) + "/requests/" + url.PathEscape(requestID)
 	deadline := time.Now().Add(60 * time.Minute)
 	for time.Now().Before(deadline) {
+		if videoJobCancellationRequested(job.ID) {
+			return
+		}
 		data, _, err := callFalQueue(http.MethodGet, base+"/status", nil)
 		if err != nil {
 			time.Sleep(2500 * time.Millisecond)

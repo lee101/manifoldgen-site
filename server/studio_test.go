@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -23,8 +24,49 @@ func TestStudioAudioTitle(t *testing.T) {
 }
 
 func TestStudioMusicEndpointMatchesPublishedModelID(t *testing.T) {
-	if studioMusicEndpoint != "https://fal.run/CassetteAI/music-generator" {
+	if studioMusicEndpoint != "https://fal.run/fal-ai/minimax-music/v2.6" {
 		t.Fatalf("unexpected music endpoint: %s", studioMusicEndpoint)
+	}
+}
+
+func TestStudioFalMusicUsesMiniMaxInstrumentalContract(t *testing.T) {
+	var received map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Key test-fal-key" {
+			t.Fatalf("authorization header = %q", r.Header.Get("Authorization"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"audio":{"url":"https://cdn.example/generated.mp3"}}`))
+	}))
+	defer server.Close()
+
+	oldKey := falAPIKey
+	oldEndpoint, hadEndpoint := os.LookupEnv("STUDIO_MUSIC_FAL_ENDPOINT")
+	t.Cleanup(func() {
+		falAPIKey = oldKey
+		if hadEndpoint {
+			_ = os.Setenv("STUDIO_MUSIC_FAL_ENDPOINT", oldEndpoint)
+		} else {
+			_ = os.Unsetenv("STUDIO_MUSIC_FAL_ENDPOINT")
+		}
+	})
+	falAPIKey = "test-fal-key"
+	_ = os.Setenv("STUDIO_MUSIC_FAL_ENDPOINT", server.URL)
+
+	result, err := studioFalMusic("warm modular sunrise score", 45)
+	if err != nil || result != "https://cdn.example/generated.mp3" {
+		t.Fatalf("studioFalMusic result=%q err=%v", result, err)
+	}
+	if received["is_instrumental"] != true {
+		t.Fatalf("is_instrumental = %#v", received["is_instrumental"])
+	}
+	if _, exists := received["duration"]; exists {
+		t.Fatal("MiniMax v2.6 does not accept a duration field")
+	}
+	if !strings.Contains(received["prompt"].(string), "45 seconds") {
+		t.Fatalf("duration steering missing from prompt: %#v", received["prompt"])
 	}
 }
 
@@ -38,6 +80,7 @@ func TestNormalizeMusicGenerationInput(t *testing.T) {
 		duration int
 	}{
 		{"", 30},
+		{"music", 30},
 		{"music", 29},
 		{"music", 181},
 	} {
@@ -91,6 +134,35 @@ func TestStudioAssetPresignValidation(t *testing.T) {
 	valid.ContentType = "text/html"
 	if _, err := validateStudioAssetPresign(valid); err == nil {
 		t.Fatal("expected unsupported content type to be rejected")
+	}
+}
+
+func TestStudioVideoPreviewInputIsScopedToTheSignedInProjectAsset(t *testing.T) {
+	oldPrefix := r2PathPrefix
+	r2PathPrefix = "gallery"
+	t.Cleanup(func() { r2PathPrefix = oldPrefix })
+	user := &User{ID: "7cd844da-0b82-48c2-a8b2-2c20107b4cb0"}
+	projectID := "923ef911-cf5f-446f-9a21-da355553b5fc"
+	assetID := "9c6f9b7f-aed0-45ef-a261-3c7a3fd831ca"
+	input := studioVideoPreviewInput{
+		ProjectID: projectID,
+		AssetID:   assetID,
+		ObjectKey: studioAssetObjectPrefix(user, projectID, assetID) + "opening-shot.webm",
+	}
+	if _, err := validateStudioVideoPreviewInput(user, input); err != nil {
+		t.Fatalf("valid preview input rejected: %v", err)
+	}
+	if got := studioVideoPreviewObjectKey(input.ObjectKey); got != input.ObjectKey+".preview.webm" {
+		t.Fatalf("preview object key = %q", got)
+	}
+	for _, invalid := range []studioVideoPreviewInput{
+		{ProjectID: projectID, AssetID: assetID, ObjectKey: "gallery/studio/another-user/" + projectID + "/" + assetID + "/clip.webm"},
+		{ProjectID: projectID, AssetID: assetID, ObjectKey: studioAssetObjectPrefix(user, projectID, assetID) + "nested/clip.webm"},
+		{ProjectID: projectID, AssetID: assetID, ObjectKey: studioAssetObjectPrefix(user, projectID, assetID) + "still.png"},
+	} {
+		if _, err := validateStudioVideoPreviewInput(user, invalid); err == nil {
+			t.Fatalf("unsafe preview input accepted: %#v", invalid)
+		}
 	}
 }
 
