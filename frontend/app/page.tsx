@@ -1579,11 +1579,11 @@ export default function HomePage() {
                   ) : null}
                   <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent opacity-70 transition group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100" />
                   </button>
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3 pb-14 text-left text-xs leading-snug text-white/90 opacity-90 transition group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 md:text-sm">
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 hidden p-3 pb-14 text-left text-xs leading-snug text-white/90 opacity-0 transition group-hover:opacity-100 sm:block md:text-sm">
                     {img.prompt.slice(0, 140)}
                   </div>
                   {src ? (
-                    <div className="absolute inset-x-3 bottom-3 z-10 grid grid-cols-2 gap-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
+                    <div className="absolute inset-x-3 bottom-3 z-10 hidden grid-cols-2 gap-2 opacity-0 transition group-hover:opacity-100 sm:grid">
                       <button type="button" onClick={() => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: src }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
                       <button type="button" onClick={() => openGalleryImageInStudio(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Studio</button>
                       <button type="button" disabled={backgroundRemovingID === img.id} onClick={() => void removeGalleryBackground(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black disabled:opacity-60">{backgroundRemovingID === img.id ? <Loader2 className="animate-spin" size={13} /> : <WandSparkles size={13} />}Remove BG</button>
