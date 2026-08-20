@@ -975,9 +975,12 @@ type FeaturedVideo struct {
 
 // ListFeaturedVideos returns recent, full-quality completed clips with a playable URL.
 // Experimental w4a8 output stays out of the homepage showcase until explicitly curated.
-func (db *DB) ListFeaturedVideos(limit int) ([]FeaturedVideo, error) {
-	if limit <= 0 || limit > 48 {
+func (db *DB) ListFeaturedVideos(limit, offset int) ([]FeaturedVideo, error) {
+	if limit <= 0 || limit > 49 {
 		limit = 12
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -995,7 +998,7 @@ func (db *DB) ListFeaturedVideos(limit int) ([]FeaturedVideo, error) {
 		ORDER BY
 			CASE WHEN service = 'music_video' THEN 0 WHEN service = 'h3_video' THEN 1 ELSE 2 END,
 			created_at DESC
-		LIMIT $1`, limit*3)
+		LIMIT $1`, (offset+limit)*3)
 	if err != nil {
 		return nil, err
 	}
@@ -1008,6 +1011,10 @@ func (db *DB) ListFeaturedVideos(limit int) ([]FeaturedVideo, error) {
 		}
 		videoURL := extractVideoURLFromResultJSON(resultText)
 		if videoURL == "" {
+			continue
+		}
+		if offset > 0 {
+			offset--
 			continue
 		}
 		var metadata struct {

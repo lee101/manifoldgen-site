@@ -45,6 +45,19 @@ async function captureLoaderReview(browser) {
   await page.close();
 }
 
+async function captureHomepageGallery(browser, viewport, device) {
+  const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
+  await proxyProductionCatalog(page);
+  await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
+  const gallery = page.getByTestId('still-gallery');
+  await gallery.waitFor({ state: 'visible', timeout: 20_000 });
+  await page.locator('[data-testid^="gallery-video-"]').first().waitFor({ state: 'visible', timeout: 20_000 });
+  await gallery.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(outputDir, `homepage-${device}-gallery.png`), fullPage: false });
+  await page.close();
+}
+
 async function capture(browser, viewport, device, mode) {
   const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
   await proxyProductionCatalog(page);
@@ -111,6 +124,8 @@ async function captureGalleryImage(browser, viewport, device) {
   try {
     await captureLoaderReview(browser);
     if (process.env.VISUALBENCH_LOADER_ONLY === '1') return;
+    await captureHomepageGallery(browser, { width: 1440, height: 1000 }, 'desktop');
+    await captureHomepageGallery(browser, { width: 390, height: 844 }, 'mobile');
     await captureGalleryImage(browser, { width: 1440, height: 1000 }, 'desktop');
     await captureGalleryImage(browser, { width: 390, height: 844 }, 'mobile');
     if (process.env.VISUALBENCH_GALLERY_ONLY !== '1') {

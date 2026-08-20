@@ -166,6 +166,10 @@ interface VideoHit {
   similarity?: number;
 }
 
+type GalleryFeedItem =
+  | { kind: 'image'; id: string; prompt: string; image: GalleryImage; src?: string }
+  | { kind: 'video'; id: string; prompt: string; video: VideoHit };
+
 interface PromptAsset {
   kind: 'image' | 'audio';
   url: string;
@@ -250,8 +254,13 @@ export default function HomePage() {
   const [imageCredits, setImageCredits] = useState(4);
   const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
   const [gallery, setGallery] = useState<GalleryImage[]>([]);
+  const [galleryCursor, setGalleryCursor] = useState<number | null>(null);
+  const [galleryWrapped, setGalleryWrapped] = useState(false);
+  const [galleryHasMore, setGalleryHasMore] = useState(true);
+  const [galleryLoadingMore, setGalleryLoadingMore] = useState(false);
   const [backgroundRemovingID, setBackgroundRemovingID] = useState('');
   const [featuredVideos, setFeaturedVideos] = useState<VideoHit[]>([]);
+  const [featuredHasMore, setFeaturedHasMore] = useState(true);
   const [searchQ, setSearchQ] = useState('');
   const [activeSearchQ, setActiveSearchQ] = useState('');
   const [searchBusy, setSearchBusy] = useState(false);
@@ -268,6 +277,8 @@ export default function HomePage() {
   const heroVideoRef = useRef<HTMLVideoElement>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
   const searchMoreRef = useRef<HTMLDivElement>(null);
+  const galleryMoreRef = useRef<HTMLDivElement>(null);
+  const gallerySeedRef = useRef(Math.random());
 
   const updateGenerationTask = useCallback((id: string, update: Partial<HomeGenerationTask>) => {
     setGenerationTasks((current) => current.map((task) => task.id === id ? { ...task, ...update } : task));
@@ -305,7 +316,7 @@ export default function HomePage() {
   const loadGallery = useCallback(async (q = '', attempt = 0): Promise<void> => {
     const url = q.trim()
       ? `${API}/images/semantic?q=${encodeURIComponent(q.trim())}&top_k=48`
-      : `${API}/images?skip_total=true&varied=true&per_page=48&allow_nsfw=true`;
+      : `${API}/images?skip_total=true&varied=true&per_page=24&allow_nsfw=true&seed=${gallerySeedRef.current}`;
     const res = await fetch(url);
     if (!res.ok) {
       // The public API can briefly be unavailable while the image/search
@@ -319,14 +330,20 @@ export default function HomePage() {
     }
     const data = await res.json();
     setGallery(normalizeImages(data.results || data.images || []));
+    if (!q.trim()) {
+      setGalleryCursor(typeof data.next_cursor === 'number' ? data.next_cursor : null);
+      setGalleryWrapped(Boolean(data.cursor_wrapped));
+      setGalleryHasMore(typeof data.next_cursor === 'number');
+    }
   }, []);
 
   const loadFeaturedVideos = useCallback(async () => {
-    const res = await fetch(`${API}/videos/featured?limit=24`);
+    const res = await fetch(`${API}/videos/featured?limit=24&offset=0`);
     if (!res.ok) return;
     const data = await res.json();
     const rows: VideoHit[] = (data.results || []).filter((r: VideoHit) => r.video_url);
     setFeaturedVideos(rows);
+    setFeaturedHasMore(data.has_more ?? rows.length === 24);
   }, []);
 
   useEffect(() => {
@@ -464,6 +481,58 @@ export default function HomePage() {
     observer.observe(target);
     return () => observer.disconnect();
   }, [activeSearchQ, loadMoreSearch, searchHasMore]);
+
+  const loadMoreGallery = useCallback(async () => {
+    if (activeSearchQ || galleryLoadingMore || (!galleryHasMore && !featuredHasMore)) return;
+    setGalleryLoadingMore(true);
+    try {
+      const requests: Promise<void>[] = [];
+      if (galleryHasMore && galleryCursor !== null) {
+        const params = new URLSearchParams({
+          skip_total: 'true', varied: 'true', per_page: '24', allow_nsfw: 'true',
+          seed: String(gallerySeedRef.current), after: String(galleryCursor),
+          wrapped: String(galleryWrapped),
+        });
+        requests.push(fetch(`${API}/images?${params}`).then(async (res) => {
+          if (!res.ok) return;
+          const data = await res.json();
+          const rows = normalizeImages(data.images || data.results || []);
+          setGallery((current) => {
+            const seen = new Set(current.map((item) => item.id));
+            return [...current, ...rows.filter((item) => !seen.has(item.id))];
+          });
+          setGalleryCursor(typeof data.next_cursor === 'number' ? data.next_cursor : null);
+          setGalleryWrapped(Boolean(data.cursor_wrapped));
+          setGalleryHasMore(typeof data.next_cursor === 'number');
+        }));
+      }
+      if (featuredHasMore) {
+        requests.push(fetch(`${API}/videos/featured?limit=24&offset=${featuredVideos.length}`).then(async (res) => {
+          if (!res.ok) return;
+          const data = await res.json();
+          const rows: VideoHit[] = (data.results || []).filter((item: VideoHit) => item.video_url);
+          setFeaturedVideos((current) => {
+            const seen = new Set(current.map((item) => item.job_id));
+            return [...current, ...rows.filter((item) => !seen.has(item.job_id))];
+          });
+          setFeaturedHasMore(data.has_more ?? rows.length === 24);
+        }));
+      }
+      await Promise.all(requests);
+    } finally {
+      setGalleryLoadingMore(false);
+    }
+  }, [activeSearchQ, featuredHasMore, featuredVideos.length, galleryCursor, galleryHasMore, galleryLoadingMore, galleryWrapped]);
+
+  useEffect(() => {
+    const target = galleryMoreRef.current;
+    if (!target || activeSearchQ || (!galleryHasMore && !featuredHasMore)) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMoreGallery();
+    }, { rootMargin: '800px 0px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [activeSearchQ, featuredHasMore, galleryHasMore, loadMoreGallery]);
 
   function openAuth(mode: AuthMode = 'signup') {
     setAuthMode(mode);
@@ -927,9 +996,18 @@ export default function HomePage() {
   // A local, cacheable poster protects LCP from slow API/gallery responses.
   const heroImage = '/brand/manifoldgen-og.webp';
   const musicVideos = featuredVideos.filter((video) => video.music_video || video.service === 'music_video');
-  const displayVideos = videoHits.length > 0
-    ? videoHits
-    : featuredVideos.filter((video) => !video.music_video && video.service !== 'music_video');
+  const galleryFeed = useMemo<GalleryFeedItem[]>(() => {
+    const videos = featuredVideos.filter((video) => !video.music_video && video.service !== 'music_video');
+    const rows: GalleryFeedItem[] = [];
+    const length = Math.max(gallery.length, videos.length);
+    for (let index = 0; index < length; index += 1) {
+      const image = gallery[index];
+      if (image) rows.push({ kind: 'image', id: image.id, prompt: image.prompt, image, src: image.image_url || image.thumb_url });
+      const video = videos[index];
+      if (video?.video_url) rows.push({ kind: 'video', id: video.job_id, prompt: video.prompt, video });
+    }
+    return rows;
+  }, [featuredVideos, gallery]);
   const imageFrames = useMemo(() => assets.filter((asset) => asset.kind === 'image'), [assets]);
   const audioAsset = useMemo(() => assets.find((asset) => asset.kind === 'audio'), [assets]);
   const transitionCount = Math.max(1, imageFrames.length - 1);
@@ -1452,55 +1530,7 @@ export default function HomePage() {
               ) : mixedSearchHits.length > 0 ? <span className="text-xs text-white/35">All matching media loaded</span> : null}
             </div>
           </div>
-        ) : displayVideos.length > 0 && (
-          <div className="pb-4" data-testid="showcase-reel">
-            <div className="flex items-end justify-between px-3 pb-3 md:px-6">
-              <div>
-                <h2 className="font-display text-lg tracking-wide text-white md:text-xl">Showcase</h2>
-              </div>
-              <span className="hidden text-xs text-white/40 sm:inline">{displayVideos.length}</span>
-            </div>
-            <div className="reel-scroll flex snap-x snap-mandatory gap-0 overflow-x-auto pb-1">
-              {displayVideos.map((hit, idx) => (
-                <div key={hit.job_id} className="group relative aspect-video h-[46vw] shrink-0 snap-start overflow-hidden sm:h-[30vw] md:h-[24vw] lg:h-[20vw]">
-                  <button type="button" aria-label="Play showcase video" onClick={() => playVideo(hit)} className="absolute inset-0 h-full w-full text-left">
-                  {hit.video_url ? (
-                    <video
-                      src={hit.video_url}
-                      muted
-                      loop
-                      playsInline
-                      preload={idx < 3 ? 'metadata' : 'none'}
-                      className="h-full w-full object-cover transition duration-700 group-hover:scale-[1.04]"
-                      onMouseEnter={(e) => {
-                        void e.currentTarget.play().catch(() => undefined);
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.pause();
-                        e.currentTarget.currentTime = 0;
-                      }}
-                    />
-                  ) : (
-                    <div className="flex h-full items-end bg-white/5 p-4 text-left text-sm text-white/70">
-                      {hit.prompt}
-                    </div>
-                  )}
-                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent opacity-90 transition group-hover:opacity-100" />
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3 text-left md:p-4">
-                    <div className="line-clamp-2 text-sm leading-snug text-white/95 md:text-base">{hit.prompt}</div>
-                  </div>
-                  </button>
-                  {hit.video_url && <button
-                    type="button"
-                    data-testid={`gallery-restyle-${hit.job_id}`}
-                    onClick={() => { window.location.href = `/studio?video_url=${encodeURIComponent(hit.video_url!)}&name=${encodeURIComponent(hit.prompt || 'Gallery video')}&restyle=1`; }}
-                    className="absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded-full border border-white/20 bg-black/65 px-3 py-1.5 text-xs font-medium text-white opacity-100 shadow-lg backdrop-blur-md transition hover:border-violet-300/60 hover:bg-violet-600/80 md:opacity-0 md:group-hover:opacity-100"
-                  ><WandSparkles size={13} /> Transform</button>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        ) : null}
       </section>
 
       {/* Full-bleed gallery */}
@@ -1508,18 +1538,30 @@ export default function HomePage() {
         <div className="flex items-end justify-between px-3 py-4 md:px-6">
           <div>
             <h2 className="font-display text-lg tracking-wide text-white md:text-xl">Gallery</h2>
-            <p className="text-sm text-[var(--color-mute)]">Stills for video</p>
+            <p className="text-sm text-[var(--color-mute)]">Images + videos</p>
           </div>
-          {gallery.length > 0 ? (
-            <span className="text-xs text-white/40">{gallery.length}</span>
+          {galleryFeed.length > 0 ? (
+            <span className="text-xs text-white/40">{galleryFeed.length}</span>
           ) : null}
         </div>
-        {gallery.length === 0 ? (
+        {galleryFeed.length === 0 ? (
           <p className="px-4 pb-12 text-sm text-[var(--color-mute)]">Gallery warming up…</p>
         ) : (
           <div className="gallery-bleed columns-2 bg-black sm:columns-3 md:columns-4 xl:columns-5 2xl:columns-6">
-            {gallery.map((img) => {
-              const src = img.image_url || img.thumb_url;
+            {galleryFeed.map((item) => {
+              if (item.kind === 'video') return (
+                <div key={`video-${item.id}`} data-testid={`gallery-video-${item.id}`} className="group relative mb-px aspect-video break-inside-avoid overflow-hidden bg-[#0c0c12]">
+                  <button type="button" aria-label="Play gallery video" onClick={() => playVideo(item.video)} className="absolute inset-0 h-full w-full text-left">
+                    <video src={item.video.video_url} muted loop playsInline preload="metadata" className="h-full w-full object-cover transition duration-700 group-hover:scale-105" onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)} onMouseLeave={(event) => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} />
+                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 hidden p-3 text-xs leading-snug text-white/90 opacity-0 transition group-hover:opacity-100 sm:line-clamp-2 md:text-sm">{item.prompt}</div>
+                    <span className="absolute left-2 top-2 rounded-full bg-black/65 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/80 backdrop-blur">Video</span>
+                  </button>
+                  <button type="button" onClick={() => { window.location.href = `/studio?video_url=${encodeURIComponent(item.video.video_url!)}&name=${encodeURIComponent(item.prompt || 'Gallery video')}&restyle=1`; }} className="absolute bottom-3 right-3 z-10 hidden items-center gap-1 rounded-full bg-black/70 px-3 py-2 text-xs font-medium text-white opacity-0 backdrop-blur transition group-hover:opacity-100 sm:inline-flex"><WandSparkles size={13} />Transform</button>
+                </div>
+              );
+              const img = item.image;
+              const src = item.src;
               return (
                 <div
                   key={img.id}
@@ -1552,6 +1594,11 @@ export default function HomePage() {
             })}
           </div>
         )}
+        <div ref={galleryMoreRef} className="flex min-h-24 items-center justify-center py-5">
+          {galleryLoadingMore ? <Loader2 className="animate-spin text-white/45" size={20} /> : galleryHasMore || featuredHasMore ? (
+            <button type="button" onClick={() => void loadMoreGallery()} className="glass rounded-full px-5 py-2 text-sm text-white/70">Load more media</button>
+          ) : galleryFeed.length > 0 ? <span className="text-xs text-white/35">All gallery media loaded</span> : null}
+        </div>
       </section>}
 
       {settingsOpen && (
