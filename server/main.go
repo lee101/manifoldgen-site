@@ -1395,23 +1395,34 @@ func handleSemanticSearch(ctx *fasthttp.RequestCtx) {
 // handleFeaturedVideos serves GET /api/videos/featured — recent completed clips for the landing strip.
 func handleFeaturedVideos(ctx *fasthttp.RequestCtx) {
 	limit, _ := strconv.Atoi(string(ctx.QueryArgs().Peek("limit")))
+	offset, _ := strconv.Atoi(string(ctx.QueryArgs().Peek("offset")))
 	if limit < 1 || limit > 48 {
 		limit = 12
+	}
+	if offset < 0 || offset > 10000 {
+		offset = 0
 	}
 	if dbConn == nil {
 		jsonError(ctx, 503, "database unavailable")
 		return
 	}
-	rows, err := dbConn.ListFeaturedVideos(limit)
+	// Fetch one extra playable row so clients can stop infinite scrolling at
+	// the real end of the catalog without making an empty follow-up request.
+	rows, err := dbConn.ListFeaturedVideos(limit+1, offset)
 	if err != nil {
 		jsonError(ctx, 500, "featured videos failed")
 		return
 	}
 	setPublicGalleryCache(ctx)
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	jsonResponse(ctx, 200, map[string]interface{}{
-		"results": rows,
-		"count":   len(rows),
-		"kind":    "videos",
+		"results":  rows,
+		"count":    len(rows),
+		"kind":     "videos",
+		"has_more": hasMore,
 	})
 }
 

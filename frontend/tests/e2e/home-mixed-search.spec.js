@@ -22,7 +22,7 @@ test('homepage gallery cache-busts restored originals after additive deployment'
 
   await page.goto('/');
   await expect(page.getByAltText('Restored gallery image')).toBeVisible();
-  expect(galleryRequestURL).toContain('?v=20260814-restored-gallery');
+  expect(galleryRequestURL).toContain('?v=20260817-gallery-index-refresh');
 });
 
 test('homepage search interleaves matching images and videos', async ({ page }) => {
@@ -60,4 +60,60 @@ test('homepage search interleaves matching images and videos', async ({ page }) 
   await expect(results.getByText('Image', { exact: true })).toBeVisible();
   await expect(page.getByTestId('showcase-reel')).toHaveCount(0);
   await expect(page.getByTestId('still-gallery')).toHaveCount(0);
+});
+
+test('homepage search automatically loads more relevance-ranked mixed media', async ({ page }) => {
+  await page.route('**/api/pricing', (route) => route.fulfill({ status: 200, json: {} }));
+  await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route('**/api/search?**', (route) => {
+    const limit = Number(new URL(route.request().url()).searchParams.get('top_k'));
+    const results = Array.from({ length: limit }, (_, index) => ({
+      job_id: `video-${index}`, prompt: `Relevant motion ${index}`,
+      video_url: '/showcase/h3-loop-glass-torus.webm', similarity: 1 - index / 1000,
+    }));
+    return route.fulfill({ status: 200, json: { results } });
+  });
+  await page.route('**/api/images/semantic?**', (route) => {
+    const limit = Number(new URL(route.request().url()).searchParams.get('top_k'));
+    const results = Array.from({ length: limit }, (_, index) => ({
+      id: `image-${index}`, prompt: `Relevant still ${index}`,
+      image_url: `https://images.example/${index}.webp`, similarity: 1 - index / 1000,
+    }));
+    return route.fulfill({ status: 200, json: { results } });
+  });
+
+  await page.goto('/');
+  await page.getByPlaceholder('Search videos and gallery by prompt…').fill('relevant art');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(page.getByTestId('home-search-video-video-23')).toBeVisible();
+  await page.getByTestId('home-search-video-video-23').scrollIntoViewIfNeeded();
+  await expect(page.getByTestId('home-search-video-video-47')).toBeVisible();
+  await expect(page.getByTestId('home-search-image-image-47')).toBeVisible();
+});
+
+test('homepage packs images and videos together and autoloads both feeds', async ({ page }) => {
+  await page.route('**/api/pricing', (route) => route.fulfill({ status: 200, json: {} }));
+  await page.route('**/api/videos/featured?**', (route) => {
+    const url = new URL(route.request().url());
+    const offset = Number(url.searchParams.get('offset') || 0);
+    return route.fulfill({ status: 200, json: {
+      results: [{ job_id: `gallery-video-${offset}`, prompt: `Gallery motion ${offset}`, video_url: '/showcase/h3-loop-glass-torus.webm' }],
+      has_more: offset === 0,
+    } });
+  });
+  await page.route('**/api/images?**', (route) => {
+    const url = new URL(route.request().url());
+    const after = url.searchParams.get('after');
+    return route.fulfill({ status: 200, json: {
+      images: [{ id: `gallery-image-${after ? 24 : 0}`, prompt: `Gallery still ${after ? 24 : 0}`, image_url: 'https://images.example/still.webp' }],
+      ...(after ? {} : { next_cursor: 0.24 }),
+    } });
+  });
+
+  await page.goto('/');
+  await expect(page.getByTestId('gallery-video-gallery-video-0')).toBeVisible();
+  await expect(page.getByAltText('Gallery still 0')).toBeVisible();
+  await page.getByTestId('gallery-video-gallery-video-0').scrollIntoViewIfNeeded();
+  await expect(page.getByTestId('gallery-video-gallery-video-1')).toBeVisible();
+  await expect(page.getByAltText('Gallery still 24')).toBeVisible();
 });
