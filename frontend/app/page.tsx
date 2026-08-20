@@ -255,6 +255,8 @@ export default function HomePage() {
   const [searchQ, setSearchQ] = useState('');
   const [activeSearchQ, setActiveSearchQ] = useState('');
   const [searchBusy, setSearchBusy] = useState(false);
+  const [searchLimit, setSearchLimit] = useState(24);
+  const [searchHasMore, setSearchHasMore] = useState(false);
   const [videoHits, setVideoHits] = useState<VideoHit[]>([]);
   const [heroMuted, setHeroMuted] = useState(true);
   const [assets, setAssets] = useState<PromptAsset[]>([]);
@@ -265,6 +267,7 @@ export default function HomePage() {
   const pendingAssetFilesRef = useRef<File[]>([]);
   const heroVideoRef = useRef<HTMLVideoElement>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
+  const searchMoreRef = useRef<HTMLDivElement>(null);
 
   const updateGenerationTask = useCallback((id: string, update: Partial<HomeGenerationTask>) => {
     setGenerationTasks((current) => current.map((task) => task.id === id ? { ...task, ...update } : task));
@@ -405,23 +408,62 @@ export default function HomePage() {
     if (!q) {
       setActiveSearchQ('');
       setVideoHits([]);
+      setSearchLimit(24);
+      setSearchHasMore(false);
       await loadGallery();
       return;
     }
     setSearchBusy(true);
     try {
-      const [vids] = await Promise.all([
-        fetch(`${API}/search?q=${encodeURIComponent(q)}&top_k=12`).then(async (r) =>
+      const limit = 24;
+      const [vids, images] = await Promise.all([
+        fetch(`${API}/search?q=${encodeURIComponent(q)}&top_k=${limit}`).then(async (r) =>
           r.ok ? r.json() : { results: [] },
         ),
-        loadGallery(q),
+        fetch(`${API}/images/semantic?q=${encodeURIComponent(q)}&top_k=${limit}`).then(async (r) =>
+          r.ok ? r.json() : { results: [] },
+        ),
       ]);
       setVideoHits(vids.results || []);
+      setGallery(normalizeImages(images.results || images.images || []));
+      setSearchLimit(limit);
+      setSearchHasMore((vids.results || []).length === limit || (images.results || images.images || []).length === limit);
       setActiveSearchQ(q);
     } finally {
       setSearchBusy(false);
     }
   }
+
+  const loadMoreSearch = useCallback(async () => {
+    if (!activeSearchQ || searchBusy || !searchHasMore || searchLimit >= 200) return;
+    const nextLimit = Math.min(200, searchLimit + 24);
+    setSearchBusy(true);
+    try {
+      const q = encodeURIComponent(activeSearchQ);
+      const [vids, images] = await Promise.all([
+        fetch(`${API}/search?q=${q}&top_k=${nextLimit}`).then((r) => r.ok ? r.json() : { results: videoHits }),
+        fetch(`${API}/images/semantic?q=${q}&top_k=${nextLimit}`).then((r) => r.ok ? r.json() : { results: gallery }),
+      ]);
+      const nextVideos = vids.results || [];
+      const nextImages = normalizeImages(images.results || images.images || []);
+      setVideoHits(nextVideos);
+      setGallery(nextImages);
+      setSearchLimit(nextLimit);
+      setSearchHasMore(nextLimit < 200 && (nextVideos.length === nextLimit || nextImages.length === nextLimit));
+    } finally {
+      setSearchBusy(false);
+    }
+  }, [activeSearchQ, gallery, searchBusy, searchHasMore, searchLimit, videoHits]);
+
+  useEffect(() => {
+    const target = searchMoreRef.current;
+    if (!target || !activeSearchQ || !searchHasMore) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMoreSearch();
+    }, { rootMargin: '500px 0px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [activeSearchQ, loadMoreSearch, searchHasMore]);
 
   function openAuth(mode: AuthMode = 'signup') {
     setAuthMode(mode);
@@ -904,7 +946,7 @@ export default function HomePage() {
       | { kind: 'image'; id: string; prompt: string; image: GalleryImage; src?: string }
     > = [];
     const length = Math.max(videoHits.length, gallery.length);
-    for (let index = 0; index < length && rows.length < 30; index += 1) {
+    for (let index = 0; index < length; index += 1) {
       const video = videoHits[index];
       if (video?.video_url) rows.push({ kind: 'video', id: video.job_id, prompt: video.prompt, video });
       const image = gallery[index];
@@ -1345,6 +1387,8 @@ export default function HomePage() {
                 setSearchQ('');
                 setActiveSearchQ('');
                 setVideoHits([]);
+                setSearchLimit(24);
+                setSearchHasMore(false);
                 void loadGallery();
               }}
               className="glass rounded-full p-3 text-white/55 transition hover:text-white"
@@ -1400,6 +1444,13 @@ export default function HomePage() {
                 ))}
               </div>
             )}
+            <div ref={searchMoreRef} className="flex min-h-20 items-center justify-center py-4">
+              {searchHasMore ? (
+                <button type="button" onClick={() => void loadMoreSearch()} disabled={searchBusy} className="glass rounded-full px-5 py-2 text-sm text-white/70 disabled:opacity-50">
+                  {searchBusy ? <Loader2 className="animate-spin" size={16} /> : 'Load more results'}
+                </button>
+              ) : mixedSearchHits.length > 0 ? <span className="text-xs text-white/35">All matching media loaded</span> : null}
+            </div>
           </div>
         ) : displayVideos.length > 0 && (
           <div className="pb-4" data-testid="showcase-reel">

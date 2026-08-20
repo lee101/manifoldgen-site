@@ -924,6 +924,12 @@ func (db *DB) StreamCompletedVideoPrompts(cb func(jobID, prompt, videoURL, servi
 			return err
 		}
 		videoURL := extractVideoURLFromResultJSON(resultText)
+		// A completed orchestration row is not necessarily playable media (for
+		// example an older music-video envelope may only contain stage metadata).
+		// Do not let those rows occupy semantic-search slots with blank cards.
+		if videoURL == "" {
+			continue
+		}
 		if err := cb(id, prompt, videoURL, service); err != nil {
 			return err
 		}
