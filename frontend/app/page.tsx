@@ -1567,7 +1567,7 @@ export default function HomePage() {
                   key={img.id}
                   className="group relative mb-px break-inside-avoid overflow-hidden bg-[#0c0c12]"
                 >
-                  <button type="button" onClick={() => selectGalleryImage(img)} className="absolute inset-0 h-full w-full" title={img.prompt}>
+                  <button type="button" onClick={() => selectGalleryImage(img)} className="relative block h-auto w-full" title={img.prompt}>
                   {src ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
