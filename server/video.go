@@ -1042,26 +1042,35 @@ func indexCompletedH3Asset(job *VideoJob, result []byte) {
 		indexCompletedVideo(job, result)
 		return
 	}
+	asset, err := h3AudioAssetFromResult(job, result)
+	if err != nil {
+		log.Printf("SFX indexing skipped for job %s: %v", job.ID, err)
+		return
+	}
+	if err := dbConn.InsertGeneratedAudio(asset); err != nil {
+		log.Printf("SFX persistence failed for job %s: %v", job.ID, err)
+	}
+}
+
+// h3AudioAssetFromResult builds the public generated_audio row that puts a
+// finished audio job into the semantic audio index.
+func h3AudioAssetFromResult(job *VideoJob, result []byte) (*GeneratedAudio, error) {
 	var payload struct {
 		AudioID         string `json:"audio_id"`
 		AudioURL        string `json:"audio_url"`
 		DurationSeconds int    `json:"duration_seconds"`
 	}
 	if json.Unmarshal(result, &payload) != nil || payload.AudioURL == "" {
-		log.Printf("SFX indexing skipped for job %s: completed result has no audio URL", job.ID)
-		return
+		return nil, fmt.Errorf("completed result has no audio URL")
 	}
 	if payload.AudioID == "" {
 		payload.AudioID = h3AudioID(job)
 	}
-	asset := &GeneratedAudio{
+	return &GeneratedAudio{
 		ID: payload.AudioID, UserID: job.UserID, Kind: audioJobKind(job), Prompt: strings.TrimSpace(job.Prompt),
 		Title: studioAudioTitle(job.Prompt), AudioURL: payload.AudioURL,
 		DurationSeconds: payload.DurationSeconds, Public: true, CreatedAt: time.Now(),
-	}
-	if err := dbConn.InsertGeneratedAudio(asset); err != nil {
-		log.Printf("SFX persistence failed for job %s: %v", job.ID, err)
-	}
+	}, nil
 }
 
 func processH3VideoJob(job *VideoJob) {

@@ -32,6 +32,24 @@ func TestMusicGenerationIsAudioJob(t *testing.T) {
 	}
 }
 
+func TestCompletedMusicJobBuildsPublicIndexedAsset(t *testing.T) {
+	job := &VideoJob{ID: "job-1", UserID: "user-1", Service: "music_generation", Prompt: "  relaxing isochronic ambient  ", Result: []byte(`{"_music3_request":{"duration":90}}`)}
+	result := []byte(`{"audio_id":"","audio_url":"https://static.example/track.wav","duration_seconds":92}`)
+	asset, err := h3AudioAssetFromResult(job, result)
+	if err != nil {
+		t.Fatalf("asset build failed: %v", err)
+	}
+	if asset.Kind != "music" || !asset.Public || asset.Prompt != "relaxing isochronic ambient" {
+		t.Fatalf("unexpected asset: %#v", asset)
+	}
+	if asset.AudioURL != "https://static.example/track.wav" || asset.DurationSeconds != 92 || asset.ID == "" {
+		t.Fatalf("unexpected asset payload: %#v", asset)
+	}
+	if _, err := h3AudioAssetFromResult(job, []byte(`{"audio_url":""}`)); err == nil {
+		t.Fatal("result without audio URL should not index")
+	}
+}
+
 func TestRecordMusic3Event(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "music3-events.jsonl")
 	t.Setenv("MUSIC3_EVENT_LOG_PATH", path)
