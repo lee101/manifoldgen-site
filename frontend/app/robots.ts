@@ -8,7 +8,14 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: '*',
       allow: '/',
     },
-    sitemap: 'https://manifoldgen.com/sitemap.xml',
+    // Cross-host sitemaps are legal from any owned host; geo.manifoldgen.com
+    // carries the agent-facing markdown mirror.
+    sitemap: [
+      'https://manifoldgen.com/sitemap.xml',
+      'https://manifoldgen.com/sitemap-images.xml',
+      'https://manifoldgen.com/videos.xml',
+      'https://geo.manifoldgen.com/sitemap.xml',
+    ],
     host: 'https://manifoldgen.com',
   };
 }

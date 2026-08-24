@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Check, Code2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Check, Code2 } from 'lucide-react';
 import { GeneratorHeader } from '@/components/generator-directory';
 import { VideoGeneratorWorkspace } from '@/components/video-generator-workspace';
 import { VIDEO_GENERATORS, videoGenerator } from '@/lib/video-generators';
@@ -27,6 +27,15 @@ export default async function GeneratorToolPage({ params }: { params: Promise<{ 
           <div className="rounded-2xl border border-white/15 bg-white/[0.05] p-5"><div className="text-xs uppercase tracking-[0.16em] text-white/50">Best for</div><div className="mt-3 space-y-2">{generator.strengths.map((strength) => <div key={strength} className="flex items-center gap-2 text-sm text-white/75"><Check size={14} className="text-[var(--color-accent-2)]" /> {strength}</div>)}</div><div className="mt-4 border-t border-white/15 pt-4 text-sm text-white/60">{generator.price}</div></div>
         </section>
         <VideoGeneratorWorkspace generator={generator} />
+        {generator.guide && (
+          <section className="mt-10 flex flex-col justify-between gap-5 rounded-3xl border border-white/15 bg-white/[0.05] p-6 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="font-display text-xl font-700">How to use {generator.name}</h2>
+              <p className="mt-1 text-sm text-white/60">{generator.guide.title} — prompting patterns, tier choice, and troubleshooting.</p>
+            </div>
+            <Link href={`/blog/${generator.guide.slug}`} className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/20 px-4 py-3 text-sm font-semibold hover:border-white/40"><BookOpen size={16} /> Read the guide <ArrowRight size={15} /></Link>
+          </section>
+        )}
         <section className="mt-10 flex flex-col justify-between gap-5 rounded-3xl border border-white/15 bg-white/[0.05] p-6 sm:flex-row sm:items-center"><div><h2 className="font-display text-xl font-700">Build this workflow into your product</h2><p className="mt-1 text-sm text-white/60">Stable JSON API, async jobs, durable outputs, and the same ManifoldGen billing.</p></div><Link href={`/api/video-generators/${generator.slug}`} className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/20 px-4 py-3 text-sm font-semibold hover:border-white/40"><Code2 size={16} /> API reference <ArrowRight size={15} /></Link></section>
       </div>
     </main>

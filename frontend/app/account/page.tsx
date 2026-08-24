@@ -75,6 +75,9 @@ export default function AccountPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [cancellationOpen, setCancellationOpen] = useState(false);
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationBusy, setCancellationBusy] = useState(false);
   const [clientSecret, setClientSecret] = useState('');
   const [publishableKey, setPublishableKey] = useState('');
   const [checkoutMeta, setCheckoutMeta] = useState('');
@@ -318,6 +321,43 @@ export default function AccountPage() {
     }
   }
 
+  async function applyRetentionOffer() {
+    setCancellationBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/stripe/retention`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      await parseJSONResponse(res, 'Unable to apply discount');
+      setCancellationOpen(false);
+      setMessage('Your 50% discount is active for the next 3 months. Thanks for staying with us!');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to apply discount');
+    } finally {
+      setCancellationBusy(false);
+    }
+  }
+
+  async function confirmCancellation() {
+    setCancellationBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/stripe/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: cancellationReason }),
+      });
+      await parseJSONResponse(res, 'Unable to cancel subscription');
+      setCancellationOpen(false);
+      setMessage('Your subscription will remain active until the end of the current billing period.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to cancel subscription');
+    } finally {
+      setCancellationBusy(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[var(--color-ink)] px-4 py-10 text-white">
       <div className="mx-auto max-w-lg">
@@ -445,7 +485,7 @@ export default function AccountPage() {
           </form>
         ) : (
           <div className="glass mt-6 rounded-3xl p-5">
-            <div className="flex items-start justify-between gap-3">
+            <div>
               <div>
                 <div className="text-sm text-[var(--color-mute)]">Signed in</div>
                 <div className="mt-1 text-sm font-medium" data-testid="account-signed-in-email">
@@ -456,15 +496,6 @@ export default function AccountPage() {
                   ${creditsUsd.toFixed(2)}
                 </div>
               </div>
-              <button
-                type="button"
-                data-testid="account-sign-out"
-                onClick={signOut}
-                className="inline-flex items-center gap-2 rounded-full border border-white/15 px-3 py-2 text-sm text-white/80"
-              >
-                <LogOut size={14} />
-                Sign out
-              </button>
             </div>
 
             <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-3">
@@ -577,6 +608,57 @@ export default function AccountPage() {
               {busy ? <Loader2 className="animate-spin" size={16} /> : <CreditCard size={16} />}
               Manage billing & subscriptions
             </button>
+
+            <button
+              type="button"
+              data-testid="account-cancel-subscription"
+              disabled={busy}
+              onClick={() => { setCancellationReason(''); setCancellationOpen(true); }}
+              className="mt-3 inline-flex w-full items-center justify-center rounded-full border border-red-300/30 px-4 py-2.5 text-sm font-medium text-red-200 disabled:opacity-50"
+            >
+              Cancel subscription
+            </button>
+
+            <button
+              type="button"
+              data-testid="account-sign-out"
+              onClick={signOut}
+              className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/15 px-4 py-2.5 text-sm font-medium text-white/85"
+            >
+              <LogOut size={16} />
+              Sign out
+            </button>
+
+            {cancellationOpen ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4" role="dialog" aria-modal="true" aria-labelledby="cancel-subscription-title">
+                <div className="glass w-full max-w-md rounded-3xl p-6">
+                  <h2 id="cancel-subscription-title" className="text-xl font-semibold">Before you go</h2>
+                  <p className="mt-2 text-sm text-[var(--color-mute)]">What is the main reason you’re cancelling?</p>
+                  <select
+                    value={cancellationReason}
+                    onChange={(event) => setCancellationReason(event.target.value)}
+                    className="mt-4 w-full rounded-xl border border-white/15 bg-black/30 px-3 py-2.5 text-sm text-white"
+                  >
+                    <option value="">Select a reason</option>
+                    <option value="too_expensive">Too expensive</option>
+                    <option value="not_using">I’m not using it enough</option>
+                    <option value="missing_features">Missing features</option>
+                    <option value="other">Other</option>
+                  </select>
+                  <div className="mt-6 rounded-2xl border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 p-4 text-center">
+                    <p className="font-semibold">Stay with us at 50% off</p>
+                    <p className="mt-1 text-sm text-[var(--color-mute)]">We’ll apply half-price billing for your next 3 months.</p>
+                    <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void applyRetentionOffer()} className="mt-4 inline-flex w-full justify-center rounded-full bg-[var(--color-accent)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
+                      {cancellationBusy ? 'Applying…' : 'Accept 50% discount'}
+                    </button>
+                  </div>
+                  <div className="mt-4 flex gap-3">
+                    <button type="button" disabled={cancellationBusy} onClick={() => setCancellationOpen(false)} className="flex-1 rounded-full border border-white/15 px-4 py-2.5 text-sm">Keep subscription</button>
+                    <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void confirmCancellation()} className="flex-1 rounded-full border border-red-300/30 px-4 py-2.5 text-sm text-red-200 disabled:opacity-50">Continue cancelling</button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <h2 className="mt-6 text-lg font-semibold">API</h2>
             <pre

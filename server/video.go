@@ -68,29 +68,50 @@ type appNZH3Envelope struct {
 }
 
 var allowedVideoModels = map[string]bool{
-	"auto-video":                           true,
-	"seedance-2.0-fast-text-to-video":      true,
-	"seedance-2.0-text-to-video":           true,
-	"seedance-2.0-image-to-video":          true,
-	"seedance-2.0-fast-reference-to-video": true,
-	"seedance-2.0-reference-to-video":      true,
-	"alibaba/happy-horse/image-to-video":   true,
-	"ltx-video":                            true,
-	"ltx-2":                                true,
-	"ltx-2.3-image-to-video":               true,
-	"wan":                                  true,
-	"ra2v":                                 true,
+	"auto-video":                                    true,
+	"seedance-2.0-fast-text-to-video":               true,
+	"seedance-2.0-text-to-video":                    true,
+	"seedance-2.0-image-to-video":                   true,
+	"seedance-2.0-fast-reference-to-video":          true,
+	"seedance-2.0-reference-to-video":               true,
+	"alibaba/happy-horse/image-to-video":            true,
+	"ltx-video":                                     true,
+	"ltx-2":                                         true,
+	"ltx-2.3-image-to-video":                        true,
+	"wan":                                           true,
+	"seedance-2.5-text-to-video":                    true,
+	"seedance-2.5-image-to-video":                   true,
+	"seedance-2.5-reference-to-video":               true,
+	"seedance-2.0-4k-text-to-video":                 true,
+	"fal-ai/kling-video/v3/pro/text-to-video":       true,
+	"fal-ai/kling-video/v3/pro/image-to-video":      true,
+	"fal-ai/kling-video/v3/standard/text-to-video":  true,
+	"fal-ai/kling-video/v3/standard/image-to-video": true,
+	"fal-ai/kling-video/v2.6/pro/text-to-video":     true,
+	"fal-ai/kling-video/v2.6/pro/image-to-video":    true,
+	"fal-ai/veo3.1":                                 true,
+	"fal-ai/veo3.1/image-to-video":                  true,
+	"fal-ai/veo3.1/fast":                            true,
+	"fal-ai/veo3.1/fast/image-to-video":             true,
+	"ra2v":                                          true,
 }
 
 var imageRequiredVideoModels = map[string]bool{
-	"seedance-2.0-image-to-video":        true,
-	"alibaba/happy-horse/image-to-video": true,
-	"ltx-2.3-image-to-video":             true,
+	"seedance-2.0-image-to-video":                   true,
+	"alibaba/happy-horse/image-to-video":            true,
+	"ltx-2.3-image-to-video":                        true,
+	"seedance-2.5-image-to-video":                   true,
+	"fal-ai/kling-video/v3/pro/image-to-video":      true,
+	"fal-ai/kling-video/v3/standard/image-to-video": true,
+	"fal-ai/kling-video/v2.6/pro/image-to-video":    true,
+	"fal-ai/veo3.1/image-to-video":                  true,
+	"fal-ai/veo3.1/fast/image-to-video":             true,
 }
 
 var referenceRequiredVideoModels = map[string]bool{
 	"seedance-2.0-fast-reference-to-video": true,
 	"seedance-2.0-reference-to-video":      true,
+	"seedance-2.5-reference-to-video":      true,
 }
 
 type openPathsVideoResponse struct {
@@ -107,6 +128,15 @@ func normalizeVideoModel(model string) string {
 		return "auto-video"
 	}
 	return model
+}
+
+func falLTXFallbackEligible(model string) bool {
+	switch normalizeVideoModel(model) {
+	case "ltx-2.3-image-to-video", "ltx-2", "ltx-video":
+		return true
+	default:
+		return false
+	}
 }
 
 func proxyOpenPathsVideo(req ServiceUsageRequest) ([]byte, error) {
@@ -195,6 +225,10 @@ func proxyOpenPathsVideo(req ServiceUsageRequest) ([]byte, error) {
 	body, _ := json.Marshal(payload)
 	result, status, err := callOpenPathsVideo(http.MethodPost, openPathsBaseURL+"/v1/videos/generations", body)
 	if err != nil {
+		if falAPIKey != "" && falLTXFallbackEligible(model) {
+			log.Printf("[video] OpenPaths %s failed: %v; falling back to FAL LTX", model, err)
+			return proxyFallbackFalVideo(req)
+		}
 		return nil, err
 	}
 	if status != http.StatusAccepted {
@@ -768,6 +802,10 @@ func processVideoJob(jobID string) {
 	}
 	if job.Service == "music_video" {
 		processMusicVideoJob(job)
+		return
+	}
+	if job.Service == dramatizeServiceName {
+		processVideoDramatizeJob(job)
 		return
 	}
 	if job.Service == "video_restyle" {
@@ -1912,6 +1950,9 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 				exposePublicMusicVideoStatus(result)
 			}
 			for key := range result {
+				if strings.HasPrefix(key, "_agent") && job.Service == dramatizeServiceName {
+					continue
+				}
 				if strings.HasPrefix(key, "_") || key == "provider" || key == "provider_cost_usd" || key == "backend" || key == "backend_used" || key == "model_variant" || key == "metrics" || key == "predict_seconds" {
 					delete(result, key)
 				}

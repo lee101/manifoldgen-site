@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +15,8 @@ import (
 )
 
 const sitemapSiteURL = "https://manifoldgen.com"
+const sitemapGalleryCDN = "https://manifoldgenstatic.manifoldgen.com/gallery"
+const sitemapImagePageSize = 45000
 
 // Sitemaps are generated from public content at request time so new gallery
 // images and completed videos become crawlable without a separate cron job.
@@ -19,7 +25,21 @@ func handleSitemapIndex(ctx *fasthttp.RequestCtx) {
 	var b strings.Builder
 	b.WriteString(xml.Header)
 	b.WriteString(`<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`)
-	for _, name := range []string{"sitemap-pages.xml", "sitemap-images.xml", "videos.xml"} {
+	names := []string{"sitemap-pages.xml", "sitemap-images.xml", "videos.xml"}
+	if dbConn != nil {
+		dbConn.mu.RLock()
+		var imageCount int
+		err := dbConn.conn.QueryRow(`
+			SELECT COUNT(*) FROM generated_images
+			WHERE is_nsfw = FALSE AND COALESCE(file_path, '') <> ''`).Scan(&imageCount)
+		dbConn.mu.RUnlock()
+		if err == nil {
+			for page := 2; page <= (imageCount+sitemapImagePageSize-1)/sitemapImagePageSize; page++ {
+				names = append(names, fmt.Sprintf("sitemap-images-%d.xml", page))
+			}
+		}
+	}
+	for _, name := range names {
 		fmt.Fprintf(&b, `<sitemap><loc>%s/%s</loc></sitemap>`, sitemapSiteURL, name)
 	}
 	b.WriteString(`</sitemapindex>`)
@@ -31,18 +51,55 @@ func handleSitemapPages(ctx *fasthttp.RequestCtx) {
 	var b strings.Builder
 	b.WriteString(xml.Header)
 	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`)
-	for _, path := range []string{"/", "/tools", "/tool/animate-video", "/tool/image-editor", "/api", "/api/video-generators", "/studio", "/voice"} {
+	for _, path := range []string{
+		"/", "/tools", "/tools/h3-image", "/tools/music-generator", "/tools/make-image",
+		"/tools/style-transfer", "/tools/h3-image-editor", "/tools/character-animator",
+		"/tools/video-background-remover", "/tools/video-dramatizer",
+		"/tools/cinematic-cameras", "/tools/relight", "/tools/inpaint",
+		"/tools/image-upscale", "/tools/outpaint", "/tools/moodboard",
+		"/tools/nano-banana", "/tools/grok-imagine", "/tools/flux-2", "/tools/gpt-image",
+		"/tool/animate-video", "/tool/image-editor", "/tool/anima",
+		"/api", "/api/video-generators", "/studio", "/voice", "/blog",
+	} {
+		fmt.Fprintf(&b, `<url><loc>%s%s</loc></url>`, sitemapSiteURL, path)
+	}
+	for _, path := range seoRoutesFromExport() {
+		if !publicSitemapURL(path) {
+			continue
+		}
 		fmt.Fprintf(&b, `<url><loc>%s%s</loc></url>`, sitemapSiteURL, path)
 	}
 	b.WriteString(`</urlset>`)
 	ctx.SetBodyString(b.String())
 }
 
-func handleSitemapImages(ctx *fasthttp.RequestCtx, _ string) {
+// seoRoutesFromExport reads the route list emitted by the frontend build
+// (public/seo-routes.json lands in the export root). Missing file or bad JSON
+// simply yields no extra routes; the static list above always ships.
+func seoRoutesFromExport() []string {
+	data, err := os.ReadFile(filepath.Join(getEnv("DIST_DIR", "../frontend/out"), "seo-routes.json"))
+	if err != nil {
+		return nil
+	}
+	var payload struct {
+		Routes []string `json:"routes"`
+	}
+	if json.Unmarshal(data, &payload) != nil {
+		return nil
+	}
+	return payload.Routes
+}
+
+func handleSitemapImages(ctx *fasthttp.RequestCtx, pageText string) {
 	setXML(ctx)
 	var b strings.Builder
 	b.WriteString(xml.Header)
 	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`)
+	page := 1
+	if parsed, err := strconv.Atoi(pageText); err == nil && parsed > 0 {
+		page = parsed
+	}
+	offset := (page - 1) * sitemapImagePageSize
 
 	if dbConn != nil {
 		dbConn.mu.RLock()
@@ -51,7 +108,7 @@ func handleSitemapImages(ctx *fasthttp.RequestCtx, _ string) {
 			FROM generated_images
 			WHERE is_nsfw = FALSE AND COALESCE(file_path, '') <> ''
 			ORDER BY created_at DESC
-			LIMIT 50000`)
+			LIMIT $1 OFFSET $2`, sitemapImagePageSize, offset)
 		if err == nil {
 			for rows.Next() {
 				var filePath, prompt string
@@ -59,7 +116,7 @@ func handleSitemapImages(ctx *fasthttp.RequestCtx, _ string) {
 				if rows.Scan(&filePath, &prompt, &createdAt) != nil {
 					continue
 				}
-				imageURL := sitemapSiteURL + "/images/" + strings.TrimPrefix(filePath, "/")
+				imageURL := sitemapGalleryCDN + "/" + strings.TrimPrefix(filePath, "/")
 				fmt.Fprintf(&b, `<url><loc>%s/</loc><lastmod>%s</lastmod><image:image><image:loc>%s</image:loc>`, sitemapSiteURL, createdAt.UTC().Format(time.RFC3339), xmlText(imageURL))
 				if prompt = sitemapText(prompt, "ManifoldGen generated image"); prompt != "" {
 					fmt.Fprintf(&b, `<image:title>%s</image:title><image:caption>%s</image:caption>`, xmlText(prompt), xmlText(prompt))
@@ -70,7 +127,7 @@ func handleSitemapImages(ctx *fasthttp.RequestCtx, _ string) {
 		}
 		dbConn.mu.RUnlock()
 	}
-	if b.Len() == len(xml.Header)+len(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`) {
+	if page == 1 && b.Len() == len(xml.Header)+len(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`) {
 		b.WriteString(`<url><loc>` + sitemapSiteURL + `</loc><image:image><image:loc>` + sitemapSiteURL + `/brand/logo.webp</image:loc><image:title>ManifoldGen</image:title></image:image></url>`)
 	}
 	b.WriteString(`</urlset>`)

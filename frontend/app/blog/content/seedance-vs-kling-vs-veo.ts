@@ -1,0 +1,47 @@
+import type { BlogArticle } from '../articles';
+
+export const seedanceKlingVeoComparison: BlogArticle = {
+  slug: 'seedance-vs-kling-vs-veo',
+  category: 'Model comparisons',
+  title: 'Seedance 2 vs Kling 3.0 vs Veo 3.1: pick the flagship that fits',
+  excerpt: 'Three flagship video models on one API: cinematic all-rounder, audio-first multi-shot scenes, and photoreal physical motion. Prices, audio, and the shots each one wins.',
+  readTime: '7 min read',
+  date: '2026-08-24',
+  ogImage: '/blog/og/seedance-vs-kling-vs-veo.jpg',
+  blocks: [
+    { type: 'p', text: 'ManifoldGen now serves three flagship video families side by side: Seedance 2 (ByteDance), Kling 3.0 (Kuaishou), and Veo 3.1 (Google). Each has a different center of gravity — cinematic character work, multi-shot scenes with audio, and photoreal physical motion. They share one API key and one prepaid credit balance, so the question is not which platform to use but which model should run which shot.' },
+    { type: 'h2', text: 'The short version' },
+    { type: 'list', items: [
+      'Seedance 2 — the cinematic all-rounder: strongest prompt fidelity and character coherence, 1080p with synced audio, reference-guided variants. From ~$1.67 per 5s at full quality.',
+      'Kling 3.0 — native audio at a lower entry price: Standard from 76 credits (~$0.76), Pro adds 1080p and improved lipsync from 101 credits, 2.6 lane for volume.',
+      'Veo 3.1 — the photoreal flagship: believable physics and synchronized sound from 240 credits (~$2.40), with Veo 3.1 Fast at 90 credits when a still needs realistic motion on a budget.',
+    ] },
+    { type: 'h2', text: 'Prices side by side' },
+    { type: 'table', head: ['Model', 'Entry price', 'Max resolution', 'Native audio'], rows: [
+      ['Seedance 2', '128 credits (~$1.28); $0.334/s at full quality', '1080p', 'Yes, synchronized'],
+      ['Seedance 2 Fast', '128 credits per 5s', '1080p', 'Yes'],
+      ['Kling 3.0 Standard', '76 credits (~$0.76)', '720p', 'Yes, synchronized'],
+      ['Kling 3.0 Pro', '101 credits (~$1.01)', '1080p', 'Yes, improved lipsync'],
+      ['Kling 2.6 Pro', '84 credits', '1080p', 'Yes'],
+      ['Veo 3.1', '240 credits (~$2.40)', '1080p', 'Yes, synchronized'],
+      ['Veo 3.1 Fast', '90 credits', '1080p', 'Yes'],
+    ] },
+    { type: 'p', text: 'All prices are measured on ManifoldGen and bill from the same credit balance: 1 credit = $0.01. Run the same prompt through all three in one session and pay only for what generates.' },
+    { type: 'h2', text: 'Which one wins which shot' },
+    { type: 'h3', text: 'Character-driven narrative → Seedance 2' },
+    { type: 'p', text: 'Seedance keeps characters coherent through multi-subject action and follows complex prompts better than the other two. For dialogue scenes, brand work, or any clip where a person must stay the same person from first frame to last, it is the default. The reference variants (Seedance 2.5 Reference, Seedance 2 Reference) lock a character, set, or palette across a full take.' },
+    { type: 'h3', text: 'Multi-shot scenes and budget audio → Kling 3.0' },
+    { type: 'p', text: 'Kling is tuned for scenes that cut: multi-shot structure, filmic camera moves, and synced audio at a lower entry price than Seedance full quality. Pro adds 1080p and notably better lipsync, which makes it the value pick for talking-head style clips. The 2.6 lane costs even less for high-volume work that still needs sound.' },
+    { type: 'h3', text: 'Photoreal stills and physics-heavy motion → Veo 3.1' },
+    { type: 'p', text: 'When the output must read as real footage — water, fabric, faces, product physics — Veo 3.1 is the most believable of the three. It is image-to-video first, and its Fast lane animates a still with realistic motion and synced audio for about a third of the flagship price.' },
+    { type: 'callout', title: 'The workflow that actually uses all three', text: 'Draft the edit with LTX 2 ($0.09), move to Kling for budget audio cuts, then finish hero shots with Seedance or Veo. One key, one balance, zero migration.' },
+    { type: 'h2', text: 'Try them yourself' },
+    { type: 'list', items: [
+      'Seedance 2 tools: /tools/seedance-2, /tools/seedance-2-fast, /tools/seedance-2-image, /tools/seedance-2-reference',
+      'Kling tools: /tools/kling-3, /tools/kling-3-pro, /tools/kling-3-image, /tools/kling-26',
+      'Veo tools: /tools/veo-3-1, /tools/veo-3-1-fast',
+      'Full model pages with specs and verdicts: /models/seedance, /models/kling, /models/veo',
+      'Head-to-head verdicts: /compare/seedance-vs-kling, /compare/seedance-vs-veo, /compare/kling-vs-veo',
+    ] },
+  ],
+};

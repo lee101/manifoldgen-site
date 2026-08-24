@@ -12,5 +12,4 @@ test('video background remover route renders the local-first tool', async ({ pag
   await expect(page.getByRole('button', { name: 'New scene' })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Use astronaut sample' }).click();
   await expect(page.getByRole('button', { name: 'Remove background' })).toBeEnabled();
-  await expect(page.getByText('Local GPU first')).toBeVisible();
 });

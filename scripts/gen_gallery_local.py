@@ -36,6 +36,8 @@ WEIGHTS = Path(os.environ.get("H3_WEIGHTS_DIR", "/nvme0n1-disk/h3-w4a8-weights")
 PATCH = Path(os.environ.get("H3_PATCH_DIR", "/tmp/h3-accel-patch"))
 ACCEL_PROFILE = os.environ.get("H3_ACCEL_PROFILE", "off")
 FACE_REFINE = os.environ.get("H3_LOCAL_FACE_REFINE", "0")
+MODEL_PROFILE = os.environ.get("H3_LOCAL_MODEL_PROFILE", "video")
+LATENT_UPSCALE = os.environ.get("H3_LOCAL_LATENT_UPSCALE", "0")
 TRAJECTORY_CAPTURE = os.environ.get("H3_TRAJECTORY_CAPTURE", "off").strip().lower()
 TRAJECTORY_ROOT = Path(os.environ.get("H3_TRAJECTORY_ROOT", "/sdb-disk/h3-trajectories"))
 TRAJECTORY_DATASET = os.environ.get("H3_TRAJECTORY_DATASET", "h3-popular-concepts-v1")
@@ -263,6 +265,8 @@ def container_matches_configuration() -> bool:
         f"H3_TRAJECTORY_CAPTURE={TRAJECTORY_CAPTURE}",
         f"H3_TRAJECTORY_DATASET={TRAJECTORY_DATASET}",
         f"H3_CONDITIONING_CACHE={1 if CONDITIONING_CACHE else 0}",
+        f"H3_MODEL_PROFILE={MODEL_PROFILE}",
+        f"H3_LATENT_UPSCALE_ENABLED={LATENT_UPSCALE}",
     }
     return expected <= environment
 
@@ -346,6 +350,12 @@ def ensure_container() -> None:
         "H3_INCLUDE_REF2VA=0",
         "-e",
         f"H3_FACE_REFINE_ENABLED={FACE_REFINE}",
+        "-e",
+        "H3_FACE_REFINE_MIN_FACE_FRACTION=0",
+        "-e",
+        f"H3_MODEL_PROFILE={MODEL_PROFILE}",
+        "-e",
+        f"H3_LATENT_UPSCALE_ENABLED={LATENT_UPSCALE}",
         "-e",
         f"H3_TRAJECTORY_ENABLED={1 if TRAJECTORY_CAPTURE in {'full', 'sketch'} else 0}",
         "-e",

@@ -70,13 +70,46 @@ var promptSearch *PromptSearchEngine
 var videoSearch *VideoSearchEngine
 var audioSearch *AudioSearchEngine
 
+// All three catalogs use the same embedding model. Loading one copy keeps
+// startup memory bounded and prevents concurrent index builds from fighting
+// over the production GPU. The search engines themselves remain independent so
+// their indexes can be queried without cross-catalog filtering.
+var sharedSearchModel struct {
+	sync.Once
+	model *gobed.EmbeddingModel
+	err   error
+}
+
+func loadSharedSearchModel() (*gobed.EmbeddingModel, error) {
+	sharedSearchModel.Do(func() {
+		log.Println("[search] Loading shared gobed model…")
+		sharedSearchModel.model, sharedSearchModel.err = gobed.LoadModel()
+		if sharedSearchModel.err == nil {
+			log.Printf("[search] gobed CUDA available: %v", gobed.IsCUDAAvailable())
+		}
+	})
+	return sharedSearchModel.model, sharedSearchModel.err
+}
+
 func initPromptSearch() {
 	promptSearch = &PromptSearchEngine{}
 	videoSearch = &VideoSearchEngine{}
 	audioSearch = &AudioSearchEngine{}
-	go promptSearch.loadAndIndex()
-	go videoSearch.loadAndIndex()
-	go audioSearch.loadAndIndex()
+	go rebuildSearchIndexes()
+}
+
+func rebuildSearchIndexes() {
+	// Build in sequence: gobed can use CUDA for embedding and ANN index work,
+	// so parallel builds increase cold-start time and can exhaust VRAM.
+	if promptSearch != nil {
+		promptSearch.loadAndIndex()
+	}
+	if videoSearch != nil {
+		videoSearch.loadAndIndex()
+	}
+	if audioSearch != nil {
+		audioSearch.loadAndIndex()
+	}
 }
 
 func (ps *PromptSearchEngine) loadAndIndex() {
@@ -94,8 +127,7 @@ func (ps *PromptSearchEngine) loadAndIndex() {
 	}()
 
 	t0 := time.Now()
-	log.Println("[search] Loading gobed model for image gallery…")
-	model, err := gobed.LoadModel()
+	model, err := loadSharedSearchModel()
 	if err != nil {
 		log.Printf("[search] gobed model load failed: %v", err)
 		return
@@ -216,8 +248,7 @@ func (vs *VideoSearchEngine) loadAndIndex() {
 	}()
 
 	t0 := time.Now()
-	log.Println("[video-search] Loading gobed model…")
-	model, err := gobed.LoadModel()
+	model, err := loadSharedSearchModel()
 	if err != nil {
 		log.Printf("[video-search] gobed model load failed: %v", err)
 		return
@@ -346,8 +377,7 @@ func (as *AudioSearchEngine) loadAndIndex() {
 	}()
 
 	t0 := time.Now()
-	log.Println("[audio-search] Loading gobed model…")
-	model, err := gobed.LoadModel()
+	model, err := loadSharedSearchModel()
 	if err != nil {
 		log.Printf("[audio-search] gobed model load failed: %v", err)
 		return

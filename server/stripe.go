@@ -87,6 +87,52 @@ type stripeSubscription struct {
 	Metadata map[string]string `json:"metadata"`
 }
 
+const retentionCouponID = "KJBkDvAB"
+
+var errNoEligibleSubscription = errors.New("no eligible subscription found")
+
+func (s *stripeService) applyRetentionCoupon(customerID string) error {
+	var subscriptions struct {
+		Data []stripeSubscription `json:"data"`
+	}
+	path := "/v1/subscriptions?" + url.Values{"customer": {customerID}, "status": {"all"}}.Encode()
+	if err := s.get(path, &subscriptions); err != nil {
+		return fmt.Errorf("list subscriptions: %w", err)
+	}
+	for _, subscription := range subscriptions.Data {
+		if subscription.Status != "active" && subscription.Status != "trialing" && subscription.Status != "past_due" {
+			continue
+		}
+		vals := url.Values{"coupon": {retentionCouponID}}
+		if err := s.post("/v1/subscriptions/"+url.PathEscape(subscription.ID), vals, nil, &struct{}{}); err != nil {
+			return fmt.Errorf("apply retention coupon: %w", err)
+		}
+		return nil
+	}
+	return errNoEligibleSubscription
+}
+
+func (s *stripeService) cancelSubscription(customerID string) error {
+	var subscriptions struct {
+		Data []stripeSubscription `json:"data"`
+	}
+	path := "/v1/subscriptions?" + url.Values{"customer": {customerID}, "status": {"all"}}.Encode()
+	if err := s.get(path, &subscriptions); err != nil {
+		return fmt.Errorf("list subscriptions: %w", err)
+	}
+	for _, subscription := range subscriptions.Data {
+		if subscription.Status != "active" && subscription.Status != "trialing" {
+			continue
+		}
+		vals := url.Values{"cancel_at_period_end": {"true"}}
+		if err := s.post("/v1/subscriptions/"+url.PathEscape(subscription.ID), vals, nil, &struct{}{}); err != nil {
+			return fmt.Errorf("cancel subscription: %w", err)
+		}
+		return nil
+	}
+	return errNoEligibleSubscription
+}
+
 type stripeInvoice struct {
 	ID            string `json:"id"`
 	Customer      string `json:"customer"`
@@ -462,6 +508,82 @@ func handleStripePortal(ctx *fasthttp.RequestCtx) {
 		"url":         session.URL,
 		"customer_id": customerID,
 	})
+}
+
+func stripeAuthenticatedCustomer(ctx *fasthttp.RequestCtx) (*User, string, error) {
+	if stripeSvc == nil {
+		return nil, "", errors.New("stripe payments not configured")
+	}
+	apiKey := strings.TrimSpace(strings.TrimPrefix(string(ctx.Request.Header.Peek("Authorization")), "Bearer "))
+	if apiKey == "" {
+		return nil, "", errors.New("api key required")
+	}
+	user, err := dbConn.GetUserByAPIKey(apiKey)
+	if err != nil {
+		return nil, "", errors.New("invalid API key")
+	}
+	if user.StripeCustomerID == "" {
+		return nil, "", errors.New("no subscription found")
+	}
+	return user, user.StripeCustomerID, nil
+}
+
+func handleStripeRetentionCoupon(ctx *fasthttp.RequestCtx) {
+	if !ctx.IsPost() {
+		jsonError(ctx, 405, "method not allowed")
+		return
+	}
+	_, customerID, err := stripeAuthenticatedCustomer(ctx)
+	if err != nil {
+		status := 401
+		if err.Error() == "no subscription found" {
+			status = 400
+		}
+		if err.Error() == "stripe payments not configured" {
+			status = 503
+		}
+		jsonError(ctx, status, err.Error())
+		return
+	}
+	if err := stripeSvc.applyRetentionCoupon(customerID); err != nil {
+		if errors.Is(err, errNoEligibleSubscription) {
+			jsonError(ctx, 400, "no active subscription found")
+			return
+		}
+		log.Printf("stripe retention coupon error: %v", err)
+		jsonError(ctx, 502, "failed to apply discount")
+		return
+	}
+	jsonResponse(ctx, 200, map[string]interface{}{"success": true, "message": "50% discount applied for 3 months"})
+}
+
+func handleStripeCancelSubscription(ctx *fasthttp.RequestCtx) {
+	if !ctx.IsPost() {
+		jsonError(ctx, 405, "method not allowed")
+		return
+	}
+	_, customerID, err := stripeAuthenticatedCustomer(ctx)
+	if err != nil {
+		status := 401
+		if err.Error() == "no subscription found" {
+			status = 400
+		}
+		if err.Error() == "stripe payments not configured" {
+			status = 503
+		}
+		jsonError(ctx, status, err.Error())
+		return
+	}
+	if err := stripeSvc.cancelSubscription(customerID); err != nil {
+		if errors.Is(err, errNoEligibleSubscription) {
+			jsonError(ctx, 400, "no active subscription found")
+			return
+		}
+		log.Printf("stripe cancellation error: %v", err)
+		jsonError(ctx, 502, "failed to cancel subscription")
+		return
+	}
+	jsonResponse(ctx, 200, map[string]interface{}{"success": true, "message": "Subscription cancellation scheduled"})
 }
 
 func handleStripeCheckout(ctx *fasthttp.RequestCtx) {

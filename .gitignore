@@ -65,3 +65,12 @@ server/manifoldgen-site
 frontend/.next-music-build
 frontend/.next-music-e2e
 audio-images-to-vid/
+testresults/
+frontend/public/examples/robotrun.mp4
+testreview/
+
+.next-check/
+.next-dev*/
+.next-playwright/
+.next-upscale-*/
+.next-export-visual/

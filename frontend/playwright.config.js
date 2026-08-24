@@ -15,6 +15,11 @@ module.exports = defineConfig({
   // Video encoding and WebGL fidelity checks need exclusive access to the
   // software renderer on most developer machines.
   fullyParallel: false,
+  // Next dev can compile several newly visited routes concurrently, but its
+  // dev server occasionally serves a transient 404/partial tree under the
+  // default worker count. Keep browser journeys deterministic; opt into more
+  // workers explicitly for suites that use a production server.
+  workers: process.env.PLAYWRIGHT_WORKERS ? Number(process.env.PLAYWRIGHT_WORKERS) : 1,
   reporter: [['list']],
   use: {
     baseURL,

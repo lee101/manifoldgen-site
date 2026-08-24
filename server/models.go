@@ -189,6 +189,14 @@ type ServiceUsageRequest struct {
 	MaxQuality         *bool    `json:"max_quality,omitempty"`
 	MaskURL            string   `json:"mask_url,omitempty"`
 	AddTransparency    *bool    `json:"add_transparency,omitempty"`
+	// extend_image outpaint controls: each expand side is a fraction (0..1)
+	// of the source dimension; zoom_out_percentage shrinks the subject into
+	// a larger canvas instead of extending a single side.
+	ExpandTop    float64 `json:"expand_top,omitempty"`
+	ExpandBottom float64 `json:"expand_bottom,omitempty"`
+	ExpandLeft   float64 `json:"expand_left,omitempty"`
+	ExpandRight  float64 `json:"expand_right,omitempty"`
+	ZoomOut      float64 `json:"zoom_out_percentage,omitempty"`
 	// MusicVideo asks ManifoldGen to compose a MiniMax soundtrack first, then
 	// use that persisted track as H3's driving reference audio.
 	MusicVideo    bool   `json:"music_video,omitempty"`

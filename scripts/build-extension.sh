@@ -5,7 +5,7 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 extension_dir="$repo_dir/extension"
 artifact_dir="$repo_dir/artifacts"
 version="$(node -p "require('$extension_dir/manifest.json').version")"
-archive="$artifact_dir/manifoldgen-everywhere-$version.zip"
+archive="$artifact_dir/manifoldgen-$version.zip"
 
 node --check "$extension_dir/background.js"
 node --check "$extension_dir/content.js"

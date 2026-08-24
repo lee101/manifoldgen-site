@@ -44,10 +44,7 @@ zero-copy` to fail closed instead. The strict requirement is part of the
 content key, so a portable result cannot satisfy a strict zero-copy request;
 `auto` may reuse a verified portable result because fallback is permitted.
 
-`cache/`, `downloads/`, and `results/` are intentionally gitignored. RVM
-weights are downloaded and SHA-256 verified; they are not redistributed here.
-RVM is a GPL-3.0 research backend, so production deployments should select a
-commercially compatible ONNX/TensorRT matte engine behind the same job schema.
+`cache/`, `downloads/`, and `results/` are intentionally gitignored.
 
 ## Queue and cache semantics
 

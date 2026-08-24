@@ -50,6 +50,7 @@ STATIC_PUBLIC_URL="${MANIFOLDGEN_STATIC_PUBLIC_URL:-https://manifoldgenstatic.ma
 APP_URL="${MANIFOLDGEN_APP_URL:-https://manifoldgen.com}"
 GALLERY_IMAGES_DIR="${MANIFOLDGEN_IMAGES_DIR:-${IMAGES_DIR:-/nvme0n1-disk/manifoldgen-images}}"
 DEPLOY_ROOT="${MANIFOLDGEN_DEPLOY_ROOT:-/opt/manifoldgen-site}"
+GOBED_MODULE_DIR="${MANIFOLDGEN_GOBED_DIR:-$ROOT/../gobed}"
 SKIP_LOCAL_INSTALL="${MANIFOLDGEN_SKIP_LOCAL_INSTALL:-0}"
 CF_ZONE_ID="${CLOUDFLARE_ZONE_MANIFOLDGEN:-e76d8743fa762b019b526fea3b461105}"
 CF_API_KEY="${CLOUDFLARE_API_KEY:-${CLOUDFLARE_KEY:-${CLOUDFLARE_API:-}}}"
@@ -189,10 +190,31 @@ fi
 cd ..
 echo "  ✓ Frontend built"
 
+SERVER_BUILD_FLAGS=()
+GPU_SEARCH_ENABLED=0
+GPU_MOD_FILE=""
+if [ -f "$GOBED_MODULE_DIR/go.mod" ] && \
+  [ -f "$GOBED_MODULE_DIR/gpu/torch_cgo_wrapper.h" ] && \
+  [ -f "$GOBED_MODULE_DIR/gpu/libpure_cuda_indexer.so" ]; then
+  GPU_SEARCH_ENABLED=1
+  GPU_MOD_FILE=$(mktemp "${TMPDIR:-/tmp}/manifoldgen-gpu.XXXXXX.mod")
+  cp server/go.mod "$GPU_MOD_FILE"
+  (
+    cd server
+    go mod edit -modfile="$GPU_MOD_FILE" \
+      -replace="github.com/lee101/gobed=$GOBED_MODULE_DIR"
+  )
+  SERVER_BUILD_FLAGS=(-mod=mod "-modfile=$GPU_MOD_FILE" -tags gpu)
+  echo "  Using CUDA-enabled gobed from $GOBED_MODULE_DIR"
+fi
+
 (
   cd server
-  go build -trimpath -o manifoldgen-server .
+  go build -trimpath "${SERVER_BUILD_FLAGS[@]}" -o manifoldgen-server .
 )
+if [ -n "$GPU_MOD_FILE" ]; then
+  rm -f "$GPU_MOD_FILE" "${GPU_MOD_FILE%.mod}.sum"
+fi
 SERVER_SIZE=$(du -h server/manifoldgen-server | cut -f1)
 echo "  ✓ Server built ($SERVER_SIZE)"
 
@@ -267,6 +289,11 @@ else
   fi
   "${SUDO[@]}" install -m 755 server/manifoldgen-server "$server_next"
   "${SUDO[@]}" mv -f "$server_next" "$DEPLOY_ROOT/server/manifoldgen-server"
+  if [ "$GPU_SEARCH_ENABLED" -eq 1 ]; then
+    "${SUDO[@]}" mkdir -p "$DEPLOY_ROOT/gpu"
+    "${SUDO[@]}" rsync -a --include='*.so*' --exclude='*' "$GOBED_MODULE_DIR/gpu/" "$DEPLOY_ROOT/gpu/"
+    echo "  ✓ CUDA search libraries installed"
+  fi
   echo "  ✓ Server binary installed atomically"
 
   service_unit_previous="$DEPLOY_ROOT/server/.manifoldgen-service.previous.$$"
@@ -311,7 +338,14 @@ else
   "${SUDO[@]}" ln -sfn \
     /etc/nginx/sites-available/manifoldgen.com \
     /etc/nginx/sites-enabled/manifoldgen.com
-
+  if install_root_file_if_changed \
+    "$ROOT/deploy/nginx-geo.manifoldgen.conf" \
+    /etc/nginx/sites-available/geo.manifoldgen.com 644; then
+    nginx_changed=1
+  fi
+  "${SUDO[@]}" ln -sfn \
+    /etc/nginx/sites-available/geo.manifoldgen.com \
+    /etc/nginx/sites-enabled/geo.manifoldgen.com
   if [ ! -f /etc/nginx/ssl/manifoldgen.com.crt ] || \
      [ ! -f /etc/nginx/ssl/manifoldgen.com.key ]; then
     "${SUDO[@]}" openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
@@ -323,6 +357,18 @@ else
     "${SUDO[@]}" chmod 600 /etc/nginx/ssl/manifoldgen.com.key
     nginx_changed=1
     echo "  ✓ Issued self-signed origin TLS certificate"
+  fi
+
+  if [ ! -f /etc/nginx/ssl/geo.manifoldgen.com.crt ] || \
+     [ ! -f /etc/nginx/ssl/geo.manifoldgen.com.key ]; then
+    "${SUDO[@]}" openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
+      -keyout /etc/nginx/ssl/geo.manifoldgen.com.key \
+      -out /etc/nginx/ssl/geo.manifoldgen.com.crt \
+      -subj "/CN=geo.manifoldgen.com" \
+      >/dev/null 2>&1
+    "${SUDO[@]}" chmod 600 /etc/nginx/ssl/geo.manifoldgen.com.key
+    nginx_changed=1
+    echo "  ✓ Issued self-signed origin TLS certificate for geo"
   fi
 
   if [ "$unit_changed" -eq 1 ] || [ "$socket_changed" -eq 1 ] || [ "$farm_unit_changed" -eq 1 ]; then

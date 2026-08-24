@@ -66,6 +66,13 @@ make frontend    # :3006, proxies /api → :8116
 make dev-https   # https://manifoldgen.local:3006, proxies API calls to production
 # To exercise the local API over HTTPS instead:
 MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev-https
+
+# Restart HTTPS dev cleanly, killing anything currently listening on :3006:
+fuser -k 3006/tcp 2>/dev/null || true; make dev-https
+# Restart HTTPS dev with the local Go API as well (Go API listens on :8116):
+fuser -k 3006/tcp 2>/dev/null || true; fuser -k 8116/tcp 2>/dev/null || true; \
+  (cd server && go build -o manifoldgen-server . && PORT=8116 DIST_DIR=../frontend/out ./manifoldgen-server) & \
+  MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev-https
 ```
 
 Production-backed HTTPS dev keeps its browser login separate from the local API login.
@@ -133,8 +140,7 @@ floor. Publish before indexing so every searchable image is immediately CDN
 loadable; run moderation continuously in a second process.
 
 ```bash
-# Optional licensed prompt augmentation. This downloads prompt text only and
-# drops explicit, child-related, branded, watermark, and URL-heavy rows before
+# Optional prompt augmentation. This downloads prompt text only and
 # they reach an image worker.
 python3 scripts/import_prompt_sources.py \
   --out scripts/prompts/manifold-gallery-augmented.jsonl
@@ -246,9 +252,6 @@ The serverless endpoint uses request-count scaling with one worker per queued or
 active job, a three-worker ceiling, and zero minimum workers. This avoids
 queue-delay overscaling during a long cold start while preserving bounded
 parallel throughput.
-
-RVM is GPL-3.0 research software; replace it with an appropriately licensed
-matting engine or complete the licensing review before commercial deployment.
 
 ## Deploy
 

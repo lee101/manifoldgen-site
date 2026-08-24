@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ManifoldGen Everywhere",
+  "name": "ManifoldGen",
   "version": "1.0.0",
   "description": "Turn anything you see on the web into polished ManifoldGen and Netwrck content.",
   "permissions": ["contextMenus", "tabs"],

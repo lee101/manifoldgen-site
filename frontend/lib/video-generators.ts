@@ -23,6 +23,7 @@ export type VideoGenerator = {
   accent: string;
   manifold?: boolean;
   example?: VideoGeneratorExample;
+  guide?: { slug: string; title: string };
 };
 
 const COMMON_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'];
@@ -150,6 +151,83 @@ export const VIDEO_GENERATORS: VideoGenerator[] = [
     description: 'A smart general-purpose route for polished text-to-video without choosing a specialized workflow.',
     strengths: ['General purpose', 'Smart routing', 'Polished output'], durations: [5, 6],
     aspectRatios: COMMON_RATIOS, resolutions: ['720p', '1080p'], audio: false, price: 'from 120 Manifold credits', accent: '#ffb86c', example: EXAMPLES.ra2v,
+  },
+  {
+    slug: 'kling-3', model: 'fal-ai/kling-video/v3/standard/text-to-video', name: 'Kling 3.0', shortName: 'Kling 3', family: 'Kling', mode: 'text',
+    description: 'Kling 3.0 Standard text-to-video with cinematic motion and native synced audio.',
+    strengths: ['Native audio', 'Cinematic motion', 'Multi-shot scenes'], durations: [5, 10],
+    aspectRatios: COMMON_RATIOS, resolutions: ['720p'], audio: true, price: 'from 76 Manifold credits', accent: '#ff3417',
+    guide: { slug: 'how-to-use-kling-3', title: 'How to Use Kling 3.0' },
+  },
+  {
+    slug: 'kling-3-pro', model: 'fal-ai/kling-video/v3/pro/text-to-video', name: 'Kling 3.0 Pro', shortName: 'Kling Pro', family: 'Kling', mode: 'text',
+    description: 'Kling 3.0 Pro tops the Kling lineup for fluid motion, lipsync, and filmic camera work.',
+    strengths: ['Flagship quality', 'Improved lipsync', '1080p output'], durations: [5, 10],
+    aspectRatios: COMMON_RATIOS, resolutions: ['720p', '1080p'], audio: true, price: 'from 101 Manifold credits', accent: '#ff5722',
+    guide: { slug: 'how-to-use-kling-3-pro', title: 'How to Use Kling 3.0' },
+  },
+  {
+    slug: 'kling-3-image', model: 'fal-ai/kling-video/v3/standard/image-to-video', name: 'Kling 3.0 Image to Video', shortName: 'Kling Image', family: 'Kling', mode: 'image',
+    description: 'Animate a still with Kling 3.0 while keeping the subject locked and audio in sync.',
+    strengths: ['Image fidelity', 'Native audio', 'Controlled motion'], durations: [5, 10],
+    aspectRatios: COMMON_RATIOS, resolutions: ['720p'], audio: true, price: 'from 76 Manifold credits', accent: '#ff8a50',
+    guide: { slug: 'how-to-use-kling-3-image', title: 'How to Use Kling 3.0' },
+  },
+  {
+    slug: 'kling-26', model: 'fal-ai/kling-video/v2.6/pro/text-to-video', name: 'Kling 2.6', shortName: 'Kling 2.6', family: 'Kling', mode: 'text',
+    description: 'Kling 2.6 Pro is the budget-friendly Kling route with strong motion and native audio.',
+    strengths: ['Low cost', 'Reliable motion', 'Native audio'], durations: [5, 10],
+    aspectRatios: COMMON_RATIOS, resolutions: ['720p', '1080p'], audio: true, price: 'from 84 Manifold credits', accent: '#ffa726',
+    guide: { slug: 'how-to-use-kling-2-6', title: 'How to Use Kling 2.6' },
+  },
+  {
+    slug: 'kling-26-image', model: 'fal-ai/kling-video/v2.6/pro/image-to-video', name: 'Kling 2.6 Image to Video', shortName: 'Kling 2.6 Image', family: 'Kling', mode: 'image',
+    description: 'Bring a still to life on the affordable Kling 2.6 Pro route with synced audio.',
+    strengths: ['Budget rate', 'Image animation', 'Synced audio'], durations: [5, 10],
+    aspectRatios: COMMON_RATIOS, resolutions: ['720p', '1080p'], audio: true, price: 'from 84 Manifold credits', accent: '#ffb74d',
+    guide: { slug: 'how-to-use-kling-26-image', title: 'How to Use Kling 2.6' },
+  },
+  {
+    slug: 'veo-3-1-fast', model: 'fal-ai/veo3.1/fast/image-to-video', name: 'Veo 3.1 Fast', shortName: 'Veo Fast', family: 'Veo', mode: 'image',
+    description: 'Google Veo 3.1 Fast animates a still with realistic motion and native audio at a low rate.',
+    strengths: ['Realistic motion', 'Native audio', 'Low cost'], durations: [4, 6, 8],
+    aspectRatios: COMMON_RATIOS, resolutions: ['720p', '1080p'], audio: true, price: 'from 90 Manifold credits', accent: '#4285f4',
+    guide: { slug: 'how-to-use-veo-3-1-fast', title: 'How to Use Veo 3.1' },
+  },
+  {
+    slug: 'veo-3-1', model: 'fal-ai/veo3.1/image-to-video', name: 'Veo 3.1', shortName: 'Veo 3.1', family: 'Veo', mode: 'image',
+    description: 'Google Veo 3.1 is the flagship for photoreal image-to-video with synchronized sound.',
+    strengths: ['Photorealism', 'Synchronized audio', 'Prompt adherence'], durations: [4, 6, 8],
+    aspectRatios: COMMON_RATIOS, resolutions: ['720p', '1080p'], audio: true, price: 'from 240 Manifold credits', accent: '#34a853',
+    guide: { slug: 'how-to-use-veo-3-1', title: 'How to Use Veo 3.1' },
+  },
+  {
+    slug: 'seedance-2-5', model: 'seedance-2.5-text-to-video', name: 'Seedance 2.5', shortName: 'Seedance 2.5', family: 'Seedance', mode: 'text',
+    description: 'Seedance 2.5 reasons about a whole shot at once: coherent single-take clips up to 30 seconds with synced audio.',
+    strengths: ['Long single takes', 'Whole-shot coherence', 'Native audio'], durations: [4, 5, 8, 10],
+    aspectRatios: COMMON_RATIOS, resolutions: ['480p', '720p'], audio: true, price: 'from 106 Manifold credits', accent: '#00b8a9',
+    guide: { slug: 'how-to-use-seedance-2-5', title: 'How to Use Seedance 2.5' },
+  },
+  {
+    slug: 'seedance-2-5-image', model: 'seedance-2.5-image-to-video', name: 'Seedance 2.5 Image to Video', shortName: 'Seedance 2.5 Image', family: 'Seedance', mode: 'image',
+    description: 'Extend one frame into a continuous Seedance 2.5 take without multi-clip stitching drift.',
+    strengths: ['One-frame start', 'Continuous motion', 'Native audio'], durations: [4, 5, 8, 10],
+    aspectRatios: COMMON_RATIOS, resolutions: ['480p', '720p'], audio: true, price: 'from 106 Manifold credits', accent: '#26c6da',
+    guide: { slug: 'how-to-use-seedance-2-5-image', title: 'How to Use Seedance 2.5' },
+  },
+  {
+    slug: 'seedance-2-5-reference', model: 'seedance-2.5-reference-to-video', name: 'Seedance 2.5 Reference', shortName: 'Seedance Ref 2.5', family: 'Seedance', mode: 'reference',
+    description: 'Lock characters, sets, and palettes across a full take with Seedance 2.5 multimodal references.',
+    strengths: ['Character lock', 'Set consistency', 'Multimodal refs'], durations: [4, 5, 8, 10],
+    aspectRatios: COMMON_RATIOS, resolutions: ['480p', '720p'], audio: true, price: 'from 106 Manifold credits', accent: '#7ee8e0',
+    guide: { slug: 'how-to-use-seedance-2-5-reference', title: 'How to Use Seedance 2.5' },
+  },
+  {
+    slug: 'seedance-4k', model: 'seedance-2.0-4k-text-to-video', name: 'Seedance 4K', shortName: 'Seedance 4K', family: 'Seedance', mode: 'text',
+    description: 'Seedance 2.0 pinned to native 4K output: professional-grade resolution in one step, no upscale pass.',
+    strengths: ['Native 4K', 'No upscaling', 'Cinematic detail'], durations: [4, 5],
+    aspectRatios: ['16:9', '9:16'], resolutions: ['4k'], audio: true, price: 'from 747 Manifold credits', accent: '#9575cd',
+    guide: { slug: 'how-to-use-seedance-4k', title: 'How to Use Seedance 4K' },
   },
 ];
 

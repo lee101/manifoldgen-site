@@ -114,6 +114,13 @@ func manifoldListener(port int) (net.Listener, error) {
 }
 
 func requestHandler(ctx *fasthttp.RequestCtx) {
+	// geo.manifoldgen.com is served by the same process behind its own nginx
+	// vhost; everything below this gate assumes the manifoldgen.com surface.
+	if string(ctx.Host()) == geoHost {
+		handleGeo(ctx)
+		return
+	}
+
 	path := string(ctx.Path())
 	method := string(ctx.Method())
 	defer func() {
@@ -290,6 +297,10 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 
 	case path == "/api/stripe/portal" && method == "POST":
 		handleStripePortal(ctx)
+	case path == "/api/stripe/retention" && method == "POST":
+		handleStripeRetentionCoupon(ctx)
+	case path == "/api/stripe/cancel" && method == "POST":
+		handleStripeCancelSubscription(ctx)
 
 	case (path == "/api/stripe-webhook" || path == "/api/stripe/webhook") && method == "POST":
 		handleStripeWebhook(ctx)
@@ -480,15 +491,7 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 			jsonError(ctx, fasthttp.StatusUnauthorized, err.Error())
 			return
 		}
-		if promptSearch != nil {
-			go promptSearch.loadAndIndex()
-		}
-		if videoSearch != nil {
-			go videoSearch.loadAndIndex()
-		}
-		if audioSearch != nil {
-			go audioSearch.loadAndIndex()
-		}
+		go rebuildSearchIndexes()
 		jsonResponse(ctx, 202, map[string]interface{}{
 			"status":  "reindexing",
 			"indexes": []string{"images", "videos", "audio"},

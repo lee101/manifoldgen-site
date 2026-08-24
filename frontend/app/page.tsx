@@ -12,7 +12,6 @@ import {
   KeyRound,
   Loader2,
   LogIn,
-  LogOut,
   Repeat2,
   GripVertical,
   Image as ImageIcon,
@@ -45,6 +44,7 @@ import {
   type H3Aspect,
   type H3Size,
 } from '../lib/h3-loop';
+import { CURATED_SEARCH_PAGES } from '@/lib/search-pages';
 
 const API = '/api';
 const GALLERY_CDN = 'https://manifoldgenstatic.manifoldgen.com/gallery';
@@ -279,6 +279,19 @@ export default function HomePage() {
   const searchMoreRef = useRef<HTMLDivElement>(null);
   const galleryMoreRef = useRef<HTMLDivElement>(null);
   const gallerySeedRef = useRef(Math.random());
+  // Gallery masonry assigns every image to the shortest column and never moves
+  // it again. The column count derives from the viewport so the grid matches
+  // the old CSS multi-column breakpoints (2/3/4/5/6).
+  const [galleryColumns, setGalleryColumns] = useState(4);
+  useEffect(() => {
+    const update = () => {
+      const width = window.innerWidth;
+      setGalleryColumns(width >= 1536 ? 6 : width >= 1280 ? 5 : width >= 768 ? 4 : width >= 640 ? 3 : 2);
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
 
   const updateGenerationTask = useCallback((id: string, update: Partial<HomeGenerationTask>) => {
     setGenerationTasks((current) => current.map((task) => task.id === id ? { ...task, ...update } : task));
@@ -338,12 +351,12 @@ export default function HomePage() {
   }, []);
 
   const loadFeaturedVideos = useCallback(async () => {
-    const res = await fetch(`${API}/videos/featured?limit=24&offset=0`);
+    const res = await fetch(`${API}/videos/featured?limit=48&offset=0`);
     if (!res.ok) return;
     const data = await res.json();
     const rows: VideoHit[] = (data.results || []).filter((r: VideoHit) => r.video_url);
     setFeaturedVideos(rows);
-    setFeaturedHasMore(data.has_more ?? rows.length === 24);
+    setFeaturedHasMore(data.has_more ?? rows.length === 48);
   }, []);
 
   useEffect(() => {
@@ -507,7 +520,7 @@ export default function HomePage() {
         }));
       }
       if (featuredHasMore) {
-        requests.push(fetch(`${API}/videos/featured?limit=24&offset=${featuredVideos.length}`).then(async (res) => {
+        requests.push(fetch(`${API}/videos/featured?limit=48&offset=${featuredVideos.length}`).then(async (res) => {
           if (!res.ok) return;
           const data = await res.json();
           const rows: VideoHit[] = (data.results || []).filter((item: VideoHit) => item.video_url);
@@ -515,7 +528,7 @@ export default function HomePage() {
             const seen = new Set(current.map((item) => item.job_id));
             return [...current, ...rows.filter((item) => !seen.has(item.job_id))];
           });
-          setFeaturedHasMore(data.has_more ?? rows.length === 24);
+          setFeaturedHasMore(data.has_more ?? rows.length === 48);
         }));
       }
       await Promise.all(requests);
@@ -835,9 +848,40 @@ export default function HomePage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  function promptForSimilar(promptText: string) {
+    setPrompt(promptText);
+    setGenerationMode('video');
+    // A similar prompt should not accidentally reuse an older steering frame.
+    setAssets((current) => current.filter((asset) => asset.kind === 'audio'));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function useGalleryImageAsStartFrame(img: GalleryImage) {
+    const src = img.image_url || img.thumb_url;
+    if (!src) return;
+    setPrompt(img.prompt);
+    setGenerationMode('video');
+    setAssets((current) => {
+      const frame = { kind: 'image' as const, url: src, name: img.prompt.slice(0, 48) || 'Gallery image' };
+      const existingFrames = current.filter((asset) => asset.kind === 'image' && asset.url !== src);
+      return [
+        ...current.filter((asset) => asset.kind === 'audio'),
+        frame,
+        ...existingFrames,
+      ];
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   function openGalleryImageInStudio(img: GalleryImage, source = img.image_url || img.thumb_url) {
     if (!source) return;
-    const query = new URLSearchParams({ image_url: source, name: img.prompt.slice(0, 80) || 'Gallery image' });
+    const query = new URLSearchParams({ image_url: new URL(source, window.location.origin).toString(), name: img.prompt.slice(0, 80) || 'Gallery image' });
+    window.location.assign(`/studio?${query}`);
+  }
+
+  function openGalleryVideoInStudio(video: VideoHit) {
+    if (!video.video_url) return;
+    const query = new URLSearchParams({ video_url: new URL(video.video_url, window.location.origin).toString(), name: video.prompt.slice(0, 80) || 'Gallery video' });
     window.location.assign(`/studio?${query}`);
   }
 
@@ -991,7 +1035,23 @@ export default function HomePage() {
   // Keep the landing experience deterministic. Showcase data is loaded lazily
   // and may change order; it should not replace the homepage hero underneath a
   // visitor. User-selected and newly generated videos still take precedence.
-  const resultUrl = job?.result_url || HOMEPAGE_HERO_VIDEO_URL;
+  const [heroRotationIndex, setHeroRotationIndex] = useState(0);
+  const heroRotationClips = featuredVideos.slice(0, 6);
+  useEffect(() => {
+    if (job?.result_url || heroRotationClips.length < 2) return;
+    const id = window.setInterval(() => {
+      if (document.hidden) return;
+      setHeroRotationIndex((index) => {
+        const count = Math.min(6, heroRotationClips.length);
+        return (index + 1) % count;
+      });
+    }, 90000);
+    return () => window.clearInterval(id);
+  }, [job?.result_url, heroRotationClips.length]);
+  const heroClip = heroRotationClips.length
+    ? heroRotationClips[heroRotationIndex % heroRotationClips.length]
+    : undefined;
+  const resultUrl = job?.result_url || heroClip?.video_url || HOMEPAGE_HERO_VIDEO_URL;
   const activeGenerationTasks = generationTasks.filter((task) => !['completed', 'failed'].includes(task.status));
   // A local, cacheable poster protects LCP from slow API/gallery responses.
   const heroImage = '/brand/manifoldgen-og.webp';
@@ -1002,12 +1062,30 @@ export default function HomePage() {
     const length = Math.max(gallery.length, videos.length);
     for (let index = 0; index < length; index += 1) {
       const image = gallery[index];
-      if (image) rows.push({ kind: 'image', id: image.id, prompt: image.prompt, image, src: image.image_url || image.thumb_url });
+      if (image) rows.push({ kind: 'image', id: image.id, prompt: image.prompt, image, src: image.thumb_url || image.image_url });
       const video = videos[index];
       if (video?.video_url) rows.push({ kind: 'video', id: video.job_id, prompt: video.prompt, video });
     }
     return rows;
   }, [featuredVideos, gallery]);
+  // Split the feed into fixed columns by always appending the next item to the
+  // currently-shortest column (weighted by reserved aspect-ratio height). Every
+  // cell keeps its aspect-ratio space, so lazy image loads and appended batches
+  // only ever extend the bottom of a column; nothing above reflows or jumps.
+  const galleryColumnsFeed = useMemo(() => {
+    const columns: GalleryFeedItem[][] = Array.from({ length: Math.max(1, galleryColumns) }, () => []);
+    const heights = new Array<number>(columns.length).fill(0);
+    for (const item of galleryFeed) {
+      const weight = item.kind === 'video'
+        ? 9 / 16
+        : item.image.width && item.image.height ? item.image.height / item.image.width : 4 / 3;
+      let target = 0;
+      for (let index = 1; index < columns.length; index += 1) if (heights[index] < heights[target]) target = index;
+      columns[target].push(item);
+      heights[target] += weight;
+    }
+    return columns;
+  }, [galleryColumns, galleryFeed]);
   const imageFrames = useMemo(() => assets.filter((asset) => asset.kind === 'image'), [assets]);
   const audioAsset = useMemo(() => assets.find((asset) => asset.kind === 'audio'), [assets]);
   const transitionCount = Math.max(1, imageFrames.length - 1);
@@ -1028,7 +1106,7 @@ export default function HomePage() {
       const video = videoHits[index];
       if (video?.video_url) rows.push({ kind: 'video', id: video.job_id, prompt: video.prompt, video });
       const image = gallery[index];
-      if (image) rows.push({ kind: 'image', id: image.id, prompt: image.prompt, image, src: image.image_url || image.thumb_url });
+      if (image) rows.push({ kind: 'image', id: image.id, prompt: image.prompt, image, src: image.thumb_url || image.image_url });
     }
     return rows;
   }, [gallery, videoHits]);
@@ -1139,14 +1217,6 @@ export default function HomePage() {
                   <CreditCard size={14} />
                   {creditsLabel}
                 </a>
-                <button
-                  type="button"
-                  onClick={signOut}
-                  className="glass rounded-full p-2.5 text-[var(--color-mute)] hover:text-white"
-                  aria-label="Sign out"
-                >
-                  <LogOut size={18} />
-                </button>
               </>
             ) : (
               <>
@@ -1268,12 +1338,6 @@ export default function HomePage() {
                 placeholder="Describe the shot, camera, light, motion… Paste an image to set frame 1"
                 className="w-full resize-none bg-transparent px-2 py-1 text-base outline-none placeholder:text-white/35 md:text-lg"
               />
-              {imageFrames.length === 0 ? (
-                <div className="flex items-center gap-2 px-2 pb-1 text-[11px] text-white/35">
-                  <ClipboardPaste size={13} className="text-[var(--color-accent-2)]/80" />
-                  Paste an image here to use it as the first video frame
-                </div>
-              ) : null}
               <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
                 <select
                   value={aspect}
@@ -1424,10 +1488,13 @@ export default function HomePage() {
       {musicVideos.length > 0 && <section className="relative z-10 border-t border-fuchsia-300/10 bg-[linear-gradient(180deg,#100817,#050508)] py-6" data-testid="home-music-videos">
         <div className="flex items-end justify-between px-3 pb-4 md:px-6">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[.18em] text-fuchsia-300">MiniMax score → H3 reference video</p>
             <h2 className="mt-1 font-display text-xl tracking-wide text-white md:text-2xl">Music videos</h2>
           </div>
-          <Link href="/studio" className="rounded-full border border-fuchsia-200/20 bg-fuchsia-300/10 px-4 py-2 text-xs font-semibold text-fuchsia-100 transition hover:bg-fuchsia-300/20">Create one in Studio</Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/studio" className="rounded-full border border-fuchsia-200/20 bg-fuchsia-300/10 px-4 py-2 text-xs font-semibold text-fuchsia-100 transition hover:bg-fuchsia-300/20">Create video</Link>
+            <Link href="/tools/make-image" className="rounded-full border border-fuchsia-200/20 bg-fuchsia-300/10 px-4 py-2 text-xs font-semibold text-fuchsia-100 transition hover:bg-fuchsia-300/20">Create image</Link>
+            <Link href="/tools/music-generator" className="rounded-full border border-fuchsia-200/20 bg-fuchsia-300/10 px-4 py-2 text-xs font-semibold text-fuchsia-100 transition hover:bg-fuchsia-300/20">Create music</Link>
+          </div>
         </div>
         <div className="reel-scroll flex snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-2 md:px-6">
           {musicVideos.map((hit, index) => <button key={hit.job_id} type="button" onClick={() => playVideo(hit)} className="group relative aspect-video h-[48vw] max-h-[420px] min-h-[220px] shrink-0 snap-start overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left sm:h-[32vw] lg:h-[24vw]" aria-label="Play music video">
@@ -1475,6 +1542,17 @@ export default function HomePage() {
             </button>
           ) : null}
         </form>
+        <div className="reel-scroll flex gap-2 overflow-x-auto px-3 pb-4 md:px-6" data-testid="home-search-collections">
+          {CURATED_SEARCH_PAGES.slice(0, 14).map((page) => (
+            <Link
+              key={page.slug}
+              href={`/search/${page.slug}`}
+              className="glass shrink-0 whitespace-nowrap rounded-full px-4 py-1.5 text-xs text-white/70 transition hover:text-white"
+            >
+              {page.title}
+            </Link>
+          ))}
+        </div>
 
         {activeSearchQ ? (
           <div className="px-3 pb-6 md:px-6" data-testid="home-search-results">
@@ -1547,51 +1625,66 @@ export default function HomePage() {
         {galleryFeed.length === 0 ? (
           <p className="px-4 pb-12 text-sm text-[var(--color-mute)]">Gallery warming up…</p>
         ) : (
-          <div className="gallery-bleed columns-2 bg-black sm:columns-3 md:columns-4 xl:columns-5 2xl:columns-6">
-            {galleryFeed.map((item) => {
+          <div className="flex gap-[1px] bg-black">
+            {galleryColumnsFeed.map((column, columnIndex) => (
+              <div key={columnIndex} className="flex min-w-0 flex-1 flex-col gap-[1px]">
+                {column.map((item) => {
               if (item.kind === 'video') return (
-                <div key={`video-${item.id}`} data-testid={`gallery-video-${item.id}`} className="group relative mb-px aspect-video break-inside-avoid overflow-hidden bg-[#0c0c12]">
+                <div key={`video-${item.id}`} data-testid={`gallery-video-${item.id}`} className="group relative aspect-video overflow-hidden bg-[#0c0c12]">
                   <button type="button" aria-label="Play gallery video" onClick={() => playVideo(item.video)} className="absolute inset-0 h-full w-full text-left">
-                    <video src={item.video.video_url} muted loop playsInline preload="metadata" className="h-full w-full object-cover transition duration-700 group-hover:scale-105" onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)} onMouseLeave={(event) => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} />
+                    <video src={item.video.video_url} muted loop playsInline preload="none" className="h-full w-full object-cover transition duration-700 group-hover:scale-105" onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)} onMouseLeave={(event) => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} />
                     <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 hidden p-3 text-xs leading-snug text-white/90 opacity-0 transition group-hover:opacity-100 sm:line-clamp-2 md:text-sm">{item.prompt}</div>
+                    <div className="pointer-events-none absolute inset-0 bg-black/70 opacity-0 backdrop-blur-sm transition group-hover:opacity-100" />
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 hidden p-3 pb-32 text-xs leading-snug text-white/90 opacity-0 transition group-hover:opacity-100 sm:line-clamp-2 md:text-sm">{item.prompt}</div>
                     <span className="absolute left-2 top-2 rounded-full bg-black/65 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/80 backdrop-blur">Video</span>
                   </button>
-                  <button type="button" onClick={() => { window.location.href = `/studio?video_url=${encodeURIComponent(item.video.video_url!)}&name=${encodeURIComponent(item.prompt || 'Gallery video')}&restyle=1`; }} className="absolute bottom-3 right-3 z-10 hidden items-center gap-1 rounded-full bg-black/70 px-3 py-2 text-xs font-medium text-white opacity-0 backdrop-blur transition group-hover:opacity-100 sm:inline-flex"><WandSparkles size={13} />Transform</button>
+                  <div className="absolute inset-x-3 bottom-3 z-10 grid grid-cols-2 gap-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
+                    <button type="button" onClick={() => openGalleryVideoInStudio(item.video)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Open in editor</button>
+                    <button type="button" onClick={() => promptForSimilar(item.prompt)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Sparkles size={13} />Prompt for similar</button>
+                    <button type="button" onClick={() => { if (item.video.video_url) window.location.assign(`/studio?video_url=${encodeURIComponent(new URL(item.video.video_url, window.location.origin).toString())}&name=${encodeURIComponent(item.prompt || 'Gallery video')}&restyle=1`); }} className="col-span-2 inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><WandSparkles size={13} />Transform</button>
+                  </div>
                 </div>
               );
               const img = item.image;
               const src = item.src;
+              const imgRatio = img.width && img.height ? `${img.width} / ${img.height}` : '3 / 4';
               return (
                 <div
                   key={img.id}
-                  className="group relative mb-px break-inside-avoid overflow-hidden bg-[#0c0c12]"
+                  className="gallery-card group relative overflow-hidden bg-[#0c0c12]"
                 >
-                  <button type="button" onClick={() => selectGalleryImage(img)} className="relative block h-auto w-full" title={img.prompt}>
+                  <button type="button" onClick={() => selectGalleryImage(img)} className="relative block w-full" title={img.prompt} style={{ aspectRatio: imgRatio }}>
                   {src ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={src}
                       alt={img.prompt}
-                      className="block h-auto w-full transition duration-700 group-hover:scale-105"
+                      width={img.width || 768}
+                      height={img.height || 1024}
+                      decoding="async"
+                      className="absolute inset-0 h-full w-full object-cover transition duration-700 group-hover:scale-105"
                       loading="lazy"
                     />
                   ) : null}
-                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent opacity-70 transition group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100" />
                   </button>
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 hidden p-3 pb-14 text-left text-xs leading-snug text-white/90 opacity-0 transition group-hover:opacity-100 sm:block md:text-sm">
+                  <div className="pointer-events-none absolute inset-0 z-[5] bg-black/70 opacity-0 backdrop-blur-sm transition group-hover:opacity-100" />
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 hidden p-3 pb-40 text-left text-xs leading-snug text-white/90 opacity-0 transition group-hover:opacity-100 sm:block md:text-sm">
                     {img.prompt.slice(0, 140)}
                   </div>
                   {src ? (
-                    <div className="absolute inset-x-3 bottom-3 z-10 hidden grid-cols-2 gap-2 opacity-0 transition group-hover:opacity-100 sm:grid">
-                      <button type="button" onClick={() => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: src }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
-                      <button type="button" onClick={() => openGalleryImageInStudio(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Studio</button>
+                    <div className="absolute inset-x-3 bottom-3 z-10 grid grid-cols-2 gap-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
+                      <button type="button" onClick={() => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: img.image_url || img.thumb_url }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
+                      <button type="button" onClick={() => useGalleryImageAsStartFrame(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><ImageIcon size={13} />Use as start frame</button>
+                      <button type="button" onClick={() => promptForSimilar(img.prompt)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Sparkles size={13} />Prompt for similar</button>
+                      <button type="button" onClick={() => openGalleryImageInStudio(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Open in editor</button>
                       <button type="button" disabled={backgroundRemovingID === img.id} onClick={() => void removeGalleryBackground(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black disabled:opacity-60">{backgroundRemovingID === img.id ? <Loader2 className="animate-spin" size={13} /> : <WandSparkles size={13} />}Remove BG</button>
                     </div>
                   ) : null}
                 </div>
               );
-            })}
+                })}
+              </div>
+            ))}
           </div>
         )}
         <div ref={galleryMoreRef} className="flex min-h-24 items-center justify-center py-5">

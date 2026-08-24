@@ -4,3 +4,10 @@ description = "ManifoldGen API key"
 regex = '''sk-mg-(?:admin-)?[a-f0-9]{32,64}'''
 secretGroup = 0
 entropy = 3.5
+
+[[rules]]
+id = "business-api-key-prefix"
+description = "Recognizable business API key"
+regex = '''sk-(?:mg|nw|hz|th|mj|dict|op|ci)-[A-Za-z0-9_-]{24,}'''
+secretGroup = 0
+entropy = 3.5

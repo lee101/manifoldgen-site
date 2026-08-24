@@ -1,13 +1,14 @@
 {
-  "image": "ghcr.io/lee101/h3-cog:cu130-20260816-image-r5",
+  "image": "ghcr.io/lee101/h3-cog:cu130-20260821-face-upscaler",
   "dockerStartCmd": ["python", "-u", "/src/rp_handler.py"],
   "env": {
     "H3_ACCEL_PROFILE": "balanced",
     "H3_ATTENTION_BACKEND": "ck",
     "H3_FACE_REFINE_ENABLED": "1",
     "H3_FACE_REFINE_REQUIRED": "0",
-    "H3_MODEL_SET": "fl2va,ref2va",
-    "H3_LAZY_REF2VA": "1"
+    "H3_MODEL_SET": "fl2va,ref2va,face_refine",
+    "H3_LAZY_REF2VA": "1",
+    "H3_LATENT_UPSCALE_ENABLED": "0"
   },
   "workersMin": 0,
   "idleTimeout": 5,

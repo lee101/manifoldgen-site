@@ -1,4 +1,4 @@
-# ManifoldGen Everywhere
+# ManifoldGen
 
 Chrome MV3 extension for turning web research into polished ManifoldGen and Netwrck content.
 
@@ -10,7 +10,7 @@ Build and verify the Chrome Web Store ZIP from the repository root:
 ./scripts/build-extension.sh
 ```
 
-The upload-ready archive is written to `artifacts/manifoldgen-everywhere-<version>.zip`.
+The upload-ready archive is written to `artifacts/manifoldgen-<version>.zip`.
 
 Actions:
 

@@ -117,3 +117,27 @@ test('homepage packs images and videos together and autoloads both feeds', async
   await expect(page.getByTestId('gallery-video-gallery-video-1')).toBeVisible();
   await expect(page.getByAltText('Gallery still 24')).toBeVisible();
 });
+
+test('gallery image actions copy the prompt, choose a start frame, and open Studio', async ({ page }) => {
+  await page.route('**/api/pricing', (route) => route.fulfill({ status: 200, json: {} }));
+  await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route('**/api/images?**', (route) => route.fulfill({ status: 200, json: { images: [{
+    id: 'gallery-action-image',
+    prompt: 'A copper moon over a quiet ocean',
+    image_url: 'https://manifoldgenstatic.manifoldgen.com/gallery/originals/action-image.webp',
+  }] } }));
+  await page.route('**/api/gallery-assets/originals/action-image.webp?**', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE }));
+
+  await page.goto('/');
+  const card = page.getByAltText('A copper moon over a quiet ocean').locator('..').locator('..');
+  await card.getByRole('button', { name: 'Use as start frame' }).click();
+  await expect(page.getByTestId('home-frame-tray')).toContainText('Frame 1 anchors the shot');
+  await expect(page.locator('textarea').first()).toHaveValue('A copper moon over a quiet ocean');
+
+  await card.getByRole('button', { name: 'Prompt for similar' }).click();
+  await expect(page.getByTestId('home-frame-tray')).toHaveCount(0);
+  await expect(page.locator('textarea').first()).toHaveValue('A copper moon over a quiet ocean');
+
+  await card.getByRole('button', { name: 'Open in editor' }).click();
+  await expect(page).toHaveURL(/\/studio\?image_url=https%3A%2F%2Fmanifoldgenstatic\.manifoldgen\.com%2Fgallery%2Foriginals%2Faction-image\.webp/);
+});

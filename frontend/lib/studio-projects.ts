@@ -1,6 +1,6 @@
 import type { StudioAdjustments } from './studio-renderer';
 
-export const STUDIO_PROJECT_VERSION = 4;
+export const STUDIO_PROJECT_VERSION = 5;
 const DB_NAME = 'manifold-studio';
 const DB_VERSION = 1;
 const LAST_PROJECT_KEY = 'mg_studio_project_id';
@@ -57,6 +57,13 @@ export type PortableStudioDocument = {
   version: number;
   selectedID: string;
   assets: PortableStudioAsset[];
+  /** The design canvas is independent from the dimensions of imported media. */
+  canvas?: {
+    width: number;
+    height: number;
+  };
+  /** Master gain for the timeline's A1 track. Older projects default to 1. */
+  audioTrackVolume?: number;
   /**
    * Editor history is part of the project document so undoing an edit still
    * works after reopening the project or moving to another device.

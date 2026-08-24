@@ -106,6 +106,7 @@ def save(name, state, fetch_url):
 
 
 def main():
+    global OUT
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", required=True)
     parser.add_argument("--lyrics-file", required=True)
@@ -114,7 +115,10 @@ def main():
     parser.add_argument("--seed", type=int, default=20260818)
     parser.add_argument("--endpoint", default=None)
     parser.add_argument("--extra", default="{}")
+    parser.add_argument("--output-dir", type=pathlib.Path, default=OUT)
     args = parser.parse_args()
+
+    OUT = args.output_dir if args.output_dir.is_absolute() else ROOT / args.output_dir
 
     load_env(ROOT / ".env")
     load_env(pathlib.Path("/vfast/data/code/omniserve-native/.runpod-music3.env"))

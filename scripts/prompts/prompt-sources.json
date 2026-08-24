@@ -46,5 +46,65 @@
     "filename": "danielrosehill-painters.md",
     "license": "Apache-2.0",
     "url": "https://huggingface.co/datasets/danielrosehill/Text-To-Image-Test-Prompts/resolve/main/stylistic-following/painters.md?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-3",
+    "filename": "jackyhate-512-10k-3.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000003.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-4",
+    "filename": "jackyhate-512-10k-4.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000004.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-5",
+    "filename": "jackyhate-512-10k-5.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000005.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-6",
+    "filename": "jackyhate-512-10k-6.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000006.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-7",
+    "filename": "jackyhate-512-10k-7.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000007.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-8",
+    "filename": "jackyhate-512-10k-8.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000008.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-9",
+    "filename": "jackyhate-512-10k-9.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000009.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-10",
+    "filename": "jackyhate-512-10k-10.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000010.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-11",
+    "filename": "jackyhate-512-10k-11.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000011.jsonl?download=true"
+  },
+  {
+    "name": "jackyhate-text-to-image-512-10k-12",
+    "filename": "jackyhate-512-10k-12.jsonl",
+    "license": "MIT",
+    "url": "https://huggingface.co/datasets/kigland/ImageGenEditPromptCorpus/resolve/main/prompts/jackyhate_text-to-image-2M/data_512_10K/data_000012.jsonl?download=true"
   }
 ]

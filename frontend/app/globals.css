@@ -76,19 +76,18 @@ body {
   }
 }
 
-.gallery-bleed img {
-  will-change: transform;
-}
-
-.gallery-bleed {
-  column-gap: 1px;
-}
-
 .reel-scroll {
   scrollbar-width: none;
 }
 .reel-scroll::-webkit-scrollbar {
   display: none;
+}
+
+/* Avoid painting the long gallery until cards approach the viewport. */
+.gallery-card {
+  contain: layout paint style;
+  content-visibility: auto;
+  contain-intrinsic-size: 320px 420px;
 }
 
 .hero-grain {

@@ -52,13 +52,13 @@ export default function AnimaTool() {
   }, [availability, user]);
 
   async function generate() {
-    if (!availability.available) { setPhase('error'); setMessage('Anima native capacity is temporarily unavailable'); return; }
+    if (!availability.available) { setPhase('error'); setMessage('Anima is temporarily at capacity'); return; }
     if (!user?.api_key) { setPhase('error'); setMessage('Sign in before generating'); return; }
     if (!prompt.trim()) { setPhase('error'); setMessage('Describe the character or illustration'); return; }
     const parsedSeed = Number(seed);
     if (!Number.isInteger(parsedSeed) || parsedSeed < 0 || parsedSeed > 2147483647) { setPhase('error'); setMessage('Seed must be an integer from 0 to 2147483647'); return; }
     const [width, height] = CANVASES[canvas];
-    setOutputURL(''); setCharged(null); setPrivateResult(false); setPhase('queued'); setMessage('Starting OmniServe native image capacity…');
+    setOutputURL(''); setCharged(null); setPrivateResult(false); setPhase('queued'); setMessage('Preparing your artwork…');
     try {
       const queued = await jsonResponse<{ result?: { job_id?: string; status_url?: string }; estimated_cost_usd?: number }>(
         await fetch('/api/service', {
@@ -83,7 +83,7 @@ export default function AnimaTool() {
         }
         if (status === 'failed' || status === 'payment_required') throw new Error(payload.job?.error || (status === 'payment_required' ? 'Top up to release this image' : 'Anima generation failed'));
         setPhase(status === 'processing' ? 'processing' : 'queued');
-        setMessage(status === 'processing' ? 'Painting the final Anima frame…' : 'Waiting for OmniServe native capacity…');
+        setMessage(status === 'processing' ? 'Painting your frame…' : 'Waiting for available capacity…');
         await new Promise((resolve) => window.setTimeout(resolve, 2500));
       }
       throw new Error('The job remains available in your account');
@@ -103,14 +103,14 @@ export default function AnimaTool() {
 
     <section className={styles.hero}>
       <div className={styles.heroCopy}>
-        <div className={styles.eyebrow}><Sparkles size={14} /> ANIMA 2.9B · CHARACTER ILLUSTRATION</div>
+        <div className={styles.eyebrow}><Sparkles size={14} /> ANIMA · CHARACTER ILLUSTRATION</div>
         <h1>Design a character.<br /><span>Give them a world.</span></h1>
-        <p>An art-first generator for expressive anime characters, costume design, key art, and polished illustration. Seeded controls make a look repeatable.</p>
+        <p>An art-first studio for expressive anime characters, key art, and polished illustration. Seeded controls keep a look repeatable.</p>
         <div className={styles.chips}><span>Anime-native</span><span>Up to 1 MP</span><span>28-step default</span><span>$0.04 / image</span></div>
       </div>
       <figure className={styles.heroExample}>
         <img src={EXAMPLE_URL} alt="Anima-generated celestial cartographer anime character" />
-        <figcaption><span><Check size={13} /> REAL ANIMA OUTPUT</span><b>Celestial Cartographer</b><small>Seed 18467291 · 768 × 1024 · 28 steps</small></figcaption>
+        <figcaption><b>Celestial Cartographer</b><small>Seed 18467291 · 768 × 1024 · 28 steps</small></figcaption>
       </figure>
     </section>
 
@@ -131,36 +131,38 @@ export default function AnimaTool() {
         <button data-testid="anima-run" className={styles.run} type="button" disabled={busy || !availability.available || !prompt.trim()} onClick={() => void generate()}>
           {busy ? <LoaderCircle className={styles.spin} size={19} /> : <WandSparkles size={18} />}{busy ? message : launchCopy}
         </button>
-        <div className={styles.price}><span>Fixed $0.04 per successful image</span><span>Output classified before gallery indexing</span></div>
-        {!availability.available && availability.reason !== 'checking' && <div className={styles.license}><span><b>Native capacity unavailable.</b> OmniServe’s licensed image lane is not currently ready to accept jobs.</span></div>}
+        <div className={styles.price}><span>Fixed $0.04 / image</span></div>
+        {!availability.available && availability.reason !== 'checking' && <div className={styles.license}><span><b>At capacity right now.</b> Anima is briefly at maximum load. Please check back in a moment.</span></div>}
         {phase === 'error' && <div className={styles.error}>{message}</div>}
       </div>
 
       <div className={styles.outputPanel}>
-        <div className={styles.outputHeader}><span>{outputURL ? 'YOUR OUTPUT' : 'REAL MODEL EXAMPLE'}</span>{phase === 'done' && <span className={styles.ready}><Check size={13} /> READY</span>}</div>
+        <div className={styles.outputHeader}><span>{outputURL ? 'YOUR OUTPUT' : 'EXAMPLE'}</span>{phase === 'done' && <span className={styles.ready}><Check size={13} /> READY</span>}</div>
         <div className={styles.output}>
           <img src={displayedURL} alt={outputURL ? 'Your generated Anima illustration' : 'Anima example output'} />
           {busy && <div className={styles.busy}><LoaderCircle className={styles.spin} size={30} /><b>{message}</b></div>}
         </div>
-        <div className={styles.resultFooter}><div><b>{privateResult ? 'Private adult result' : outputURL ? 'Saved to your gallery' : 'Generated with Anima-2.9B'}</b><span>{charged === null ? 'Example seed 18467291' : `$${charged.toFixed(4)} charged`}</span></div>{outputURL && <a href={outputURL} download><Download size={16} /> Download</a>}</div>
+        <div className={styles.resultFooter}><div><b>{privateResult ? 'Private adult result' : outputURL ? 'Saved to your gallery' : 'Anima output'}</b><span>{charged === null ? 'Example seed 18467291' : `$${charged.toFixed(4)} charged`}</span></div>{outputURL && <a href={outputURL} download><Download size={16} /> Download</a>}</div>
       </div>
     </section>
 
     <section className={styles.api}>
-      <div><span>API</span><h2>The same art pipeline,<br />from one durable request.</h2><p>Jobs survive browser refreshes, scale cached GPU capacity from zero, and publish only after classification.</p></div>
-      <pre><code>{`POST /api/service
-Authorization: Bearer $MANIFOLDGEN_API_KEY
-
-{
-  "service": "anima",
-  "prompt": "celestial cartographer...",
-  "width": 768,
-  "height": 1024,
-  "num_steps": 28,
-  "guidance": 4,
-  "seed": 18467291
-}`}</code></pre>
+      <div><span>API</span><h2>The same pipeline,<br />from one request.</h2><p>Run it from code with a single POST. Jobs stay live across refreshes and are charged only when the image is delivered.</p></div>
+      <pre><code>
+        <span className={styles.tokKw}>POST</span> <span className={styles.tokUrl}>/api/service</span>{"\n"}
+        <span className={styles.tokVar}>Authorization</span>: <span className={styles.tokStr}>Bearer $MANIFOLDGEN_API_KEY</span>{"\n"}
+        {"\n"}
+        <span className={styles.tokPunct}>{"{"}</span>{"\n"}
+        <span className={styles.tokPunct}>{"  "}</span>"<span className={styles.tokKey}>service</span>": "<span className={styles.tokStr}>anima</span>",{"\n"}
+        <span className={styles.tokPunct}>{"  "}</span>"<span className={styles.tokKey}>prompt</span>": "<span className={styles.tokStr}>celestial cartographer…</span>",{"\n"}
+        <span className={styles.tokPunct}>{"  "}</span>"<span className={styles.tokKey}>width</span>": <span className={styles.tokNum}>768</span>,{"\n"}
+        <span className={styles.tokPunct}>{"  "}</span>"<span className={styles.tokKey}>height</span>": <span className={styles.tokNum}>1024</span>,{"\n"}
+        <span className={styles.tokPunct}>{"  "}</span>"<span className={styles.tokKey}>num_steps</span>": <span className={styles.tokNum}>28</span>,{"\n"}
+        <span className={styles.tokPunct}>{"  "}</span>"<span className={styles.tokKey}>guidance</span>": <span className={styles.tokNum}>4</span>,{"\n"}
+        <span className={styles.tokPunct}>{"  "}</span>"<span className={styles.tokKey}>seed</span>": <span className={styles.tokNum}>18467291</span>{"\n"}
+        <span className={styles.tokPunct}>{"}"}</span>
+      </code></pre>
     </section>
-    <section className={styles.notes}><div><ShieldCheck size={18} /><span><b>Classifier-routed</b>Every generated image passes the production NSFW classifier. Adult results remain private and out of public search.</span></div><div><Sparkles size={18} /><span><b>Native GPU lane</b>Requests run through the licensed OmniServe native image gateway with durable job status.</span></div><div><Sparkles size={18} /><span><b>Gallery-safe</b>Only classified, successfully stored outputs are settled and indexed.</span></div></section>
+    <section className={styles.notes}><div><ShieldCheck size={18} /><span><b>Privacy</b>Adult results stay in your account, never public search.</span></div><div><Sparkles size={18} /><span><b>Durable jobs</b>Generation continues even if you close the tab.</span></div><div><Sparkles size={18} /><span><b>Settled on success</b>You are only charged for delivered images.</span></div></section>
   </main>;
 }

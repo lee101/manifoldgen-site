@@ -41,11 +41,11 @@ test('H3 image generator queues and completes an image job', async ({ page }) =>
   }));
 
   await page.goto('/tools/h3-image');
-  await expect(page.getByText('MINIMAX H3 · IMAGE GENERATOR')).toBeVisible();
-  await page.getByLabel('Describe the image').fill('A glass hummingbird in a greenhouse');
+  await expect(page.getByText('MINIMAX H3 · FL2VA')).toBeVisible();
+  await page.getByLabel('Describe the finished image').fill('A glass hummingbird in a greenhouse');
   await page.getByTestId('h3-image-run').click();
 
-  await expect(page.getByText('H3 IMAGE OUTPUT')).toBeVisible();
+  await expect(page.getByText('IMAGE OUTPUT')).toBeVisible();
   await expect(page.getByText('$0.1234 charged')).toBeVisible();
   expect(requestBody).toMatchObject({
     service: 'h3_image',

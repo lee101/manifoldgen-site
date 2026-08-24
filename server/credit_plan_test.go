@@ -65,6 +65,16 @@ func TestGPTImageBatchIsAlwaysMeteredAtPaidRate(t *testing.T) {
 	}
 }
 
+func TestImageEditUsesMaximumMeteredEditPrice(t *testing.T) {
+	req := ServiceUsageRequest{Service: "image_edit"}
+	if usd := getRequestServicePriceUSD(req); usd != 0.30 {
+		t.Fatalf("image edit usd = %v, want 0.30", usd)
+	}
+	if credits := getRequestServicePriceCUTE(req); credits != 30 {
+		t.Fatalf("image edit credits = %v, want 30", credits)
+	}
+}
+
 func TestProxyOpenPathsGPTImageGenerationPinsModelAndBatch(t *testing.T) {
 	var got map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +111,44 @@ func TestProxyOpenPathsGPTImageGenerationPinsModelAndBatch(t *testing.T) {
 		t.Fatalf("decode result: %v", err)
 	}
 	if normalized["engine"] != "gpt-image-2" {
+		t.Fatalf("engine = %v", normalized["engine"])
+	}
+}
+
+func TestProxyOpenPathsImageEditUsesLogicalOpenPathsRoute(t *testing.T) {
+	var got map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/edits" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{{"b64_json": "aW1hZ2U="}}})
+	}))
+	defer srv.Close()
+
+	oldClient, oldBaseURL, oldKey := backendClient, openPathsBaseURL, openPathsAPIKey
+	backendClient, openPathsBaseURL, openPathsAPIKey = srv.Client(), srv.URL, "test-openpaths-key"
+	defer func() { backendClient, openPathsBaseURL, openPathsAPIKey = oldClient, oldBaseURL, oldKey }()
+
+	result, err := proxyOpenPathsImageEdit(ServiceUsageRequest{
+		ImageURL: "https://manifoldgenstatic.manifoldgen.com/uploads/source.webp",
+		Prompt:   "turn this into a watercolor illustration",
+		Width:    1536,
+		Height:   1024,
+	})
+	if err != nil {
+		t.Fatalf("proxyOpenPathsImageEdit: %v", err)
+	}
+	if got["model"] != "openpaths/image-edit" || got["size"] != "1536x1024" || got["image_url"] == "" {
+		t.Fatalf("OpenPaths edit request = %#v", got)
+	}
+	var normalized map[string]interface{}
+	if err := json.Unmarshal(result, &normalized); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if normalized["engine"] != "openpaths/image-edit" {
 		t.Fatalf("engine = %v", normalized["engine"])
 	}
 }

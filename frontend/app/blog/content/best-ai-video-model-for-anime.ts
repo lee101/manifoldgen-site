@@ -1,0 +1,41 @@
+import type { BlogArticle } from '../articles';
+
+export const bestAiVideoModelForAnime: BlogArticle = {
+  slug: 'best-ai-video-model-for-anime',
+  category: 'Use cases',
+  title: 'Best AI video model for anime: Wan, Happy Horse, Kling and the honest breakdown',
+  excerpt: 'Which served model actually produces anime that looks like anime? Wan for style and budget, Happy Horse for expressive character animation, Kling for audio and multi-shot scenes.',
+  readTime: '6 min read',
+  date: '2026-08-24',
+  ogImage: '/blog/og/best-ai-video-model-for-anime.jpg',
+  blocks: [
+    { type: 'p', text: 'ManifoldGen serves several models that can produce anime-style footage, but they fail differently. Wan is the safe all-rounder for illustration styles at a low price. Happy Horse is built for expressive stylized character motion. Kling 3.0 adds native audio and multi-shot scenes. Seedance handles sakuga-style action when characters must stay coherent through fast cuts. This guide maps each one to the anime jobs it actually wins.' },
+    { type: 'h2', text: 'The picks' },
+    { type: 'table', head: ['Job', 'Model', 'Why'], rows: [
+      ['Full episodes on a budget', 'Wan', 'Broad illustration styles and camera-move prompting at ~$0.90 per 5s'],
+      ['Expressive character animation from stills', 'Happy Horse', 'Purpose-built for lively, exaggerated motion from 168 credits (~$1.68)'],
+      ['Audio and multi-shot scenes', 'Kling 3.0', 'Synced sound and filmic cuts from 76 credits (~$0.76)'],
+      ['Sakuga-style action coherence', 'Seedance 2', 'Character coherence through fast action at 1080p, ~$1.67 per 5s'],
+    ] },
+    { type: 'h2', text: 'Wan: the budget workhorse' },
+    { type: 'p', text: 'Wan handles a wide berth of illustration styles — cel shading, painterly, watercolor, mecha detail — and responds well to camera-move prompting like pan, tilt, and push-in. It is silent and caps at 720p, which is fine for drafts, style tests, and volume content. At 90 credits (~$0.90) per 5-second clip it makes full-episode coverage affordable in a way no premium model does.' },
+    { type: 'code', text: `Anime establishing shot, hand-drawn cel style, a lantern-lit fishing village at dusk,
+slow crane up from the harbor, clouds parting to reveal a crescent moon,
+loose confident linework, limited palette of indigo and amber, 2D animation, no 3D shading.` },
+    { type: 'h2', text: 'Happy Horse: expressive animation from a still' },
+    { type: 'p', text: 'Happy Horse animates a still image with lively, characterful motion. It is tuned for stylized characters and playful scenes — dance-like movement, exaggerated reactions, meme-ready energy. It is image-input only: feed it a character sheet or a single clean illustration and it brings the pose to life. The tradeoff is the same as Wan: 720p, no audio, and energy over realism.' },
+    { type: 'callout', title: 'Character consistency trick', text: 'Generate the character once in the image model that nails your design (try /tools/h3-image or /tools/nano-banana), then feed that still into Happy Horse instead of prompting a new character every time.' },
+    { type: 'h2', text: 'Kling 3.0: audio and multi-shot scenes' },
+    { type: 'p', text: 'Kling 3.0 is the value pick when the clip needs sound: Standard text-to-video starts at 76 credits (~$0.76) with synced audio, and Pro adds 1080p and better lipsync from 101 credits. Multi-shot prompting — "cut from the close-up to the wide reaction" — is a Kling strength, which helps for short anime segments that should feel directed rather than single-take.' },
+    { type: 'h2', text: 'Seedance 2: sakuga when it matters' },
+    { type: 'p', text: 'When the cut is fast and characters must stay coherent through action — a fight, a chase, a transformation — Seedance 2 is the strongest of the four at 1080p with native audio. It costs the most, so the practical pattern is: Wan drafts, Kling middle tier, Seedance for the two or three shots an audience will actually scrutinize.' },
+    { type: 'h2', text: 'Try them' },
+    { type: 'list', items: [
+      'Wan: /tools/wan or the full /models/wan page',
+      'Happy Horse: /tools/happy-horse or /models/happy-horse',
+      'Kling: /tools/kling-3, /tools/kling-3-pro, /tools/kling-3-image',
+      'Seedance: /tools/seedance-2 and /models/seedance',
+      'Usecase hub: /ai-video-generator/anime with prompts and FAQs',
+    ] },
+  ],
+};

@@ -243,15 +243,25 @@ export class StudioRenderer {
     gl.useProgram(this.program);
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
-    const dimensions = source instanceof HTMLVideoElement
-      ? [source.videoWidth, source.videoHeight]
-      : source instanceof HTMLImageElement
-        ? [source.naturalWidth, source.naturalHeight]
-        : 'displayWidth' in source && 'displayHeight' in source
-          // WebCodecs VideoFrame uses display/coded dimensions rather than
-          // the width/height fields exposed by canvas and bitmap sources.
-          ? [Number(source.displayWidth), Number(source.displayHeight)]
-          : ['width' in source && 'height' in source ? Number(source.width) : 0, 'width' in source && 'height' in source ? Number(source.height) : 0];
+    let dimensions: number[];
+    if (source instanceof HTMLVideoElement) {
+      // A <video> with no decodable frame yet (or an audio-only stream) has
+      // zero dimensions. Uploading it would raise
+      // "WebGL: INVALID_VALUE: texSubImage2D: no video" and leave the GL
+      // error flag set; keep the previous frame instead.
+      if (!source.videoWidth || !source.videoHeight) return;
+      dimensions = [source.videoWidth, source.videoHeight];
+    } else if (source instanceof HTMLImageElement) {
+      if (!source.naturalWidth || !source.naturalHeight) return;
+      dimensions = [source.naturalWidth, source.naturalHeight];
+    } else {
+      dimensions = 'displayWidth' in source && 'displayHeight' in source
+        // WebCodecs VideoFrame uses display/coded dimensions rather than
+        // the width/height fields exposed by canvas and bitmap sources.
+        ? [Number(source.displayWidth), Number(source.displayHeight)]
+        : ['width' in source && 'height' in source ? Number(source.width) : 0, 'width' in source && 'height' in source ? Number(source.height) : 0];
+      if (!dimensions[0] || !dimensions[1]) return;
+    }
     if (dimensions[0] !== this.textureWidth || dimensions[1] !== this.textureHeight) {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
       this.textureWidth = dimensions[0];

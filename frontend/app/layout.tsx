@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Bebas_Neue, Cormorant_Garamond, DM_Sans, IBM_Plex_Mono, Playfair_Display, Space_Grotesk, Syne } from 'next/font/google';
 import './globals.css';
 import PaymentProvider from '../components/payment-provider';
+import SiteFooter from '../components/site-footer';
 
 const syne = Syne({
   subsets: ['latin'],
@@ -111,14 +112,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${syne.variable} ${dmSans.variable} ${spaceGrotesk.variable} ${playfair.variable} ${cormorant.variable} ${bebas.variable} ${ibmPlexMono.variable} dark`}>
       <body className="min-h-screen antialiased">
         <PaymentProvider>{children}</PaymentProvider>
-        <footer className="border-t border-white/10 bg-[#0a0910] px-5 py-6 text-center text-sm text-white/50">
-          <a
-            href="https://manifoldgan.evangeler.com"
-            className="font-medium text-white/65 transition hover:text-white"
-          >
-            Affiliate program
-          </a>
-        </footer>
+        <SiteFooter />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}

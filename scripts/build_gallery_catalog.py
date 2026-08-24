@@ -107,6 +107,126 @@ PALETTES = [
     "rust and sage", "ice blue and warm cedar", "garnet and warm grey", "seafoam and copper",
 ]
 
+# Human and cinematic subjects. The classic catalog only carries architecture /
+# nature / objects, which is why the library clustered into formulaic scenic
+# frames. These axes add attractive adult characters, fantasy figures,
+# influencers, and cinematic alluring portraits so the gallery reads as an
+# artistic mix instead of a landscape loop. Content stays tasteful/alluring and
+# is still moderated after render (see --moderate-before-index); the gallery
+# endpoint surfaces borderline work separately through allow_nsfw.
+PEOPLE_SUBJECTS = [
+    ("fashion", "a young woman in a flowing silk gown"),
+    ("fashion", "an androgynous model in a sharply tailored suit"),
+    ("fashion", "a couture catwalk muse with razor cheekbones"),
+    ("fashion", "a streetwear influencer with wet-look hair"),
+    ("glamour", "a siren at the waterline in a translucent slip"),
+    ("glamour", "a muse on a rooftop at dusk in a body-con dress"),
+    ("glamour", "a femme fatale in a crimson backless gown"),
+    ("glamour", "a smiley lounge singer in a satin robe"),
+    ("cinema", "a noir detective's femme fatal muse in a trench coat"),
+    ("cinema", "a dancer mid-spin in a silk maxi dress"),
+    ("cinema", "a rider removing a helmet, flushed and windblown"),
+    ("cinema", "a lover leaning against rain-streaked glass"),
+    ("fantasy", "a sorceress in a star-lit midnight cloak"),
+    ("fantasy", "an elven queen in a moonlit silver crown"),
+    ("fantasy", "a warrior queen in ornate gilded armor"),
+    ("fantasy", "a dryad with vine-woven hair in a forest pool"),
+    ("fantasy", "a celestial priestess with haloed candlelight"),
+    ("fantasy", "a spectral fox-spirit woman in an ink wash"),
+    ("editorial", "a ballet dancer in a bare-shoulder leotard, mid-extension"),
+    ("editorial", "an astronaut in a reflective bodysuit among wildflowers"),
+    ("editorial", "a sculptor at rest in a linen shirt, dust-hazed"),
+    ("editorial", "a swimmer before the plunge in a racing suit"),
+    ("portrait", "a striking woman with a smoldering over-the-shoulder gaze"),
+    ("portrait", "a handsome man in a rolled-sleeve white shirt"),
+    ("portrait", "a muse with freckles and wind-tousled copper hair"),
+    ("portrait", "a feline-featured model with gold ear cuffs"),
+    ("portrait", "a chiseled athlete in dramatic rim light, oiled skin"),
+    ("portrait", "an elegant older stateswoman in a silk scarf"),
+    ("influencer", "a travel influencer posing on a cliffside at golden hour"),
+    ("influencer", "a fitness creator stretching in a sunlit loft"),
+]
+
+PEOPLE_POSES = [
+    "in a graceful contrapposto pose", "in an alluring over-the-shoulder glance",
+    "in a confident cinematic stride", "in a dramatic three-quarter profile",
+    "reclining elegantly on a chaise", "mid-turn with fabric catching the light",
+    "in a low lunge with a lifted chin", "standing tall with hands in pockets",
+    "in a coy glance from under lowered lashes", "in a bold, open-armed welcome",
+    "in a wind-swept lean against a wall", "in a deep breath with eyes closed",
+    "in a gentle reach toward the lens", "in a seated silhouette against a window",
+]
+
+
+PEOPLE_SETTINGS = [
+    "on a neon-lit rooftop at midnight", "in a moonlit palace courtyard",
+    "in a rain-slick neon alley", "on a sun-drenched cliffside",
+    "in a candle-lit cathedral ruin", "in a smoke-lit photo studio",
+    "on a marble staircase at dawn", "in a dewy forest clearing",
+    "in a brutalist concrete atrium", "in a silent desert at twilight",
+    "in a backlit golden-hour field", "in a blue-hour city apartment",
+    "on a storm-washed boardwalk", "in a greenhouse humid with mist",
+    "in a velvet-curtained boudoir", "on a midnight dance floor",
+]
+PEOPLE_STYLES = [
+    "editorial glamour photography", "high-fashion runway photography",
+    "cinematic film still", "mythology-inspired fine art",
+    "dreamlike fantasy illustration", "neo-noir cinematic portrait",
+    "Vogue-style studio portraiture", "soft-grain analog fashion film",
+    "Renaissance chiaroscuro oil portrait", "futuristic speculative couture",
+    "National Geographic-style editorial", "bold Helmut Newton attitude",
+    "Wong Kar-wai colour cinema still", "moody Fujifilm street portrait",
+]
+
+
+def people_row(index: int) -> dict[str, object]:
+    (category, subject), pose, setting, style, detail, palette = decode(
+        index,
+        [PEOPLE_SUBJECTS, PEOPLE_POSES, PEOPLE_SETTINGS, PEOPLE_STYLES, IMAGE_DETAILS, PALETTES],
+    )
+    prompt = (
+        f"{subject} {pose}, {setting}, {style}, {detail}, {palette} palette, "
+        "no text, no logo, no watermark"
+    )
+    digest = hashlib.sha256(prompt.encode()).hexdigest()
+    width, height = DIMENSIONS[index % len(DIMENSIONS)]
+    return {
+        "prompt": prompt, "category": category, "slug": f"person-{digest[:14]}",
+        "seed": int(digest[:8], 16) % (2**31), "width": width, "height": height,
+    }
+
+
+def people_video_row(index: int) -> dict[str, object]:
+    subject, action, camera, setting, light, sound = decode(
+        index, [PEOPLE_VIDEO_SUBJECTS, VIDEO_ACTIONS, CAMERAS, PEOPLE_VIDEO_SETTINGS, VIDEO_LIGHT, SOUNDS]
+    )
+    prompt = (
+        f"{subject} in {setting}, {action}; {camera}, cinematic 16:9, {light}; "
+        f"natural motion, coherent geometry, no text, no logo; audio: {sound}"
+    )
+    digest = hashlib.sha256(prompt.encode()).hexdigest()
+    return {"prompt": prompt, "category": "video", "slug": f"motion-{digest[:14]}", "seed": int(digest[:8], 16) % (2**31)}
+PEOPLE_VIDEO_SUBJECTS = [
+    "a dancer in a silk gown spinning through a marble hall",
+    "a model in a wet-look coat walking toward the lens in rain",
+    "a sorceress conjuring sparks in a moonlit courtyard",
+    "a fighter training slow shadow-boxing in a loft",
+    "a muse dancing alone in a rain-slick street at night",
+    "a long-haired rider dismounting from a rearing horse",
+    "an astronaut drifting through a greenhouse in slow motion",
+    "a femme fatale pausing at a neon door before entering",
+    "a musician swaying behind a smoke-lit microphone",
+    "a woman in a flowing dress running through a field",
+    "a couture walk on a stadium catwalk with slow camera",
+    "a couple slow-dancing in a derelict theatre",
+]
+PEOPLE_VIDEO_SETTINGS = [
+    "a marble palace hall", "a neon-lit rooftop", "a rain-slick neon street",
+    "a moonlit beach", "a sun-drenched cliffside", "a smoke-lit studio",
+    "a dewy forest clearing", "a brutalist concrete atrium",
+    "a candle-lit cathedral ruin", "a silent desert dawn",
+]
+
 # Keep the gallery visually varied without asking the image worker to render
 # unusually large canvases. Every dimension is a multiple of 64, and each
 # entry has roughly the same pixel count as the 1024px square baseline.
@@ -207,7 +327,7 @@ def video_row(index: int) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--kind", choices=("image", "video"), default="image")
+    parser.add_argument("--kind", choices=("image", "people", "video", "people-video"), default="image")
     parser.add_argument("--count", type=int, default=100_000)
     parser.add_argument("--seed", type=int, default=20260810, help="deterministic catalog ordering")
     parser.add_argument("--out", type=Path, required=True)
@@ -218,6 +338,12 @@ def main() -> None:
     if args.kind == "image":
         axes = [IMAGE_SUBJECTS, IMAGE_SETTINGS, IMAGE_STYLES, IMAGE_DETAILS, PALETTES]
         build_row = image_row
+    elif args.kind == "people":
+        axes = [PEOPLE_SUBJECTS, PEOPLE_POSES, PEOPLE_SETTINGS, PEOPLE_STYLES, IMAGE_DETAILS, PALETTES]
+        build_row = people_row
+    elif args.kind == "people-video":
+        axes = [PEOPLE_VIDEO_SUBJECTS, VIDEO_ACTIONS, CAMERAS, PEOPLE_VIDEO_SETTINGS, VIDEO_LIGHT, SOUNDS]
+        build_row = people_video_row
     else:
         axes = [VIDEO_SUBJECTS, VIDEO_ACTIONS, CAMERAS, VIDEO_LIGHT, SOUNDS]
         build_row = video_row

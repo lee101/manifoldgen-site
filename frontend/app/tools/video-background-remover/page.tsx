@@ -287,12 +287,6 @@ export default function VideoBackgroundRemoverPage() {
           </div>
         </div>
       </section>
-
-      <section className={styles.notes}>
-        <div><b>01</b><span><strong>Temporal matte</strong>Recurrent inference keeps edges stable between frames.</span></div>
-		<div><b>02</b><span><strong>Local GPU first</strong>Our native worker handles the job; RunPod absorbs local queue pressure and general matting uses standby capacity.</span></div>
-        <div><b>03</b><span><strong>No duplicate work</strong>Repeated submissions reuse the same account job and content cache.</span></div>
-      </section>
     </main>
   );
 }

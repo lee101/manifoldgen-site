@@ -378,7 +378,10 @@ test('a stale queued generation reconciles into a video tile and reuses its prom
 
   await page.goto('/studio');
   const tile = page.getByTestId('studio-generation-generation-finished-1');
-  await expect(tile.getByText('Ready', { exact: true })).toBeVisible();
+  // Ready generations render their output preview and an Add affordance;
+  // the card intentionally has no literal “Ready” label.
+  await expect(tile.locator('video')).toBeVisible();
+  await expect(tile.getByText('Add', { exact: true })).toBeVisible();
   await expect(tile.locator('video')).toHaveAttribute('src', 'https://studio-result.example/generation.webm');
   expect(listChecks).toBeGreaterThan(1);
 
@@ -614,7 +617,7 @@ test('persisted history keeps distinct media revisions and restores the old text
   const document = saves.at(-1).document;
   const previous = document.history.undo.at(-1).assets[0];
   const current = document.assets[0];
-  expect(document.version).toBe(4);
+  expect(document.version).toBe(5);
   expect(previous.mediaID).toBeTruthy();
   expect(current.mediaID).toBeTruthy();
   expect(previous.mediaID).not.toBe(current.mediaID);
@@ -1002,7 +1005,7 @@ test('visual clips stack across timeline layers with vertical dragging and brack
   await page.keyboard.press('Control+BracketLeft');
 
   await expect.poll(() => saves.at(-1)?.document?.assets?.map((asset) => asset.visualTrack)).toEqual([2, 1]);
-  expect(saves.at(-1).document.version).toBe(4);
+  expect(saves.at(-1).document.version).toBe(5);
 });
 
 test('timeline copy paste aligns groups to the playhead and accepts dropped media', async ({ page }) => {
@@ -1148,6 +1151,120 @@ test('audio volume and fades are persisted in the cloud project document', async
   await expect(page.getByTestId('studio-audio-fade-in').locator('xpath=..')).toContainText('0.4s');
   await expect(page.getByTestId('studio-audio-fade-out').locator('xpath=..')).toContainText('0.6s');
   await expect.poll(() => saves.at(-1)?.document?.assets?.[0]).toMatchObject({ volume: 0.65, fadeIn: 0.4, fadeOut: 0.6 });
+});
+
+test('design resolution, A1 gain, and timeline height are project-level controls', async ({ page }) => {
+  const saves = [];
+  await installMocks(page, { onProjectSave: (project) => saves.push(project) });
+  await page.goto('/studio');
+
+  await page.getByTestId('studio-project-menu').click();
+  await expect(page.getByTestId('studio-design-size')).toContainText('1920 × 1080');
+  await page.getByTestId('studio-design-size').getByRole('button', { name: 'Resize' }).click();
+  await page.getByTestId('studio-design-width').fill('1080');
+  await page.getByTestId('studio-design-height').fill('1920');
+  await page.getByTestId('studio-design-submit').click();
+  await expect(page.getByTestId('studio-render-status')).toContainText('1080 × 1920 design');
+
+  await page.getByTestId('studio-a1-volume').fill('0.72');
+  await expect.poll(() => saves.at(-1)?.document).toMatchObject({
+    version: 5,
+    canvas: { width: 1080, height: 1920 },
+    audioTrackVolume: 0.72,
+  });
+
+  const resize = page.getByTestId('studio-timeline-resize');
+  const timeline = resize.locator('xpath=..');
+  const before = await timeline.boundingBox();
+  const handle = await resize.boundingBox();
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + 3);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2, handle.y - 90, { steps: 5 });
+  await page.mouse.up();
+  const after = await timeline.boundingBox();
+  expect(after.height).toBeGreaterThan(before.height + 70);
+});
+
+test('New design chooses a resolution and starts an empty project', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles({ name: 'old-design.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
+  await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(1);
+
+  await page.getByTestId('studio-project-menu').click();
+  await page.getByRole('button', { name: 'New design' }).click();
+  await page.getByRole('button', { name: /Portrait/ }).click();
+  await page.getByTestId('studio-design-submit').click();
+  await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(0);
+  await expect(page.getByTestId('studio-render-status')).toContainText('1080 × 1920 design');
+});
+
+test('audio context menu stays in the viewport and queues H3 from an exact interval', async ({ page }) => {
+  const serviceRequests = [];
+  let uploadedAudioBytes = 0;
+  await installMocks(page);
+  await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route('**/api/search?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route('**/api/uploads/presign**', async (route) => route.fulfill({ status: 200, json: {
+    upload_url: 'https://upload.example/audio-snippet.wav',
+    public_url: 'https://media.example/audio-snippet.wav',
+  } }));
+  await page.route('https://upload.example/audio-snippet.wav', async (route) => {
+    uploadedAudioBytes = (await route.request().postDataBuffer())?.length || 0;
+    await route.fulfill({ status: 200 });
+  });
+  await page.route('**/api/service', async (route) => {
+    const body = route.request().postDataJSON();
+    serviceRequests.push(body);
+    if (body.service === 'zimage') {
+      await route.fulfill({ status: 200, json: { saved_image_url: 'https://media.example/generated-opening.webp' } });
+      return;
+    }
+    await route.fulfill({ status: 202, json: { result: { job_id: 'audio-video-job', status: 'queued' } } });
+  });
+
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles({ name: 'long-score.wav', mimeType: 'audio/wav', buffer: wavFixture(14) });
+  const audioClip = page.locator('[data-testid^="timeline-audio-"]').first();
+  await audioClip.click({ button: 'right', position: { x: 30, y: 20 } });
+  const menu = page.getByTestId('studio-context-menu');
+  await expect(menu).toBeVisible();
+  const menuBox = await menu.boundingBox();
+  expect(menuBox.y).toBeGreaterThanOrEqual(7);
+  expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(page.viewportSize().height + 1);
+  await page.getByTestId('studio-context-audio-video').click();
+  await page.getByTestId('studio-audio-video-start').fill('8');
+  await page.getByTestId('studio-audio-video-end').fill('13');
+  await page.getByTestId('studio-audio-video-prompt').fill('A dancer moves through a hall of mirrors in time with the score');
+  await page.getByTestId('studio-audio-video-submit').click();
+
+  await expect(page.getByTestId('studio-audio-video-status')).toContainText('Video queued', { timeout: 20_000 });
+  expect(uploadedAudioBytes).toBeGreaterThan(44);
+  expect(serviceRequests).toHaveLength(2);
+  expect(serviceRequests[0]).toMatchObject({ service: 'zimage' });
+  expect(serviceRequests[1]).toMatchObject({
+    service: 'h3_video', duration: 5, audio_url: 'https://media.example/audio-snippet.wav',
+    first_frame: 'https://media.example/generated-opening.webp', include_audio: true,
+  });
+});
+
+test('timeline composites active visuals and starts overlapping audio clips together', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  const input = page.locator('input[type=file]');
+  await input.setInputFiles(VIDEO);
+  await input.setInputFiles([
+    { name: 'first-track.wav', mimeType: 'audio/wav', buffer: wavFixture(1) },
+    { name: 'second-track.wav', mimeType: 'audio/wav', buffer: wavFixture(1) },
+  ]);
+
+  await expect(page.locator('[data-testid^="timeline-audio-"]')).toHaveCount(2);
+  // Selecting audio must not replace the visual composition with an
+  // audio-only stage.
+  await expect(page.locator('[data-stage-asset]')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Play', description: 'Play/pause (Space)' }).click();
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  await expect.poll(() => page.locator('audio').evaluateAll((elements) => elements.filter((element) => !element.paused && element.currentTime > 0).length)).toBe(2);
 });
 
 test('spacebar toggles timeline playback even after the file input had focus', async ({ page }) => {
@@ -1311,8 +1428,10 @@ for (const { format, codec, extension } of [
     await testInfo.attach('visual-benchmark.json', { body: Buffer.from(JSON.stringify(benchmark, null, 2)), contentType: 'application/json' });
     console.log(`[visualbench] ${format}: ${elapsedSeconds.toFixed(2)}s, ${(elapsedSeconds / visual.duration).toFixed(2)}x realtime, min similarity ${Math.min(...visual.metrics.map((metric) => metric.similarity)).toFixed(4)}`);
 
-    expect(visual.width).toBe(1184);
-    expect(visual.height).toBe(672);
+    // Export dimensions follow the project canvas, not the first imported
+    // asset. The default design is 16:9, so a 720p export is exactly 1280×720.
+    expect(visual.width).toBe(1280);
+    expect(visual.height).toBe(720);
     expect(visual.duration).toBeGreaterThan(4.3);
     expect(visual.byteLength).toBeGreaterThan(10_000);
     for (const metric of visual.metrics) {
@@ -1606,4 +1725,47 @@ test('local MP4 export mixes an added audio clip into the downloaded video', asy
   const outputPath = await download.path();
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', outputPath], { encoding: 'utf8' }));
   expect(probe.streams.map((stream) => stream.codec_type).sort()).toEqual(['audio', 'video']);
+});
+
+test('a preview request that permanently fails marks the asset failed without retrying', async ({ page }) => {
+  const projectID = '1c1f9f1e-0000-4000-8000-000000000001';
+  const assetID = '1c1f9f1e-0000-4000-8000-000000000002';
+  const objectPath = `test/${projectID}/${assetID}/unsupported-container.avi`;
+  const now = new Date().toISOString();
+  let previewCalls = 0;
+  await installMocks(page, { cloudProjects: [{
+    id: projectID, name: 'Preview failure', revision: 1, created_at: now, updated_at: now,
+    document: { version: 1, selectedID: assetID, assets: [{
+      id: assetID, mediaID: assetID, name: 'unsupported-container.avi', kind: 'video', duration: 4, width: 320, height: 240,
+      trimStart: 0, trimEnd: 4, timelineStart: 0, visualTrack: 0, volume: 1, fadeIn: 0, fadeOut: 0,
+      stageX: 0, stageY: 0, adjustments: {}, contentType: 'video/x-msvideo', size: fs.statSync(VIDEO).size, lastModified: 1,
+      cloudURL: `https://manifoldgenstatic.manifoldgen.com/gallery/${objectPath}`, objectKey: `gallery/${objectPath}`,
+    }] },
+  }] });
+  // The restore flow downloads the source through the CORS-safe proxy before
+  // the timeline (and its queued preview) exists.
+  await page.route(`**/api/gallery-assets/${objectPath}?v=1`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'video/x-msvideo', body: fs.readFileSync(VIDEO) });
+  });
+  await page.route(`https://manifoldgenstatic.manifoldgen.com/gallery/${objectPath}`, (route) => route.abort());
+  // A video/* MIME whose container the encoder rejects: the client uploads the
+  // asset fine but the preview endpoint returns a permanent 4xx.
+  await page.route('**/api/studio/assets/preview', (route) => {
+    previewCalls += 1;
+    return route.fulfill({ status: 400, json: { error: 'a video asset is required' } });
+  });
+  await page.goto('/studio');
+  // Give the resume pass a moment to fire, then assert the endpoint was called
+  // exactly once and the terminal 'failed' state stops any retry storm.
+  await expect.poll(() => previewCalls).toBe(1);
+  // Mutating a clip property replaces the assets array identity; the resume
+  // effect depends on `assets`, so without the terminal 'failed' state this
+  // would re-queue the preview request for the rejected container.
+  // Selecting the clip and opening the sound panel reveals the volume
+  // slider, which writes through updateAsset -> setAssets.
+  await page.getByTestId('studio-panel').getByRole('button', { name: /unsupported-container\.avi/ }).first().click();
+  await page.getByTestId('studio-tool-audio').click();
+  await page.getByTestId('studio-video-volume').fill('0.6');
+  await page.waitForTimeout(800);
+  expect(previewCalls).toBe(1);
 });

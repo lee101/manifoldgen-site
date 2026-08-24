@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-refs_file="$(mktemp)"
-trap 'rm -f "$refs_file"' EXIT
-cat > "$refs_file"
+root=$(git rev-parse --show-toplevel)
+config="$root/.gitleaks.toml"
+command -v gitleaks >/dev/null 2>&1 || {
+  echo "pre-push: gitleaks is required; install it from https://github.com/gitleaks/gitleaks#installation" >&2
+  echo "pre-push: set SKIP_GITLEAKS=1 only for an emergency, documented bypass" >&2
+  [ "${SKIP_GITLEAKS:-}" = 1 ] && exit 0
+  exit 1
+}
 
-PRE_PUSH_REFS_FILE="$refs_file" "$(git rev-parse --show-toplevel)/scripts/check-all.sh"
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "$local_sha" ] || continue
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    log_opts="$local_sha"
+  else
+    log_opts="$remote_sha..$local_sha"
+  fi
+  gitleaks git --config "$config" --redact --no-banner --exit-code 1 --log-opts="$log_opts"
+done
