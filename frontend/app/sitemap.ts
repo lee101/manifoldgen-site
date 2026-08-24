@@ -14,7 +14,7 @@ export const dynamic = 'force-static';
 export default function sitemap(): MetadataRoute.Sitemap {
   const base = 'https://manifoldgen.com';
   const now = new Date();
-  const staticRoutes = ['', '/tools', '/tool/animate-video', '/tool/image-editor', '/api', '/api/video-generators', '/studio', '/blog', '/blog/guides', '/account', '/ai-video-generator', '/compare', '/best', '/models', '/leaderboard'];
+  const staticRoutes = ['', '/tools', '/tool/animate-video', '/tool/image-editor', '/api', '/api/video-generators', '/studio', '/blog', '/blog/guides', '/account', '/privacy', '/ai-video-generator', '/compare', '/best', '/models', '/leaderboard'];
   const toolSlugs = ['make-image', 'style-transfer', 'h3-image', 'h3-image-editor', 'character-animator', 'video-background-remover', 'music-generator', 'cinematic-cameras', 'relight', 'inpaint', 'image-upscale', 'outpaint', 'moodboard', 'nano-banana', 'grok-imagine', 'flux-2', 'gpt-image'];
   return [
     ...staticRoutes.map((path) => ({ url: `${base}${path}`, lastModified: now, changeFrequency: path === '' ? 'daily' as const : 'weekly' as const, priority: path === '' ? 1 : 0.8 })),
