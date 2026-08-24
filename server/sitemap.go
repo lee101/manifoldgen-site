@@ -64,7 +64,7 @@ func handleSitemapPages(ctx *fasthttp.RequestCtx) {
 		fmt.Fprintf(&b, `<url><loc>%s%s</loc></url>`, sitemapSiteURL, path)
 	}
 	for _, path := range seoRoutesFromExport() {
-		if !publicSitemapURL(path) {
+		if !strings.HasPrefix(path, "/") || !publicSitemapURL(sitemapSiteURL+path) {
 			continue
 		}
 		fmt.Fprintf(&b, `<url><loc>%s%s</loc></url>`, sitemapSiteURL, path)
