@@ -11,18 +11,6 @@
   "video_url": "https://manifoldgenstatic.manifoldgen.com/gallery/8c3c7b43-eb5/videos/4011d5b2-81f3-4e32-96ef-1936408b293f.webm",
   "wall_seconds": 308
  },
- "camera-motion:seedance": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
- "camera-motion:seedance-fast": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
- "camera-motion:wan": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
  "cinematic:ltx-2": {
   "credits_used": 8.639999999999999,
   "status": "completed",
@@ -34,18 +22,6 @@
   "status": "completed",
   "video_url": "https://manifoldgenstatic.manifoldgen.com/gallery/8c3c7b43-eb5/videos/ff2098ab-e5b3-4b14-a9c9-5278d9caf58c.webm",
   "wall_seconds": 106
- },
- "cinematic:seedance": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
- "cinematic:seedance-fast": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
- "cinematic:wan": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
  },
  "human-motion:ltx-2": {
   "credits_used": 8.639999999999999,
@@ -59,18 +35,6 @@
   "video_url": "https://manifoldgenstatic.manifoldgen.com/gallery/8c3c7b43-eb5/videos/328438c8-dfef-4bf6-9f66-fcc2606b86ae.webm",
   "wall_seconds": 271
  },
- "human-motion:seedance": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
- "human-motion:seedance-fast": {
-  "error": "502 {\"error\":\"service temporarily unavailable\"}",
-  "status": "failed"
- },
- "human-motion:wan": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
  "product:ltx-2": {
   "credits_used": 8.639999999999999,
   "status": "completed",
@@ -83,18 +47,6 @@
   "video_url": "https://manifoldgenstatic.manifoldgen.com/gallery/8c3c7b43-eb5/videos/af36ec57-f1b9-4965-9f81-50fc4316aa23.webm",
   "wall_seconds": 106
  },
- "product:seedance": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
- "product:seedance-fast": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
- "product:wan": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
  "stylized:ltx-2": {
   "credits_used": 8.639999999999999,
   "status": "completed",
@@ -102,20 +54,10 @@
   "wall_seconds": 58
  },
  "stylized:manifold-h3": {
-  "error": "job failed",
-  "status": "failed"
- },
- "stylized:seedance": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
- "stylized:seedance-fast": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
- "stylized:wan": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
+  "credits_used": 0,
+  "status": "completed",
+  "video_url": "https://manifoldgenstatic.manifoldgen.com/gallery/8c3c7b43-eb5/videos/8ec12da4-23a4-47c6-90a3-a37bc6dce451.webm",
+  "wall_seconds": 273
  },
  "vfx:ltx-2": {
   "credits_used": 8.639999999999999,
@@ -128,17 +70,5 @@
   "status": "completed",
   "video_url": "https://manifoldgenstatic.manifoldgen.com/gallery/8c3c7b43-eb5/videos/f85d55c5-df70-495b-97de-24b4ebe3cdd6.webm",
   "wall_seconds": 256
- },
- "vfx:seedance": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
- },
- "vfx:seedance-fast": {
-  "error": "502 {\"error\":\"service temporarily unavailable\"}",
-  "status": "failed"
- },
- "vfx:wan": {
-  "error": "name 'API' is not defined",
-  "status": "failed"
  }
 }
