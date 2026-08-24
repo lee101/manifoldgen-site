@@ -59,7 +59,7 @@ func handleSitemapPages(ctx *fasthttp.RequestCtx) {
 		"/tools/image-upscale", "/tools/outpaint", "/tools/moodboard",
 		"/tools/nano-banana", "/tools/grok-imagine", "/tools/flux-2", "/tools/gpt-image",
 		"/tool/animate-video", "/tool/image-editor", "/tool/anima",
-		"/api", "/api/video-generators", "/studio", "/voice", "/blog",
+		"/api", "/api/video-generators", "/studio", "/voice", "/blog", "/privacy",
 	} {
 		fmt.Fprintf(&b, `<url><loc>%s%s</loc></url>`, sitemapSiteURL, path)
 	}
