@@ -14,7 +14,7 @@
     "test:e2e:hook": "playwright test tests/e2e/studio-media.spec.js tests/e2e/api-pricing.spec.js --grep-invert 'visual fidelity benchmark|2K preview stays'",
     "test:e2e:perf": "PLAYWRIGHT_GPU=1 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-/usr/bin/google-chrome} playwright test tests/e2e/studio-media.spec.js --grep '2K preview'",
     "test:e2e:export-visual": "NEXT_DIST_DIR=.next-export-visual PLAYWRIGHT_PORT=3237 PLAYWRIGHT_WORKERS=1 PLAYWRIGHT_AV1=1 playwright test tests/e2e/studio-media.spec.js --grep 'visual fidelity benchmark'",
-    "prebuild": "bun scripts/gen-seo-routes.ts"
+    "prebuild": "command -v bun >/dev/null 2>&1 && bun scripts/gen-seo-routes.ts || echo \"(skipping seo-routes gen: no bun; using committed json)\""
   },
   "dependencies": {
     "lucide-react": "^0.553.0",
