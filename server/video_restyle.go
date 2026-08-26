@@ -19,7 +19,12 @@ import (
 const (
 	falRestyleMarkup = 1.20
 	wanAnimateMarkup = 2.00
+	h3ControlMarkup  = 1.20
 )
+
+var h3ControlTypes = map[string]bool{
+	"canny": true, "depth": true, "hed": true, "mlsd": true, "pose": true, "inpaint": true,
+}
 
 type restyleStoredRequest struct {
 	Input ServiceUsageRequest `json:"input"`
@@ -41,8 +46,8 @@ func normalizeVideoRestyleRequest(req *ServiceUsageRequest) error {
 	if req.Model == "wan-animate" {
 		req.Model = "wan-animate-2"
 	}
-	if req.Model != "wan-2.2" && req.Model != "h3-reference" && req.Model != "wan-animate-2" {
-		return fmt.Errorf("model must be wan-2.2, h3-reference, or wan-animate-2")
+	if req.Model != "wan-2.2" && req.Model != "h3-reference" && req.Model != "h3-control" && req.Model != "wan-animate-2" {
+		return fmt.Errorf("unsupported video restyle model")
 	}
 	if req.Prompt == "" {
 		return fmt.Errorf("prompt is required")
@@ -53,7 +58,52 @@ func normalizeVideoRestyleRequest(req *ServiceUsageRequest) error {
 	if err := validateRestyleURL(req.VideoURL); err != nil {
 		return fmt.Errorf("video_url: %w", err)
 	}
-	if req.Model == "wan-animate-2" {
+	if req.Model == "h3-control" {
+		req.ControlType = strings.ToLower(strings.TrimSpace(req.ControlType))
+		if !h3ControlTypes[req.ControlType] {
+			return fmt.Errorf("control_type must be canny, depth, hed, mlsd, pose, or inpaint")
+		}
+		if !req.AcceptH3License {
+			return fmt.Errorf("accept_h3_license is required")
+		}
+		if req.Duration == 0 {
+			req.Duration = 5
+		}
+		if req.Duration < 1 || req.Duration > 15 {
+			return fmt.Errorf("duration must be between 1 and 15 seconds")
+		}
+		if req.Resolution == "" {
+			req.Resolution = "480p"
+		}
+		if !videoStringIn(req.Resolution, "480p", "576p", "720p") {
+			return fmt.Errorf("resolution must be 480p, 576p, or 720p")
+		}
+		if req.ControlScale == 0 {
+			req.ControlScale = 1
+		}
+		if req.ControlScale < 0.1 || req.ControlScale > 1 {
+			return fmt.Errorf("control_scale must be between 0.1 and 1")
+		}
+		if req.NumSteps == 0 {
+			req.NumSteps = 20
+		}
+		if req.NumSteps < 20 || req.NumSteps > 50 {
+			return fmt.Errorf("num_steps must be between 20 and 50")
+		}
+		if req.ControlPreprocess == nil {
+			value := true
+			req.ControlPreprocess = &value
+		}
+		if req.ControlType == "inpaint" {
+			req.MaskVideoURL = strings.TrimSpace(req.MaskVideoURL)
+			if req.MaskVideoURL == "" {
+				return fmt.Errorf("mask_video_url is required for video inpainting")
+			}
+			if err := validateRestyleURL(req.MaskVideoURL); err != nil {
+				return fmt.Errorf("mask_video_url: %w", err)
+			}
+		}
+	} else if req.Model == "wan-animate-2" {
 		req.ImageURL = strings.TrimSpace(req.ImageURL)
 		if req.ImageURL == "" {
 			return fmt.Errorf("image_url is required for animation transfer")
@@ -183,6 +233,12 @@ func prependUniqueURL(first string, rest []string) []string {
 }
 
 func restyleFalProviderCost(req ServiceUsageRequest) float64 {
+	if req.Model == "h3-control" {
+		coldStart := restyleEnvFloat("H3_CONTROL_ESTIMATED_PROVIDER_BASE_USD", 0.60)
+		perSecond := restyleEnvFloat("H3_CONTROL_ESTIMATED_PROVIDER_USD_PER_SECOND", 0.12)
+		factor := map[string]float64{"480p": 1, "576p": 1.35, "720p": 2}[req.Resolution]
+		return (coldStart + perSecond*float64(req.Duration)) * factor
+	}
 	if req.Model == "wan-animate-2" {
 		base := restyleEnvFloat("WAN_ANIMATE_ESTIMATED_PROVIDER_USD_PER_SECOND", 0.10)
 		factor := map[string]float64{"preview": 1, "balanced": 1.6, "high": 3}[req.Resolution]
@@ -200,6 +256,8 @@ func restyleEstimate(req ServiceUsageRequest) (float64, float64) {
 	markup := falRestyleMarkup
 	if req.Model == "wan-animate-2" {
 		markup = wanAnimateMarkup
+	} else if req.Model == "h3-control" {
+		markup = h3ControlMarkup
 	}
 	charged := math.Ceil(restyleFalProviderCost(req)*markup*100) / 100
 	credits := 0.0
@@ -214,9 +272,17 @@ func handleVideoRestyleService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.Model == "h3-control" && !h3ControlRequestAllowed(ctx) {
+		jsonError(ctx, http.StatusForbidden, "MiniMax H3 Control is not licensed for use in your territory")
+		return
+	}
 	estimatedUSD, estimatedCredits := restyleEstimate(req)
-	if req.Model == "wan-animate-2" && !user.UnlimitedAPI && user.Credits < estimatedCredits {
-		jsonError(ctx, http.StatusPaymentRequired, fmt.Sprintf("insufficient credits: animation transfer needs about %.0f credits ($%.2f)", estimatedCredits, estimatedUSD))
+	if (req.Model == "wan-animate-2" || req.Model == "h3-control") && !user.UnlimitedAPI && user.Credits < estimatedCredits {
+		label := "animation transfer"
+		if req.Model == "h3-control" {
+			label = "H3 control video"
+		}
+		jsonError(ctx, http.StatusPaymentRequired, fmt.Sprintf("insufficient credits: %s needs about %.0f credits ($%.2f)", label, estimatedCredits, estimatedUSD))
 		return
 	}
 	stored, _ := json.Marshal(restyleStoredRequest{Input: req})
@@ -245,8 +311,33 @@ func handleVideoRestyleService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 	})
 }
 
+func h3ControlTerritoryExcluded(country string) bool {
+	switch strings.ToUpper(strings.TrimSpace(country)) {
+	case "US", "GB", "KR", "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE":
+		return true
+	default:
+		return false
+	}
+}
+
+func handleH3ControlEligibility(ctx *fasthttp.RequestCtx) {
+	country := strings.ToUpper(strings.TrimSpace(string(ctx.Request.Header.Peek("CF-IPCountry"))))
+	jsonResponse(ctx, http.StatusOK, map[string]interface{}{
+		"allowed": h3ControlRequestAllowed(ctx),
+		"country": country,
+	})
+}
+
+func h3ControlRequestAllowed(ctx *fasthttp.RequestCtx) bool {
+	country := strings.ToUpper(strings.TrimSpace(string(ctx.Request.Header.Peek("CF-IPCountry"))))
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("H3_CONTROL_REQUIRE_CF_COUNTRY")), "true") && (len(country) != 2 || country == "XX" || country == "T1") {
+		return false
+	}
+	return !h3ControlTerritoryExcluded(country)
+}
+
 func allowsFalVideoRestyle(req ServiceUsageRequest) bool {
-	return req.Model != "wan-animate-2"
+	return req.Model != "wan-animate-2" && req.Model != "h3-control"
 }
 
 func privateRestyleTemplate(req ServiceUsageRequest) string {
@@ -255,6 +346,9 @@ func privateRestyleTemplate(req ServiceUsageRequest) string {
 	}
 	if req.Model == "h3-reference" {
 		return strings.TrimSpace(getEnv("VIDEO_REFERENCE_APPNZ_TEMPLATE", "minimax-h3-reference"))
+	}
+	if req.Model == "h3-control" {
+		return strings.TrimSpace(getEnv("VIDEO_CONTROL_APPNZ_TEMPLATE", "minimax-h3-control-union"))
 	}
 	return strings.TrimSpace(getEnv("VIDEO_RESTYLE_APPNZ_TEMPLATE", "wan-2.2-a14b-v2v"))
 }
@@ -266,10 +360,16 @@ func privateRestyleModelID(req ServiceUsageRequest) string {
 	if req.Model == "h3-reference" {
 		return strings.TrimSpace(os.Getenv("VIDEO_REFERENCE_APPNZ_MODEL_ID"))
 	}
+	if req.Model == "h3-control" {
+		return strings.TrimSpace(os.Getenv("VIDEO_CONTROL_APPNZ_MODEL_ID"))
+	}
 	return strings.TrimSpace(os.Getenv("VIDEO_RESTYLE_APPNZ_MODEL_ID"))
 }
 
 func submitPrivateVideoRestyle(req ServiceUsageRequest) (string, error) {
+	if req.Model == "h3-control" && h3ControlEndpointID() != "" {
+		return submitH3ControlRunpod(req)
+	}
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("VIDEO_RESTYLE_PRIVATE_DISABLED")), "true") {
 		return "", fmt.Errorf("private restyle disabled")
 	}
@@ -289,6 +389,50 @@ func submitPrivateVideoRestyle(req ServiceUsageRequest) (string, error) {
 		return "", fmt.Errorf("private video service returned no job")
 	}
 	return "private:" + envelope.Prediction.ID, nil
+}
+
+func h3ControlEndpointID() string {
+	return strings.TrimSpace(os.Getenv("VIDEO_CONTROL_RUNPOD_ENDPOINT_ID"))
+}
+
+func h3ControlOutputTarget() (string, string, error) {
+	objectKey := fmt.Sprintf("%s/control-video/%s.mp4", strings.TrimSuffix(r2PathPrefix, "/"), newUUID())
+	uploadURL, err := presignR2PutObject(objectKey, "video/mp4", 6*60*60)
+	if err != nil {
+		return "", "", err
+	}
+	return uploadURL, fmt.Sprintf("https://%s/%s", r2PublicHost, objectKey), nil
+}
+
+func submitH3ControlRunpod(req ServiceUsageRequest) (string, error) {
+	endpointID := h3ControlEndpointID()
+	if endpointID == "" {
+		return "", fmt.Errorf("H3 control endpoint is not configured")
+	}
+	uploadURL, publicURL, err := h3ControlOutputTarget()
+	if err != nil {
+		return "", err
+	}
+	input := privateRestyleProviderInput(req)
+	input["_output_upload_url"] = uploadURL
+	input["_output_public_url"] = publicURL
+	var queued h3RunpodQueuedJob
+	status, err := submitCharacterAnimationRunpod(endpointID, "standard", input, &queued)
+	if err != nil {
+		return "", err
+	}
+	if queued.ID == "" {
+		return "", fmt.Errorf("H3 control endpoint returned no job (status %d)", status)
+	}
+	return "runpod-control:" + endpointID + ":" + queued.ID, nil
+}
+
+func parseH3ControlProviderID(value string) (endpointID, jobID string, ok bool) {
+	parts := strings.SplitN(value, ":", 3)
+	if len(parts) != 3 || parts[0] != "runpod-control" || parts[1] == "" || parts[2] == "" {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
 }
 
 func privateRestyleProviderInput(req ServiceUsageRequest) map[string]interface{} {
@@ -314,6 +458,22 @@ func privateRestyleProviderInput(req ServiceUsageRequest) map[string]interface{}
 			"prompt": req.Prompt, "duration": req.Duration, "resolution": req.Resolution,
 			"aspect_ratio": req.AspectRatio, "reference_image_urls": req.ReferenceImageURLs,
 			"reference_video_urls": req.ReferenceVideoURLs, "reference_audio_urls": req.ReferenceAudioURLs,
+		}
+		if req.Seed != 0 {
+			input["seed"] = req.Seed
+		}
+		return input
+	}
+	if req.Model == "h3-control" {
+		preprocess := true
+		if req.ControlPreprocess != nil {
+			preprocess = *req.ControlPreprocess
+		}
+		input := map[string]interface{}{
+			"video_url": req.VideoURL, "prompt": req.Prompt, "negative_prompt": req.NegativePrompt,
+			"control_type": req.ControlType, "control_scale": req.ControlScale,
+			"preprocess": preprocess, "duration": req.Duration, "resolution": req.Resolution,
+			"steps": req.NumSteps, "mask_video_url": req.MaskVideoURL,
 		}
 		if req.Seed != 0 {
 			input["seed"] = req.Seed
@@ -425,6 +585,10 @@ func processVideoRestyleJob(job *VideoJob) {
 		return
 	}
 	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
+	if strings.HasPrefix(job.ProviderJobID, "runpod-control:") {
+		processH3ControlRunpod(job, stored.Input)
+		return
+	}
 	if strings.HasPrefix(job.ProviderJobID, "private:") {
 		if processPrivateVideoRestyle(job, stored.Input) {
 			return
@@ -432,8 +596,12 @@ func processVideoRestyleJob(job *VideoJob) {
 		if videoJobCancellationRequested(job.ID) {
 			return
 		}
-		if stored.Input.Model == "wan-animate-2" {
-			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "animation transfer failed; your credits were not charged")
+		if stored.Input.Model == "wan-animate-2" || stored.Input.Model == "h3-control" {
+			label := "animation transfer"
+			if stored.Input.Model == "h3-control" {
+				label = "H3 control video"
+			}
+			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, label+" failed; your credits were not charged")
 			return
 		}
 		fallbackID, err := submitFalVideoRestyle(stored.Input)
@@ -448,6 +616,49 @@ func processVideoRestyleJob(job *VideoJob) {
 		job.ProviderJobID = fallbackID
 	}
 	processFalVideoRestyle(job, stored.Input)
+}
+
+func processH3ControlRunpod(job *VideoJob, input ServiceUsageRequest) {
+	endpointID, providerJobID, ok := parseH3ControlProviderID(job.ProviderJobID)
+	if !ok {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "H3 control provider job is invalid")
+		return
+	}
+	defer scheduleCharacterAnimationScaleToZero(endpointID, "standard")
+	deadline := time.Now().Add(3 * time.Hour)
+	for time.Now().Before(deadline) {
+		if videoJobCancellationRequested(job.ID) {
+			return
+		}
+		var state characterAnimationRunpodStatus
+		_, err := callH3Runpod(endpointID, "/status/"+url.PathEscape(providerJobID), http.MethodGet, nil, &state)
+		if err != nil {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		switch strings.ToUpper(strings.TrimSpace(state.Status)) {
+		case "COMPLETED", "SUCCEEDED":
+			if strings.TrimSpace(state.Output.VideoURL) == "" {
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "H3 control returned no playable video")
+				return
+			}
+			seconds := float64(state.ExecutionTime) / 1000
+			providerUSD := restyleEnvFloat("H3_CONTROL_GPU_HOURLY_USD", 4.59) * seconds / 3600
+			if providerUSD <= 0 {
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "H3 control returned no metered execution time")
+				return
+			}
+			chargedUSD := math.Ceil(providerUSD*h3ControlMarkup*1_000_000) / 1_000_000
+			result := map[string]interface{}{"video_url": state.Output.VideoURL, "duration_seconds": state.Output.DurationSeconds, "content_type": state.Output.ContentType}
+			settleVideoRestyle(job, input, result, providerUSD, chargedUSD)
+			return
+		case "FAILED", "CANCELLED", "CANCELED", "TIMED_OUT":
+			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "H3 control generation failed")
+			return
+		}
+		time.Sleep(3 * time.Second)
+	}
+	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "H3 control generation did not finish in time")
 }
 
 // processPrivateVideoRestyle returns false only when the private worker fails,
@@ -473,6 +684,8 @@ func processPrivateVideoRestyle(job *VideoJob, input ServiceUsageRequest) bool {
 			chargedMicros := h3DownstreamMicros(envelope.Prediction.CostMicros)
 			if input.Model == "wan-animate-2" {
 				chargedMicros = int64(math.Ceil(float64(envelope.Prediction.CostMicros) * wanAnimateMarkup))
+			} else if input.Model == "h3-control" {
+				chargedMicros = int64(math.Ceil(float64(envelope.Prediction.CostMicros) * h3ControlMarkup))
 			}
 			chargedUSD := float64(chargedMicros) / 1_000_000
 			return settleVideoRestyle(job, input, resultMap, providerUSD, chargedUSD)

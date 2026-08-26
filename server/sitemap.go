@@ -55,6 +55,7 @@ func handleSitemapPages(ctx *fasthttp.RequestCtx) {
 		"/", "/tools", "/tools/h3-image", "/tools/music-generator", "/tools/make-image",
 		"/tools/style-transfer", "/tools/h3-image-editor", "/tools/character-animator",
 		"/tools/video-background-remover", "/tools/video-dramatizer",
+		"/tools/canny-video", "/tools/depth-video", "/tools/hed-video", "/tools/mlsd-video", "/tools/pose-video", "/tools/video-inpainting",
 		"/tools/cinematic-cameras", "/tools/relight", "/tools/inpaint",
 		"/tools/image-upscale", "/tools/outpaint", "/tools/moodboard",
 		"/tools/nano-banana", "/tools/grok-imagine", "/tools/flux-2", "/tools/gpt-image",

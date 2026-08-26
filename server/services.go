@@ -313,7 +313,7 @@ type h3VideoPricingTier struct {
 
 func h3VideoPricingTiers() []h3VideoPricingTier {
 	tiers := []h3VideoPricingTier{
-		{Size: "preview", Label: "Preview", Width16x9: 1024, Height16x9: 576, Resolution16x9: "1024 × 576"},
+		{Size: "preview", Label: "Preview", Width16x9: 896, Height16x9: 512, Resolution16x9: "896 × 512"},
 		{Size: "balanced", Label: "Balanced", Width16x9: 1184, Height16x9: 672, Resolution16x9: "1184 × 672"},
 		{Size: "native", Label: "Native", Width16x9: 1344, Height16x9: 768, Resolution16x9: "1344 × 768"},
 	}

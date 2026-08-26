@@ -72,7 +72,7 @@ export default async function ModelPage({ params }: { params: Promise<{ model: s
       </section>
 
       {media.videos.length + media.images.length > 0 && (
-        <section className="mt-14">
+        <section className="mt-14 mx-[calc(50%-50vw)] px-5">
           <div className="flex items-baseline justify-between">
             <h2 className="font-display text-2xl font-700 tracking-tight">Real output generated on ManifoldGen</h2>
             <span className="text-xs text-white/40">hover for prompts</span>

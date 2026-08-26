@@ -12,6 +12,11 @@ Environment=GOBED_MODEL_PATH=/nvme0n1-disk/code/gobed/model
 Environment=LD_LIBRARY_PATH=/opt/manifoldgen-site/gpu:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib
 Environment=DIST_DIR=frontend/out
 Environment=FRONTEND_ERROR_LOG_PATH=/opt/manifoldgen-site/logs/frontend-errors.jsonl
+Environment=VIDEO_CONTROL_RUNPOD_ENDPOINT_ID=0464l4kizwvlzo
+Environment=H3_CONTROL_REQUIRE_CF_COUNTRY=true
+Environment=H3_CONTROL_GPU_HOURLY_USD=4.59
+Environment=H3_CONTROL_ESTIMATED_PROVIDER_BASE_USD=0.60
+Environment=H3_CONTROL_ESTIMATED_PROVIDER_USD_PER_SECOND=0.12
 ExecStart=/opt/manifoldgen-site/server/manifoldgen-server
 Restart=on-failure
 RestartSec=3

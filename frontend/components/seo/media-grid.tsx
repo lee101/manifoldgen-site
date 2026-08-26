@@ -37,14 +37,13 @@ function VideoCard({ asset, eager }: { asset: VideoAsset; eager: boolean }) {
       <figcaption className="pointer-events-none absolute inset-x-0 bottom-0 line-clamp-2 bg-gradient-to-t from-black/85 to-transparent p-3 text-xs leading-snug text-white/70 opacity-0 transition group-hover:opacity-100">
         {asset.prompt}
       </figcaption>
-      <span className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/80">video</span>
     </figure>
   );
 }
 
 export default function MediaGrid({ videos, images }: { videos: VideoAsset[]; images: ImageAsset[] }) {
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
       {videos.map((asset) => (
         <VideoCard key={asset.url} asset={asset} eager={false} />
       ))}
@@ -55,7 +54,7 @@ export default function MediaGrid({ videos, images }: { videos: VideoAsset[]; im
             src={asset.url}
             alt={asset.prompt}
             loading={index < 2 ? 'eager' : 'lazy'}
-            className="aspect-square w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+            className="aspect-video w-full object-cover transition duration-300 group-hover:scale-[1.03]"
           />
           <figcaption className="pointer-events-none absolute inset-x-0 bottom-0 line-clamp-2 bg-gradient-to-t from-black/85 to-transparent p-3 text-xs leading-snug text-white/70 opacity-0 transition group-hover:opacity-100">
             {asset.prompt}

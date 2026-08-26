@@ -74,3 +74,6 @@ testreview/
 .next-playwright/
 .next-upscale-*/
 .next-export-visual/
+h3_clean_latent_upscaler_film_epoch200.safetensors
+createdfilms/
+docs/upscale-results/

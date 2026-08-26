@@ -10,7 +10,7 @@ import {
   saveUser,
   userFromAuthResponse,
 } from '../../lib/auth';
-import { parseJSONResponse } from '../../lib/http';
+import { friendlyError, parseJSONResponse } from '../../lib/http';
 
 const API = '/api';
 
@@ -238,7 +238,7 @@ export default function AccountPage() {
       setMessage(data.created ? 'Account created.' : 'Signed in.');
       setPassword('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Auth failed');
+      setError(friendlyError(err, 'Auth failed'));
     } finally {
       setBusy(false);
     }

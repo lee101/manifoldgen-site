@@ -19,7 +19,7 @@ export default async function GeneratorAPIPage({ params }: { params: Promise<{ s
   const generator = videoGenerator((await params).slug);
   if (!generator) notFound();
   const fields = generator.manifold
-    ? [['service', 'h3_video', 'Required'], ['prompt', 'string', 'Required'], ['first_frame', 'HTTPS URL', 'Optional'], ['keyframes', 'HTTPS URL[]', 'Optional, up to 8'], ['duration', generator.durations.join(' | '), `${generator.durations[0]}`], ['size', 'preview | balanced | native', 'balanced'], ['aspect_ratio', generator.aspectRatios.join(' | '), generator.aspectRatios[0]]]
+    ? [['service', 'h3_video', 'Required'], ['prompt', 'string', 'Required'], ['first_frame', 'HTTPS URL', 'Optional'], ['keyframes', 'HTTPS URL[]', 'Optional, up to 8'], ['duration', generator.durations.join(' | '), `${generator.durations[0]}`], ['size', 'preview | balanced | native', 'balanced'], ['aspect_ratio', generator.aspectRatios.join(' | '), generator.aspectRatios[0]], ['latent_upscale', 'boolean; learned clean-latent 2× before decode (2× output)', 'Optional']]
     : [['service', 'video_generate', 'Required'], ['model', generator.model, 'Required'], ['prompt', 'string', 'Required'], [generator.mode === 'reference' ? 'reference_image_urls' : 'image_url', generator.mode === 'reference' ? 'HTTPS URL[]' : 'HTTPS URL', generator.mode === 'text' ? 'Optional' : 'Required'], ['duration', generator.durations.join(' | '), `${generator.durations[0]}`], ['resolution', generator.resolutions.join(' | '), generator.resolutions[0]], ['aspect_ratio', generator.aspectRatios.join(' | '), generator.aspectRatios[0]]];
   return (
     <main className="min-h-screen bg-[var(--color-ink)] text-white">

@@ -187,7 +187,13 @@ type ServiceUsageRequest struct {
 	BackgroundColor    string   `json:"background_color,omitempty"`
 	PreserveAudio      *bool    `json:"preserve_audio,omitempty"`
 	MaxQuality         *bool    `json:"max_quality,omitempty"`
+	LatentUpscale      *bool    `json:"latent_upscale,omitempty"`
 	MaskURL            string   `json:"mask_url,omitempty"`
+	MaskVideoURL       string   `json:"mask_video_url,omitempty"`
+	ControlType        string   `json:"control_type,omitempty"`
+	ControlScale       float64  `json:"control_scale,omitempty"`
+	ControlPreprocess  *bool    `json:"control_preprocess,omitempty"`
+	AcceptH3License    bool     `json:"accept_h3_license,omitempty"`
 	AddTransparency    *bool    `json:"add_transparency,omitempty"`
 	// extend_image outpaint controls: each expand side is a fraction (0..1)
 	// of the source dimension; zoom_out_percentage shrinks the subject into

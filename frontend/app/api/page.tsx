@@ -242,6 +242,7 @@ export default function ApiDocsPage() {
                 ['num_steps', '8–30; more steps increase time and price', '20'],
                 ['include_audio', 'Generate native audio when available', 'true'],
                 ['output_format', 'webm-av1 | mp4-h264', 'webm-av1'],
+                ['latent_upscale', 'Sample at base size, then a learned clean-latent 2× upscaler runs before decode (2× output resolution). Omit to use the worker default', 'unset'],
               ].map(([name, detail, fallback]) => (
                 <div key={name} className="grid gap-1 border-b border-white/10 px-4 py-3 last:border-0 sm:grid-cols-[130px_1fr_100px]">
                   <code className="text-[var(--color-accent-2)]">{name}</code>

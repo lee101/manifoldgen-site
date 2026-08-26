@@ -385,7 +385,7 @@ func TestH3VideoPricingTiersExposeResolutionAndDurationMatrix(t *testing.T) {
 	if len(tiers) != 3 {
 		t.Fatalf("tiers = %d, want 3", len(tiers))
 	}
-	if tiers[0].Size != "preview" || tiers[0].Resolution16x9 != "1024 × 576" {
+	if tiers[0].Size != "preview" || tiers[0].Resolution16x9 != "896 × 512" {
 		t.Fatalf("preview tier = %#v", tiers[0])
 	}
 	if tiers[1].Size != "balanced" || tiers[1].Resolution16x9 != "1184 × 672" {

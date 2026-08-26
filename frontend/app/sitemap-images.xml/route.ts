@@ -12,7 +12,7 @@ function escapeXml(value: string) {
 
 export function GET() {
   const imageEntries = [
-    { loc: `${SITE_URL}/blog`, imageLoc: `${SITE_URL}/blog/og/index.jpg`, title: 'ManifoldGen Blog — AI Video Guides', caption: 'AI video guides with real prompts and real outputs.' },
+    { loc: `${SITE_URL}/blog`, imageLoc: `${SITE_URL}/blog/og/index.webp`, title: 'ManifoldGen Blog — AI Video Guides', caption: 'AI video guides with real prompts and real outputs.' },
     ...articles.map((article) => ({
       loc: `${SITE_URL}/blog/${article.slug}`,
       imageLoc: `${SITE_URL}${article.ogImage}`,

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import SearchGallery, { type SearchImage } from '@/components/search/search-gallery';
-import { CURATED_SEARCH_PAGES } from '@/lib/search-pages';
+import { CURATED_SEARCH_PAGES, relatedSearchPages } from '@/lib/search-pages';
 
 export const dynamic = 'force-static';
 export const dynamicParams = false;
@@ -48,8 +48,7 @@ export default async function CuratedSearchPage({ params }: PageParams) {
   const entry = CURATED_SEARCH_PAGES.find((page) => page.slug === q);
   if (!entry) notFound();
   const initial = await fetchInitialResults(entry.query);
-  const index = CURATED_SEARCH_PAGES.indexOf(entry);
-  const related = Array.from({ length: 8 }, (_, offset) => CURATED_SEARCH_PAGES[(index + 1 + offset) % CURATED_SEARCH_PAGES.length]);
+  const related = relatedSearchPages(entry);
 
   return (
     <main className="min-h-screen bg-[var(--color-ink)] text-white">

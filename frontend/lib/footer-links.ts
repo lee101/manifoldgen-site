@@ -40,24 +40,23 @@ export const FOOTER_VIDEO_MODEL_LINKS: FooterLink[] = [
 ];
 
 export const FOOTER_BLOG_LINKS: FooterLink[] = [
-  { href: '/blog/how-to-make-ai-video-from-script', label: 'AI video from a script' },
+  { href: '/blog/seedance-vs-kling-vs-veo', label: 'Seedance vs Kling vs Veo' },
+  { href: '/blog/best-ai-video-generators-tested-2026', label: 'Best AI video generators, tested' },
+  { href: '/blog/how-to-use-kling-3', label: 'How to use Kling 3' },
+  { href: '/blog/how-to-use-veo-3-1', label: 'How to use Veo 3.1' },
+  { href: '/blog/how-to-use-seedance-2-5', label: 'How to use Seedance 2.5' },
+  { href: '/blog/ai-video-api-cost-guide-2026', label: 'AI video API cost guide' },
   { href: '/blog/how-to-make-ai-video-look-real', label: 'Make AI video look real' },
   { href: '/blog/ai-content-for-tiktok', label: 'AI content for TikTok' },
-  { href: '/blog/start-faceless-channel-with-ai', label: 'Start a faceless channel' },
-  { href: '/blog/consistent-characters-and-locations', label: 'Consistent characters & locations' },
-  { href: '/blog/camera-movement-angles-and-lenses', label: 'Camera movement & lenses' },
-  { href: '/blog/cutedsl-latent-teleportation-faster-generation', label: 'Faster generation with CuteDSL' },
-  { href: '/blog/prompting-video-motion-camera-language', label: 'Prompting video motion' },
-  { href: '/blog/prompting-images-composition-light', label: 'Prompting images: composition first' },
 ];
 
 export const FOOTER_GUIDE_LINKS: FooterLink[] = [
   { href: '/blog/guides/why-ai-character-face-changes', label: 'Why AI faces change' },
-  { href: '/blog/guides/keep-ai-character-consistent', label: 'Keep an AI character consistent' },
   { href: '/blog/guides/create-consistent-ai-influencer', label: 'Create an AI influencer' },
   { href: '/blog/guides/soul-id-explained', label: 'Soul ID explained' },
   { href: '/blog/guides/filmmaking-principles-for-ai-shots', label: 'Filmmaking principles' },
-  { href: '/blog/guides/from-comfyui-to-one-click', label: 'From ComfyUI to one click' },
+  { href: '/blog/guides/faceless-youtube-channel-10k-month', label: 'Faceless YouTube to $10k/mo' },
+  { href: '/blog/guides/100-creative-ads-without-a-team', label: '100 creative ads without a team' },
 ];
 
 export const FOOTER_EXPLORE_QUERIES = [

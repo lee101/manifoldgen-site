@@ -279,7 +279,7 @@ test('signed-in projects autosave locally while assets upload and save to the ac
   expect(saves.at(-1).document.assets[0].cloudURL).toContain('studio-media.example');
 
   await page.reload();
-  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /cloud-frame\.png/ })).toBeVisible();
+  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /cloud-frame\.png/ }).first()).toBeVisible();
   await expect(page.getByTestId('studio-save-status')).toHaveText('Saved to cloud', { timeout: 20_000 });
   expect(presigns).toHaveLength(1);
 });
@@ -307,7 +307,7 @@ test('homepage gallery art imports through the same-origin gallery endpoint', as
 
   await page.goto(`/studio?image_url=${encodeURIComponent(assetURL)}&name=Homepage%20art`);
 
-  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /Homepage art\.png/ })).toBeVisible();
+  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /Homepage art\.png/ }).first()).toBeVisible();
   expect(proxyRequest).toBe(true);
 });
 test('an account project restores its R2 media on a device without a local copy', async ({ page }) => {
@@ -327,7 +327,7 @@ test('an account project restores its R2 media on a device without a local copy'
   await page.route('https://studio-media.example/cloud/remote-frame.png', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE }));
   await page.goto('/studio');
   await expect(page.getByTestId('studio-project-menu')).toContainText('Cloud restored');
-  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /remote-frame\.png/ })).toBeVisible();
+  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /remote-frame\.png/ }).first()).toBeVisible();
   await expect(page.getByTestId('studio-render-status')).toContainText('2 × 2 · GPU preview');
 });
 
@@ -579,8 +579,7 @@ test('text layers stay editable and are persisted in the project document', asyn
   await page.getByRole('option', { name: /Playfair Display/ }).click();
   await expect(page.getByTestId('studio-stage-text-editor')).toHaveCSS('font-family', /Playfair/i);
   await page.getByTestId('studio-text-apply').click();
-  await expect(page.getByText('Text updated')).toBeVisible();
-  await expect(page.getByTestId('studio-save-status')).toHaveText('Saved to cloud', { timeout: 20_000 });
+  await expect.poll(() => saves.at(-1)?.document.assets[0]?.text?.content, { timeout: 20_000 }).toBe('Launch night');
   const latest = saves.at(-1);
   expect(latest.document.assets).toHaveLength(1);
   expect(latest.document.assets[0].text).toMatchObject({ content: 'Launch night', fontFamily: 'Playfair Display', fontSize: 132, fontWeight: 800, align: 'center' });
@@ -675,8 +674,12 @@ test('right click keeps browser actions and opens contextual image and audio pro
   await page.getByRole('button', { name: 'Close Text to speech' }).click();
 
   await page.locator('input[type=file]').setInputFiles({ name: 'opal-conservatory.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
-  const imageCard = page.getByTestId('studio-panel').getByRole('button', { name: /opal-conservatory\.png/ });
+  const imageCard = page.getByTestId('studio-panel').getByRole('button', { name: /opal-conservatory\.png/ }).first();
   await imageCard.click({ button: 'right' });
+  await expect(menu.getByText('Move forward', { exact: true })).toBeVisible();
+  await expect(menu.getByText('Move back', { exact: true })).toBeVisible();
+  await expect(menu.getByText('Move to front', { exact: true })).toBeVisible();
+  await expect(menu.getByText('Split at playhead', { exact: true })).toBeVisible();
   await page.getByTestId('studio-context-similar').click();
   await expect(page.getByRole('heading', { name: 'Generate images' })).toBeVisible();
   await expect(page.getByTestId('studio-image-modal-prompt')).toHaveValue('opal conservatory');
@@ -696,7 +699,7 @@ test('video assets open the shared restyle modal and completed jobs return to th
 
   await page.goto('/studio');
   await page.locator('input[type=file]').setInputFiles(VIDEO);
-  const card = page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ });
+  const card = page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ }).first();
   await card.click({ button: 'right' });
   await expect(page.getByTestId('studio-context-video-remove-background')).toBeVisible();
   await page.getByTestId('studio-context-video-style-transfer').click();
@@ -735,7 +738,7 @@ test('a timeline video context menu removes its background and adds the transpar
   await page.getByTestId('studio-context-video-remove-background').click();
 
   await expect(page.getByText('Background-removed video added to Media')).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus-background-removed\.webm/ })).toBeVisible();
+  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus-background-removed\.webm/ }).first()).toBeVisible();
   expect(submitted).toMatchObject({
     service: 'video_background_removal', background_color: 'transparent',
     output_format: 'webm_vp9', preserve_audio: true,
@@ -854,6 +857,85 @@ test('timeline supports grouped dragging, click seeking, keyboard split, and han
   await page.mouse.up();
   const widthAfterTrim = await splitClip.evaluate((item) => Number.parseFloat(item.style.width));
   expect(widthAfterTrim).toBeLessThan(widthBeforeTrim - 20);
+});
+
+test('timeline move drags subtly snap to zero and neighboring clip edges', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'snap-a.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'snap-b.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+  ]);
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  await expect(clips).toHaveCount(2);
+
+  const leftOf = (index) => clips.nth(index).evaluate((item) => Number.parseFloat(item.style.left));
+  let box = await clips.nth(0).boundingBox();
+  await page.mouse.move(box.x + 24, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 424, box.y + box.height / 2, { steps: 6 });
+  await page.mouse.up();
+
+  // Drifting back to within a few pixels of the origin settles exactly on zero.
+  box = await clips.nth(0).boundingBox();
+  const away = await leftOf(0);
+  await page.mouse.move(box.x + 24, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 24 + 2 - away, box.y + box.height / 2, { steps: 6 });
+  await page.mouse.up();
+  expect(await leftOf(0)).toBeCloseTo(0, 5);
+
+  // Approaching the first clip's end from the right snaps flush against it.
+  box = await clips.nth(1).boundingBox();
+  await page.mouse.move(box.x + 24, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 424, box.y + box.height / 2, { steps: 6 });
+  await page.mouse.up();
+
+  const width0 = await clips.nth(0).evaluate((item) => Number.parseFloat(item.style.width));
+  box = await clips.nth(1).boundingBox();
+  const far = await leftOf(1);
+  await page.mouse.move(box.x + 24, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 24 + (width0 - 4 - far), box.y + box.height / 2, { steps: 6 });
+  await page.mouse.up();
+  expect(await leftOf(1)).toBeCloseTo(width0, 3);
+});
+
+test('keyboard shortcuts nudge clips, step the playhead, duplicate, and cycle selection', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'key-a.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'key-b.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+  ]);
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  await expect(clips).toHaveCount(2);
+  await page.waitForFunction(() => window.__MANIFOLD_STUDIO_KEYS_READY__);
+
+  // Ctrl+Right nudges the selected clip 0.1s (6.4px at the default zoom);
+  // adding Shift moves a full second.
+  const firstBox = await clips.nth(0).boundingBox();
+  await page.mouse.click(firstBox.x + 24, firstBox.y + firstBox.height / 2);
+  const startLeft = await clips.nth(0).evaluate((item) => Number.parseFloat(item.style.left));
+  await page.keyboard.press('Control+ArrowRight');
+  await expect.poll(async () => clips.nth(0).evaluate((item) => Number.parseFloat(item.style.left))).toBeCloseTo(startLeft + 6.4, 1);
+  await page.keyboard.press('Control+Shift+ArrowRight');
+  await expect.poll(async () => clips.nth(0).evaluate((item) => Number.parseFloat(item.style.left))).toBeCloseTo(startLeft + 70.4, 1);
+
+  // Plain arrows step the playhead from the start.
+  await page.keyboard.press('Home');
+  await expect(page.locator('[class*="playhead"] span').first()).toHaveText(/^00:00\.00$/);
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect(page.locator('[class*="playhead"] span').first()).toHaveText(/^00:01\.00$/);
+
+  // Tab cycles selection in timeline order, Ctrl+D duplicates, Delete removes.
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Control+d');
+  await expect(clips).toHaveCount(3);
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Delete');
+  await expect(clips).toHaveCount(2);
 });
 
 test('common timeline edits participate in undo and redo history', async ({ page }) => {
@@ -989,7 +1071,7 @@ test('visual clips stack across timeline layers with vertical dragging and brack
   await expect(clips.nth(0)).toHaveAttribute('data-visual-track', '2');
   await expect(clips.nth(1)).toHaveAttribute('data-visual-track', '1');
 
-  await page.getByTestId('studio-panel').getByRole('button', { name: /upper-layer\.png/ }).click();
+  await page.getByTestId('studio-panel').getByRole('button', { name: /upper-layer\.png/ }).first().click();
   const overlapBox = await clips.nth(1).boundingBox();
   await page.mouse.move(overlapBox.x + overlapBox.width / 2, overlapBox.y + overlapBox.height / 2);
   await page.mouse.down();
@@ -1101,7 +1183,7 @@ test('editor shortcuts stay inactive while typing in search fields', async ({ pa
   ]);
   await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(2);
   await page.getByTestId('studio-tool-media').click();
-  await page.getByTestId('studio-panel').getByRole('button', { name: /shortcut-video\.webm/ }).click();
+  await page.getByTestId('studio-panel').getByRole('button', { name: /shortcut-video\.webm/ }).first().click();
   await expect(page.getByRole('button', { name: 'Play' })).toBeEnabled();
 
   await page.getByTestId('studio-tool-audio').click();
@@ -1361,6 +1443,34 @@ test('multiple PNGs export the complete slideshow as a local WebM video', async 
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-show_entries', 'stream=codec_name,codec_type', '-of', 'json', outputPath], { encoding: 'utf8' }));
   expect(probe.streams).toContainEqual(expect.objectContaining({ codec_type: 'video', codec_name: 'vp9' }));
   expect(Number(probe.format.duration)).toBeGreaterThan(9.8);
+});
+
+test('MP4 export honors the explicit Opus audio choice and AAC default', async ({ page }) => {
+  test.setTimeout(120_000);
+  await installMocks(page);
+  const sourceWithAudio = execFileSync('ffmpeg', [
+    '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=30',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '3',
+    '-c:v', 'libvpx-vp9', '-c:a', 'libopus', '-f', 'webm', 'pipe:1',
+  ], { timeout: 60_000, stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 32 * 1024 * 1024 });
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles({ name: 'audio-source.webm', mimeType: 'video/webm', buffer: sourceWithAudio });
+  await expect(page.getByTestId('studio-export')).toBeEnabled({ timeout: 20_000 });
+  await page.getByTestId('studio-export').click();
+  await expect(page.getByRole('heading', { name: 'Export' })).toBeVisible();
+
+  await expect(page.getByText('Mixed · AAC')).toBeVisible();
+  await page.getByTestId('export-audio-codec').selectOption('opus');
+  await expect(page.getByText('Mixed · Opus')).toBeVisible();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('dialog', { name: 'Export' }).getByRole('button', { name: 'Export', exact: true }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/-studio\.mp4$/);
+  const outputPath = await download.path();
+  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name,codec_type', '-of', 'json', outputPath], { encoding: 'utf8' }));
+  expect(probe.streams).toContainEqual(expect.objectContaining({ codec_type: 'video', codec_name: 'h264' }));
+  expect(probe.streams).toContainEqual(expect.objectContaining({ codec_type: 'audio', codec_name: 'opus' }));
 });
 
 for (const { format, codec, extension } of [
@@ -1650,7 +1760,11 @@ test('export dialog offers renderer presets and remembers them across reloads', 
   await page.getByTestId('studio-export').click();
 
   await expect(page.getByTestId('export-format-webm-vp9')).toBeVisible();
+  await expect(page.getByTestId('export-audio-codec')).toHaveValue('aac');
+  await page.getByTestId('export-audio-codec').selectOption('opus');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('mg_studio_export_settings_v1'))).toContain('"audio":"opus"');
   await page.getByTestId('export-format-webm-vp9').click();
+  await expect(page.getByTestId('export-audio-codec')).toBeDisabled();
   await page.getByTestId('export-resolution').selectOption('720p');
   await page.getByTestId('export-frame-rate').selectOption('24');
   await page.getByTestId('export-quality').selectOption('high');
@@ -1671,6 +1785,7 @@ test('export dialog offers renderer presets and remembers them across reloads', 
   await expect(page.getByTestId('export-resolution')).toHaveValue('720p');
   await expect(page.getByTestId('export-frame-rate')).toHaveValue('24');
   await expect(page.getByTestId('export-quality')).toHaveValue('high');
+  await expect(page.getByTestId('export-audio-codec')).toHaveValue('opus');
   await expect(page.getByRole('heading', { name: 'Export' })).toBeVisible();
 });
 
@@ -1715,7 +1830,7 @@ test('local MP4 export mixes an added audio clip into the downloaded video', asy
   await input.setInputFiles(VIDEO);
   await input.setInputFiles({ name: 'timeline-tone.wav', mimeType: 'audio/wav', buffer: wavFixture(1) });
   await page.getByTestId('studio-tool-media').click();
-  await page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ }).click();
+  await page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ }).first().click();
   await page.getByTestId('studio-export').click();
   await page.getByRole('button', { name: /MP4 · H\.264/ }).click();
   const downloadPromise = page.waitForEvent('download');
@@ -1768,4 +1883,23 @@ test('a preview request that permanently fails marks the asset failed without re
   await page.getByTestId('studio-video-volume').fill('0.6');
   await page.waitForTimeout(800);
   expect(previewCalls).toBe(1);
+});
+
+test('cut and paste move clips through the internal clipboard', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles({ name: 'cut-paste.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  await expect(clips).toHaveCount(1);
+
+  await clips.nth(0).click();
+  await page.keyboard.press('Control+x');
+  await expect(clips).toHaveCount(0);
+
+  await page.keyboard.press('Control+v');
+  await expect(clips).toHaveCount(1);
+
+  await page.locator('main').click({ button: 'right', position: { x: 700, y: 300 } });
+  await page.getByTestId('studio-context-paste').click();
+  await expect(clips).toHaveCount(2);
 });

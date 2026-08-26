@@ -343,6 +343,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleGetBillingHistory(ctx)
 
 	// AI Service usage
+	case path == "/api/h3-control-eligibility" && method == "GET":
+		handleH3ControlEligibility(ctx)
 	case path == "/api/service" && method == "POST":
 		handleServiceRequest(ctx)
 	case path == "/api/studio/remove-background" && method == "POST":

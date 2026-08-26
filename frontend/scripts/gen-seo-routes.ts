@@ -4,7 +4,10 @@ import { COMPARISONS } from '../lib/seo/comparisons';
 import { BEST_TOPICS } from '../lib/seo/best-topics';
 import { VIDEO_MODELS } from '../lib/seo/models';
 import { CATEGORIES, comparePairs } from '../lib/seo/benchmarks';
-const routes = [
+import { articles } from '../app/blog/articles';
+import { guides } from '../app/blog/guides/registry';
+
+const routes = [...new Set([
   '/ai-video-generator',
   ...USE_CASES.map((useCase) => `/ai-video-generator/${useCase.slug}`),
   '/compare',
@@ -16,7 +19,9 @@ const routes = [
   '/models',
   ...VIDEO_MODELS.map((model) => `/models/${model.slug}`),
   '/leaderboard',
-];
+  ...articles.map((article) => `/blog/${article.slug}`),
+  ...guides.map((guide) => `/blog/guides/${guide.slug}`),
+])];
 
 writeFileSync(
   new URL('../public/seo-routes.json', import.meta.url),

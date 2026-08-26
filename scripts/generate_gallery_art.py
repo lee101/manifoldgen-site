@@ -291,6 +291,7 @@ def main() -> None:
     parser.add_argument('--retries', type=int, default=8, help='retries per prompt for busy/temporarily unavailable workers')
     parser.add_argument('--retry-delay', type=float, default=15.0, help='initial retry delay; exponential backoff is capped at 5 minutes')
     parser.add_argument('--moderate-before-index', action='store_true', help='classify locally before publishing or indexing; unsafe output is quarantined locally')
+    parser.add_argument('--moderation-endpoint', default='', help='separate nsfw_detect_file endpoint when the image worker lacks moderation')
     parser.add_argument('--nsfw-threshold', type=float, default=0.5)
     parser.add_argument('--moderation-secret-env', default='OMNISERVE_NATIVE_SECRET')
     parser.add_argument('--reindex-every', type=int, default=0, help='request a search rebuild after each N indexed rows; 0 means only at the end when --reindex-after is set')
@@ -372,7 +373,7 @@ def main() -> None:
             is_nsfw = None
             score = None
             if args.moderate_before_index:
-                is_nsfw, score = moderate_image(args.endpoint, destination, args.nsfw_threshold, args.moderation_secret_env)
+                is_nsfw, score = moderate_image(args.moderation_endpoint or args.endpoint, destination, args.nsfw_threshold, args.moderation_secret_env)
                 print(f'[{number}/{len(pending)}] nsfw_score={score:.4f} flagged={is_nsfw}', flush=True)
             if client and is_nsfw is not True:
                 object_key = f"{prefix}/{relpath}"
@@ -422,9 +423,8 @@ def main() -> None:
             sys.executable,
             str(ROOT / "scripts" / "moderate_gallery_art.py"),
             "--limit", str(generated),
-            "--database-url", args.database_url,
+            "--endpoint", args.moderation_endpoint or args.endpoint,
             "--images-dir", str(args.images_dir),
-            "--endpoint", args.endpoint,
         ])
     if args.reindex_after:
         reindex(args.database_url)

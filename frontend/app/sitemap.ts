@@ -8,13 +8,14 @@ import { COMPARISONS } from '@/lib/seo/comparisons';
 import { BEST_TOPICS } from '@/lib/seo/best-topics';
 import { VIDEO_MODELS } from '@/lib/seo/models';
 import { CATEGORIES, comparePairs } from '@/lib/seo/benchmarks';
+import { VIDEO_CONTROL_TOOLS } from '@/lib/video-controls';
 
 export const dynamic = 'force-static';
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const base = 'https://manifoldgen.com';
   const now = new Date();
-  const staticRoutes = ['', '/tools', '/tool/animate-video', '/tool/image-editor', '/api', '/api/video-generators', '/studio', '/blog', '/blog/guides', '/account', '/privacy', '/ai-video-generator', '/compare', '/best', '/models', '/leaderboard'];
+  const staticRoutes = ['', '/tools', '/tool/animate-video', '/tool/image-editor', '/api', '/api/video-generators', '/studio', '/blog', '/blog/anime-styles', '/blog/guides', '/account', '/privacy', '/ai-video-generator', '/compare', '/best', '/models', '/leaderboard'];
   const toolSlugs = ['make-image', 'style-transfer', 'h3-image', 'h3-image-editor', 'character-animator', 'video-background-remover', 'music-generator', 'cinematic-cameras', 'relight', 'inpaint', 'image-upscale', 'outpaint', 'moodboard', 'nano-banana', 'grok-imagine', 'flux-2', 'gpt-image'];
   return [
     ...staticRoutes.map((path) => ({ url: `${base}${path}`, lastModified: now, changeFrequency: path === '' ? 'daily' as const : 'weekly' as const, priority: path === '' ? 1 : 0.8 })),
@@ -22,6 +23,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       { url: `${base}/tools/${generator.slug}`, lastModified: now, changeFrequency: 'weekly' as const, priority: 0.8 },
       { url: `${base}/api/video-generators/${generator.slug}`, lastModified: now, changeFrequency: 'weekly' as const, priority: 0.75 },
     ]),
+    ...VIDEO_CONTROL_TOOLS.map((tool) => ({ url: `${base}/tools/${tool.slug}`, lastModified: now, changeFrequency: 'weekly' as const, priority: 0.85 })),
     ...toolSlugs.map((slug) => ({ url: `${base}/tools/${slug}`, lastModified: now, changeFrequency: 'weekly' as const, priority: 0.8 })),
     ...articles.map(({ slug, date }) => ({ url: `${base}/blog/${slug}`, lastModified: new Date(`${date}T00:00:00Z`), changeFrequency: 'monthly' as const, priority: 0.7 })),
     ...CURATED_SEARCH_PAGES.map(({ slug }) => ({ url: `${base}/search/${slug}`, changeFrequency: 'weekly' as const, priority: 0.7 })),

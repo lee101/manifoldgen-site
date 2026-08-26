@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { copyText, createLongPressRegistry, downloadMedia, MediaActionSheet } from '../media-action-sheet';
 
 export interface SearchImage {
   id: string;
@@ -43,9 +44,18 @@ export function normalizeSearchImages(rows: SearchImage[]): SearchImage[] {
 
 type LoadState = 'ready' | 'loading' | 'error';
 
+function studioHref(img: SearchImage) {
+  return `/studio?image_url=${encodeURIComponent(img.image_url || img.thumb_url || '')}&name=${encodeURIComponent(img.prompt.slice(0, 80))}`;
+}
+
 export default function SearchGallery({ query, initial }: { query: string; initial?: SearchImage[] }) {
   const [images, setImages] = useState<SearchImage[]>(() => (initial ? normalizeSearchImages(initial).slice(0, 24) : []));
   const [state, setState] = useState<LoadState>(initial ? 'ready' : 'loading');
+  const [sheetImage, setSheetImage] = useState<SearchImage | null>(null);
+  const sheetPress = useMemo(
+    () => createLongPressRegistry((img: SearchImage) => setSheetImage(img)),
+    [],
+  );
 
   useEffect(() => {
     if (initial) return;
@@ -95,10 +105,11 @@ export default function SearchGallery({ query, initial }: { query: string; initi
           return (
             <Link
               key={img.id}
-              href={`/studio?image_url=${encodeURIComponent(img.image_url || src)}&name=${encodeURIComponent(img.prompt.slice(0, 80))}`}
+              href={studioHref(img)}
               className="group relative overflow-hidden bg-[#0c0c12]"
               title={img.prompt}
               style={{ aspectRatio: ratio }}
+              {...sheetPress(img)}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -117,6 +128,18 @@ export default function SearchGallery({ query, initial }: { query: string; initi
           );
         })}
       </div>
+      {sheetImage && (
+        <MediaActionSheet
+          open
+          title={sheetImage.prompt || 'Image'}
+          actions={[
+            { label: 'Open in Studio', icon: <span aria-hidden className="text-white/70">↗</span>, onClick: () => window.location.assign(studioHref(sheetImage)) },
+            { label: 'Copy prompt', icon: <span aria-hidden className="text-white/70">⧉</span>, onClick: () => void copyText(sheetImage.prompt) },
+            { label: 'Download image', icon: <span aria-hidden className="text-white/70">↓</span>, onClick: () => downloadMedia(sheetImage.image_url || sheetImage.thumb_url || '') },
+          ]}
+          onClose={() => setSheetImage(null)}
+        />
+      )}
     </>
   );
 }

@@ -36,15 +36,17 @@
     ".next-codex-coverage/types/**/*.ts",
     ".next-codex-editor-3241/types/**/*.ts",
     ".next-dev-relight/types/**/*.ts",
+    ".next-dev-test/types/**/*.ts",
     ".next-dev/types/**/*.ts",
     ".next-export-visual/types/**/*.ts",
+    ".next-guides-check/types/**/*.ts",
     ".next-inpaint-e2e/types/**/*.ts",
     ".next-playwright/types/**/*.ts",
     ".next-upscale-3319/types/**/*.ts",
     ".next-visual/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-guides-check/types/**/*.ts"
+    ".next-probe/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

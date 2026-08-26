@@ -5,6 +5,9 @@ import Link from 'next/link';
 import {
   Clapperboard,
   ClipboardPaste,
+  Copy,
+  Download,
+  Play,
   CreditCard,
   ChevronLeft,
   ChevronRight,
@@ -36,8 +39,9 @@ import {
   userFromAuthResponse,
   type StoredUser,
 } from '../lib/auth';
-import { parseJSONResponse } from '../lib/http';
+import { friendlyError, parseJSONResponse } from '../lib/http';
 import { ManifoldLoader } from '../components/manifold-loader';
+import { copyText, createLongPressRegistry, downloadMedia, MediaActionSheet, type SheetAction } from '../components/media-action-sheet';
 import {
   h3Dimensions,
   loopAnchorURL,
@@ -259,6 +263,7 @@ export default function HomePage() {
   const [galleryHasMore, setGalleryHasMore] = useState(true);
   const [galleryLoadingMore, setGalleryLoadingMore] = useState(false);
   const [backgroundRemovingID, setBackgroundRemovingID] = useState('');
+  const [gallerySheetItem, setGallerySheetItem] = useState<GalleryFeedItem | null>(null);
   const [featuredVideos, setFeaturedVideos] = useState<VideoHit[]>([]);
   const [featuredHasMore, setFeaturedHasMore] = useState(true);
   const [searchQ, setSearchQ] = useState('');
@@ -636,7 +641,7 @@ export default function HomePage() {
         setAuthOpen(false);
       }
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Auth failed');
+      setAuthError(friendlyError(err, 'Auth failed'));
     } finally {
       setBusy(false);
     }
@@ -915,6 +920,41 @@ export default function HomePage() {
     }
   }
 
+  function buildGallerySheetActions(item: GalleryFeedItem): SheetAction[] {
+    if (item.kind === 'video') {
+      const video = item.video;
+      const actions: SheetAction[] = [];
+      if (video.video_url) {
+        actions.push({ label: 'Play', icon: <Play size={16} />, onClick: () => playVideo(video) });
+        actions.push({ label: 'Open in editor', icon: <Clapperboard size={16} />, onClick: () => openGalleryVideoInStudio(video) });
+        actions.push({
+          label: 'Transform',
+          icon: <WandSparkles size={16} />,
+          onClick: () => window.location.assign(`/studio?video_url=${encodeURIComponent(new URL(video.video_url!, window.location.origin).toString())}&name=${encodeURIComponent(video.prompt || 'Gallery video')}&restyle=1`),
+        });
+        actions.push({ label: 'Download video', icon: <Download size={16} />, onClick: () => downloadMedia(video.video_url!) });
+      }
+      actions.push({ label: 'Copy prompt', icon: <Copy size={16} />, onClick: () => void copyText(item.prompt) });
+      return actions;
+    }
+    const img = item.image;
+    const fullSize = img.image_url || item.src || '';
+    const actions: SheetAction[] = [
+      { label: 'Open in editor', icon: <Clapperboard size={16} />, onClick: () => openGalleryImageInStudio(img) },
+      { label: 'Generate video', icon: <Sparkles size={16} />, onClick: () => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: img.image_url || img.thumb_url }); } },
+      { label: 'Use as start frame', icon: <ImageIcon size={16} />, onClick: () => useGalleryImageAsStartFrame(img) },
+      { label: 'Prompt for similar', icon: <Sparkles size={16} />, onClick: () => promptForSimilar(item.prompt) },
+    ];
+    actions.push(
+      backgroundRemovingID === img.id
+        ? { label: 'Removing background…', icon: <Loader2 className="animate-spin" size={16} />, onClick: () => undefined }
+        : { label: 'Remove BG', icon: <WandSparkles size={16} />, onClick: () => void removeGalleryBackground(img) },
+    );
+    actions.push({ label: 'Copy prompt', icon: <Copy size={16} />, onClick: () => void copyText(item.prompt) });
+    if (fullSize) actions.push({ label: 'Download image', icon: <Download size={16} />, onClick: () => downloadMedia(fullSize) });
+    return actions;
+  }
+
   async function uploadAssets(files: FileList | File[]) {
     const accepted = Array.from(files).filter(
       (file) => file.type.startsWith('image/') || file.type.startsWith('audio/'),
@@ -1086,6 +1126,10 @@ export default function HomePage() {
     }
     return columns;
   }, [galleryColumns, galleryFeed]);
+  const gallerySheetPress = useMemo(
+    () => createLongPressRegistry((item: GalleryFeedItem) => setGallerySheetItem(item)),
+    [],
+  );
   const imageFrames = useMemo(() => assets.filter((asset) => asset.kind === 'image'), [assets]);
   const audioAsset = useMemo(() => assets.find((asset) => asset.kind === 'audio'), [assets]);
   const transitionCount = Math.max(1, imageFrames.length - 1);
@@ -1245,7 +1289,7 @@ export default function HomePage() {
 
         <div className="absolute inset-x-0 bottom-0 z-20 px-3 pb-4 pt-24 md:px-6 md:pb-6">
           <div className="mx-auto w-full max-w-4xl">
-            <div className="mb-4 max-w-3xl drop-shadow-[0_3px_18px_rgba(0,0,0,.7)]">
+            <div className="mb-4 max-w-3xl drop-shadow-[0_3px_18px_rgba(0,0,0,.7)] hidden">
               <p className="text-xs font-semibold uppercase tracking-[.18em] text-[var(--color-accent-2)]">AI video creator</p>
               <h1 className="mt-2 font-display text-2xl font-700 tracking-tight text-white sm:text-3xl md:text-4xl">Create AI video from text, images, and reference media.</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-white/75 md:text-base">ManifoldGen is an AI video generator and editor for cinematic text-to-video, image-to-video, motion, audio, and finishing.</p>
@@ -1354,12 +1398,16 @@ export default function HomePage() {
                   value={size}
                   onChange={(e) => setSize(e.target.value as Size)}
                   className="rounded-full bg-white/5 px-3 py-1.5 text-sm"
+                  title={SIZES.find((s) => s.id === size)?.hint}
                 >
-                  {SIZES.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label}
-                    </option>
-                  ))}
+                  {SIZES.map((s) => {
+                    const [width, height] = h3Dimensions(aspect, s.id);
+                    return (
+                      <option key={s.id} value={s.id}>
+                        {s.label} · {width}×{height}
+                      </option>
+                    );
+                  })}
                 </select>
                 <div className="flex items-center rounded-full bg-white/5 p-0.5" role="group" aria-label="Generation type" data-testid="home-generation-mode">
                   <button
@@ -1574,6 +1622,7 @@ export default function HomePage() {
                     data-testid={`home-search-${hit.kind}-${hit.id}`}
                     onClick={() => hit.kind === 'video' ? playVideo(hit.video) : selectGalleryImage(hit.image)}
                     className="group relative aspect-video overflow-hidden rounded-xl bg-white/5 text-left"
+                    {...gallerySheetPress(hit)}
                   >
                     {hit.kind === 'video' ? (
                       <video
@@ -1630,7 +1679,7 @@ export default function HomePage() {
               <div key={columnIndex} className="flex min-w-0 flex-1 flex-col gap-[1px]">
                 {column.map((item) => {
               if (item.kind === 'video') return (
-                <div key={`video-${item.id}`} data-testid={`gallery-video-${item.id}`} className="group relative aspect-video overflow-hidden bg-[#0c0c12]">
+                <div key={`video-${item.id}`} data-testid={`gallery-video-${item.id}`} className="group relative aspect-video overflow-hidden bg-[#0c0c12]" {...gallerySheetPress(item)}>
                   <button type="button" aria-label="Play gallery video" onClick={() => playVideo(item.video)} className="absolute inset-0 h-full w-full text-left">
                     <video src={item.video.video_url} muted loop playsInline preload="none" className="h-full w-full object-cover transition duration-700 group-hover:scale-105" onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)} onMouseLeave={(event) => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} />
                     <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
@@ -1652,6 +1701,7 @@ export default function HomePage() {
                 <div
                   key={img.id}
                   className="gallery-card group relative overflow-hidden bg-[#0c0c12]"
+                  {...gallerySheetPress(item)}
                 >
                   <button type="button" onClick={() => selectGalleryImage(img)} className="relative block w-full" title={img.prompt} style={{ aspectRatio: imgRatio }}>
                   {src ? (
@@ -1693,7 +1743,14 @@ export default function HomePage() {
           ) : galleryFeed.length > 0 ? <span className="text-xs text-white/35">All gallery media loaded</span> : null}
         </div>
       </section>}
-
+      {gallerySheetItem && (
+        <MediaActionSheet
+          open
+          title={gallerySheetItem.prompt || 'Media'}
+          actions={buildGallerySheetActions(gallerySheetItem)}
+          onClose={() => setGallerySheetItem(null)}
+        />
+      )}
       {settingsOpen && (
         <div data-testid="homepage-settings-backdrop" className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm md:items-center" onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}>
           <div className="glass w-full max-w-md rounded-3xl border border-white/10 p-5 shadow-2xl shadow-black/40" role="dialog" aria-modal="true" aria-label="Video settings">

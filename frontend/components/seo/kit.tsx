@@ -104,7 +104,7 @@ export function CtaStrip({ heading, sub }: { heading: string; sub: string }) {
 
 export function PageShell({ children }: { children: ReactNode }) {
   return (
-    <main className="min-h-screen bg-[var(--color-ink)] text-white">
+    <main className="min-h-screen overflow-x-clip bg-[var(--color-ink)] text-white">
       <SeoHeader />
       <div className="mx-auto max-w-7xl px-5 py-10 md:py-14">{children}</div>
     </main>

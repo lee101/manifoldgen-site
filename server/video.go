@@ -500,6 +500,9 @@ func appNZH3Input(req ServiceUsageRequest) map[string]interface{} {
 	}
 	input["structured_prompt"] = structured
 	input["include_audio"] = audio
+	if req.LatentUpscale != nil {
+		input["latent_upscale"] = *req.LatentUpscale
+	}
 	return input
 }
 
@@ -2171,6 +2174,14 @@ func cancelVideoProvider(job *VideoJob) error {
 		return cancelPredictionAt(cogURL, job.ID, "")
 	case strings.HasPrefix(providerID, "private:"):
 		_, _, err := callAppNZH3(http.MethodPost, "/api/cogs/predictions/"+url.PathEscape(strings.TrimPrefix(providerID, "private:"))+"/cancel", nil)
+		return err
+	case strings.HasPrefix(providerID, "runpod-control:"):
+		endpointID, jobID, ok := parseH3ControlProviderID(providerID)
+		if !ok {
+			return fmt.Errorf("invalid H3 control provider job")
+		}
+		_, err := callH3Runpod(endpointID, "/cancel/"+url.PathEscape(jobID), http.MethodPost, nil, nil)
+		scheduleCharacterAnimationScaleToZero(endpointID, "standard")
 		return err
 	case job.Service == "h3_video" || job.Service == "sfx_generation" || job.Service == "music_video":
 		if providerID == "" || providerID == "pipeline:music" {

@@ -21,7 +21,7 @@ const NATIVE_DIMENSIONS: Record<H3Aspect, readonly [number, number]> = {
 };
 
 const SIZE_AREA_SCALE: Record<H3Size, number> = {
-  preview: 0.58,
+  preview: 0.44,
   balanced: 0.78,
   native: 1,
 };

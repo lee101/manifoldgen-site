@@ -39,6 +39,16 @@ function textFallback(text: string): string | null {
   return trimmed.slice(0, 200);
 }
 
+export function friendlyError(err: unknown, fallback: string): string {
+  if (err instanceof TypeError) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return 'You are offline. Check your connection and try again.';
+    }
+    return 'Cannot reach the server. You may be offline, or the service is temporarily unavailable.';
+  }
+  return err instanceof Error ? err.message : fallback;
+}
+
 export async function parseJSONResponse<T>(res: Response, fallback: string): Promise<T> {
   const contentType = res.headers.get('content-type') || '';
   const text = await res.text();

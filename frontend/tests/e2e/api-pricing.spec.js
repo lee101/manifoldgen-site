@@ -10,7 +10,7 @@ test('API docs show concrete video resolution and duration prices', async ({ pag
     video_pricing: {
       basis_steps: 20,
       tiers: [
-        { size: 'preview', label: 'Preview', resolution_16_9: '1024 × 576', prices: [{ duration_seconds: 5, price_usd: .46, credits: 46 }, { duration_seconds: 10, price_usd: .91, credits: 91 }] },
+        { size: 'preview', label: 'Preview', resolution_16_9: '896 × 512', prices: [{ duration_seconds: 5, price_usd: .46, credits: 46 }, { duration_seconds: 10, price_usd: .91, credits: 91 }] },
         { size: 'balanced', label: 'Balanced', resolution_16_9: '1184 × 672', prices: [{ duration_seconds: 5, price_usd: .71, credits: 71 }, { duration_seconds: 10, price_usd: 1.42, credits: 142 }] },
         { size: 'native', label: 'Native', resolution_16_9: '1344 × 768', prices: [{ duration_seconds: 5, price_usd: 1.01, credits: 101 }, { duration_seconds: 10, price_usd: 2.02, credits: 202 }] },
       ],
@@ -21,7 +21,7 @@ test('API docs show concrete video resolution and duration prices', async ({ pag
 
   await page.goto('/api#pricing');
   const table = page.getByTestId('api-video-pricing');
-  await expect(table).toContainText('1024 × 576');
+  await expect(table).toContainText('896 × 512');
   await expect(table).toContainText('1184 × 672');
   await expect(table).toContainText('1344 × 768');
   await expect(table).toContainText('$0.46');

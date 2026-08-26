@@ -34,7 +34,7 @@ type PricingResponse = {
 };
 
 const FALLBACK_TIERS: VideoPricingTier[] = [
-  { size: 'preview', label: 'Preview', resolution_16_9: '1024 × 576', prices: [[5, .46], [10, .91], [15, 1.37], [30, 2.73], [60, 5.45]].map(([duration_seconds, price_usd]) => ({ duration_seconds, price_usd, credits: Math.round(price_usd * 100) })) },
+  { size: 'preview', label: 'Preview', resolution_16_9: '896 × 512', prices: [[5, .46], [10, .91], [15, 1.37], [30, 2.73], [60, 5.45]].map(([duration_seconds, price_usd]) => ({ duration_seconds, price_usd, credits: Math.round(price_usd * 100) })) },
   { size: 'balanced', label: 'Balanced', resolution_16_9: '1184 × 672', prices: [[5, .71], [10, 1.42], [15, 2.12], [30, 4.24], [60, 8.47]].map(([duration_seconds, price_usd]) => ({ duration_seconds, price_usd, credits: Math.round(price_usd * 100) })) },
   { size: 'native', label: 'Native', resolution_16_9: '1344 × 768', prices: [[5, 1.01], [10, 2.02], [15, 3.03], [30, 6.05], [60, 12.10]].map(([duration_seconds, price_usd]) => ({ duration_seconds, price_usd, credits: Math.round(price_usd * 100) })) },
 ];
