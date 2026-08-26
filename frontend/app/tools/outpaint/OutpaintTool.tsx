@@ -155,7 +155,6 @@ export default function OutpaintTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * creditPrice).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>SOURCE IMAGE · CANVAS OUTPAINTING · OPENPATHS ROUTING</div>
       <h1>Keep the subject.<br /><span>Grow the world around it.</span></h1>
       <p>Upload a frame, push any edge outward or zoom the whole scene out, and outpainting fills the new border in visual continuity with the original.</p>
     </section>

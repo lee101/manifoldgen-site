@@ -265,7 +265,6 @@ export default function VideoDramatizerTool() {
     </header>
 
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>SHOT PLANNING · GENERATED CUT-INS · BEAT-ALIGNED EDITING</div>
       <h1>Describe the film.<br /><span>Get the edit, not just a clip.</span></h1>
       <p>
         Give the agent a clip and a brief. It watches the footage, listens for the beats, plans a shot list,
@@ -334,7 +333,7 @@ export default function VideoDramatizerTool() {
           <textarea
             value={prompt}
             maxLength={6000}
-            rows={9}
+            rows={3}
             onChange={(event) => setPrompt(event.target.value)}
             placeholder="Let us make a video dramatizing…"
             data-testid="dramatizer-prompt"

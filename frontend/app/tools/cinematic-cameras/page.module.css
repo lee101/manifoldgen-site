@@ -2,3 +2,29 @@
 .chips{display:flex;flex-wrap:wrap;gap:8px}.chip{border:1px solid #3a3554;border-radius:999px;background:#14121f;color:#c9c2dd;font:inherit;font-size:12px;padding:7px 13px;cursor:pointer;transition:border-color .15s,color .15s}.chip:hover{border-color:#6d5fd0;color:#efeaff}.chipActive{border-color:#8b78ff;background:#241d44;color:#f1ecff}
 .frames{display:flex;flex-direction:column;width:100%}.frames img{width:100%;height:auto;object-fit:contain}.frames a{position:absolute;right:12px;bottom:12px;padding:8px 10px;display:flex;align-items:center;color:#110c1e;background:#e7dcff;border-radius:8px;text-decoration:none}
 .example{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:0 clamp(20px,4vw,64px);margin-top:26px}.exampleMedia{border:1px solid #302c48;border-radius:14px;overflow:hidden;background:#0d0d16}.exampleMedia img{display:block;width:100%;aspect-ratio:4/3;height:auto;object-fit:cover}.prompts{display:grid;gap:10px;align-content:center;color:#77718e;font-size:10px;text-transform:uppercase;letter-spacing:.08em}.prompts button{text-align:left;padding:11px 13px;color:#c9c2dd;border:1px solid #3a3554;border-radius:10px;background:#14121f;font-size:12px;font-weight:600;text-transform:none;letter-spacing:0;cursor:pointer}.prompts button:hover{border-color:#8b78ff;color:#f1ecff}@media(max-width:880px){.example{grid-template-columns:1fr}}
+
+/* --- compact above-the-fold --- */
+.drop{aspect-ratio:3/2}
+.hero{padding:32px 30px 18px}
+.hero h1{font-size:clamp(27px,3.5vw,42px)}
+.hero p{margin-top:9px;font-size:13px;line-height:1.55}
+@media(max-width:880px){
+.header{height:50px}
+.hero{padding:12px 16px 4px}
+.hero h1{font-size:20px;letter-spacing:-.02em}
+.hero p{margin-top:3px;font-size:11.5px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.workspace{padding:0 14px;gap:12px}
+.notes{padding:0 14px 30px;margin-top:14px}
+}
+@media(max-width:600px){
+.drop{aspect-ratio:16/7}
+.drop img{position:absolute;inset:0;width:100%;height:100%}
+.field{margin-top:11px;gap:5px}
+.field textarea{min-height:78px;padding:10px}
+.options{margin:9px 0}
+.run{min-height:44px;font-size:13px}
+.price{margin-top:6px}
+.preview{min-height:300px}
+.preview.split{grid-template-columns:1fr}
+.footer{min-height:52px}
+}

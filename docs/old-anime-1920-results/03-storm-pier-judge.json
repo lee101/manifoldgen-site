@@ -1,0 +1,7 @@
+{
+  "confidence": 0.9,
+  "contact_sheet": "03-storm-pier-contact.jpg",
+  "model": "deepseek-v4-flash-vision-exp",
+  "reason": "B shows anatomy/rope issues; A maintains coherent action and style",
+  "winner": "A"
+}

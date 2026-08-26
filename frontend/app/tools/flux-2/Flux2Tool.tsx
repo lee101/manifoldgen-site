@@ -138,13 +138,12 @@ export default function Flux2Tool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * creditPrice).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>FLUX FAMILY · KLEIN · DEV · PRO · OPENPATHS ROUTING</div>
       <h1>Pick your point<br /><span>on the speed-fidelity curve.</span></h1>
       <p>Klein answers almost instantly, Dev balances cost and craft, and Pro pushes the family&rsquo;s maximum fidelity — all from one prompt.</p>
     </section>
     <section className={styles.workspace}>
       <div className={styles.controls}>
-        <label className={styles.field}><span>Describe the image</span><textarea data-testid="flux-2-prompt" value={prompt} maxLength={1200} rows={6} onChange={(event) => setPrompt(event.target.value)} placeholder="A paper-cut lighthouse over layered card-stock waves…" /><small>Name the subject, medium, palette, light, and finish.</small></label>
+        <label className={styles.field}><span>Describe the image</span><textarea data-testid="flux-2-prompt" value={prompt} maxLength={1200} rows={3} onChange={(event) => setPrompt(event.target.value)} placeholder="A paper-cut lighthouse over layered card-stock waves…" /><small>Name the subject, medium, palette, light, and finish.</small></label>
         <div className={styles.options}>
           <label><span>Model</span><select value={model} onChange={(event) => setModel(event.target.value as Model)}>{MODELS.map((m) => <option key={m.id} value={m.id}>{`${m.name} · $${m.price.toFixed(2)}`}</option>)}</select></label>
           <label><span>Size</span><select value={size} onChange={(event) => setSize(event.target.value as Size)}>{Object.entries(SIZES).map(([id, s]) => <option key={id} value={id}>{s.label}</option>)}</select></label>

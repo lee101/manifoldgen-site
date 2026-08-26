@@ -190,6 +190,14 @@ fi
 cd ..
 echo "  ✓ Frontend built"
 
+# Precomputed translations: localized static pages under frontend/out/<lang>/.
+# Best-effort — a failure ships the English site unchanged.
+if (cd frontend && bun scripts/i18n-build.ts); then
+  echo "  ✓ Localized pages generated"
+else
+  echo "  ⚠ i18n-build failed; shipping English-only"
+fi
+
 SERVER_BUILD_FLAGS=()
 GPU_SEARCH_ENABLED=0
 GPU_MOD_FILE=""

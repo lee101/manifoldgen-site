@@ -199,7 +199,6 @@ export default function VideoBackgroundRemoverPage() {
       </header>
 
       <section className={styles.hero}>
-        <div className={styles.eyebrow}><Scissors size={14} /> GPU VIDEO MATTING</div>
         <h1>Remove a video background.<br /><span>Keep every original pixel.</span></h1>
         <p>We infer a temporal alpha matte and attach it to your source frames—no generative redraw, no lost fabric or skin detail.</p>
       </section>

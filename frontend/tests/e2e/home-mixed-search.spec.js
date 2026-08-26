@@ -130,14 +130,66 @@ test('gallery image actions copy the prompt, choose a start frame, and open Stud
 
   await page.goto('/');
   const card = page.getByAltText('A copper moon over a quiet ocean').locator('..').locator('..');
+  await card.hover();
   await card.getByRole('button', { name: 'Use as start frame' }).click();
   await expect(page.getByTestId('home-frame-tray')).toContainText('Frame 1 anchors the shot');
   await expect(page.locator('textarea').first()).toHaveValue('A copper moon over a quiet ocean');
 
+  await card.hover();
   await card.getByRole('button', { name: 'Prompt for similar' }).click();
   await expect(page.getByTestId('home-frame-tray')).toHaveCount(0);
   await expect(page.locator('textarea').first()).toHaveValue('A copper moon over a quiet ocean');
 
+  await card.hover();
   await card.getByRole('button', { name: 'Open in editor' }).click();
   await expect(page).toHaveURL(/\/studio\?image_url=https%3A%2F%2Fmanifoldgenstatic\.manifoldgen\.com%2Fgallery%2Foriginals%2Faction-image\.webp/);
+});
+
+test('right click opens a cursor-anchored gallery menu with browser and clipboard actions', async ({ page }) => {
+  await page.route('**/api/pricing', (route) => route.fulfill({ status: 200, json: {} }));
+  await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route('**/api/images?**', (route) => route.fulfill({ status: 200, json: { images: [{
+    id: 'gallery-menu-image',
+    prompt: 'A copper moon over a quiet ocean',
+    image_url: 'https://manifoldgenstatic.manifoldgen.com/gallery/originals/action-image.webp',
+  }] } }));
+  await page.route('**/api/gallery-assets/originals/action-image.webp?**', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE }));
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+
+  await page.goto('/');
+  const img = page.getByAltText('A copper moon over a quiet ocean');
+  await img.scrollIntoViewIfNeeded();
+  const box = await img.boundingBox();
+  const cursor = { x: box.x + box.width / 2, y: box.y + Math.min(30, box.height / 2) };
+  const menu = page.getByTestId('media-context-menu');
+
+  // A right-click dispatched before React hydrates is lost, so retry until the
+  // menu mounts instead of assuming the first event lands.
+  for (let attempt = 0; attempt < 30 && (await menu.count()) === 0; attempt += 1) {
+    await page.mouse.click(cursor.x, cursor.y, { button: 'right' });
+    await page.waitForTimeout(200);
+  }
+  await expect(menu).toBeVisible();
+  const menuBox = await menu.boundingBox();
+  expect(menuBox.width).toBeLessThan(320);
+  expect(menuBox.height).toBeLessThan(page.viewportSize().height * 0.9);
+  expect(Math.abs(menuBox.x + menuBox.width / 2 - cursor.x)).toBeLessThan(240);
+  expect(Math.abs(menuBox.y - cursor.y)).toBeLessThan(40);
+  for (const label of ['Back', 'Forward', 'Reload', 'Copy image', 'Copy prompt', 'Open in editor']) {
+    await expect(menu.getByText(label, { exact: true })).toBeVisible();
+  }
+
+  await menu.getByText('Copy prompt', { exact: true }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('A copper moon over a quiet ocean');
+
+  await img.click({ button: 'right' });
+  await expect(menu).toBeVisible();
+  await menu.getByText('Copy image', { exact: true }).click();
+  const clipboardTypes = await page.evaluate(async () => (await navigator.clipboard.read()).flatMap((item) => [...item.types]));
+  expect(clipboardTypes).toContain('image/png');
+
+  await img.click({ button: 'right' });
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
 });

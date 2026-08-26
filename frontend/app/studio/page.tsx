@@ -69,7 +69,7 @@ import {
   canEncodeAudio,
   canEncodeVideo,
 } from 'mediabunny';
-import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '../../lib/auth';
+import { clearUser, loadStoredUser, refreshUser, saveUser, type StoredUser } from '../../lib/auth';
 import { HTTPResponseError, parseJSONResponse } from '../../lib/http';
 import { loadPromptHistory, promptHistoryUserKey, recordPrompt, usePromptHistoryCycler, type PromptHistoryEntry, type PromptKind } from '../../lib/prompt-history';
 import { ManifoldLoader } from '../../components/manifold-loader';
@@ -1061,6 +1061,34 @@ function clipEnd(asset: Pick<StudioAsset, 'timelineStart' | 'trimStart' | 'trimE
   return asset.timelineStart + clipDuration(asset);
 }
 
+const GAP_EPSILON = 0.001;
+
+/** Timeline spans covered by no visual clip; exports render these black. */
+function visualTimelineGaps(assets: Pick<StudioAsset, 'kind' | 'timelineStart' | 'trimStart' | 'trimEnd'>[]) {
+  const spans = assets
+    .filter((asset) => asset.kind === 'video' || asset.kind === 'image')
+    .map((asset) => ({ start: asset.timelineStart, end: clipEnd(asset) }))
+    .sort((left, right) => left.start - right.start);
+  const gaps: Array<{ start: number; end: number }> = [];
+  let cursor = 0;
+  for (const span of spans) {
+    if (span.start - cursor > GAP_EPSILON) gaps.push({ start: cursor, end: span.start });
+    cursor = Math.max(cursor, span.end);
+  }
+  return gaps;
+}
+
+/** Ripple-closes gaps by pulling every later clip (all layers and audio) left. */
+function closeTimelineGaps<T extends Pick<StudioAsset, 'timelineStart'>>(assets: T[], gaps: Array<{ start: number; end: number }>) {
+  return assets.map((asset) => {
+    let start = asset.timelineStart;
+    for (const gap of gaps) {
+      if (asset.timelineStart >= gap.end) start -= gap.end - gap.start;
+    }
+    return start === asset.timelineStart ? asset : { ...asset, timelineStart: Math.max(0, start) };
+  });
+}
+
 // Magnetic move edges: within TIMELINE_SNAP_PX of zero or a stationary clip's
 // start/end, the dragged selection settles exactly onto that time.
 function snapTimelineMoveDelta(drag: Pick<TimelineDrag, 'originals' | 'pixelsPerSecond'>, assets: StudioAsset[], delta: number) {
@@ -1595,6 +1623,8 @@ export default function StudioPage() {
   const [videoGenerateUseSelected, setVideoGenerateUseSelected] = useState(false);
   const [videoGenerateQueueStatus, setVideoGenerateQueueStatus] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
+  const [gapWarning, setGapWarning] = useState<Array<{ start: number; end: number }> | null>(null);
+  const [pendingExport, setPendingExport] = useState(false);
   const [exportSettings, setExportSettings] = useState<ExportSettings>(loadExportSettings);
   const [exportProgress, setExportProgress] = useState(0);
   const [busy, setBusy] = useState('');
@@ -2340,8 +2370,18 @@ export default function StudioPage() {
         }
       } catch (reason) {
         if (!cancelled) {
+          if (reason instanceof HTTPResponseError && (reason.status === 401 || reason.status === 403)) {
+            // A project deep-link is often the first authenticated request on
+            // startup. Do not leave a rotated or environment-mismatched key in
+            // place: it would keep every autosave and generation request in an
+            // unauthorized loop until the user manually cleared site data.
+            clearUser();
+            setUser(null);
+          }
           setProjectID(requestedID || uid());
-          setError(reason instanceof Error ? reason.message : 'Could not restore the project');
+          setError(reason instanceof HTTPResponseError && (reason.status === 401 || reason.status === 403)
+            ? 'Your saved sign-in is no longer valid. Sign in again to open this cloud project.'
+            : reason instanceof Error ? reason.message : 'Could not restore the project');
         }
       } finally {
         if (!cancelled) {
@@ -4606,16 +4646,34 @@ export default function StudioPage() {
     if (!exportBase || !visualAssets.length) throw new Error('Add an image or video to the timeline first');
     setExportProgress(0.01);
     let output: Output | null = null;
+    // Chrome caps a page at ~16 live WebGL contexts and silently force-loses
+    // the oldest ones beyond that. Giving every clip its own StudioRenderer
+    // made long timelines export black segments for exactly those evicted
+    // clips (draw() no-ops and readPixels returns zeros without throwing), so
+    // all clips share one GL context; each frame's draws are sequential, so
+    // nothing needs to stay resident between clips.
+    const sharedCanvas = document.createElement('canvas');
+    const sharedRenderer = new StudioRenderer(sharedCanvas, { preserveDrawingBuffer: true });
+    const sharedRaster = document.createElement('canvas');
+    const sharedRasterContext = sharedRaster.getContext('2d', { alpha: false });
+    let sharedContextLost = false;
+    sharedCanvas.addEventListener('webglcontextlost', (event) => {
+      event.preventDefault();
+      sharedContextLost = true;
+    });
     type ExportVisualState = {
       asset: StudioAsset;
-      rasterCanvas: HTMLCanvasElement;
-      rasterContext: CanvasRenderingContext2D;
-      renderer: StudioRenderer;
-      image: HTMLImageElement | null;
+      /** Images composite from a persistent raster; videos share sharedRaster. */
+      rasterCanvas: HTMLCanvasElement | null;
       input: Input | null;
       iterator: AsyncIterator<VideoSample> | null;
       current: VideoSample | null;
       next: VideoSample | null;
+    };
+    const resizeSharedRaster = (sourceWidth: number, sourceHeight: number) => {
+      sharedRenderer.resize(sourceWidth, sourceHeight);
+      if (sharedRaster.width !== sharedCanvas.width) sharedRaster.width = sharedCanvas.width;
+      if (sharedRaster.height !== sharedCanvas.height) sharedRaster.height = sharedCanvas.height;
     };
     const visualStates: ExportVisualState[] = [];
     let antiAliasRenderer: StudioRenderer | null = null;
@@ -4658,6 +4716,7 @@ export default function StudioPage() {
       if (!compositor) throw new Error('This browser cannot start the timeline compositor');
       compositor.imageSmoothingEnabled = true;
       compositor.imageSmoothingQuality = 'high';
+      if (!sharedRasterContext) throw new Error('This browser cannot prepare the export frame buffer');
 
       // Editable text starts as a crisp transparent PNG, but the 2D
       // compositor has to resample it when it is rotated. A final, tiny FXAA
@@ -4673,23 +4732,21 @@ export default function StudioPage() {
       }
 
       for (const asset of visualAssets) {
-        const filteredCanvas = document.createElement('canvas');
-        // Export reads finished WebGL pixels into a 2D raster before handing
-        // frames to WebCodecs, avoiding compositor timing issues.
-        const renderer = new StudioRenderer(filteredCanvas, { preserveDrawingBuffer: true });
-        renderer.resize(asset.width, asset.height);
-        const rasterCanvas = document.createElement('canvas');
-        rasterCanvas.width = filteredCanvas.width;
-        rasterCanvas.height = filteredCanvas.height;
-        const rasterContext = rasterCanvas.getContext('2d', { alpha: false });
-        if (!rasterContext) throw new Error('This browser cannot prepare the export frame buffer');
-        const state: ExportVisualState = { asset, rasterCanvas, rasterContext, renderer, image: null, input: null, iterator: null, current: null, next: null };
+        const state: ExportVisualState = { asset, rasterCanvas: null, input: null, iterator: null, current: null, next: null };
         if (asset.kind === 'image') {
-          state.image = new Image();
-          state.image.src = asset.url;
-          await state.image.decode();
-          renderer.draw(state.image, asset.adjustments, 0);
-          renderer.copyToCanvas(rasterContext);
+          const image = new Image();
+          image.src = asset.url;
+          await image.decode();
+          resizeSharedRaster(asset.width, asset.height);
+          sharedRenderer.draw(image, asset.adjustments, 0);
+          // Images composite every frame but filter once, so they keep a
+          // persistent raster while videos reuse the shared one per frame.
+          const rasterCanvas = document.createElement('canvas');
+          rasterCanvas.width = sharedRaster.width;
+          rasterCanvas.height = sharedRaster.height;
+          sharedRenderer.copyToCanvas(sharedRasterContext);
+          rasterCanvas.getContext('2d')?.drawImage(sharedRaster, 0, 0);
+          state.rasterCanvas = rasterCanvas;
         } else {
           state.input = new Input({ source: new BlobSource(asset.file), formats: ALL_FORMATS });
           const track = await state.input.getPrimaryVideoTrack();
@@ -4705,8 +4762,8 @@ export default function StudioPage() {
       const exportDiagnostics = perfDiagnostics().export;
       if (exportDiagnostics) {
         const outputCanvases = needsTextAntiAlias ? 2 : 1;
-        exportDiagnostics.estimatedWorkingSetBytes = width * height * 4 * outputCanvases
-          + visualStates.reduce((total, state) => total + state.asset.width * state.asset.height * 8, 0);
+        exportDiagnostics.estimatedWorkingSetBytes = width * height * 4 * (outputCanvases + 1)
+          + visualStates.reduce((total, state) => total + (state.rasterCanvas ? state.rasterCanvas.width * state.rasterCanvas.height * 4 : 0), 0);
       }
 
       const target = new BufferTarget();
@@ -4759,9 +4816,11 @@ export default function StudioPage() {
             }
             const sample = state.current || state.next;
             if (!sample) continue;
+            if (sharedContextLost) throw new Error('The graphics context was lost during export. Retry the export once other graphics-heavy tabs are closed.');
+            resizeSharedRaster(asset.width, asset.height);
             const frame = sample.toVideoFrame();
-            state.renderer.draw(frame, asset.adjustments, index);
-            state.renderer.copyToCanvas(state.rasterContext);
+            sharedRenderer.draw(frame, asset.adjustments, index);
+            sharedRenderer.copyToCanvas(sharedRasterContext!);
             frame.close();
           }
           const fit = Math.min(width / Math.max(1, asset.width), height / Math.max(1, asset.height));
@@ -4770,7 +4829,7 @@ export default function StudioPage() {
           compositor.save();
           compositor.translate(width * (0.5 + asset.stageX), height * (0.5 + asset.stageY));
           compositor.rotate(asset.stageRotation * Math.PI / 180);
-          compositor.drawImage(state.rasterCanvas, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+          compositor.drawImage(state.rasterCanvas ?? sharedRaster, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
           compositor.restore();
         }
         if (antiAliasRenderer) antiAliasRenderer.draw(workCanvas, DEFAULT_ADJUSTMENTS, index, { fxaa: true });
@@ -4803,13 +4862,39 @@ export default function StudioPage() {
       for (const state of visualStates) {
         state.current?.close();
         state.next?.close();
-        state.renderer.destroy();
         state.input?.dispose();
       }
+      sharedRenderer.destroy();
       antiAliasRenderer?.destroy();
     }
   }
 
+
+  // Gap closure rewrites clip times; defer exporting to the next committed
+  // render so the export reads the updated timeline instead of stale state.
+  useEffect(() => {
+    if (!pendingExport) return;
+    setPendingExport(false);
+    void exportVideo();
+  }, [pendingExport]);
+
+  function requestExport() {
+    const gaps = visualTimelineGaps(assets);
+    if (!gaps.length) {
+      void exportVideo();
+      return;
+    }
+    setGapWarning(gaps);
+  }
+
+  function removeGapsAndExport() {
+    const gaps = gapWarning;
+    setGapWarning(null);
+    if (!gaps?.length) return;
+    rememberEdit();
+    setAssets((current) => closeTimelineGaps(current, gaps));
+    setPendingExport(true);
+  }
   async function exportVideo() {
     if (!timelineVisuals.length) return;
     setBusy('export'); setError('');
@@ -5313,7 +5398,7 @@ export default function StudioPage() {
         <div className={styles.timelineToolbar}>
           <div className={styles.timelineTools}><button title="Add media" onClick={() => fileInputRef.current?.click()}><Plus size={14} /> Add</button><button onClick={splitAtPlayhead} disabled={!selectedAssets.length} title="Split at playhead (S)"><Scissors size={14} /> Split</button><button data-testid="studio-layer-up" onClick={() => moveSelectionBetweenLayers(1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move up a layer (Ctrl/Cmd + ])"><ChevronUp size={14} /> Layer</button><button data-testid="studio-layer-down" onClick={() => moveSelectionBetweenLayers(-1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move down a layer (Ctrl/Cmd + [)"><ChevronDown size={14} /> Layer</button><button onClick={duplicateSelected} disabled={!selectedAssets.length} title="Duplicate selected clips"><Copy size={14} /></button><button onClick={removeSelected} disabled={!selectedAssets.length} title="Delete selected clips"><Trash2 size={14} /></button>{selectedAssets.length > 1 && <span className={styles.selectionCount}>{selectedAssets.length} selected</span>}</div>
           <div className={styles.transport}><button aria-label={playing ? 'Pause' : 'Play'} title="Play/pause (Space)" className={styles.playButton} onClick={togglePlayback} disabled={!playableTimelineAssets.length}>{playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}</button><span>{formatTime(playhead)} <i>/</i> {formatTime(timelineDuration)}</span></div>
-          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Drag empty space to select · Shift-drag adds · Ctrl/Cmd [ ] to layer</span><span className={styles.mobileGestureHint}>Long-press + drag to move · drag edges to trim</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
+          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Drag empty space to select</span><span className={styles.mobileGestureHint}>Long-press + drag to move · drag edges to trim</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
         </div>
         <div className={styles.timelineBody}>
           <div ref={timelineLabelsRef} className={styles.trackLabels} onWheel={(event) => { if (timelineContentRef.current) timelineContentRef.current.scrollTop += event.deltaY; }}><span>VIDEO</span>{Array.from({ length: visualTrackCount }, (_, index) => visualTrackCount - index - 1).map((track) => <div data-testid={`timeline-track-label-v${track + 1}`} key={track}>V{track + 1}</div>)}<div className={styles.audioLabel}><b>A1</b><label title="A1 track volume"><Volume2 size={11} /><input data-testid="studio-a1-volume" aria-label="A1 track volume" type="range" min="0" max="2" step="0.01" value={audioTrackVolume} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => setAudioTrackVolume(Number(event.target.value))} /></label></div></div>
@@ -5460,7 +5545,15 @@ export default function StudioPage() {
         <p className={styles.exportRemembered}>Complete {formatTime(timelineDuration)} timeline · settings saved on this device.</p>
         <div className={styles.exportSummary}><span>Output <b>{selectedExportSize ? `${selectedExportSize.width} × ${selectedExportSize.height}` : 'Not set'}</b></span><span>Frame rate <b>{exportSettings.frameRate === 'source' ? '30 fps timeline' : `${exportSettings.frameRate} fps`}</b></span><span>Audio <b>{assets.some((asset) => asset.kind !== 'image') ? (exportSettings.format.startsWith('webm-') || exportSettings.audio === 'opus' ? 'Mixed · Opus' : 'Mixed · AAC') : 'None'}</b></span></div>
         {exportProgress > 0 && <div className={styles.progress}><i style={{ width: `${exportProgress * 100}%` }} /></div>}
-        <button className={styles.modalPrimary} disabled={!!busy} onClick={() => void exportVideo()}>{busy === 'export' ? <><Loader2 className={styles.spin} size={16} /> Exporting {Math.round(exportProgress * 100)}%</> : <><Download size={16} /> Export</>}</button>
+        <button className={styles.modalPrimary} disabled={!!busy} onClick={() => void requestExport()}>{busy === 'export' ? <><Loader2 className={styles.spin} size={16} /> Exporting {Math.round(exportProgress * 100)}%</> : <><Download size={16} /> Export</>}</button>
+      </Modal>}
+
+      {gapWarning && <Modal title="Remove timeline gaps?" onClose={() => setGapWarning(null)}>
+        <p className={styles.billingNote}>{gapWarning.length} gap{gapWarning.length === 1 ? '' : 's'} totalling {formatTime(gapWarning.reduce((total, gap) => total + gap.end - gap.start, 0))} have no clip, so the export renders them black. Closing gaps pulls every later clip left across them; this can be undone.</p>
+        <div className={styles.durationChoices}>
+          <button data-testid="studio-gaps-close-export" onClick={() => removeGapsAndExport()}><b>Close gaps &amp; export</b></button>
+          <button data-testid="studio-gaps-keep-export" onClick={() => { setGapWarning(null); void exportVideo(); }}><b>Export with gaps</b></button>
+        </div>
       </Modal>}
 
       {extendOpen && <Modal title="Extend video" onClose={() => setExtendOpen(false)}>

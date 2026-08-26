@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -46,32 +47,54 @@ func handleSitemapIndex(ctx *fasthttp.RequestCtx) {
 	ctx.SetBodyString(b.String())
 }
 
+var staticSitemapPages = []string{
+	"/", "/tools", "/tools/h3-image", "/tools/music-generator", "/tools/make-image",
+	"/tools/style-transfer", "/tools/h3-image-editor", "/tools/character-animator",
+	"/tools/video-background-remover", "/tools/video-dramatizer",
+	"/tools/canny-video", "/tools/depth-video", "/tools/hed-video", "/tools/mlsd-video", "/tools/pose-video", "/tools/video-inpainting",
+	"/tools/cinematic-cameras", "/tools/relight", "/tools/inpaint",
+	"/tools/image-upscale", "/tools/outpaint", "/tools/moodboard",
+	"/tools/nano-banana", "/tools/grok-imagine", "/tools/flux-2", "/tools/gpt-image",
+	"/tool/animate-video", "/tool/image-editor", "/tool/anima",
+	"/api", "/api/video-generators", "/studio", "/voice", "/blog", "/privacy",
+}
+
 func handleSitemapPages(ctx *fasthttp.RequestCtx) {
 	setXML(ctx)
 	var b strings.Builder
 	b.WriteString(xml.Header)
 	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">`)
-	for _, path := range []string{
-		"/", "/tools", "/tools/h3-image", "/tools/music-generator", "/tools/make-image",
-		"/tools/style-transfer", "/tools/h3-image-editor", "/tools/character-animator",
-		"/tools/video-background-remover", "/tools/video-dramatizer",
-		"/tools/canny-video", "/tools/depth-video", "/tools/hed-video", "/tools/mlsd-video", "/tools/pose-video", "/tools/video-inpainting",
-		"/tools/cinematic-cameras", "/tools/relight", "/tools/inpaint",
-		"/tools/image-upscale", "/tools/outpaint", "/tools/moodboard",
-		"/tools/nano-banana", "/tools/grok-imagine", "/tools/flux-2", "/tools/gpt-image",
-		"/tool/animate-video", "/tool/image-editor", "/tool/anima",
-		"/api", "/api/video-generators", "/studio", "/voice", "/blog", "/privacy",
-	} {
+	seen := map[string]bool{}
+	emit := func(path string) {
+		if seen[path] || !strings.HasPrefix(path, "/") || !publicSitemapURL(sitemapSiteURL+path) {
+			return
+		}
+		seen[path] = true
 		writeSitemapURL(&b, path)
 	}
+	for _, path := range staticSitemapPages {
+		emit(path)
+	}
 	for _, path := range seoRoutesFromExport() {
-		if !strings.HasPrefix(path, "/") || !publicSitemapURL(sitemapSiteURL+path) {
-			continue
-		}
-		writeSitemapURL(&b, path)
+		emit(path)
+	}
+	// Localized coverage: any route the i18n build shipped (tools, search
+	// pages, …) is crawlable and belongs in the pages sitemap.
+	loadI18nManifest()
+	for _, path := range sortedI18nRoutes() {
+		emit(path)
 	}
 	b.WriteString(`</urlset>`)
 	ctx.SetBodyString(b.String())
+}
+
+func sortedI18nRoutes() []string {
+	paths := make([]string, 0, len(i18nRouteLangs))
+	for path := range i18nRouteLangs {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // writeSitemapURL emits one <url> carrying the full hreflang alternates

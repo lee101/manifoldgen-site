@@ -109,7 +109,6 @@ export default function GptImageTool() {
     </header>
 
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>PREMIUM TEXT TO IMAGE · OPENAI ROUTE · ALWAYS METERED</div>
       <h1>Premium prompts,<br /><span>gallery-grade frames.</span></h1>
       <p>GPT Image 2 renders precise, prompt-faithful images with strong typography and composition. Up to four variants per run, optional seed for reproducibility.</p>
     </section>
@@ -133,7 +132,7 @@ export default function GptImageTool() {
           data-testid="gpt-image-prompt"
           value={prompt}
           maxLength={MAX_PROMPT}
-          rows={6}
+          rows={3}
           onChange={(event) => setPrompt(event.target.value)}
           placeholder="a floating botanical conservatory beneath a star-filled sky…"
         />

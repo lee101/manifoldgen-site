@@ -142,7 +142,6 @@ export default function CharacterAnimatorPage() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}><Sparkles size={14} /> WAN-ANIMATE-2</div>
       <h1>Give any character<br /><span>someone else&apos;s motion.</span></h1>
       <p>One character image. One driving video. Body movement, expression, and timing transfer directly—without a pose-extraction stage.</p>
     </section>

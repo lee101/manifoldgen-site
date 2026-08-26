@@ -61,6 +61,12 @@ def request_json(
 def validate_config(config: dict[str, Any]) -> None:
     if not config.get("image"):
         raise ValueError("config image is required")
+    forward_env = config.get("forwardEnv") or {}
+    if not isinstance(forward_env, dict) or any(
+        not str(target).strip() or not str(source).strip()
+        for target, source in forward_env.items()
+    ):
+        raise ValueError("config forwardEnv must map non-empty target names to source names")
     endpoints = config.get("endpoints")
     if not isinstance(endpoints, list) or not endpoints:
         raise ValueError("config endpoints must be a non-empty array")
@@ -87,6 +93,11 @@ def template_payload(
     env = dict(current.get("env") or {})
     env.update(config.get("env") or {})
     env.update(endpoint.get("env") or {})
+    for target, source in (config.get("forwardEnv") or {}).items():
+        value = os.environ.get(str(source), "").strip()
+        if not value:
+            raise RuntimeError(f"required forwarded environment variable {source} is missing")
+        env[str(target)] = value
     for key in endpoint.get("unsetEnv", []):
         env.pop(key, None)
     payload["env"] = env
@@ -141,7 +152,7 @@ def apply(config: dict[str, Any], api_key: str, drain_timeout: int) -> None:
                 "PATCH",
                 f"{REST_BASE}/endpoints/{endpoint['id']}",
                 api_key,
-                {"workersMax": 0},
+                {"workersMin": 0, "workersMax": 0},
             )
             print(f"draining {endpoint['name']}")
         drained = True

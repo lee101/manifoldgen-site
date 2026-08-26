@@ -294,7 +294,7 @@ func (vs *VideoSearchEngine) loadAndIndex() {
 	}
 	log.Printf("[video-search] Loaded %d video prompts in %v", len(prompts), time.Since(t0))
 
-	engine := gobed.NewAutoSearchEngine(model)
+	engine := newLocalSearchEngine(model)
 	if len(prompts) > 0 {
 		ids := make([]int, len(prompts))
 		for i := range ids {
@@ -420,7 +420,7 @@ func (as *AudioSearchEngine) loadAndIndex() {
 	}
 	log.Printf("[audio-search] Loaded %d audio prompts in %v", len(assets), time.Since(t0))
 
-	engine := gobed.NewAutoSearchEngine(model)
+	engine := newLocalSearchEngine(model)
 	if len(assets) > 0 {
 		ids := make([]int, len(assets))
 		prompts := make([]string, len(assets))

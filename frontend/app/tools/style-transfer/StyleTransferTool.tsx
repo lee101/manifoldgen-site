@@ -145,9 +145,8 @@ export default function StyleTransferTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>SOURCE IMAGE · PROMPTED EDITING · OPENPATHS ROUTING</div>
-      <h1>Keep the image.<br /><span>Change its visual world.</span></h1>
-      <p>Upload a source, describe the style you want, and let an image-editing model reinterpret it while preserving the subject and composition that made the original work.</p>
+      <h1>Keep the image.<br /><span>Change its world.</span></h1>
+      <p>Upload a source, describe a style, and an edit model restyles it while preserving subject and composition.</p>
     </section>
     <section className={styles.workspace}>
       <div className={styles.controls}>
@@ -156,10 +155,10 @@ export default function StyleTransferTool() {
           {sourceURL ? <img src={sourceURL} alt="Source image" /> : <><Upload size={26} /><b>Drop an image here</b><span>PNG, JPG, WEBP · up to 20 MB</span></>}
           {sourceURL && <button type="button" onClick={(event) => { event.stopPropagation(); fileInput.current?.click(); }}><Upload size={13} /> Replace image</button>}
         </div>
-        <label className={styles.field}><span>Describe the new style</span><textarea value={prompt} maxLength={1200} onChange={(event) => setPrompt(event.target.value)} rows={6} placeholder="Preserve the subject, but…" /><small>Say what should stay, what should change, the medium, palette, light, and finish.</small></label>
+        <label className={styles.field}><span>Describe the new style</span><textarea value={prompt} maxLength={1200} onChange={(event) => setPrompt(event.target.value)} rows={3} placeholder="Preserve the subject, but…" /><small>Say what should stay, what should change, the medium, palette, light, and finish.</small></label>
         <div className={styles.options}><label><span>Canvas</span><select value={aspect} onChange={(event) => setAspect(event.target.value as typeof aspect)}><option value="square">Square · 1024 × 1024</option><option value="landscape">Landscape · 1536 × 1024</option><option value="portrait">Portrait · 1024 × 1536</option></select></label></div>
         <button className={styles.run} type="button" disabled={Boolean(busy) || !prompt.trim()} onClick={() => void edit()}>{busy ? <Loader2 className={styles.spin} size={18} /> : <WandSparkles size={18} />}{busy ? status : 'Transfer style'}</button>
-        <div className={styles.price}><span>OpenPaths edit route · provider fallbacks enabled</span><b>~{credits} credits · ${price.toFixed(2)}</b></div>
+        <div className={styles.price}><b>~{credits} credits · ${price.toFixed(2)}</b></div>
         {error && <div className={styles.error} role="alert">{error}</div>}
       </div>
       <div className={styles.previewPanel}>

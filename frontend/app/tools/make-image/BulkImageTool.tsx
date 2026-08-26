@@ -177,7 +177,6 @@ export default function BulkImageTool() {
       </header>
 
       <section className={styles.hero}>
-        <div className={styles.eyebrow}>TEXT TO IMAGE · MULTI-VARIANT · BULK EXPLORER</div>
         <h1>Drop a prompt.<br /><span>Get a full test of ideas.</span></h1>
         <p>One prompt per line becomes its own variant batch across the Z-Image, RA1, and R1 lanes. Compare directions, and refill any batch that looks worth chasing.</p>
       </section>
@@ -189,7 +188,7 @@ export default function BulkImageTool() {
             id="bulk-prompt"
             value={prompt}
             maxLength={12000}
-            rows={6}
+            rows={3}
             onChange={(event) => setPrompt(event.target.value)}
             placeholder="a glass hummingbird in a greenhouse&#10;a neon city street at dusk, rain-slicked&#10;acrylic-painted cartoon fox in a spacesuit"
           />

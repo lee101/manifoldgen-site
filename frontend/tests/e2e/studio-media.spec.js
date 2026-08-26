@@ -331,6 +331,30 @@ test('an account project restores its R2 media on a device without a local copy'
   await expect(page.getByTestId('studio-render-status')).toContainText('2 × 2 · GPU preview');
 });
 
+test('a stale API key on a project deep-link is cleared and asks the user to sign in again', async ({ page }) => {
+  const projectID = 'd3ec0917-e645-4b45-9412-5dc79cdbdf8a';
+  await page.addInitScript(({ apiKey }) => {
+    localStorage.setItem('mg_api_key', apiKey);
+    localStorage.setItem('mg_user', JSON.stringify({ email: 'studio@example.com', api_key: apiKey, credits: 10 }));
+    localStorage.setItem('userData', JSON.stringify({ email: 'studio@example.com', api_key: apiKey, credits: 10 }));
+  }, { apiKey: 'stale-local-api-key' });
+  await page.route('**/api/pricing', (route) => route.fulfill({ status: 200, json: { credit_price_usd: 0.01 } }));
+  await page.route('**/api/auth/session', (route) => route.fulfill({ status: 401, json: { error: 'invalid API key' } }));
+  await page.route('**/api/video-jobs', (route) => route.fulfill({ status: 401, json: { error: 'invalid API key' } }));
+  await page.route('**/api/studio/projects', (route) => route.fulfill({ status: 401, json: { error: 'invalid API key' } }));
+  await page.route('**/api/studio/projects/*', (route) => route.fulfill({ status: 401, json: { error: 'invalid API key' } }));
+
+  await page.goto(`/studio?project=${projectID}`);
+
+  await expect(page.getByText('Your saved sign-in is no longer valid. Sign in again to open this cloud project.')).toBeVisible();
+  await expect(page.locator('a[href="/account"]').filter({ hasText: 'Sign in' }).first()).toBeVisible();
+  await expect.poll(() => page.evaluate(() => ({
+    key: localStorage.getItem('mg_api_key'),
+    user: localStorage.getItem('mg_user'),
+    legacy: localStorage.getItem('userData'),
+  }))).toEqual({ key: null, user: null, legacy: null });
+});
+
 test('a restored gallery video is fetched once through the CORS-safe cache and playback stays local', async ({ page }) => {
   const projectID = '58c511e4-9271-49bd-9dfe-3bb7912e6405';
   const assetID = 'd9e60bfd-ad18-4a70-96ba-0e5cb3a4a9c3';

@@ -24,6 +24,18 @@ build-server:
 
 build: build-frontend build-server
 
+i18n-extract:
+	cd frontend && bun scripts/i18n-extract.ts
+
+i18n-check:
+	cd frontend && bun scripts/i18n-check.ts
+
+i18n-fill:
+	cd frontend && python3 scripts/i18n_fill.py --langs all
+
+i18n-build:
+	cd frontend && bun scripts/i18n-build.ts
+
 hooks:
 	git config core.hooksPath .githooks
 

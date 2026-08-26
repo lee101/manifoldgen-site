@@ -506,6 +506,18 @@ func appNZH3Input(req ServiceUsageRequest) map[string]interface{} {
 	return input
 }
 
+// Style LoRAs are selected only by the server-side prompt router. Keeping this
+// out of ServiceUsageRequest prevents clients from naming arbitrary worker
+// weights. Studio 1939's published recipe also requires prompt expansion off.
+func applyH3StyleRoute(input map[string]interface{}, route h3WorkerRoute) {
+	if route.StyleLoRA == "" {
+		delete(input, "style_lora")
+		return
+	}
+	input["style_lora"] = route.StyleLoRA
+	input["structured_prompt"] = false
+}
+
 func handleSFXGeneration(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User) {
 	req.Service = "sfx_generation"
 	req.Kind = "sfx"
@@ -554,9 +566,11 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		handleLocalH3VideoService(ctx, req, user, route)
 		return
 	}
+	input := appNZH3Input(req)
+	applyH3StyleRoute(input, route)
 	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
 	envelope, upstreamStatus, err := callAppNZH3(http.MethodPost, "/api/cogs/run", map[string]interface{}{
-		"template": "minimax-h3", "name": "minimax-h3-shared", "input": appNZH3Input(req),
+		"template": "minimax-h3", "name": "minimax-h3-shared", "input": input,
 	})
 	if err != nil {
 		if isRunPodWorkersQuotaErr(err) && h3LocalCogURL() == "" {
@@ -583,7 +597,7 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		jsonError(ctx, http.StatusInternalServerError, "failed to create video job")
 		return
 	}
-	persisted := persistH3Request(req, appNZH3Input(req))
+	persisted := persistH3Request(req, input)
 	if err := dbConn.UpdateVideoJob(job.ID, "queued", persisted, ""); err != nil {
 		jsonError(ctx, http.StatusInternalServerError, "failed to persist generation input")
 		return
@@ -660,6 +674,7 @@ func callH3Runpod(endpointID, suffix string, method string, input interface{}, o
 
 func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, route h3WorkerRoute) {
 	input := appNZH3Input(req)
+	applyH3StyleRoute(input, route)
 	if err := prepareH3RunpodOutputTarget(input, user.ID); err != nil {
 		log.Printf("[video] prepare hosted output upload failed: %v", err)
 		jsonError(ctx, http.StatusServiceUnavailable, videoGenerationUnavailableMessage)
@@ -710,6 +725,7 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 
 func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, route h3WorkerRoute) {
 	input := appNZH3Input(req)
+	applyH3StyleRoute(input, route)
 	// These keys are persisted for the internal worker only and removed before
 	// the request reaches Cog. They must never be controllable by a client.
 	input["_h3_cog_url"] = route.CogURL
@@ -1471,6 +1487,7 @@ func fallbackRunpodH3ToLocal(job *VideoJob, endpointID, providerJobID, variant s
 	}
 	input["_h3_cog_url"] = route.CogURL
 	input["_h3_variant"] = variant
+	applyH3StyleRoute(input, route)
 	payload, _ := json.Marshal(input)
 	if err := dbConn.UpdateVideoJobProvider(job.ID, "local:sync", "queued", payload); err != nil {
 		log.Printf("[h3] queue fallback persistence failed job=%s: %v", job.ID, err)
@@ -1745,6 +1762,7 @@ func retryH3VideoJob(job *VideoJob) error {
 	}
 
 	route := h3RouteForPrompt(job.Prompt)
+	applyH3StyleRoute(input, route)
 	if route.RunpodEndpointID != "" {
 		delete(input, "_h3_cog_url")
 		input["_h3_variant"] = route.Variant

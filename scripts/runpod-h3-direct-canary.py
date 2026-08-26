@@ -84,6 +84,19 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--endpoint", default=config["endpoints"][0]["id"])
     parser.add_argument("--timeout", type=int, default=2400)
+    parser.add_argument("--workers-max", type=int, default=1)
+    parser.add_argument("--aspect-ratio", default="9:16")
+    parser.add_argument("--seed", type=int, default=20260814)
+    parser.add_argument("--size", choices=("preview", "balanced", "quality"), default="preview")
+    parser.add_argument("--duration", type=float, default=5)
+    parser.add_argument("--steps", type=int, default=8)
+    parser.add_argument("--structured-prompt", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--style-lora", choices=("studio1939",))
+    parser.add_argument("--output-path", type=Path)
+    parser.add_argument("--summary-path", type=Path)
+    parser.add_argument("--leave-active", action="store_true")
+    parser.add_argument("--keep-warm", action="store_true")
+    parser.add_argument("--scale-zero-after", action="store_true")
     parser.add_argument("--prompt", default="Medium waist-up portrait of an adult woman seated beside a window, face occupies about fifteen percent of the frame, natural blinking, subtle head movement")
     args = parser.parse_args()
 
@@ -94,12 +107,12 @@ def main() -> int:
     payload = {
         "input": {
             "prompt": args.prompt,
-            "aspect_ratio": "9:16",
-            "size": "preview",
-            "duration": 5,
-            "steps": 8,
-            "seed": 20260814,
-            "structured_prompt": True,
+            "aspect_ratio": args.aspect_ratio,
+            "size": args.size,
+            "duration": args.duration,
+            "steps": args.steps,
+            "seed": args.seed,
+            "structured_prompt": args.structured_prompt,
             "include_audio": True,
             "output_codec": "webm-av1",
             "encode_quality": 26,
@@ -107,11 +120,16 @@ def main() -> int:
             "_output_public_url": public_url,
         }
     }
+    if args.style_lora:
+        payload["input"]["style_lora"] = args.style_lora
     base = f"https://api.runpod.ai/v2/{args.endpoint}"
     control_url = f"https://rest.runpod.io/v1/endpoints/{args.endpoint}"
     previous_max = int(request_json(control_url, runpod_key).get("workersMax") or 0)
-    activation = {"workersMax": 2, "workersMin": 0, "scalerType": "REQUEST_COUNT", "scalerValue": 1}
-    if previous_max == 0:
+    activation = {
+        "workersMax": max(1, args.workers_max), "workersMin": 1 if args.keep_warm else 0,
+        "scalerType": "REQUEST_COUNT", "scalerValue": 1,
+    }
+    if previous_max == 0 or args.keep_warm:
         request_json(control_url, runpod_key, activation, method="PATCH")
     submitted = None
     for attempt in range(7):
@@ -136,12 +154,13 @@ def main() -> int:
             time.sleep(5)
             state = request_json(base + "/status/" + urllib.parse.quote(job_id, safe=""), runpod_key)
     finally:
-        if previous_max == 0 and state.get("status") in terminal:
+        should_scale_zero = args.scale_zero_after or (previous_max == 0 and not args.leave_active)
+        if should_scale_zero and state.get("status") in terminal:
             health = request_json(base + "/health", runpod_key)
             jobs = health.get("jobs") or {}
             active_jobs = int(jobs.get("inProgress") or 0) + int(jobs.get("inQueue") or 0)
             if active_jobs == 0:
-                request_json(control_url, runpod_key, {"workersMax": 0}, method="PATCH")
+                request_json(control_url, runpod_key, {"workersMin": 0, "workersMax": 0}, method="PATCH")
 
     output = state.get("output") or {}
     artifact = (output.get("outputs") or [{}])[0]
@@ -157,14 +176,31 @@ def main() -> int:
             "total_seconds", "generation_seconds", "face_refine_seconds", "encode_seconds",
             "output_upload_seconds", "output_transport", "output_bytes", "frames", "width", "height",
             "attention_backend", "face_refine",
+            "style_lora",
         )},
         "error": state.get("error"),
     }
-    print(json.dumps(summary, indent=2, sort_keys=True))
+    summary_json = json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    print(summary_json, end="")
+    if args.summary_path:
+        args.summary_path.parent.mkdir(parents=True, exist_ok=True)
+        args.summary_path.write_text(summary_json)
     if state.get("status") != "COMPLETED":
         return 1
     if artifact.get("url") != public_url or artifact.get("data") or metrics.get("output_transport") != "r2-direct":
         raise RuntimeError("RunPod completed without the expected direct-output contract")
+    if args.output_path:
+        args.output_path.parent.mkdir(parents=True, exist_ok=True)
+        download = urllib.request.Request(
+            public_url,
+            headers={"User-Agent": "curl/8.10 ManifoldGen-H3-canary"},
+        )
+        with urllib.request.urlopen(download, timeout=300) as response:
+            body = response.read()
+        expected_sha = str(artifact.get("sha256") or "")
+        if expected_sha and hashlib.sha256(body).hexdigest() != expected_sha:
+            raise RuntimeError("downloaded output SHA-256 does not match worker artifact")
+        args.output_path.write_bytes(body)
     return 0
 
 

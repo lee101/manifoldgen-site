@@ -176,7 +176,6 @@ export default function RelightTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>SOURCE IMAGE · LIGHTING CONTROL · FAL IC-LIGHT V2</div>
       <h1>Same image.<br /><span>A completely different light.</span></h1>
       <p>Upload a photo and redirect its lighting. Pick a direction or describe the mood, and IC-Light v2 rebuilds the illumination while keeping the subject and composition intact.</p>
     </section>

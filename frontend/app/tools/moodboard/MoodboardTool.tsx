@@ -167,7 +167,6 @@ export default function MoodboardTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>REFERENCE FUSION · 2–6 IMAGES · OPENPATHS ROUTING</div>
       <h1>Many references.<br /><span>One fused design.</span></h1>
       <p>Collect two to six images that share a mood, then let a reference-aware model fuse them into a single cohesive composition with one unified visual language.</p>
     </section>
@@ -187,7 +186,7 @@ export default function MoodboardTool() {
           </div>)}
           {refs.length < MAX_REFS && <button type="button" className={styles.addTile} onClick={() => fileInput.current?.click()}><Plus size={20} /></button>}
         </div>}
-        <label className={styles.field}><span>Fusion direction</span><textarea data-testid="moodboard-prompt" value={prompt} maxLength={1200} onChange={(event) => setPrompt(event.target.value)} rows={6} placeholder="Fuse these references into…" /><small>Say what unites the references: palette, medium, era, light, or the single scene they should become.</small></label>
+        <label className={styles.field}><span>Fusion direction</span><textarea data-testid="moodboard-prompt" value={prompt} maxLength={1200} onChange={(event) => setPrompt(event.target.value)} rows={3} placeholder="Fuse these references into…" /><small>Say what unites the references: palette, medium, era, light, or the single scene they should become.</small></label>
         <div className={styles.options}><label><span>Model</span><select value={model} onChange={(event) => setModel(event.target.value as Model)}>
           <option value="nano-banana-2">Nano Banana 2 · $0.16</option>
           <option value="gpt-image-2">GPT Image 2 · $0.24</option>

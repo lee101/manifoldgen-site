@@ -106,7 +106,6 @@ export default function GrokImagineTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || 0.01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>TEXT TO IMAGE · XAI GROK · FAST LANES</div>
       <h1>Type a scene.<br /><span>Grok Imagine renders it.</span></h1>
       <p>A quick, inexpensive image lane powered by xAI. Choose your framing, opt into 2K when the detail matters, and pull up to four takes on the same prompt in one run.</p>
     </section>
@@ -118,7 +117,7 @@ export default function GrokImagineTool() {
           data-testid="grok-imagine-prompt"
           value={prompt}
           maxLength={4000}
-          rows={5}
+          rows={3}
           onChange={(event) => setPrompt(event.target.value)}
           placeholder="a lighthouse on black basalt, storm clouds breaking, long-exposure surf"
         />

@@ -129,7 +129,6 @@ export default function H3ImageTool({ editing = false }: Props) {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}><Sparkles size={14} /> MINIMAX H3 · {editing ? 'REF2VA' : 'FL2VA'}</div>
       <h1>{editing ? <>Edit with references.<br /><span>Keep what matters.</span></> : <>H3, held still.<br /><span>Create a finished frame.</span></>}</h1>
       <p>{editing ? 'Regenerate a source with identity, composition, and geometry preservation—optionally borrowing details from a second reference.' : 'Use H3’s visual world model as a high-detail text-to-image engine, with a short hidden temporal packet distilled into one selected still.'}</p>
     </section>

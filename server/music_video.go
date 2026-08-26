@@ -255,6 +255,7 @@ func submitMusicVideoH3(job *VideoJob, user *User, state musicVideoState) error 
 	req := state.Request
 	input := appNZH3Input(req)
 	route := h3RouteForPrompt(req.Prompt)
+	applyH3StyleRoute(input, route)
 	if route.RunpodEndpointID != "" {
 		logH3Route(req.Prompt, route)
 		if err := prepareH3RunpodOutputTarget(input, user.ID); err != nil {

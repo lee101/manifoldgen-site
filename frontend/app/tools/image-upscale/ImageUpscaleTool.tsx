@@ -140,7 +140,6 @@ export default function ImageUpscaleTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * creditPrice).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>SOURCE IMAGE · CREATIVE UPSCALER · FLAT PRICE</div>
       <h1>Same picture.<br /><span>Twice the resolution.</span></h1>
       <p>Drop in any image and a creative upscaler redraws texture and edge detail at double size — no prompt, no settings, one flat price per run.</p>
     </section>

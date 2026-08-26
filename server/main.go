@@ -64,6 +64,9 @@ func main() {
 	godotenv.Load("../.env")
 
 	devMode = strings.EqualFold(os.Getenv("DEV"), "true")
+	// Light dev skips background subsystems that either email real users or
+	// pay heavy startup cost; DEV_FULL=true restores full parity locally.
+	lightDev := devMode && !strings.EqualFold(os.Getenv("DEV_FULL"), "true")
 	frontendURL = getEnv("FRONTEND_URL", "http://localhost:3000")
 
 	// Initialize database
@@ -82,8 +85,6 @@ func main() {
 	initServices()
 	initUploads()
 	initStudioUpscaleUploadServer()
-	initEmail()
-	initPromptSearch() // Background: loads gobed model + indexes 1.7M prompts
 
 	port := getPort()
 	log.Printf("ManifoldGen server starting on :%d (dev=%v)", port, devMode)
@@ -93,6 +94,17 @@ func main() {
 		log.Fatalf("Server listener error: %v", err)
 	}
 	defer listener.Close()
+
+	// Background work starts only after the listener is bound so a process
+	// that cannot take the port fails immediately instead of loading models
+	// and training indexes before dying on the bind error.
+	if lightDev {
+		log.Printf("Light dev mode: email drip scheduler and gobed search disabled (DEV_FULL=true to enable)")
+	} else {
+		initEmail()
+		initPromptSearch()
+	}
+
 	if err := fasthttp.Serve(listener, requestHandler); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

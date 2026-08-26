@@ -107,7 +107,6 @@ export default function MusicTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}><Music4 size={14} /> MINIMAX MUSIC 3 · SONG GENERATOR</div>
       <h1>Write the song.<br /><span>Get the record.</span></h1>
       <p>Vocals and instrumental together, 32 kHz stereo, up to five minutes. The style caption decides the arrangement; the lyrics decide what gets sung.</p>
     </section>
@@ -119,7 +118,7 @@ export default function MusicTool() {
           <small>Name the genre, instruments, tempo and production character.</small>
         </label>
         <label className={styles.promptLabel}>Lyrics <span className={styles.optional}>optional</span>
-          <textarea data-testid="music-lyrics" value={lyrics} disabled={busy} maxLength={8000} rows={8}
+          <textarea data-testid="music-lyrics" value={lyrics} disabled={busy} maxLength={8000} rows={3}
             onChange={(event) => setLyrics(event.target.value)} placeholder={EXAMPLE_LYRICS} />
           <small>Section tags are added for you if you leave them out, so the whole lyric gets sung. Leave empty for an instrumental.</small>
         </label>

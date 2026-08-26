@@ -1,0 +1,7 @@
+{
+  "confidence": 0.9,
+  "contact_sheet": "01-rabbit-band-contact.jpg",
+  "model": "deepseek-v4-flash-vision-exp",
+  "reason": "B shows anatomical distortions and misplaced objects, breaking coherence",
+  "winner": "A"
+}

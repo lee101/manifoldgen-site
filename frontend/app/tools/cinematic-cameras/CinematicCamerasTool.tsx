@@ -166,7 +166,6 @@ export default function CinematicCamerasTool() {
       </header>
 
       <section className={styles.hero}>
-        <div className={styles.eyebrow}>CAMERA DIRECTION · TWO ENGINES · SHOT PRESETS</div>
         <h1>Direct the camera.<br /><span>The model frames the shot.</span></h1>
         <p>Pick camera moves and lens language as chips, stack up to three per shot, and render through Z-Image or GPT Image 2.</p>
       </section>
@@ -180,7 +179,7 @@ export default function CinematicCamerasTool() {
               data-testid="cinematic-cameras-prompt"
               value={prompt}
               maxLength={4000}
-              rows={5}
+              rows={3}
               onChange={(event) => setPrompt(event.target.value)}
               placeholder="a lighthouse on black basalt in storm light"
             />

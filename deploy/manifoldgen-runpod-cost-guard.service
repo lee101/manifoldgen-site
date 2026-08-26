@@ -1,0 +1,18 @@
+[Unit]
+Description=ManifoldGen conservative RunPod cost guard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=administrator
+Group=administrator
+WorkingDirectory=/opt/manifoldgen-site
+EnvironmentFile=/opt/manifoldgen-site/.env
+StateDirectory=manifoldgen-runpod-guard
+ExecStart=/usr/bin/python3 /opt/manifoldgen-site/scripts/runpod_cost_guard.py --apply --threshold 6
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/manifoldgen-runpod-guard

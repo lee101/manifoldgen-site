@@ -1,0 +1,48 @@
+{
+  "artifact": {
+    "bytes": 1468481,
+    "content_type": "video/webm",
+    "sha256": "64a2c0915271dc424db6c77cc0d7be837e6105ed919d25692617b3724ba23547",
+    "url": "https://manifoldgenstatic.manifoldgen.com/gallery/tests/h3-direct-canary/a0cf61e9-d4ea-41b8-9e4c-ae41259079a0.webm"
+  },
+  "contains_inline_data": false,
+  "delay_ms": 184,
+  "error": null,
+  "execution_ms": 67555,
+  "id": "430de29f-da28-4bda-84b2-faf6f096a732-u2",
+  "metrics": {
+    "attention_backend": "ck",
+    "encode_seconds": 2.904,
+    "face_refine": {
+      "applied": false,
+      "detector_device": "cuda:0",
+      "enabled": true,
+      "error": "",
+      "face_frames": 0,
+      "face_presence_fraction": 0,
+      "first_faces": 0,
+      "first_max_face_fraction": 0,
+      "last_faces": 0,
+      "last_max_face_fraction": 0,
+      "representative_face_fraction": 0,
+      "representative_frame": -1,
+      "sampled_frames": 7,
+      "skip_reason": ""
+    },
+    "face_refine_seconds": 0.827,
+    "frames": 124,
+    "generation_seconds": 59.375,
+    "height": 672,
+    "output_bytes": 1468481,
+    "output_transport": "r2-direct",
+    "output_upload_seconds": 2.763,
+    "style_lora": {
+      "filename": "studio1939-strong.safetensors",
+      "id": "studio1939",
+      "strength": 0.65
+    },
+    "total_seconds": 63.769,
+    "width": 896
+  },
+  "status": "COMPLETED"
+}

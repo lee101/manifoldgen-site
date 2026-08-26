@@ -170,7 +170,6 @@ export default function NanoBananaTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>GEMINI-FLASH IMAGE · TEXT TO IMAGE · REFERENCE EDIT</div>
       <h1>Nano Banana 2.<br /><span>Prompt it. Or re-prompt an image.</span></h1>
       <p>Google&rsquo;s Gemini-flash image model, routed through OpenPaths. Generate from text or drop in a reference and describe the change &mdash; square, portrait, or landscape at 1K or 2K.</p>
     </section>
@@ -186,7 +185,7 @@ export default function NanoBananaTool() {
           {sourceURL && <button type="button" onClick={(event) => { event.stopPropagation(); fileInput.current?.click(); }}><Upload size={13} /> Replace image</button>}
         </div>}
         <label className={styles.field}><span>{mode === 'edit' ? 'Describe the change' : 'Describe the image'}</span>
-          <textarea data-testid="nano-banana-prompt" value={prompt} maxLength={1200} rows={5} onChange={(event) => setPrompt(event.target.value)} placeholder="glass monorail in crisp winter sunlight…" />
+          <textarea data-testid="nano-banana-prompt" value={prompt} maxLength={1200} rows={3} onChange={(event) => setPrompt(event.target.value)} placeholder="glass monorail in crisp winter sunlight…" />
           <small>Name the subject, setting, medium, palette, and light.</small>
         </label>
         <div className={styles.options}>

@@ -99,6 +99,9 @@ export function clearUser() {
   if (!canUseStorage()) return;
   localStorage.removeItem(MG_API_KEY);
   localStorage.removeItem(MG_USER);
+  // Otherwise loadStoredUser() can immediately migrate the rejected key back
+  // from the pre-mg_user cache after an explicit logout or invalid session.
+  localStorage.removeItem('userData');
 }
 
 export function userFromAuthResponse(data: {

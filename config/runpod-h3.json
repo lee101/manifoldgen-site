@@ -1,14 +1,33 @@
 {
-  "image": "ghcr.io/lee101/h3-cog:cu130-20260821-face-upscaler",
+  "image": "ghcr.io/lee101/h3-cog:cu130-20260826-studio1939-r4",
   "dockerStartCmd": ["python", "-u", "/src/rp_handler.py"],
   "env": {
     "H3_ACCEL_PROFILE": "balanced",
     "H3_ATTENTION_BACKEND": "ck",
     "H3_FACE_REFINE_ENABLED": "1",
     "H3_FACE_REFINE_REQUIRED": "0",
-    "H3_MODEL_SET": "fl2va,ref2va,face_refine",
+    "H3_FACE_REFINE_VISION_JUDGE": "1",
+    "H3_FACE_REFINE_GATE_SAMPLES": "7",
+    "H3_FACE_REFINE_PREVIEW_FRAMES": "5",
+    "H3_FACE_REFINE_TARGET_FACE_FRACTION": "0.12",
+    "H3_FACE_REFINE_CROP_FACTOR": "2.2",
+    "H3_FACE_REFINE_CANVAS": "512",
+    "H3_FACE_REFINE_SMALL_STRENGTH": "1.0",
+    "H3_FACE_REFINE_CONDITIONING": "image",
+    "H3_FACE_REFINE_MIN_FACE_FRACTION": "0.07",
+    "H3_FACE_REFINE_DETECTOR": "face_yolov8m.pt",
+    "H3_FACE_REFINE_FALLBACK_DETECTOR": "none",
+    "H3_FACE_JUDGE_URL": "https://openpaths.io/v1/chat/completions",
+    "H3_FACE_JUDGE_MODEL": "deepseek-v4-flash-vision-exp",
+    "H3_FACE_JUDGE_MIN_CONFIDENCE": "0.75",
+    "H3_FACE_REFINE_MIN_DETAIL_GAIN_RATIO": "1.02",
+    "H3_MODEL_SET": "fl2va,ref2va,face_refine,style_loras",
     "H3_LAZY_REF2VA": "1",
-    "H3_LATENT_UPSCALE_ENABLED": "0"
+    "H3_LATENT_UPSCALE_ENABLED": "0",
+    "H3_LATENT_UPSCALER_MODEL": "h3_clean_latent_upscaler_film_epoch200.safetensors"
+  },
+  "forwardEnv": {
+    "H3_FACE_JUDGE_API_KEY": "OPENPATHS_API_KEY"
   },
   "workersMin": 0,
   "idleTimeout": 5,
@@ -47,5 +66,5 @@
       ]
     }
   ],
-  "notes": "Both variants use the native handler and scale to zero after five idle seconds. H100 remains the validated default; REF2VA is an allowed lazy capability so text/video cold starts do not pay its load cost, while image edits load it on demand. r5 can link RunPod's endpoint-level Hugging Face cache directly and pins PinkCherry beta-0.6 to an immutable revision. Enable Comfy-Org/MiniMax-H3 as the normal endpoint's cached model before considering a fixed-cost network volume. A40 remains excluded after second-pass crashes."
+  "notes": "Both variants use the native handler and scale to zero after five idle seconds. H100 remains the validated default; REF2VA is an allowed lazy capability so text/video cold starts do not pay its load cost, while image edits load it on demand. Studio 1939 worker support is allowlisted and pinned to immutable revision 19214d4c3989de6caca673d534d0d4b16b73b0f7; r4 carries the light r16 adapter at 0.8 and rejects arbitrary filenames. Production prompt routing remains disabled: deepseek-v4-flash-vision-exp chose base H3 at 0.90 confidence in all three strong-r64 0.65 matched video pairs, and again chose base at 0.90 on the hard light-r16 0.8 canary because anatomy and requested action degraded. Strong r64 1.0 was also rejected manually on two pairs. The shared H3 base remains resident and the style patch swaps without base-model reload. Face refinement remains preview-gated and preserves the original on missing, failed, or ambiguous judge responses. PinkCherry beta-0.6 remains pinned to an immutable revision. A40 remains excluded after second-pass crashes."
 }

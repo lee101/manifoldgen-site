@@ -253,7 +253,6 @@ export default function InpaintTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}>BRUSH A REGION · PROMPTED EDIT · MASKED COMPOSITE</div>
       <h1>Change one region.<br /><span>Keep everything else pixel-exact.</span></h1>
       <p>Brush the area you want changed, describe the replacement, and the edit is composited back only inside your mask. The rest of the image returns untouched.</p>
     </section>
@@ -270,7 +269,7 @@ export default function InpaintTool() {
           <button type="button" className={styles.ghostButton} onClick={clearMask}><Eraser size={13} /> Clear mask</button>
         </div>}
         <label className={styles.field}><span>Describe the change inside the brushed area</span>
-          <textarea data-testid="inpaint-prompt" value={prompt} maxLength={1200} onChange={(event) => setPrompt(event.target.value)} rows={5} placeholder="Replace the masked region with…" />
+          <textarea data-testid="inpaint-prompt" value={prompt} maxLength={1200} onChange={(event) => setPrompt(event.target.value)} rows={3} placeholder="Replace the masked region with…" />
           <small>Only the brushed region changes; everything outside the mask is composited back untouched.</small>
         </label>
         <button data-testid="inpaint-run" className={styles.run} type="button" disabled={Boolean(busy) || !prompt.trim()} onClick={() => void run()}>{busy ? <Loader2 className={styles.spin} size={18} /> : <WandSparkles size={18} />}{busy ? status : 'Inpaint brushed area'}</button>
@@ -296,7 +295,6 @@ export default function InpaintTool() {
       <div className={styles.exampleCard}>
         <img src={EXAMPLE} alt="Example inpaint source: a lighthouse on black basalt" />
         <div className={styles.exampleCopy}>
-          <span className={styles.eyebrow}>EXAMPLE</span>
           <b>Lighthouse on black basalt</b>
           <p>Brush the sky or the headland, then try one of these prompts on the masked region.</p>
           <div className={styles.chips}>
