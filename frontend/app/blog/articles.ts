@@ -23,6 +23,7 @@ export type BlogBlock =
   | { type: 'code'; text: string }
   | { type: 'callout'; title: string; text: string }
   | { type: 'table'; head: string[]; rows: string[][] }
+  | { type: 'links'; items: { label: string; href: string }[] }
   | { type: 'example'; example: BlogExample }
 
 export type BlogArticle = {
@@ -60,8 +61,12 @@ import { howToUseKling26 } from './content/how-to-use-kling-2-6';
 import { howToUseVeo31 } from './content/how-to-use-veo-3-1';
 import { howToUseSeedance25 } from './content/how-to-use-seedance-2-5';
 import { howToUseSeedance4k } from './content/how-to-use-seedance-4k';
+import { h3ShortFilmsEmberHollowOrbit } from './content/h3-short-films-ember-hollow-orbit';
+import { h3ControlVideoStyleTransfer } from './content/h3-control-video-style-transfer';
 
 export const articles: BlogArticle[] = [
+  h3ControlVideoStyleTransfer,
+  h3ShortFilmsEmberHollowOrbit,
   seedanceKlingVeoComparison,
   bestAiVideoModelForAnime,
   bestAiVideoModelForProductAds,
@@ -71,6 +76,10 @@ export const articles: BlogArticle[] = [
   howToUseVeo31,
   howToUseSeedance25,
   howToUseSeedance4k,
+  aiContentForTiktok,
+  documentaryVideosWithAi,
+  turnPhotoIntoAiVideo,
+  aiProductVideosWithoutAStudio,
   bestAiVideoGeneratorsTested2026,
   mostReliableAiVideoGenerators2026,
   bestAiPrevizToolsForFilmmakers,

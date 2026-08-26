@@ -7,7 +7,7 @@ export const howToUseSeedance4k: BlogArticle = {
   excerpt: 'Seedance 4K runs Seedance 2.0 pinned to native ultra-HD output — one generation, no upscale pass. Here is when native pixels beat upscaling and how to art-direct for them.',
   readTime: '5 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/how-to-use-seedance-4k.jpg',
+  ogImage: '/blog/og/how-to-use-seedance-4k.webp',
   blocks: [
     { type: 'p', text: 'Most "4K AI video" is a 720p render stretched after the fact. Seedance 4K is different: it drives Seedance 2.0 straight into its native ultra-HD tier, so texture, edge detail, and on-screen text exist in the original pixels instead of being invented by a scaler. That costs more per second (from 747 credits for a 4-second clip) and buys the one thing upscalers cannot fake — real resolution where the camera looks.' },
     { type: 'table', head: ['Route', 'Resolution', 'Durations', 'Price'], rows: [

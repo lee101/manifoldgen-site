@@ -149,6 +149,16 @@ function BlockRenderer({ block }: { block: BlogBlock }) {
           </table>
         </div>
       );
+    case 'links':
+      return (
+        <div className="flex flex-wrap gap-3">
+          {block.items.map((item) => (
+            <Link key={item.href} href={item.href} className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[.05] px-4 py-2.5 text-sm font-semibold text-white/80 transition hover:border-white/30 hover:bg-white/[.09] hover:text-white">
+              {item.label} <ArrowRight size={14} />
+            </Link>
+          ))}
+        </div>
+      );
     case 'example':
       return <ExampleBlock example={block.example} />;
   }

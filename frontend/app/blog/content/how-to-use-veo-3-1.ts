@@ -7,7 +7,7 @@ export const howToUseVeo31: BlogArticle = {
   excerpt: 'Google\'s Veo 3.1 is the photorealism benchmark: physics that hold, native dialogue, and 4/6/8-second takes with synced audio. Fast covers drafts at 90 credits; Standard covers finals.',
   readTime: '6 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/how-to-use-veo-3-1.jpg',
+  ogImage: '/blog/og/how-to-use-veo-3-1.webp',
   blocks: [
     { type: 'p', text: 'Veo 3.1 is the model you reach for when the clip must look filmed rather than generated: real-world physics, believable skin and water, and the best native dialogue in the field. On ManifoldGen it runs as image-to-video in two tiers — Fast for iteration, Standard for finals — both with synchronized sound.' },
     { type: 'table', head: ['Route', 'Resolution', 'Durations', 'Price'], rows: [

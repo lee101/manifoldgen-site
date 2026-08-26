@@ -7,7 +7,7 @@ export const howToMakeAiVideoLookReal: BlogArticle = {
   excerpt: 'Realism in AI video comes from imperfection and light physics: handheld shake, mixed color temps, natural exposure, mundane action. Exact prompt language inside.',
   readTime: '9 min read',
   date: '2026-08-18',
-  ogImage: '/blog/og/how-to-make-ai-video-look-real.jpg',
+  ogImage: '/blog/og/how-to-make-ai-video-look-real.webp',
   blocks: [
     { type: 'p', text: 'AI video looks fake for one reason: it is too perfect. Frames are clean, motion is smooth, lighting is flattering, and every shot is composed like a poster. Real footage — the footage models were trained on — is handheld, slightly miss-framed, lit by whatever bulbs were in the room, and mostly shows people doing boring things.' },
     { type: 'p', text: 'So the technique is subtraction plus physics. Remove every "cinematic" word from your vocabulary, then describe how light actually behaves and how an actual camera actually fails. Two passes on real generations below show exactly what that looks like.' },

@@ -7,7 +7,7 @@ export const bestAiPrevizToolsForFilmmakers: BlogArticle = {
   excerpt: 'Previz is the cheapest place on the cost curve to make a mistake. Which ManifoldGen tools actually block shots and look like a film — and which are just prompt toys.',
   readTime: '5 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/best-ai-previz-tools-filmmakers.jpg',
+  ogImage: '/blog/og/best-ai-previz-tools-filmmakers.webp',
   blocks: [
     { type: 'p', text: 'Previz does not need to sell the final pixels — it needs to sell the shot: subject, camera move, lens, timing. The good ManifoldGen previz tools separate prompts from storyboards and give you blocking in seconds, so the job is deciding which tool reads your intent best and keeps a clean pipeline.' },
     { type: 'h2', text: 'The shortlist' },

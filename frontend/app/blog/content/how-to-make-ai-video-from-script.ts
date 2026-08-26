@@ -7,7 +7,7 @@ export const howToMakeAiVideoFromScript: BlogArticle = {
   excerpt: 'Turn a written script into shot-by-shot AI video prompts: extract subject, action, camera, light, and ending per scene line and keep continuity across cuts.',
   readTime: '8 min read',
   date: '2026-08-20',
-  ogImage: '/blog/og/how-to-make-ai-video-from-script.jpg',
+  ogImage: '/blog/og/how-to-make-ai-video-from-script.webp',
   blocks: [
     { type: 'p', text: 'A script is already a prompt list — most people just hand it over whole. Video models generate one shot at a time, four or five seconds each. Feed them three pages of scene description and you get mush. Feed them one formatted line per shot and the edit assembles itself.' },
     { type: 'p', text: 'This guide walks through converting a two-scene script into two prompts, generating both clips with ManifoldGen, and cutting them together into a coherent sequence. The workflow scales to any length: every scene heading becomes one or more shot prompts, never more than one shot per prompt.' },

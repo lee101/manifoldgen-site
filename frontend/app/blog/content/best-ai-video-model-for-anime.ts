@@ -7,7 +7,7 @@ export const bestAiVideoModelForAnime: BlogArticle = {
   excerpt: 'Which served model actually produces anime that looks like anime? Wan for style and budget, Happy Horse for expressive character animation, Kling for audio and multi-shot scenes.',
   readTime: '6 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/best-ai-video-model-for-anime.jpg',
+  ogImage: '/blog/og/best-ai-video-model-for-anime.webp',
   blocks: [
     { type: 'p', text: 'ManifoldGen serves several models that can produce anime-style footage, but they fail differently. Wan is the safe all-rounder for illustration styles at a low price. Happy Horse is built for expressive stylized character motion. Kling 3.0 adds native audio and multi-shot scenes. Seedance handles sakuga-style action when characters must stay coherent through fast cuts. This guide maps each one to the anime jobs it actually wins.' },
     { type: 'h2', text: 'The picks' },

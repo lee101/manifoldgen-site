@@ -7,7 +7,7 @@ export const bestAiVideoGeneratorsTested2026: BlogArticle = {
   excerpt: 'We ran identical prompts through Manifold H3, Seedance 2, Kling 3.0, Veo 3.1, Wan and LTX on real infrastructure — measured speed, prices, and the shots each model wins.',
   readTime: '8 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/best-ai-video-generators-tested-2026.jpg',
+  ogImage: '/blog/og/best-ai-video-generators-tested-2026.webp',
   blocks: [
     { type: 'p', text: 'The only useful way to compare AI video generators is to run the same prompt through each one and look at the output. That is what the ManifoldGen leaderboard does: six categories, six prompts, identical inputs, measured wall-clock time, and per-category winners chosen from the clips you can watch yourself. This article distills the results and names the model for each job.' },
     { type: 'h2', text: 'How the test worked' },

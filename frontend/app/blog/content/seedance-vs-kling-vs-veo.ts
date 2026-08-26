@@ -7,7 +7,7 @@ export const seedanceKlingVeoComparison: BlogArticle = {
   excerpt: 'Three flagship video models on one API: cinematic all-rounder, audio-first multi-shot scenes, and photoreal physical motion. Prices, audio, and the shots each one wins.',
   readTime: '7 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/seedance-vs-kling-vs-veo.jpg',
+  ogImage: '/blog/og/seedance-vs-kling-vs-veo.webp',
   blocks: [
     { type: 'p', text: 'ManifoldGen now serves three flagship video families side by side: Seedance 2 (ByteDance), Kling 3.0 (Kuaishou), and Veo 3.1 (Google). Each has a different center of gravity — cinematic character work, multi-shot scenes with audio, and photoreal physical motion. They share one API key and one prepaid credit balance, so the question is not which platform to use but which model should run which shot.' },
     { type: 'h2', text: 'The short version' },

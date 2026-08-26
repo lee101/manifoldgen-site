@@ -1,5 +1,5 @@
+import { ArrowRight, BookOpen, Images, Sparkles } from 'lucide-react';
 import Link from 'next/link';
-import { ArrowRight, BookOpen, Sparkles } from 'lucide-react';
 import { articles } from './articles';
 
 export const metadata = {
@@ -10,13 +10,13 @@ export const metadata = {
     title: 'ManifoldGen Blog — AI Video Guides',
     description: 'AI video guides with real prompts and real outputs. Generated with ManifoldGen.',
     url: 'https://manifoldgen.com/blog',
-    images: [{ url: 'https://manifoldgen.com/blog/og/index.jpg', width: 1200, height: 630, alt: 'ManifoldGen blog' }],
+    images: [{ url: 'https://manifoldgen.com/blog/og/index.webp', width: 1200, height: 630, alt: 'ManifoldGen blog' }],
   },
   twitter: {
     card: 'summary_large_image' as const,
     title: 'ManifoldGen Blog — AI Video Guides',
     description: 'AI video guides with real prompts and real outputs.',
-    images: ['https://manifoldgen.com/blog/og/index.jpg'],
+    images: ['https://manifoldgen.com/blog/og/index.webp'],
   },
 };
 
@@ -87,6 +87,22 @@ export default function BlogPage() {
             <Link href={`/blog/${featured.slug}`} className="mt-10 inline-flex w-fit items-center gap-2 text-sm font-semibold text-[#bcb2ff] hover:text-white">Read the guide <ArrowRight size={15} /></Link>
           </div>
         </section>
+
+        <Link href="/blog/anime-styles" className="group mt-16 grid overflow-hidden rounded-3xl border border-white/10 bg-white/[.035] transition hover:border-white/20 lg:grid-cols-[.95fr_1.05fr]" aria-labelledby="anime-styles-heading">
+          <div className="flex flex-col justify-between p-7 sm:p-10">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-semibold tracking-[.14em] text-white/60"><Images size={14} /> STYLE EXPLORER</div>
+              <h2 id="anime-styles-heading" className="mt-6 font-display text-3xl font-700 tracking-tight sm:text-4xl">One elf, 1000 anime styles</h2>
+              <p className="mt-5 text-base leading-7 text-white/55">The same prompt re-run a thousand times with only the style modifier changed — art movements, printmaking, retro games, subculture fashion, lighting grades. Filterable gallery with every prompt shown.</p>
+            </div>
+            <span className="mt-10 inline-flex w-fit items-center gap-2 text-sm font-semibold text-[#bcb2ff] group-hover:text-white">Browse the gallery <ArrowRight size={15} /></span>
+          </div>
+          <div className="relative block min-h-[220px] overflow-hidden bg-black lg:min-h-full">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="https://netwrckstatic.netwrck.com/static/uploads/anime-styles/0001-1960s-retro-anime-style.webp" alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover object-top opacity-80 transition group-hover:opacity-100" />
+            <div className="absolute inset-0 bg-gradient-to-r from-[#07070a]/90 via-[#07070a]/20 to-transparent" />
+          </div>
+        </Link>
 
         <section className="mt-16 rounded-3xl border border-[#bcb2ff]/20 bg-[#bcb2ff]/[.05] p-7 sm:p-9" aria-labelledby="creation-guides-heading">
           <div className="flex flex-wrap items-end justify-between gap-4">

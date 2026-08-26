@@ -7,7 +7,7 @@ export const aiVideoApiCostGuide: BlogArticle = {
   excerpt: 'Every model on ManifoldGen, measured in credits and dollars per second: LTX 2 at $0.09 per clip through Veo 3.1 at $0.40/s. With per-second math and the workflow that keeps spend sane.',
   readTime: '7 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/ai-video-api-cost-guide-2026.jpg',
+  ogImage: '/blog/og/ai-video-api-cost-guide-2026.webp',
   blocks: [
     { type: 'p', text: 'AI video APIs stopped being priced per clip — they are priced per second, and the spread is enormous. On ManifoldGen the cheapest real generator (LTX 2) runs about $0.02 per second while the photoreal flagship (Veo 3.1) runs $0.40 per second, a 20x spread across one API key and one credit balance. This is the pricing picture as it stands on the platform, with the math you need to estimate a project before you start.' },
     { type: 'h2', text: 'The per-second table' },

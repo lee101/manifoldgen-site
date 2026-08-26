@@ -7,7 +7,7 @@ export const consistentCharactersAndLocations: BlogArticle = {
   excerpt: 'Consistency across AI shots is a memory problem: build one character sheet, pass it as reference on every shot, repeat descriptors verbatim, fix the rest in edit.',
   readTime: '9 min read',
   date: '2026-07-27',
-  ogImage: '/blog/og/consistent-characters-and-locations.jpg',
+  ogImage: '/blog/og/consistent-characters-and-locations.webp',
   blocks: [
     { type: 'p', text: 'Every narrative AI video hits the same wall: shot one gives you a perfect character, and by shot four she has a different face, jacket, and hairline. Video models have no memory between generations. Consistency is not something you ask for — it is a system you build around the model: one reference image, one frozen descriptor block, and an edit pass that absorbs the last twenty percent.' },
     { type: 'p', text: 'This guide builds that system. The running example is a field botanist who appears in two locations — a bioluminescent moss cave and a jungle trail — generated from the same character sheet. You need an image model for the reference sheet and a video tool that accepts image references, such as /studio.' },

@@ -7,7 +7,7 @@ export const howToUseKling3: BlogArticle = {
   excerpt: 'Kling 3.0 turns prompts and stills into multi-shot cinematic clips with native synced audio. Here is how to prompt it, which tier to pick, and what each setting costs.',
   readTime: '6 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/how-to-use-kling-3.jpg',
+  ogImage: '/blog/og/how-to-use-kling-3.webp',
   blocks: [
     { type: 'p', text: 'Kling 3.0 is the strongest Kling release for narrative work: it plans multiple shots inside one generation, keeps characters consistent across them, and ships native synced audio — dialogue, ambience, and effects — without a post pass. On ManifoldGen it runs in two tiers (Standard and Pro) with text-to-video and image-to-video routes for each. This guide covers when each tier earns its price, how to prompt for multi-shot scenes, and the settings that actually change the output.' },
     { type: 'table', head: ['Route', 'Resolution', 'Durations', 'Price'], rows: [

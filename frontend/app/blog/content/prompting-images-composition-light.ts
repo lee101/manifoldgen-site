@@ -7,7 +7,7 @@ export const promptingImagesCompositionLight: BlogArticle = {
   excerpt: 'Use subject, framing, lens, light, and material cues in the order an image model can actually use them.',
   readTime: '5 min read',
   date: '2026-07-02',
-  ogImage: '/blog/og/prompting-images-composition-light.jpg',
+  ogImage: '/blog/og/prompting-images-composition-light.webp',
   blocks: [
     { type: 'p', text: 'Image prompts work best when they establish the frame before decorating it. A model can use “three-quarter portrait, subject on the right third, hard side light” as a set of visual constraints. It has less to do with whether the prompt sounds poetic.' },
     {

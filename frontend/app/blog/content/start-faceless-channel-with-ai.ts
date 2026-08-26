@@ -7,7 +7,7 @@ export const startFacelessChannelWithAi: BlogArticle = {
   excerpt: 'A faceless channel is an asset pipeline: pick a repeatable niche, generate voiceover and b-roll in batches, build loops that monetize, ship on a calendar.',
   readTime: '8 min read',
   date: '2026-07-30',
-  ogImage: '/blog/og/start-faceless-channel-with-ai.jpg',
+  ogImage: '/blog/og/start-faceless-channel-with-ai.webp',
   blocks: [
     { type: 'p', text: 'A faceless channel is not a channel without you on camera; it is a channel where every asset is replaceable. Voiceover, b-roll, music, thumbnail — none of it depends on your presence, which means all of it can be generated, batched, and scheduled. That is the entire advantage: you compete on consistency of output, not charisma.' },
     { type: 'p', text: 'This guide walks through niche selection, a three-asset pipeline (voiceover plus generated visuals plus music), a batching workflow for a weekly calendar, and the format decisions per platform — vertical for Shorts and TikTok, 16:9 for YouTube long-form. You need a video generation tool such as /studio, a voiceover tool, and two to three hours per week.' },

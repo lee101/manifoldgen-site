@@ -7,7 +7,7 @@ export const promptingVideoMotionCameraLanguage: BlogArticle = {
   excerpt: 'A repeatable structure for turning a visual idea into camera motion, subject action, lighting, and a clean ending.',
   readTime: '6 min read',
   date: '2026-07-09',
-  ogImage: '/blog/og/prompting-video-motion-camera-language.jpg',
+  ogImage: '/blog/og/prompting-video-motion-camera-language.webp',
   blocks: [
     { type: 'p', text: 'A strong video prompt gives the model a shot to perform. Start with what is in frame, then say what moves, how the camera moves, how the light behaves, and where the shot should settle. The model does not need a screenplay; it needs a coherent visual event.' },
     {

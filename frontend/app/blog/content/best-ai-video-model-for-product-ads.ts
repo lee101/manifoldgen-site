@@ -7,7 +7,7 @@ export const bestAiVideoModelForProductAds: BlogArticle = {
   excerpt: 'Product ads have different needs from narrative: logo locks, packshot realism, camera moves, and exact end frames. Three models worth paying for, and when.',
   readTime: '6 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/best-ai-video-model-for-product-ads.jpg',
+  ogImage: '/blog/og/best-ai-video-model-for-product-ads.webp',
   blocks: [
     { type: 'p', text: 'Product advertising punishes different models differently. The still must hold identity, the motion must feel physical, and the end frame must land on the exact packshot. ManifoldGen covers all of these but no single model is the best at all of them — the practical pattern is draft with LTX, move to Seedance or Manifold, finish with Manifold keyframes.' },
     { type: 'table', head: ['Job', 'Model', 'Why'], rows: [

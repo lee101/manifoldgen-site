@@ -7,7 +7,7 @@ export const aiProductVideosWithoutAStudio: BlogArticle = {
   excerpt: 'Skip the light table and crew: prompt AI product videos with precise material language, one hero move, controlled reflections, and seamless loops built for ads.',
   readTime: '7 min read',
   date: '2026-08-03',
-  ogImage: '/blog/og/ai-product-videos-without-a-studio.jpg',
+  ogImage: '/blog/og/ai-product-videos-without-a-studio.webp',
   blocks: [
     { type: 'p', text: 'A product video used to mean a light table, a macro rig, and a day of crew time. AI video replaces most of that — but only if you prompt like a cinematographer instead of a marketer. Commercial product footage has a grammar: the product described precisely enough to render its actual material, one hero move, reflections that look placed rather than accidental, and a loop clean enough to run as an ad. This guide gives you that grammar with a real generation.' },
     { type: 'p', text: 'The example below is a four-second luxury loop of a perfume bottle — no camera, no studio, generated in ManifoldGen. The prompts are copyable.' },

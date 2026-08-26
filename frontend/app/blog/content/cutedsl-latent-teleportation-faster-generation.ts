@@ -7,7 +7,7 @@ export const cutedslLatentTeleportation: BlogArticle = {
   excerpt: 'A practical mental model for moving work through a generative pipeline without paying the full cost of rebuilding every intermediate representation.',
   readTime: '8 min read',
   date: '2026-07-16',
-  ogImage: '/blog/og/cutedsl-latent-teleportation-faster-generation.jpg',
+  ogImage: '/blog/og/cutedsl-latent-teleportation-faster-generation.webp',
   blocks: [
     { type: 'p', text: 'Generative workloads are often described as if the model is the whole system. In practice, the slow part can be the movement around the model: loading weights, translating formats, copying tensors, waiting for a worker, and throwing away an intermediate that another stage could have reused.' },
     { type: 'p', text: 'CuteDSL is a useful way to think about that boundary. A small, declarative description of the work can travel through a system while the expensive representation stays close to the accelerator. The goal is not clever syntax; it is keeping orchestration cheap and inference busy.' },

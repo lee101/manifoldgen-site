@@ -7,7 +7,7 @@ export const documentaryVideosWithAi: BlogArticle = {
   excerpt: 'Build documentary-style videos with AI the way editors actually work: stills first, Ken Burns motion second, archival looks, narration-first structure, honest labeling.',
   readTime: '8 min read',
   date: '2026-08-11',
-  ogImage: '/blog/og/documentary-videos-with-ai.jpg',
+  ogImage: '/blog/og/documentary-videos-with-ai.webp',
   blocks: [
     { type: 'p', text: 'Documentary is the one genre where AI video fails if you start with video. Long clips drift, faces mutate, and period detail dissolves after a few seconds. The workflow that holds up inverts the order: generate archival-quality stills, lock the look on those frames, then add restrained motion on top. You get the Ken Burns grammar audiences already accept from real documentaries, plus full control over every composition before anything moves.' },
     { type: 'p', text: 'This guide walks the full pipeline — narration script, still generation, animation, and ethical labeling — using a real example: a 1930s shipyard sequence built from one generated press photograph. Everything runs in ManifoldGen; the prompts are copyable.' },

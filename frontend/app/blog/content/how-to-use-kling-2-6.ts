@@ -7,7 +7,7 @@ export const howToUseKling26: BlogArticle = {
   excerpt: 'Kling 2.6 Pro is the value tier of the Kling line: reliable motion, native audio, and 1080p at roughly two-thirds of Kling 3.0 pricing. Here is where it wins and how to prompt it.',
   readTime: '5 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/how-to-use-kling-2-6.jpg',
+  ogImage: '/blog/og/how-to-use-kling-2-6.webp',
   blocks: [
     { type: 'p', text: 'Not every shot needs the flagship. Kling 2.6 Pro is the previous-generation tier fal still serves because it earns its keep: dependable single-subject motion, native synced audio, and 1080p output at 14 credits a second — about two-thirds of Kling 3.0 Pro\'s rate. For social cuts, product loops, and animating stills on a budget, it is frequently indistinguishable in the final edit.' },
     { type: 'table', head: ['Route', 'Resolution', 'Durations', 'Price'], rows: [

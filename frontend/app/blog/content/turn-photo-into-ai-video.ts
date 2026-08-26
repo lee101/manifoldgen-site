@@ -7,7 +7,7 @@ export const turnPhotoIntoAiVideo: BlogArticle = {
   excerpt: 'Turn any photo into a living AI video: pick source images that animate well, prompt motion that belongs to the scene, and keep identity perfectly stable.',
   readTime: '6 min read',
   date: '2026-08-07',
-  ogImage: '/blog/og/turn-photo-into-ai-video.jpg',
+  ogImage: '/blog/og/turn-photo-into-ai-video.webp',
   blocks: [
     { type: 'p', text: 'Image-to-video is the highest-leverage feature in AI video: one good photograph in, a few seconds of believable life out. It is also where most attempts fail, because people ask for motion the scene cannot support. A portrait does not need the camera to orbit — it needs an ear to twitch and the background bokeh to breathe. This guide covers choosing a source photo that animates cleanly, writing motion prompts that belong to the scene, and keeping the subject recognizably the same.' },
     { type: 'p', text: 'The example below animates a single personal-style photo into a four-second clip. The same pipeline works for portraits, pets, product shots, and landscapes in ManifoldGen.' },

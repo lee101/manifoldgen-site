@@ -7,7 +7,7 @@ export const mostReliableAiVideoGenerators2026: BlogArticle = {
   excerpt: 'Reliability is not model polish — it is consistent output, sensible failure modes, and pricing that does not surprise. Which ManifoldGen models deliver that in 2026.',
   readTime: '6 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/most-reliable-ai-video-generators-2026.jpg',
+  ogImage: '/blog/og/most-reliable-ai-video-generators-2026.webp',
   blocks: [
     { type: 'p', text: 'When you are building a pipeline, "best looking output" matters less than "ships a clip every time." Reliability is about deterministic request shapes, honest pricing, and failure modes you can catch. On ManifoldGen all of these are served through one API with a stable job model: submit, poll, download — so reliability is mostly about choosing the right lane per job.' },
     { type: 'h2', text: 'The reliable cores' },

@@ -7,7 +7,7 @@ export const cameraMovementAnglesAndLenses: BlogArticle = {
   excerpt: 'Stop asking for "cinematic" and start directing: exact prompt language for dollies, orbits, cranes, focal lengths, and angles that video models actually follow.',
   readTime: '9 min read',
   date: '2026-07-23',
-  ogImage: '/blog/og/camera-movement-angles-and-lenses.jpg',
+  ogImage: '/blog/og/camera-movement-angles-and-lenses.webp',
   blocks: [
     { type: 'p', text: 'Most disappointing AI clips fail at the camera, not the subject. "Cinematic shot of a car" gives the model permission to invent everything about framing and motion, so you get a slow float toward nothing in particular. The fix is to direct the camera the way a shot list does: one move, one angle, one lens feel, stated plainly.' },
     { type: 'p', text: 'This guide uses three real generations of the same subject — a red convertible on a salt flat at sunrise — where only the final camera sentence changes. Everything below was generated with ManifoldGen preview-tier clips; the prompts are copyable.' },

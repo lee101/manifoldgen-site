@@ -7,7 +7,7 @@ export const aiContentForTiktok: BlogArticle = {
   excerpt: 'Generate AI video that performs on TikTok: vertical-native 9:16 prompts, a hook in the first second, seamless loops, and batch variation workflows.',
   readTime: '7 min read',
   date: '2026-08-14',
-  ogImage: '/blog/og/ai-content-for-tiktok.jpg',
+  ogImage: '/blog/og/ai-content-for-tiktok.webp',
   blocks: [
     { type: 'p', text: 'TikTok punishes landscape video twice: once when the letterboxed frame shrinks on the For You page, and again when the viewer has to rotate or squint. Generate vertical from the start — aspect 9:16 in every prompt — and compose for a phone held in one hand.' },
     { type: 'p', text: 'This guide covers the four things that separate AI clips that travel from AI clips that die at 200 views: native vertical composition, a hook inside the first second, loop-ability, and batching enough variations to let the algorithm choose.' },

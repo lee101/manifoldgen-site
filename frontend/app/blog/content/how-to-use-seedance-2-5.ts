@@ -7,7 +7,7 @@ export const howToUseSeedance25: BlogArticle = {
   excerpt: 'Seedance 2.5 plans a whole shot at once: coherent single takes up to 30 seconds, synced speech and music, and up to 50 multimodal references. Here is how to drive it.',
   readTime: '6 min read',
   date: '2026-08-24',
-  ogImage: '/blog/og/how-to-use-seedance-2-5.jpg',
+  ogImage: '/blog/og/how-to-use-seedance-2-5.webp',
   blocks: [
     { type: 'p', text: 'Most video models think in five-second fragments; Seedance 2.5 thinks in scenes. It reasons about the entire take before rendering — so motion, lighting, and identity hold from first frame to last — and it generates synchronized speech, music, and effects natively. On ManifoldGen it runs as text-to-video, image-to-video, and a reference route that locks characters and sets across the whole clip.' },
     { type: 'table', head: ['Route', 'Resolution', 'Durations', 'Price'], rows: [
