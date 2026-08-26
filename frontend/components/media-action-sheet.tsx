@@ -1,13 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { X } from 'lucide-react';
-
-export type SheetAction = {
-  label: string;
-  icon?: ReactNode;
-  onClick: () => void;
-};
+import { Fragment, useEffect, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
 export function hapticFeedback(ms = 15) {
   try {
@@ -19,7 +12,7 @@ export function hapticFeedback(ms = 15) {
 
 export function copyText(value: string) {
   if (navigator.clipboard && window.isSecureContext) {
-    void navigator.clipboard.writeText(value).catch(() => undefined);
+    navigator.clipboard.writeText(value).catch(() => undefined);
     return true;
   }
   const input = document.createElement('textarea');
@@ -50,10 +43,13 @@ export function downloadMedia(url: string) {
   anchor.remove();
 }
 
+export type PressPoint = { x: number; y: number };
+
 // Per-row handler factory for lists: create once with useMemo, spread the
 // returned object onto each row. Avoids hooks-in-loop while giving every row
-// its own press tracking keyed by the target value.
-export function createLongPressRegistry<T>(onFire: (target: T) => void, delayMs = 450) {
+// its own press tracking keyed by the target value. Fires with the pointer
+// position so callers can anchor a context menu at the cursor or finger.
+export function createLongPressRegistry<T>(onFire: (target: T, at: PressPoint) => void, delayMs = 450) {
   let timer: number | null = null;
   let startX = 0;
   let startY = 0;
@@ -74,7 +70,7 @@ export function createLongPressRegistry<T>(onFire: (target: T) => void, delayMs 
         timer = null;
         firedAt = Date.now();
         hapticFeedback();
-        onFire(target);
+        onFire(target, { x: startX, y: startY });
       }, delayMs);
     },
     onPointerMove(event: ReactPointerEvent) {
@@ -90,130 +86,167 @@ export function createLongPressRegistry<T>(onFire: (target: T) => void, delayMs 
         event.stopPropagation();
       }
     },
-    onContextMenu(event: { preventDefault: () => void }) {
+    onContextMenu(event: ReactMouseEvent<HTMLElement>) {
       event.preventDefault();
       firedAt = Date.now();
-      onFire(target);
+      onFire(target, { x: event.clientX, y: event.clientY });
     },
   });
 }
 
-// Single-target hook variant with identical semantics.
-export function useLongPress(onLongPress: () => void, delayMs = 450) {
-  const timer = useRef<number | null>(null);
-  const start = useRef<{ x: number; y: number } | null>(null);
-  const firedAt = useRef(0);
+export type ContextMenuItem = {
+  label: string;
+  detail?: string;
+  icon?: ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+};
 
-  const clear = useCallback(() => {
-    if (timer.current) {
-      window.clearTimeout(timer.current);
-      timer.current = null;
-    }
-    start.current = null;
-  }, []);
+export type ContextMenuGroup = {
+  label?: string;
+  // Compact three-column row for browser-style actions.
+  row?: boolean;
+  items: ContextMenuItem[];
+};
 
-  useEffect(() => clear, [clear]);
-
-  const swallowPostPressClick = useCallback((event: { stopPropagation: () => void; preventDefault: () => void }) => {
-    if (Date.now() - firedAt.current < 650) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }, []);
-
-  return {
-    onPointerDown: useCallback(
-      (event: ReactPointerEvent) => {
-        if (event.pointerType !== 'touch') return;
-        clear();
-        start.current = { x: event.clientX, y: event.clientY };
-        timer.current = window.setTimeout(() => {
-          timer.current = null;
-          start.current = null;
-          firedAt.current = Date.now();
-          hapticFeedback();
-          onLongPress();
-        }, delayMs);
-      },
-      [clear, delayMs, onLongPress],
-    ),
-    onPointerMove: useCallback(
-      (event: ReactPointerEvent) => {
-        if (!start.current) return;
-        if (Math.abs(event.clientX - start.current.x) > 10 || Math.abs(event.clientY - start.current.y) > 10) clear();
-      },
-      [clear],
-    ),
-    onPointerUp: clear,
-    onPointerCancel: clear,
-    onPointerLeave: clear,
-    onClickCapture: swallowPostPressClick,
-    onContextMenu: useCallback(
-      (event: { preventDefault: () => void }) => {
-        event.preventDefault();
-        firedAt.current = Date.now();
-        onLongPress();
-      },
-      [onLongPress],
-    ),
-  };
-}
-
-export function MediaActionSheet({
-  open,
-  title,
-  actions,
+// Cursor-anchored replacement for native right-click menus. Never fullscreen:
+// the panel hugs the pointer and clamps to the viewport like a native menu.
+// Escape, scroll, resize, blur, click-away, and another right-click close it so
+// browser navigation shortcuts stay reachable.
+export function MediaContextMenu({
+  x,
+  y,
+  label,
+  groups,
   onClose,
 }: {
-  open: boolean;
-  title: string;
-  actions: SheetAction[];
+  x: number;
+  y: number;
+  label: string;
+  groups: ContextMenuGroup[];
   onClose: () => void;
 }) {
   useEffect(() => {
-    if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
+    const close = () => onClose();
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    window.addEventListener('resize', close);
+    window.addEventListener('blur', close);
+    document.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('blur', close);
+      document.removeEventListener('scroll', close, true);
+    };
+  }, [onClose]);
 
-  if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60 p-3 backdrop-blur-sm sm:items-center"
-      onClick={(event) => event.target === event.currentTarget && onClose()}
+      className="fixed inset-0 z-[80]"
+      onPointerDown={onClose}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
     >
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title.slice(0, 80) || 'Media actions'}
-        className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#12121a] p-2 shadow-2xl shadow-black/50"
+        data-testid="media-context-menu"
+        role="menu"
+        aria-label={label.slice(0, 120)}
+        className="fixed max-h-[calc(100dvh-16px)] w-60 overflow-x-hidden overflow-y-auto rounded-lg border border-[#353a44] bg-[#14171c]/[.98] p-[5px] shadow-[0_16px_50px_rgba(0,0,0,.55)] backdrop-blur-md"
+        style={{ left: x, top: y }}
+        ref={(el) => {
+          if (!el) return;
+          el.style.left = `${Math.max(8, Math.min(x, window.innerWidth - el.offsetWidth - 8))}px`;
+          el.style.top = `${Math.max(8, Math.min(y, window.innerHeight - el.offsetHeight - 8))}px`;
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-2 px-2 pb-1 pt-2">
-          <p className="line-clamp-2 min-w-0 flex-1 text-left text-xs leading-snug text-white/55">{title}</p>
-          <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-1 text-white/60 hover:bg-white/10 hover:text-white">
-            <X size={16} />
-          </button>
-        </div>
-        <div className="grid gap-1 pt-1">
-          {actions.map((action) => (
-            <button
-              key={action.label}
-              type="button"
-              onClick={() => {
-                onClose();
-                action.onClick();
-              }}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium text-white hover:bg-white/10"
-            >
-              {action.icon}
-              <span>{action.label}</span>
-            </button>
-          ))}
-        </div>
+        {groups.map((group, index) => (
+          <Fragment key={group.label || index}>
+            {index > 0 && <div role="separator" className="mx-[3px] my-1 h-px bg-white/10" />}
+            {group.label && (
+              <p className="px-2 pb-0.5 pt-1 text-[9px] font-extrabold uppercase tracking-[.12em] text-white/35">{group.label}</p>
+            )}
+            <div className={group.row ? 'grid grid-cols-3 gap-[2px]' : 'grid gap-[1px]'}>
+              {group.items.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  role="menuitem"
+                  disabled={item.disabled}
+                  onClick={() => {
+                    onClose();
+                    item.onClick?.();
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium ${
+                    group.row ? 'flex-col justify-center gap-0.5 py-2' : ''
+                  } ${item.danger ? 'text-red-300 hover:bg-red-500/15' : 'text-white hover:bg-white/10'} disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent`}
+                >
+                  {item.icon}
+                  <span className="min-w-0">
+                    <b className="block truncate font-semibold">{item.label}</b>
+                    {item.detail && !group.row && (
+                      <small className="block truncate text-[10px] font-normal leading-tight text-white/40">{item.detail}</small>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </Fragment>
+        ))}
       </div>
     </div>
   );
+}
+
+const GALLERY_CDN_HOST = 'manifoldgenstatic.manifoldgen.com';
+
+// Gallery bytes live on a separate CDN origin; route fetches through our
+// same-origin proxy so CORS can never fail the clipboard write.
+function sameOriginGalleryURL(url: string) {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.hostname === GALLERY_CDN_HOST && parsed.pathname.startsWith('/gallery/')) {
+      return `/api/gallery-assets/${parsed.pathname.slice('/gallery/'.length)}?v=1`;
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+async function fetchImageBlob(url: string): Promise<Blob> {
+  const response = await fetch(sameOriginGalleryURL(url), { cache: 'force-cache' });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.blob();
+}
+
+async function imageBlobAsPNG(blob: Blob): Promise<Blob> {
+  if (blob.type === 'image/png') return blob;
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((encoded) => (encoded ? resolve(encoded) : reject(new Error('PNG encode failed'))), 'image/png');
+  });
+}
+
+// Clipboard write starts synchronously with a Promise-valued PNG so Safari
+// keeps the user-gesture window open while the bytes load.
+export async function copyImageToClipboard(url: string): Promise<boolean> {
+  if (!url || !window.isSecureContext || typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) return false;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': fetchImageBlob(url).then(imageBlobAsPNG) })]);
+    return true;
+  } catch {
+    return false;
+  }
 }

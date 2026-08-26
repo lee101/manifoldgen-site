@@ -91,6 +91,16 @@ func loadSharedSearchModel() (*gobed.EmbeddingModel, error) {
 	return sharedSearchModel.model, sharedSearchModel.err
 }
 
+// newLocalSearchEngine keeps datasets up to 100k on the exact flat index,
+// skipping gobed's IVF training pass that re-embeds a training sample on CPU
+// at every boot. A 27k-prompt exact scan costs milliseconds.
+func newLocalSearchEngine(model *gobed.EmbeddingModel) *gobed.SearchEngine {
+	return gobed.NewSearchEngineWithConfig(model, gobed.SearchConfig{
+		AutoMode:           true,
+		MaxExactSearchSize: 100000,
+	})
+}
+
 func initPromptSearch() {
 	promptSearch = &PromptSearchEngine{}
 	videoSearch = &VideoSearchEngine{}
@@ -147,7 +157,7 @@ func (ps *PromptSearchEngine) loadAndIndex() {
 	}
 	log.Printf("[search] Loaded %d image prompts in %v", len(prompts), time.Since(t0))
 
-	engine := gobed.NewAutoSearchEngine(model)
+	engine := newLocalSearchEngine(model)
 	if len(prompts) > 0 {
 		ids := make([]int, len(prompts))
 		for i := range ids {
@@ -209,18 +219,32 @@ func (ps *PromptSearchEngine) Stats() map[string]any {
 	return out
 }
 
-func (ps *PromptSearchEngine) Search(query string, topK int) ([]SearchResult, error) {
+// SearchPage returns one page of nearest prompts plus whether another page
+// exists. has_more is computed before database hydration because visibility
+// filters can shrink a page without exhausting the index.
+func (ps *PromptSearchEngine) SearchPage(query string, topK, offset int) ([]SearchResult, bool, error) {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 	if !ps.ready || ps.engine == nil {
-		return nil, nil
+		return nil, false, nil
 	}
-	hits, err := ps.engine.Search(query, topK)
+	if offset < 0 {
+		offset = 0
+	}
+	hits, err := ps.engine.Search(query, offset+topK+1)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	out := make([]SearchResult, 0, len(hits))
-	for _, r := range hits {
+	if offset >= len(hits) {
+		return []SearchResult{}, false, nil
+	}
+	hasMore := len(hits) > offset+topK
+	end := offset + topK
+	if end > len(hits) {
+		end = len(hits)
+	}
+	out := make([]SearchResult, 0, end-offset)
+	for _, r := range hits[offset:end] {
 		if r.ID < 0 || r.ID >= len(ps.prompts) {
 			continue
 		}
@@ -230,7 +254,7 @@ func (ps *PromptSearchEngine) Search(query string, topK int) ([]SearchResult, er
 			Similarity: r.Similarity,
 		})
 	}
-	return out, nil
+	return out, hasMore, nil
 }
 
 func (vs *VideoSearchEngine) loadAndIndex() {

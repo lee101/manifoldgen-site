@@ -68,9 +68,11 @@ export default async function CuratedSearchPage({ params }: PageParams) {
           <h1 className="mt-4 font-display text-4xl font-700 tracking-tight md:text-6xl">{entry.title}</h1>
           <p className="mt-5 text-lg leading-8 text-white/70">{entry.blurb}</p>
         </section>
-        <section className="mt-10">
-          <SearchGallery query={entry.query} initial={initial} />
-        </section>
+      </div>
+      <section className="mt-2 w-full">
+        <SearchGallery query={entry.query} initial={initial} />
+      </section>
+      <div className="mx-auto max-w-7xl px-5 pb-16">
         <section className="mt-12">
           <h2 className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Related searches</h2>
           <div className="mt-4 flex flex-wrap gap-2">

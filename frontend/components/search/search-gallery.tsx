@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { copyText, createLongPressRegistry, downloadMedia, MediaActionSheet } from '../media-action-sheet';
+import { ArrowLeft, ArrowRight, Clapperboard, Copy, Download, ExternalLink, RotateCw } from 'lucide-react';
+import { ContextMenuItem, MediaContextMenu, copyImageToClipboard, copyText, createLongPressRegistry, downloadMedia } from '../media-action-sheet';
 
 export interface SearchImage {
   id: string;
@@ -48,23 +49,83 @@ function studioHref(img: SearchImage) {
   return `/studio?image_url=${encodeURIComponent(img.image_url || img.thumb_url || '')}&name=${encodeURIComponent(img.prompt.slice(0, 80))}`;
 }
 
+const PAGE_SIZE = 48;
+const FIRST_PAGE = 24;
+
 export default function SearchGallery({ query, initial }: { query: string; initial?: SearchImage[] }) {
-  const [images, setImages] = useState<SearchImage[]>(() => (initial ? normalizeSearchImages(initial).slice(0, 24) : []));
+  const [images, setImages] = useState<SearchImage[]>(() => (initial ? normalizeSearchImages(initial).slice(0, FIRST_PAGE) : []));
   const [state, setState] = useState<LoadState>(initial ? 'ready' : 'loading');
-  const [sheetImage, setSheetImage] = useState<SearchImage | null>(null);
-  const sheetPress = useMemo(
-    () => createLongPressRegistry((img: SearchImage) => setSheetImage(img)),
+  const [fetching, setFetching] = useState(false);
+  const [menuImage, setMenuImage] = useState<{ img: SearchImage; x: number; y: number } | null>(null);
+  const exhausted = useRef(false);
+  const inFlight = useRef(false);
+  const offsetRef = useRef(initial ? Math.min(initial.length, FIRST_PAGE) : 0);
+  const seen = useRef<Set<string>>(new Set());
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const menuPress = useMemo(
+    () => createLongPressRegistry((img: SearchImage, at) => setMenuImage({ img, x: at.x, y: at.y })),
     [],
   );
+
+  const mergeImages = useCallback((rows: SearchImage[]) => {
+    const fresh = rows.filter((img) => img.id && !seen.current.has(img.id));
+    for (const img of fresh) seen.current.add(img.id);
+    if (fresh.length) setImages((prev) => [...prev, ...fresh]);
+  }, []);
+
+  const loadMore = useCallback(async () => {
+    if (inFlight.current || exhausted.current) return;
+    inFlight.current = true;
+    setFetching(true);
+    try {
+      const res = await fetch(
+        `/api/images/semantic?q=${encodeURIComponent(query)}&top_k=${PAGE_SIZE}&offset=${offsetRef.current}`,
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const rows: SearchImage[] = normalizeSearchImages(data.results || data.images || []);
+      offsetRef.current += PAGE_SIZE;
+      mergeImages(rows);
+      if (data.has_more === false || rows.length === 0) exhausted.current = true;
+    } catch {
+      // Network hiccup: allow a retry on the next intersection instead of
+      // permanently disabling the feed.
+    } finally {
+      inFlight.current = false;
+      setFetching(false);
+      // Appending results can leave the sentinel inside the observer's margin
+      // without a new intersection transition, so re-check it explicitly.
+      const node = sentinelRef.current;
+      if (node && !exhausted.current) {
+        const rect = node.getBoundingClientRect();
+        if (rect.top < window.innerHeight + 1600 && rect.bottom > -1600) {
+          window.setTimeout(() => void loadMore(), 40);
+        }
+      }
+    }
+  }, [mergeImages, query]);
+
+  useEffect(() => {
+    const onScroll = () => {
+      const node = sentinelRef.current;
+      if (!node || exhausted.current || inFlight.current) return;
+      const rect = node.getBoundingClientRect();
+      if (rect.top < window.innerHeight + 1600 && rect.bottom > -1600) void loadMore();
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [loadMore]);
 
   useEffect(() => {
     if (initial) return;
     let alive = true;
-    fetch(`/api/images/semantic?q=${encodeURIComponent(query)}&top_k=24`)
+    fetch(`/api/images/semantic?q=${encodeURIComponent(query)}&top_k=${FIRST_PAGE}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
       .then((data) => {
         if (!alive) return;
-        setImages(normalizeSearchImages(data.results || data.images || []).slice(0, 24));
+        const rows = normalizeSearchImages(data.results || data.images || []).slice(0, FIRST_PAGE);
+        for (const img of rows) seen.current.add(img.id);
+        setImages(rows);
         setState('ready');
       })
       .catch(() => {
@@ -75,10 +136,24 @@ export default function SearchGallery({ query, initial }: { query: string; initi
     };
   }, [initial, query]);
 
+  useEffect(() => {
+    void loadMore();
+    const node = sentinelRef.current;
+    if (!node || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadMore();
+      },
+      { rootMargin: '1600px 0px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadMore]);
+
   if (state === 'loading') {
     return (
-      <div className="grid grid-cols-2 gap-[1px] bg-black sm:grid-cols-3 lg:grid-cols-4">
-        {Array.from({ length: 12 }, (_, i) => (
+      <div className="grid grid-cols-2 gap-[1px] bg-black sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
+        {Array.from({ length: 16 }, (_, i) => (
           <div key={i} className="aspect-[3/4] animate-pulse bg-white/[0.04]" />
         ))}
       </div>
@@ -97,7 +172,7 @@ export default function SearchGallery({ query, initial }: { query: string; initi
   return (
     <>
       <p className="pb-3 text-xs uppercase tracking-[0.16em] text-white/45">{images.length} images</p>
-      <div className="grid grid-cols-2 gap-[1px] bg-black sm:grid-cols-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-[1px] bg-black sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
         {images.map((img) => {
           const src = img.thumb_url || img.image_url;
           if (!src) return null;
@@ -109,7 +184,7 @@ export default function SearchGallery({ query, initial }: { query: string; initi
               className="group relative overflow-hidden bg-[#0c0c12]"
               title={img.prompt}
               style={{ aspectRatio: ratio }}
-              {...sheetPress(img)}
+              {...menuPress(img)}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -128,18 +203,55 @@ export default function SearchGallery({ query, initial }: { query: string; initi
           );
         })}
       </div>
-      {sheetImage && (
-        <MediaActionSheet
-          open
-          title={sheetImage.prompt || 'Image'}
-          actions={[
-            { label: 'Open in Studio', icon: <span aria-hidden className="text-white/70">↗</span>, onClick: () => window.location.assign(studioHref(sheetImage)) },
-            { label: 'Copy prompt', icon: <span aria-hidden className="text-white/70">⧉</span>, onClick: () => void copyText(sheetImage.prompt) },
-            { label: 'Download image', icon: <span aria-hidden className="text-white/70">↓</span>, onClick: () => downloadMedia(sheetImage.image_url || sheetImage.thumb_url || '') },
-          ]}
-          onClose={() => setSheetImage(null)}
-        />
-      )}
+      <div ref={sentinelRef} aria-hidden className="h-px w-full" />
+      <div className="flex justify-center py-8">
+        {fetching ? (
+          <span className="text-xs uppercase tracking-[0.16em] text-white/45">Loading more…</span>
+        ) : exhausted.current ? null : (
+          <button
+            type="button"
+            onClick={() => void loadMore()}
+            className="rounded-full border border-white/20 px-5 py-2 text-sm text-white/75 transition hover:border-white/40 hover:text-white"
+          >
+            Load more
+          </button>
+        )}
+      </div>
+      {menuImage && (() => {
+        const src = menuImage.img.image_url || menuImage.img.thumb_url || '';
+        const imageItems: ContextMenuItem[] = [];
+        if (src) {
+          imageItems.push(
+            { label: 'Copy image', detail: 'Paste into any app or post', icon: <Copy size={15} />, onClick: () => void copyImageToClipboard(src) },
+            { label: 'Open image', detail: 'Full resolution in a new tab', icon: <ExternalLink size={15} />, onClick: () => window.open(src, '_blank', 'noopener') },
+            { label: 'Download image', detail: 'Save the original file', icon: <Download size={15} />, onClick: () => downloadMedia(src) },
+          );
+        }
+        imageItems.push(
+          { label: 'Copy prompt', detail: 'Paste it into any generator', icon: <Copy size={15} />, onClick: () => void copyText(menuImage.img.prompt) },
+          { label: 'Open in Studio', detail: 'Edit this image on a timeline', icon: <Clapperboard size={15} />, onClick: () => window.location.assign(studioHref(menuImage.img)) },
+        );
+        return (
+          <MediaContextMenu
+            x={menuImage.x}
+            y={menuImage.y}
+            label={menuImage.img.prompt || 'Gallery image'}
+            onClose={() => setMenuImage(null)}
+            groups={[
+              {
+                label: 'Browser',
+                row: true,
+                items: [
+                  { label: 'Back', icon: <ArrowLeft size={15} />, onClick: () => window.history.back() },
+                  { label: 'Forward', icon: <ArrowRight size={15} />, onClick: () => window.history.forward() },
+                  { label: 'Reload', icon: <RotateCw size={15} />, onClick: () => window.location.reload() },
+                ],
+              },
+              { label: 'Image', items: imageItems },
+            ]}
+          />
+        );
+      })()}
     </>
   );
 }

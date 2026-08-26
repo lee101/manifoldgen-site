@@ -1216,10 +1216,20 @@ func serveStaticFile(ctx *fasthttp.RequestCtx, path string) bool {
 }
 
 func serveStatic(ctx *fasthttp.RequestCtx, path string) {
-	// Try to serve from frontend build output.
+	// Precomputed localized pages (/de/…): real files under DIST_DIR/<lang>/.
+	// Unknown localized URLs are hard 404s instead of the English SPA fallback,
+	// which would otherwise publish duplicate-content soft 404s.
+	if lang, rest := i18nLangOf(path); lang != "" {
+		if handleLocalizedStatic(ctx, lang, rest) {
+			return
+		}
+		serveLocalized404(ctx)
+		return
+	}
 	if path == "/" {
 		path = "/index.html"
 	}
+	// Try to serve from frontend build output.
 	if serveStaticFile(ctx, path) {
 		return
 	}
@@ -1495,11 +1505,15 @@ func handleSemanticImageSearch(ctx *fasthttp.RequestCtx) {
 	if topK < 1 || topK > 200 {
 		topK = 24
 	}
+	offset, _ := strconv.Atoi(string(ctx.QueryArgs().Peek("offset")))
+	if offset < 0 || offset > 5000 {
+		offset = 0
+	}
 	if promptSearch == nil || !promptSearch.IsReady() {
 		jsonError(ctx, 503, "image search engine not ready")
 		return
 	}
-	results, err := promptSearch.Search(query, topK)
+	results, hasMore, err := promptSearch.SearchPage(query, topK, offset)
 	if err != nil {
 		jsonError(ctx, 500, "search failed")
 		return
@@ -1530,10 +1544,12 @@ func handleSemanticImageSearch(ctx *fasthttp.RequestCtx) {
 	}
 	setPublicGalleryCache(ctx)
 	jsonResponse(ctx, 200, map[string]interface{}{
-		"query":   query,
-		"results": rows,
-		"count":   len(rows),
-		"kind":    "images",
+		"query":    query,
+		"offset":   offset,
+		"results":  rows,
+		"count":    len(rows),
+		"has_more": hasMore,
+		"kind":     "images",
 	})
 }
 

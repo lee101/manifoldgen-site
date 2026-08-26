@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
+  ArrowLeft,
+  ArrowRight,
   Clapperboard,
   ClipboardPaste,
   Copy,
   Download,
+  ExternalLink,
   Play,
   CreditCard,
   ChevronLeft,
@@ -22,6 +25,7 @@ import {
   Mic2,
   Music2,
   Paperclip,
+  RotateCw,
   Search,
   Settings2,
   Sparkles,
@@ -41,7 +45,7 @@ import {
 } from '../lib/auth';
 import { friendlyError, parseJSONResponse } from '../lib/http';
 import { ManifoldLoader } from '../components/manifold-loader';
-import { copyText, createLongPressRegistry, downloadMedia, MediaActionSheet, type SheetAction } from '../components/media-action-sheet';
+import { ContextMenuItem, MediaContextMenu, copyImageToClipboard, copyText, createLongPressRegistry, downloadMedia } from '../components/media-action-sheet';
 import {
   h3Dimensions,
   loopAnchorURL,
@@ -263,7 +267,7 @@ export default function HomePage() {
   const [galleryHasMore, setGalleryHasMore] = useState(true);
   const [galleryLoadingMore, setGalleryLoadingMore] = useState(false);
   const [backgroundRemovingID, setBackgroundRemovingID] = useState('');
-  const [gallerySheetItem, setGallerySheetItem] = useState<GalleryFeedItem | null>(null);
+  const [galleryMenu, setGalleryMenu] = useState<{ item: GalleryFeedItem; x: number; y: number } | null>(null);
   const [featuredVideos, setFeaturedVideos] = useState<VideoHit[]>([]);
   const [featuredHasMore, setFeaturedHasMore] = useState(true);
   const [searchQ, setSearchQ] = useState('');
@@ -920,38 +924,42 @@ export default function HomePage() {
     }
   }
 
-  function buildGallerySheetActions(item: GalleryFeedItem): SheetAction[] {
+  function buildGalleryMenuActions(item: GalleryFeedItem): ContextMenuItem[] {
     if (item.kind === 'video') {
       const video = item.video;
-      const actions: SheetAction[] = [];
+      const actions: ContextMenuItem[] = [];
       if (video.video_url) {
-        actions.push({ label: 'Play', icon: <Play size={16} />, onClick: () => playVideo(video) });
-        actions.push({ label: 'Open in editor', icon: <Clapperboard size={16} />, onClick: () => openGalleryVideoInStudio(video) });
+        actions.push({ label: 'Play', icon: <Play size={15} />, onClick: () => playVideo(video) });
+        actions.push({ label: 'Open in editor', detail: 'Timeline project with this clip', icon: <Clapperboard size={15} />, onClick: () => openGalleryVideoInStudio(video) });
         actions.push({
           label: 'Transform',
-          icon: <WandSparkles size={16} />,
+          detail: 'Restyle the video from a prompt',
+          icon: <WandSparkles size={15} />,
           onClick: () => window.location.assign(`/studio?video_url=${encodeURIComponent(new URL(video.video_url!, window.location.origin).toString())}&name=${encodeURIComponent(video.prompt || 'Gallery video')}&restyle=1`),
         });
-        actions.push({ label: 'Download video', icon: <Download size={16} />, onClick: () => downloadMedia(video.video_url!) });
+        actions.push({ label: 'Download video', detail: 'Save the original file', icon: <Download size={15} />, onClick: () => downloadMedia(video.video_url!) });
       }
-      actions.push({ label: 'Copy prompt', icon: <Copy size={16} />, onClick: () => void copyText(item.prompt) });
+      actions.push({ label: 'Copy prompt', detail: 'Paste it into any generator', icon: <Copy size={15} />, onClick: () => void copyText(item.prompt) });
       return actions;
     }
     const img = item.image;
     const fullSize = img.image_url || item.src || '';
-    const actions: SheetAction[] = [
-      { label: 'Open in editor', icon: <Clapperboard size={16} />, onClick: () => openGalleryImageInStudio(img) },
-      { label: 'Generate video', icon: <Sparkles size={16} />, onClick: () => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: img.image_url || img.thumb_url }); } },
-      { label: 'Use as start frame', icon: <ImageIcon size={16} />, onClick: () => useGalleryImageAsStartFrame(img) },
-      { label: 'Prompt for similar', icon: <Sparkles size={16} />, onClick: () => promptForSimilar(item.prompt) },
-    ];
+    const actions: ContextMenuItem[] = [];
+    if (fullSize) {
+      actions.push({ label: 'Copy image', detail: 'Paste into any app or post', icon: <Copy size={15} />, onClick: () => void copyImageToClipboard(fullSize).then((copied) => !copied && setError('Could not copy the image')) });
+      actions.push({ label: 'Open image', detail: 'Full resolution in a new tab', icon: <ExternalLink size={15} />, onClick: () => window.open(fullSize, '_blank', 'noopener') });
+      actions.push({ label: 'Download image', detail: 'Save the original file', icon: <Download size={15} />, onClick: () => downloadMedia(fullSize) });
+    }
     actions.push(
+      { label: 'Copy prompt', detail: 'Paste it into any generator', icon: <Copy size={15} />, onClick: () => void copyText(item.prompt) },
+      { label: 'Open in editor', detail: 'Timeline project with this frame', icon: <Clapperboard size={15} />, onClick: () => openGalleryImageInStudio(img) },
+      { label: 'Generate video', detail: 'Animate this image', icon: <Sparkles size={15} />, onClick: () => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: img.image_url || img.thumb_url }); } },
+      { label: 'Use as start frame', detail: 'Anchor your own shot on it', icon: <ImageIcon size={15} />, onClick: () => useGalleryImageAsStartFrame(img) },
+      { label: 'Prompt for similar', detail: 'Reuse the prompt text', icon: <Sparkles size={15} />, onClick: () => promptForSimilar(item.prompt) },
       backgroundRemovingID === img.id
-        ? { label: 'Removing background…', icon: <Loader2 className="animate-spin" size={16} />, onClick: () => undefined }
-        : { label: 'Remove BG', icon: <WandSparkles size={16} />, onClick: () => void removeGalleryBackground(img) },
+        ? { label: 'Removing background…', icon: <Loader2 className="animate-spin" size={15} /> }
+        : { label: 'Remove BG', detail: 'Transparent cutout copy', icon: <WandSparkles size={15} />, onClick: () => void removeGalleryBackground(img) },
     );
-    actions.push({ label: 'Copy prompt', icon: <Copy size={16} />, onClick: () => void copyText(item.prompt) });
-    if (fullSize) actions.push({ label: 'Download image', icon: <Download size={16} />, onClick: () => downloadMedia(fullSize) });
     return actions;
   }
 
@@ -1126,8 +1134,8 @@ export default function HomePage() {
     }
     return columns;
   }, [galleryColumns, galleryFeed]);
-  const gallerySheetPress = useMemo(
-    () => createLongPressRegistry((item: GalleryFeedItem) => setGallerySheetItem(item)),
+  const galleryMenuPress = useMemo(
+    () => createLongPressRegistry((item: GalleryFeedItem, at) => setGalleryMenu({ item, x: at.x, y: at.y })),
     [],
   );
   const imageFrames = useMemo(() => assets.filter((asset) => asset.kind === 'image'), [assets]);
@@ -1622,7 +1630,7 @@ export default function HomePage() {
                     data-testid={`home-search-${hit.kind}-${hit.id}`}
                     onClick={() => hit.kind === 'video' ? playVideo(hit.video) : selectGalleryImage(hit.image)}
                     className="group relative aspect-video overflow-hidden rounded-xl bg-white/5 text-left"
-                    {...gallerySheetPress(hit)}
+                    {...galleryMenuPress(hit)}
                   >
                     {hit.kind === 'video' ? (
                       <video
@@ -1678,10 +1686,10 @@ export default function HomePage() {
             {galleryColumnsFeed.map((column, columnIndex) => (
               <div key={columnIndex} className="flex min-w-0 flex-1 flex-col gap-[1px]">
                 {column.map((item) => {
+              const flipPanelLeft = columnIndex >= galleryColumnsFeed.length - 1;
               if (item.kind === 'video') {
-                const flipPanelLeft = columnIndex >= galleryColumnsFeed.length - 1;
                 return (
-                  <div key={`video-${item.id}`} data-testid={`gallery-video-${item.id}`} className="group relative aspect-video bg-[#0c0c12]" onMouseEnter={(event) => { event.currentTarget.querySelector('video')?.play().catch(() => undefined); }} onMouseLeave={(event) => { const vid = event.currentTarget.querySelector('video'); if (vid) { vid.pause(); vid.currentTime = 0; } }} {...gallerySheetPress(item)}>
+                  <div key={`video-${item.id}`} data-testid={`gallery-video-${item.id}`} className="group relative aspect-video bg-[#0c0c12]" onMouseEnter={(event) => { event.currentTarget.querySelector('video')?.play().catch(() => undefined); }} onMouseLeave={(event) => { const vid = event.currentTarget.querySelector('video'); if (vid) { vid.pause(); vid.currentTime = 0; } }} {...galleryMenuPress(item)}>
                     <div className="absolute inset-0 overflow-hidden">
                       <button type="button" aria-label="Play gallery video" onClick={() => playVideo(item.video)} className="absolute inset-0 h-full w-full text-left">
                         <video src={item.video.video_url} muted loop playsInline preload="none" className="h-full w-full object-cover transition duration-700 group-hover:scale-105" />
@@ -1713,10 +1721,11 @@ export default function HomePage() {
               return (
                 <div
                   key={img.id}
-                  className="gallery-card group relative overflow-hidden bg-[#0c0c12]"
-                  {...gallerySheetPress(item)}
+                  className="group relative bg-[#0c0c12]"
+                  data-testid={`gallery-image-${img.id}`}
+                  {...galleryMenuPress(item)}
                 >
-                  <button type="button" onClick={() => selectGalleryImage(img)} className="relative block w-full" title={img.prompt} style={{ aspectRatio: imgRatio }}>
+                  <button type="button" onClick={() => selectGalleryImage(img)} className="relative block w-full overflow-hidden" title={img.prompt} style={{ aspectRatio: imgRatio }}>
                   {src ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -1730,18 +1739,28 @@ export default function HomePage() {
                     />
                   ) : null}
                   </button>
-                  <div className="pointer-events-none absolute inset-0 z-[5] bg-black/70 opacity-0 backdrop-blur-sm transition group-hover:opacity-100" />
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 hidden p-3 pb-40 text-left text-xs leading-snug text-white/90 opacity-0 transition group-hover:opacity-100 sm:block md:text-sm">
-                    {img.prompt.slice(0, 140)}
-                  </div>
                   {src ? (
-                    <div className="absolute inset-x-3 bottom-3 z-10 grid grid-cols-2 gap-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
-                      <button type="button" onClick={() => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: img.image_url || img.thumb_url }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
-                      <button type="button" onClick={() => useGalleryImageAsStartFrame(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><ImageIcon size={13} />Use as start frame</button>
-                      <button type="button" onClick={() => promptForSimilar(img.prompt)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Sparkles size={13} />Prompt for similar</button>
-                      <button type="button" onClick={() => openGalleryImageInStudio(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Open in editor</button>
-                      <button type="button" disabled={backgroundRemovingID === img.id} onClick={() => void removeGalleryBackground(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/70 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black disabled:opacity-60">{backgroundRemovingID === img.id ? <Loader2 className="animate-spin" size={13} /> : <WandSparkles size={13} />}Remove BG</button>
-                    </div>
+                    <>
+                      <div className={`pointer-events-none absolute top-1/2 z-30 hidden w-56 -translate-y-1/2 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100 sm:block ${flipPanelLeft ? 'right-full pr-1' : 'left-full pl-1'}`}>
+                        <div className="rounded-xl border border-white/10 bg-[#0a0a10]/95 p-2.5 shadow-2xl">
+                          <p className="line-clamp-3 text-xs leading-snug text-white/85">{item.prompt}</p>
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <button type="button" onClick={() => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: img.image_url || img.thumb_url }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
+                            <button type="button" onClick={() => useGalleryImageAsStartFrame(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><ImageIcon size={13} />Use as start frame</button>
+                            <button type="button" onClick={() => promptForSimilar(img.prompt)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Sparkles size={13} />Prompt for similar</button>
+                            <button type="button" onClick={() => openGalleryImageInStudio(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Open in editor</button>
+                            <button type="button" disabled={backgroundRemovingID === img.id} onClick={() => void removeGalleryBackground(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black disabled:opacity-60">{backgroundRemovingID === img.id ? <Loader2 className="animate-spin" size={13} /> : <WandSparkles size={13} />}Remove BG</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="absolute inset-x-3 bottom-3 z-10 grid grid-cols-2 gap-2 sm:hidden">
+                        <button type="button" onClick={() => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: img.image_url || img.thumb_url }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-black/75 px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
+                        <button type="button" onClick={() => useGalleryImageAsStartFrame(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><ImageIcon size={13} />Use as start frame</button>
+                        <button type="button" onClick={() => promptForSimilar(img.prompt)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Sparkles size={13} />Prompt for similar</button>
+                        <button type="button" onClick={() => openGalleryImageInStudio(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Open in editor</button>
+                        <button type="button" disabled={backgroundRemovingID === img.id} onClick={() => void removeGalleryBackground(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black disabled:opacity-60">{backgroundRemovingID === img.id ? <Loader2 className="animate-spin" size={13} /> : <WandSparkles size={13} />}Remove BG</button>
+                      </div>
+                    </>
                   ) : null}
                 </div>
               );
@@ -1756,12 +1775,24 @@ export default function HomePage() {
           ) : galleryFeed.length > 0 ? <span className="text-xs text-white/35">All gallery media loaded</span> : null}
         </div>
       </section>}
-      {gallerySheetItem && (
-        <MediaActionSheet
-          open
-          title={gallerySheetItem.prompt || 'Media'}
-          actions={buildGallerySheetActions(gallerySheetItem)}
-          onClose={() => setGallerySheetItem(null)}
+      {galleryMenu && (
+        <MediaContextMenu
+          x={galleryMenu.x}
+          y={galleryMenu.y}
+          label={galleryMenu.item.prompt || 'Gallery media'}
+          onClose={() => setGalleryMenu(null)}
+          groups={[
+            {
+              label: 'Browser',
+              row: true,
+              items: [
+                { label: 'Back', icon: <ArrowLeft size={15} />, onClick: () => window.history.back() },
+                { label: 'Forward', icon: <ArrowRight size={15} />, onClick: () => window.history.forward() },
+                { label: 'Reload', icon: <RotateCw size={15} />, onClick: () => window.location.reload() },
+              ],
+            },
+            { label: galleryMenu.item.kind === 'video' ? 'Video' : 'Image', items: buildGalleryMenuActions(galleryMenu.item) },
+          ]}
         />
       )}
       {settingsOpen && (
