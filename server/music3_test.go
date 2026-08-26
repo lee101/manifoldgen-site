@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +16,52 @@ func TestMusic3PublicPriceUSD(t *testing.T) {
 		if got := music3PublicPriceUSD(duration); math.Abs(got-want) > 0.000001 {
 			t.Fatalf("duration %d price = %.2f, want %.2f", duration, got, want)
 		}
+	}
+}
+
+func TestMusic3ServiceTiers(t *testing.T) {
+	for tier, want := range map[string]float64{"standard": 0.40, "fast": 0.60, "xfast": 0.80} {
+		if got := music3PublicPriceUSDForTier(60, tier); math.Abs(got-want) > 0.000001 {
+			t.Fatalf("%s price = %.2f, want %.2f", tier, got, want)
+		}
+	}
+	if _, err := normalizeMusic3ServiceTier("turbo"); err == nil {
+		t.Fatal("accepted invalid service tier")
+	}
+}
+
+func TestMusic3EndpointByTier(t *testing.T) {
+	t.Setenv("MUSIC3_RUNPOD_ENDPOINT_ID", "standard-id")
+	t.Setenv("MUSIC3_FAST_RUNPOD_ENDPOINT_ID", "fast-id")
+	t.Setenv("MUSIC3_XFAST_RUNPOD_ENDPOINT_ID", "xfast-id")
+	for tier, want := range map[string]string{"standard": "standard-id", "fast": "fast-id", "xfast": "xfast-id"} {
+		if got := music3EndpointIDForTier(tier); got != want {
+			t.Fatalf("%s endpoint = %q, want %q", tier, got, want)
+		}
+	}
+}
+
+func TestMusic3CapacityUsesCurrentPatchEndpointAPI(t *testing.T) {
+	var method, path, body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		method, path = request.Method, request.URL.Path
+		raw := make([]byte, request.ContentLength)
+		_, _ = request.Body.Read(raw)
+		body = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	t.Setenv("H3_RUNPOD_API_KEY", "test-key")
+	t.Setenv("H3_RUNPOD_CONTROL_URL", server.URL)
+	if err := music3ApplyCapacity("music-id", false); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPatch || path != "/endpoints/music-id" {
+		t.Fatalf("capacity request = %s %s", method, path)
+	}
+	if !strings.Contains(body, `"workersMin":0`) || !strings.Contains(body, `"idleTimeout":20`) {
+		t.Fatalf("unexpected capacity body: %s", body)
 	}
 }
 

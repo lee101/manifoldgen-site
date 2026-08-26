@@ -32,7 +32,7 @@ test('API docs show concrete video resolution and duration prices', async ({ pag
   await expect(page.getByText('4 credits per image', { exact: true })).toBeVisible();
   await expect(page.getByText('estimate returned by API')).toHaveCount(0);
   await expect(page.getByText(/Fetch current estimates/)).toHaveCount(0);
-  const docs = await page.locator('body').innerText();
+  const docs = await page.locator('main').innerText();
   expect(docs).toContain('"service": "video"');
   expect(docs).toContain('"service": "image"');
   expect(docs).not.toMatch(/zimage|h3_video|\bH3\b|OmniServe|backend/i);

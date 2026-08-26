@@ -7,6 +7,7 @@ import { loadStoredUser, refreshUser, saveUser, StoredUser } from '../../../lib/
 import styles from './page.module.css';
 
 type Phase = 'idle' | 'queued' | 'processing' | 'done' | 'error';
+type ServiceTier = 'standard' | 'fast' | 'xfast';
 type JobPayload = {
   job?: {
     status?: string;
@@ -18,9 +19,16 @@ type JobPayload = {
 const EXAMPLE_PROMPT = 'House remix, EDM techno at 128 BPM, old-school electro bass, saxophone hook, electric guitar stabs, wide club production';
 const EXAMPLE_LYRICS = '[Verse]\nThere is a house in New Orleans\nThey call the Rising Sun\n[Chorus]\nOh mother tell your children\nNot to do what I have done';
 const DURATIONS = [30, 60, 90, 120, 180, 240, 300];
+const TIERS: { id: ServiceTier; name: string; multiplier: number; detail: string }[] = [
+  { id: 'standard', name: 'Standard', multiplier: 1, detail: 'Best value · scale-to-zero' },
+  { id: 'fast', name: 'Fast', multiplier: 1.5, detail: 'More burst capacity' },
+  { id: 'xfast', name: 'XFast', multiplier: 2, detail: 'Isolated priority queue' },
+];
 
-function priceUSD(duration: number) {
-  return Math.max(0.35, Math.round((0.25 + (0.15 * duration) / 60) * 100) / 100);
+function priceUSD(duration: number, tier: ServiceTier) {
+  const base = Math.max(0.35, Math.round((0.25 + (0.15 * duration) / 60) * 100) / 100);
+  const multiplier = TIERS.find((option) => option.id === tier)?.multiplier || 1;
+  return Math.round(base * multiplier * 100) / 100;
 }
 
 async function jsonResponse<T>(response: Response, fallback: string): Promise<T> {
@@ -34,6 +42,7 @@ export default function MusicTool() {
   const [prompt, setPrompt] = useState('');
   const [lyrics, setLyrics] = useState('');
   const [duration, setDuration] = useState(60);
+  const [serviceTier, setServiceTier] = useState<ServiceTier>('standard');
   const [phase, setPhase] = useState<Phase>('idle');
   const [status, setStatus] = useState('Describe the track');
   const [audioURL, setAudioURL] = useState('');
@@ -54,7 +63,7 @@ export default function MusicTool() {
       const queued = await jsonResponse<{ result?: { job_id?: string; status_url?: string }; estimated_cost_usd?: number }>(
         await fetch('/api/service', {
           method: 'POST', headers: { Authorization: `Bearer ${user.api_key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ service: 'music', prompt: prompt.trim(), lyrics: lyrics.trim(), duration }),
+          body: JSON.stringify({ service: 'music', prompt: prompt.trim(), lyrics: lyrics.trim(), duration, service_tier: serviceTier }),
         }),
         'Could not start music generation',
       );
@@ -122,11 +131,18 @@ export default function MusicTool() {
           <button type="button" className={styles.example} disabled={busy}
             onClick={() => { setPrompt(EXAMPLE_PROMPT); setLyrics(EXAMPLE_LYRICS); }}>Use the example</button>
         </div>
+        <div className={styles.tiers} role="radiogroup" aria-label="Generation speed">
+          {TIERS.map((tier) => <button key={tier.id} type="button" role="radio" aria-checked={serviceTier === tier.id}
+            data-testid={`music-tier-${tier.id}`} disabled={busy} className={serviceTier === tier.id ? styles.tierActive : ''}
+            onClick={() => setServiceTier(tier.id)}>
+            <span>{tier.name}<b>{tier.multiplier === 1 ? '1×' : `${tier.multiplier}×`}</b></span><small>{tier.detail}</small>
+          </button>)}
+        </div>
         <button data-testid="music-run" className={styles.run} type="button" disabled={busy || prompt.trim().length < 10}
           onClick={() => void generate()}>
           {busy ? <LoaderCircle className={styles.spin} size={19} /> : <Sparkles size={18} />}{busy ? status : 'Generate track'}
         </button>
-        <div className={styles.price}><span>Estimate · ${priceUSD(duration).toFixed(2)}</span><span>Charged after a successful render</span></div>
+        <div className={styles.price}><span>Estimate · ${priceUSD(duration, serviceTier).toFixed(2)}</span><span>{serviceTier === 'standard' ? 'Lowest cost · may cold start' : serviceTier === 'fast' ? 'Higher concurrency when queues form' : 'Separate queue from standard jobs'}</span></div>
         {phase === 'error' && <div data-testid="music-error" className={styles.error}>{status}</div>}
       </div>
       <div className={styles.previewPanel}>

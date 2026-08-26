@@ -67,10 +67,11 @@ func recordMusic3Event(event, jobID string, detail map[string]interface{}) {
 }
 
 type music3StoredRequest struct {
-	Prompt   string `json:"prompt"`
-	Lyrics   string `json:"lyrics,omitempty"`
-	Duration int    `json:"duration"`
-	Seed     int64  `json:"seed"`
+	Prompt      string `json:"prompt"`
+	Lyrics      string `json:"lyrics,omitempty"`
+	Duration    int    `json:"duration"`
+	Seed        int64  `json:"seed"`
+	ServiceTier string `json:"service_tier,omitempty"`
 }
 
 type music3RunpodStatus struct {
@@ -89,6 +90,66 @@ type music3RunpodStatus struct {
 
 func music3EndpointID() string {
 	return strings.TrimSpace(os.Getenv("MUSIC3_RUNPOD_ENDPOINT_ID"))
+}
+
+func normalizeMusic3ServiceTier(value string) (string, error) {
+	tier := strings.ToLower(strings.TrimSpace(value))
+	if tier == "" {
+		tier = "standard"
+	}
+	if tier != "standard" && tier != "fast" && tier != "xfast" {
+		return "", fmt.Errorf("service_tier must be standard, fast, or xfast")
+	}
+	return tier, nil
+}
+
+func music3TierMultiplier(tier string) float64 {
+	switch tier {
+	case "fast":
+		return 1.5
+	case "xfast":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func music3EndpointIDForTier(tier string) string {
+	if tier == "xfast" {
+		if endpointID := strings.TrimSpace(os.Getenv("MUSIC3_XFAST_RUNPOD_ENDPOINT_ID")); endpointID != "" {
+			return endpointID
+		}
+	}
+	if tier == "fast" {
+		if endpointID := strings.TrimSpace(os.Getenv("MUSIC3_FAST_RUNPOD_ENDPOINT_ID")); endpointID != "" {
+			return endpointID
+		}
+	}
+	return music3EndpointID()
+}
+
+func music3TierWorkersMax(tier string) int {
+	if tier == "fast" {
+		return 2
+	}
+	return 1
+}
+
+// Prepare the requested capacity lane with RunPod's current endpoint API.
+// Fast expands burst concurrency on the shared lane; XFast can use an isolated
+// endpoint so it does not sit behind the standard queue. Both remain
+// scale-to-zero, so merely offering a faster lane has no standing GPU cost.
+func music3PrepareEndpoint(endpointID, tier string) error {
+	return h3ControlRequest(
+		http.MethodPatch,
+		h3ControlBase()+"/endpoints/"+url.PathEscape(endpointID),
+		map[string]interface{}{
+			"workersMin": 0, "workersMax": music3TierWorkersMax(tier),
+			"idleTimeout": music3IdleTimeoutSeconds, "flashboot": true,
+			"scalerType": "REQUEST_COUNT", "scalerValue": 1,
+		},
+		nil,
+	)
 }
 
 func music3GPUUSDPerHour() float64 {
@@ -143,6 +204,10 @@ func music3PublicPriceUSD(duration int) float64 {
 	return math.Round(price*100) / 100
 }
 
+func music3PublicPriceUSDForTier(duration int, tier string) float64 {
+	return math.Round(music3PublicPriceUSD(duration)*music3TierMultiplier(tier)*100) / 100
+}
+
 func music3PromptGuard(prompt, lyrics string) error {
 	combined := strings.ToLower(prompt + "\n" + lyrics)
 	for _, phrase := range []string{
@@ -169,8 +234,12 @@ func music3UploadTarget(userID string) (string, string, error) {
 	return uploadURL, fmt.Sprintf("https://%s/%s", r2PublicHost, objectKey), nil
 }
 
-func submitMusic3Job(user *User, prompt, lyrics string, duration int) (*VideoJob, error) {
-	endpointID := music3EndpointID()
+func submitMusic3Job(user *User, prompt, lyrics string, duration int, serviceTier string) (*VideoJob, error) {
+	tier, err := normalizeMusic3ServiceTier(serviceTier)
+	if err != nil {
+		return nil, err
+	}
+	endpointID := music3EndpointIDForTier(tier)
 	if endpointID == "" {
 		return nil, fmt.Errorf("Music3 endpoint is not configured")
 	}
@@ -181,7 +250,12 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int) (*VideoJob
 	if err != nil {
 		return nil, err
 	}
-	music3TuneCapacity(endpointID)
+	if err := music3PrepareEndpoint(endpointID, tier); err != nil {
+		return nil, fmt.Errorf("prepare Music3 %s capacity: %w", tier, err)
+	}
+	if tier == "standard" {
+		music3TuneCapacity(endpointID)
+	}
 	seed := time.Now().UnixNano() & math.MaxInt64
 	input := map[string]interface{}{
 		"workload": "minimax-music3", "prompt": prompt, "duration_seconds": duration,
@@ -191,7 +265,19 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int) (*VideoJob
 		input["lyrics"] = structured
 	}
 	var queued h3RunpodQueuedJob
-	status, err := callH3Runpod(endpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, &queued)
+	var status int
+	for attempt := 0; attempt < 7; attempt++ {
+		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, &queued)
+		if status != http.StatusConflict || err == nil || !strings.Contains(err.Error(), "ENDPOINT_PAUSED") {
+			break
+		}
+		if attempt == 0 {
+			if prepareErr := music3PrepareEndpoint(endpointID, tier); prepareErr != nil {
+				return nil, prepareErr
+			}
+		}
+		time.Sleep(h3ScalePropagationDelay)
+	}
 	if err != nil || queued.ID == "" {
 		if err != nil {
 			return nil, err
@@ -204,7 +290,9 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int) (*VideoJob
 		return nil, err
 	}
 	stored, _ := json.Marshal(map[string]interface{}{
-		"_music3_request":   music3StoredRequest{Prompt: prompt, Lyrics: lyrics, Duration: duration, Seed: seed},
+		"_music3_request": music3StoredRequest{
+			Prompt: prompt, Lyrics: lyrics, Duration: duration, Seed: seed, ServiceTier: tier,
+		},
 		"output_public_url": publicURL,
 	})
 	if err := dbConn.UpdateVideoJob(job.ID, "queued", stored, ""); err != nil {
@@ -215,26 +303,31 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int) (*VideoJob
 	return job, nil
 }
 
-func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics string, duration int, service string) {
+func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics string, duration int, service, serviceTier string) {
+	tier, tierErr := normalizeMusic3ServiceTier(serviceTier)
+	if tierErr != nil {
+		jsonError(ctx, http.StatusBadRequest, tierErr.Error())
+		return
+	}
 	if err := music3PromptGuard(prompt, lyrics); err != nil {
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
-	job, err := submitMusic3Job(user, prompt, lyrics, duration)
+	job, err := submitMusic3Job(user, prompt, lyrics, duration, tier)
 	if err != nil {
 		log.Printf("[music3] submission failed: %v", err)
 		recordMusic3Event("music3_job_error", "", map[string]interface{}{"stage": "submission", "error": err.Error()})
 		jsonError(ctx, http.StatusServiceUnavailable, "music generation is temporarily unavailable")
 		return
 	}
-	recordMusic3Event("music3_job_queued", job.ID, map[string]interface{}{"duration_seconds": duration})
-	price := music3PublicPriceUSD(duration)
+	recordMusic3Event("music3_job_queued", job.ID, map[string]interface{}{"duration_seconds": duration, "service_tier": tier})
+	price := music3PublicPriceUSDForTier(duration, tier)
 	credits := 0.0
 	if cutePrice := getCUTEPriceUSD(); cutePrice > 0 {
 		credits = price / cutePrice
 	}
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
-		"service": service, "kind": "music", "model": "MiniMax-Music3",
+		"service": service, "kind": "music", "model": "MiniMax-Music3", "service_tier": tier,
 		"result": map[string]interface{}{
 			"job_id": job.ID, "status": job.Status, "status_url": "/api/audio-jobs/" + job.ID,
 		},
@@ -290,7 +383,8 @@ func processMusic3Job(job *VideoJob) {
 			request := music3RequestFromJob(job)
 			predictSeconds := math.Max(float64(state.ExecutionTime)/1000, 1)
 			providerUSD := music3GPUUSDPerHour() * predictSeconds / 3600
-			chargedUSD := music3PublicPriceUSD(request.Duration)
+			tier, _ := normalizeMusic3ServiceTier(request.ServiceTier)
+			chargedUSD := music3PublicPriceUSDForTier(request.Duration, tier)
 			cutePrice := getCUTEPriceUSD()
 			if cutePrice <= 0 || math.IsNaN(cutePrice) || math.IsInf(cutePrice, 0) {
 				log.Printf("[music3] pricing unavailable job=%s", job.ID)
@@ -303,7 +397,7 @@ func processMusic3Job(job *VideoJob) {
 				"audio_url": state.Output.AudioURL, "duration_seconds": request.Duration,
 				"model": "MiniMax-Music3", "seed": state.Output.Seed,
 				"provider": "runpod", "provider_cost_usd": providerUSD,
-				"charged_usd": chargedUSD, "metrics": state.Output.Metrics,
+				"charged_usd": chargedUSD, "service_tier": tier, "metrics": state.Output.Metrics,
 			})
 			_, _, settleErr := dbConn.SettleGeneratedVideoJob(job.ID, result, providerUSD, chargedUSD, cutePrice)
 			if settleErr == ErrVideoPaymentRequired {
@@ -320,7 +414,7 @@ func processMusic3Job(job *VideoJob) {
 			maybeTriggerAutoTopup(job.UserID)
 			recordMusic3Event("music3_job_completed", job.ID, map[string]interface{}{
 				"duration_seconds": request.Duration, "execution_seconds": predictSeconds,
-				"provider_cost_usd": providerUSD, "charged_usd": chargedUSD,
+				"provider_cost_usd": providerUSD, "charged_usd": chargedUSD, "service_tier": tier,
 			})
 			return
 		case "FAILED", "CANCELLED", "TIMED_OUT":

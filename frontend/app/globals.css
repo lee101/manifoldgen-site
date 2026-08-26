@@ -18,6 +18,7 @@ body {
   color: #f5f6fb;
   font-family: var(--font-body);
   text-size-adjust: 100%;
+  color-scheme: dark;
 }
 
 ::selection {

@@ -859,6 +859,70 @@ test('timeline supports grouped dragging, click seeking, keyboard split, and han
   expect(widthAfterTrim).toBeLessThan(widthBeforeTrim - 20);
 });
 
+test('ctrl-click deselect cannot be undone by jitter and never moves deselected clips', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'multi-a.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'multi-b.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'multi-c.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+  ]);
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  await expect(clips).toHaveCount(3);
+  const leftOf = (index) => clips.nth(index).evaluate((item) => Number.parseFloat(item.style.left));
+
+  await clips.nth(0).click();
+  await clips.nth(1).click({ modifiers: ['ControlOrMeta'] });
+  await expect(page.getByText('2 selected')).toBeVisible();
+
+  // A ctrl-click that jitters must still deselect and must not move anything.
+  const before = [await leftOf(0), await leftOf(1), await leftOf(2)];
+  const box = await clips.nth(0).boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 14, box.y + box.height / 2, { steps: 3 });
+  await page.mouse.up();
+  await expect(clips.nth(0)).toHaveAttribute('aria-selected', 'false');
+  await expect(clips.nth(1)).toHaveAttribute('aria-selected', 'true');
+  expect(await leftOf(0)).toBeCloseTo(before[0], 5);
+  expect(await leftOf(1)).toBeCloseTo(before[1], 5);
+  expect(await leftOf(2)).toBeCloseTo(before[2], 5);
+
+  // Dragging the one remaining selected clip moves only that clip.
+  const solo = await clips.nth(1).boundingBox();
+  await page.mouse.move(solo.x + Math.min(60, solo.width / 2), solo.y + solo.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(solo.x + Math.min(60, solo.width / 2) + 64, solo.y - 70, { steps: 4 });
+  await page.mouse.up();
+  expect(await leftOf(1)).toBeGreaterThan(before[1] + 40);
+  expect(await leftOf(0)).toBeCloseTo(before[0], 5);
+  expect(await leftOf(2)).toBeCloseTo(before[2], 5);
+  await expect(clips.nth(1)).toHaveAttribute('data-visual-track', '1');
+
+  // Grouped dragging still works from a fresh multi-selection.
+  await clips.nth(2).click({ modifiers: ['ControlOrMeta'] });
+  await expect(page.getByText('2 selected')).toBeVisible();
+  const groupBefore = [await leftOf(1), await leftOf(2)];
+  const member = await clips.nth(1).boundingBox();
+  await page.mouse.move(member.x + Math.min(60, member.width / 2), member.y + member.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(member.x + Math.min(60, member.width / 2) + 48, member.y - 70, { steps: 4 });
+  await page.mouse.up();
+  const groupAfter = [await leftOf(1), await leftOf(2)];
+  expect(groupAfter[0] - groupBefore[0]).toBeGreaterThan(30);
+  expect(Math.abs((groupAfter[0] - groupBefore[0]) - (groupAfter[1] - groupBefore[1]))).toBeLessThan(1);
+  expect(await leftOf(0)).toBeCloseTo(before[0], 5);
+
+  // A clean plain click on one member collapses the selection to just it.
+  const collapsed = await clips.nth(1).boundingBox();
+  await page.mouse.move(collapsed.x + Math.min(60, collapsed.width / 2), collapsed.y + collapsed.height / 2);
+  await page.mouse.down();
+  await page.mouse.up();
+  await expect(page.getByText('2 selected')).toBeHidden();
+  await expect(clips.nth(1)).toHaveAttribute('aria-selected', 'true');
+  await expect(clips.nth(2)).toHaveAttribute('aria-selected', 'false');
+});
+
 test('timeline move drags subtly snap to zero and neighboring clip edges', async ({ page }) => {
   await installMocks(page);
   await page.goto('/studio');
@@ -997,6 +1061,24 @@ test('Shift-drag draws a timeline marquee and selects every intersecting clip', 
   await expect(clips.nth(1)).toHaveAttribute('aria-selected', 'true');
   await expect(clips.nth(2)).toHaveAttribute('aria-selected', 'false');
   await expect(page.getByText('2 selected')).toBeVisible();
+
+  // Ctrl-click grows the selection, then a plain drag from empty space replaces it.
+  await clips.nth(2).click({ modifiers: ['ControlOrMeta'] });
+  await expect(page.getByText('3 selected')).toBeVisible();
+  await page.mouse.move(canvas.x + 5, canvas.y + 32);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + 630, canvas.y + 158, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId('studio-timeline-marquee')).toBeHidden();
+  await expect(clips.nth(0)).toHaveAttribute('aria-selected', 'true');
+  await expect(clips.nth(1)).toHaveAttribute('aria-selected', 'true');
+  await expect(clips.nth(2)).toHaveAttribute('aria-selected', 'false');
+  await expect(page.getByText('2 selected')).toBeVisible();
+
+  // Clicking empty timeline space still parks the playhead and clears the selection.
+  await page.mouse.click(canvas.x + 700, canvas.y + canvas.height - 12);
+  await expect(clips.nth(0)).toHaveAttribute('aria-selected', 'false');
+  await expect(clips.nth(1)).toHaveAttribute('aria-selected', 'false');
 });
 
 test('overlapping visual clips stack into ordered lanes and bracket shortcuts swap their layer order', async ({ page }) => {
@@ -1593,12 +1675,14 @@ test('Media Music searches real catalog-shaped results, imports a track, and gen
   await expect(page.getByRole('heading', { name: 'Generate music' })).toBeVisible();
   await page.getByTestId('studio-audio-prompt').fill('Warm analog synth pulse with glass harmonics');
   await page.getByTestId('studio-music-lyrics').fill('[Verse]\nNeon on the water\n[Chorus]\nCarry us home');
+  await page.getByTestId('studio-music-tier-xfast').click();
   await page.getByTestId('studio-audio-generate').click();
   await expect(page.locator('[data-timeline-asset]')).toHaveCount(2);
   expect(generationRequest).toEqual({
     prompt: 'Warm analog synth pulse with glass harmonics',
     lyrics: '[Verse]\nNeon on the water\n[Chorus]\nCarry us home',
     duration: 30,
+    service_tier: 'xfast',
   });
   await expect(page.getByText('Music added · MiniMax-Music3')).toBeVisible();
 });

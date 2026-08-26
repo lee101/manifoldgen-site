@@ -9,7 +9,7 @@ MiniMax-Music3 checkpoint from a regional network volume.
 | Surface | Entry point |
 | --- | --- |
 | Tool page | `https://manifoldgen.com/tools/music-generator` |
-| REST | `POST /api/service` with `{"service":"music","prompt":"…","lyrics":"…","duration":180}` |
+| REST | `POST /api/service` with `{"service":"music","prompt":"…","lyrics":"…","duration":180,"service_tier":"standard"}` |
 | Studio | `POST /api/studio/generate-music` |
 | MCP | `generate_media` with `service: "music"`, `prompt`, `lyrics`, `duration` |
 | Status | `GET /api/audio-jobs/{job_id}` |
@@ -46,7 +46,10 @@ overlaps with container boot so it is mostly hidden from the request.
 
 ## Capacity policy
 
-`server/music_capacity.go` observes real arrivals over a 30-minute window:
+`server/music_capacity.go` observes real arrivals over a 30-minute window. It
+uses RunPod's current `PATCH /v1/endpoints/{id}` control API; the retired
+`POST .../update` shape can return without applying worker settings and must not
+be restored.
 
 - Quiet: `workersMin=0`, `idleTimeout=20s`. Each track absorbs its own cold start.
 - Busy: `workersMin=1`, so a worker stays resident and tracks start instantly.
@@ -68,11 +71,26 @@ GPU rates rise the public price rises with them rather than going underwater.
 At H200 rates a three-minute track costs roughly $0.11 of GPU time warm, or
 about $0.20 including a cold start, against a $0.70 charge.
 
+Users can choose a latency/capacity tier without changing the model or audio
+quality:
+
+| Tier | Price | Capacity behavior |
+| --- | --- | --- |
+| Standard | 1x | One scale-to-zero worker; lowest cost |
+| Fast | 1.5x | Allows a second burst worker when the shared queue forms |
+| XFast | 2x | Separate scale-to-zero endpoint and queue, isolated from standard traffic |
+
+Fast and XFast reduce queue and cold-capacity delay; they do not claim a faster
+sampling algorithm. Both endpoints keep `workersMin=0`, so an idle priority
+lane has no standing GPU charge.
+
 ## Environment
 
 | Variable | Purpose |
 | --- | --- |
 | `MUSIC3_RUNPOD_ENDPOINT_ID` | Serverless endpoint that serves music jobs |
+| `MUSIC3_FAST_RUNPOD_ENDPOINT_ID` | Optional Fast endpoint; falls back to the standard endpoint |
+| `MUSIC3_XFAST_RUNPOD_ENDPOINT_ID` | Optional isolated XFast endpoint; falls back to standard |
 | `MUSIC3_RUNPOD_GPU_USD_PER_HOUR` | GPU rate used for cost accounting and the price floor |
 | `MUSIC3_COLD_START_SECONDS` | Measured cold start, drives the warm threshold and price floor |
 | `MUSIC3_WARM_THRESHOLD_PER_HOUR` | Overrides the computed warm threshold |

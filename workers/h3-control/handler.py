@@ -33,18 +33,24 @@ def _public_https(url: str):
 def _download(url: str, label: str) -> Path:
     _public_https(url)
     request = urllib.request.Request(url, headers={"User-Agent": "manifoldgen-h3-control/1.0"})
-    with urllib.request.urlopen(request, timeout=180) as response:
-        length = int(response.headers.get("content-length", "0") or 0)
-        if length > MAX_VIDEO_BYTES:
-            raise ValueError(f"{label} exceeds 256 MB")
-        data = response.read(MAX_VIDEO_BYTES + 1)
-    if len(data) > MAX_VIDEO_BYTES:
-        raise ValueError(f"{label} exceeds 256 MB")
     suffix = Path(urllib.parse.urlparse(url).path).suffix or ".mp4"
     descriptor, filename = tempfile.mkstemp(prefix=f"h3-{label}-", suffix=suffix)
     os.close(descriptor)
     path = Path(filename)
-    path.write_bytes(data)
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response, path.open("wb") as handle:
+            length = int(response.headers.get("content-length", "0") or 0)
+            if length > MAX_VIDEO_BYTES:
+                raise ValueError(f"{label} exceeds 256 MB")
+            received = 0
+            for chunk in iter(lambda: response.read(8 << 20), b""):
+                received += len(chunk)
+                if received > MAX_VIDEO_BYTES:
+                    raise ValueError(f"{label} exceeds 256 MB")
+                handle.write(chunk)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
     return path
 
 

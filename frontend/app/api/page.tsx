@@ -78,7 +78,7 @@ const createMusic = `curl https://manifoldgen.com/api/service \\
   -X POST \\
   -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"service":"music","prompt":"Slow cinematic strings at dawn","lyrics":"[Verse]\\nNeon rain over the harbour","duration":45}'`;
+  -d '{"service":"music","prompt":"Slow cinematic strings at dawn","lyrics":"[Verse]\\nNeon rain over the harbour","duration":45,"service_tier":"standard"}'`;
 
 const createSFX = `curl https://manifoldgen.com/api/service \\
   -X POST \\
@@ -144,7 +144,7 @@ POST \`/api/service\` with \`{"service":"image","prompt":"...","width":1024,"hei
 For anime-native character art, first check \`GET /api/anima/status\`, then POST \`{"service":"anima","prompt":"an adult ...","width":768,"height":1024,"num_steps":28,"guidance":4,"seed":18467291}\`. Anima is one asynchronous image per request at a fixed $0.04; poll the returned \`result.status_url\`. The route remains unavailable until ManifoldGen's commercial model license is active.
 
 ## Generate audio
-Use \`{"service":"music","prompt":"...","duration":30}\` for MiniMax-Music3 generation, or \`{"service":"sfx","prompt":"...","duration":5}\` for a sound-effect job. Both return a job to poll at \`GET /api/audio-jobs/{job_id}\`. Music accepts optional \`lyrics\` with section tags and 30–300 seconds; lyrics without tags are structured into verses and choruses automatically so the model sings all of them; SFX accepts 4–45 seconds. Completed assets include a durable \`audio_url\` and \`audio_id\` and are searchable with \`GET /api/audio/search?q=...&kind=music|sfx&top_k=20\`.
+Use \`{"service":"music","prompt":"...","duration":30,"service_tier":"standard"}\` for MiniMax-Music3 generation, or \`{"service":"sfx","prompt":"...","duration":5}\` for a sound-effect job. Music tiers are \`standard\` (1x), \`fast\` (1.5x, higher burst capacity), and \`xfast\` (2x, isolated priority queue); model and audio quality are unchanged. Both services return a job to poll at \`GET /api/audio-jobs/{job_id}\`. Music accepts optional \`lyrics\` with section tags and 30–300 seconds; lyrics without tags are structured into verses and choruses automatically so the model sings all of them; SFX accepts 4–45 seconds. Completed assets include a durable \`audio_url\` and \`audio_id\` and are searchable with \`GET /api/audio/search?q=...&kind=music|sfx&top_k=20\`.
 
 ## Generate voices
 POST \`/api/voice/generate\` with a model ID, text, and optional delivery/audio controls. Discover the live model catalog at \`GET /api/voice/models\`. Batch size is 1–4. Successful results contain durable private \`audio_url\` values and exact usage charges.

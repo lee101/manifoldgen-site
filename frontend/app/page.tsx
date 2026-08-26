@@ -1678,22 +1678,35 @@ export default function HomePage() {
             {galleryColumnsFeed.map((column, columnIndex) => (
               <div key={columnIndex} className="flex min-w-0 flex-1 flex-col gap-[1px]">
                 {column.map((item) => {
-              if (item.kind === 'video') return (
-                <div key={`video-${item.id}`} data-testid={`gallery-video-${item.id}`} className="group relative aspect-video overflow-hidden bg-[#0c0c12]" {...gallerySheetPress(item)}>
-                  <button type="button" aria-label="Play gallery video" onClick={() => playVideo(item.video)} className="absolute inset-0 h-full w-full text-left">
-                    <video src={item.video.video_url} muted loop playsInline preload="none" className="h-full w-full object-cover transition duration-700 group-hover:scale-105" onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)} onMouseLeave={(event) => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} />
-                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-                    <div className="pointer-events-none absolute inset-0 bg-black/70 opacity-0 backdrop-blur-sm transition group-hover:opacity-100" />
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 hidden p-3 pb-32 text-xs leading-snug text-white/90 opacity-0 transition group-hover:opacity-100 sm:line-clamp-2 md:text-sm">{item.prompt}</div>
-                    <span className="absolute left-2 top-2 rounded-full bg-black/65 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/80 backdrop-blur">Video</span>
-                  </button>
-                  <div className="absolute inset-x-3 bottom-3 z-10 grid grid-cols-2 gap-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
-                    <button type="button" onClick={() => openGalleryVideoInStudio(item.video)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Open in editor</button>
-                    <button type="button" onClick={() => promptForSimilar(item.prompt)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Sparkles size={13} />Prompt for similar</button>
-                    <button type="button" onClick={() => { if (item.video.video_url) window.location.assign(`/studio?video_url=${encodeURIComponent(new URL(item.video.video_url, window.location.origin).toString())}&name=${encodeURIComponent(item.prompt || 'Gallery video')}&restyle=1`); }} className="col-span-2 inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><WandSparkles size={13} />Transform</button>
+              if (item.kind === 'video') {
+                const flipPanelLeft = columnIndex >= galleryColumnsFeed.length - 1;
+                return (
+                  <div key={`video-${item.id}`} data-testid={`gallery-video-${item.id}`} className="group relative aspect-video bg-[#0c0c12]" onMouseEnter={(event) => { event.currentTarget.querySelector('video')?.play().catch(() => undefined); }} onMouseLeave={(event) => { const vid = event.currentTarget.querySelector('video'); if (vid) { vid.pause(); vid.currentTime = 0; } }} {...gallerySheetPress(item)}>
+                    <div className="absolute inset-0 overflow-hidden">
+                      <button type="button" aria-label="Play gallery video" onClick={() => playVideo(item.video)} className="absolute inset-0 h-full w-full text-left">
+                        <video src={item.video.video_url} muted loop playsInline preload="none" className="h-full w-full object-cover transition duration-700 group-hover:scale-105" />
+                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                        <span className="absolute left-2 top-2 rounded-full bg-black/65 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/80 backdrop-blur">Video</span>
+                      </button>
+                    </div>
+                    <div className={`pointer-events-none absolute top-1/2 z-30 hidden w-56 -translate-y-1/2 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100 sm:block ${flipPanelLeft ? 'right-full pr-1' : 'left-full pl-1'}`}>
+                      <div className="rounded-xl border border-white/10 bg-[#0a0a10]/95 p-2.5 shadow-2xl">
+                        <p className="line-clamp-3 text-xs leading-snug text-white/85">{item.prompt}</p>
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <button type="button" onClick={() => openGalleryVideoInStudio(item.video)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Open in editor</button>
+                          <button type="button" onClick={() => promptForSimilar(item.prompt)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Sparkles size={13} />Prompt for similar</button>
+                          <button type="button" onClick={() => { if (item.video.video_url) window.location.assign(`/studio?video_url=${encodeURIComponent(new URL(item.video.video_url, window.location.origin).toString())}&name=${encodeURIComponent(item.prompt || 'Gallery video')}&restyle=1`); }} className="col-span-2 inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><WandSparkles size={13} />Transform</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="absolute inset-x-2 bottom-2 grid grid-cols-2 gap-2 sm:hidden">
+                      <button type="button" onClick={() => openGalleryVideoInStudio(item.video)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Open in editor</button>
+                      <button type="button" onClick={() => promptForSimilar(item.prompt)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Sparkles size={13} />Prompt for similar</button>
+                      <button type="button" onClick={() => { if (item.video.video_url) window.location.assign(`/studio?video_url=${encodeURIComponent(new URL(item.video.video_url, window.location.origin).toString())}&name=${encodeURIComponent(item.prompt || 'Gallery video')}&restyle=1`); }} className="col-span-2 inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><WandSparkles size={13} />Transform</button>
+                    </div>
                   </div>
-                </div>
-              );
+                );
+              }
               const img = item.image;
               const src = item.src;
               const imgRatio = img.width && img.height ? `${img.width} / ${img.height}` : '3 / 4';

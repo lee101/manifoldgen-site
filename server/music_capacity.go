@@ -129,8 +129,8 @@ func music3ApplyCapacity(endpointID string, warm bool) error {
 		workersMin = 1
 	}
 	return h3ControlRequest(
-		http.MethodPost,
-		h3ControlBase()+"/endpoints/"+url.PathEscape(endpointID)+"/update",
+		http.MethodPatch,
+		h3ControlBase()+"/endpoints/"+url.PathEscape(endpointID),
 		map[string]interface{}{
 			"workersMin": workersMin, "idleTimeout": music3IdleTimeoutSeconds,
 			"flashboot": true, "scalerType": "REQUEST_COUNT", "scalerValue": 1,

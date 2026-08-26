@@ -122,11 +122,12 @@ type TimelineDrag = {
   trackHeight: number;
   targetID?: string;
   didMove: boolean;
-  toggleOnClick?: boolean;
+  collapseOnClick?: boolean;
   trackDelta: number;
   originals: Map<string, Pick<StudioAsset, 'timelineStart' | 'trimStart' | 'trimEnd' | 'duration' | 'visualTrack' | 'kind'>>;
   baseSelection?: string[];
   marqueeIDs?: string[];
+  marqueeAdditive?: boolean;
   historySnapshot?: EditorHistoryState;
 };
 type StageDrag = {
@@ -1128,19 +1129,22 @@ function moveVisualLayersWithSwap(items: StudioAsset[], selectedIDs: Set<string>
 
 function PassiveStageMedia({ asset, playhead, playing }: { asset: StudioAsset; playhead: number; playing: boolean }) {
   const video = useRef<HTMLVideoElement>(null);
-  const sourceTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart));
 
   useEffect(() => {
     const element = video.current;
     if (!element) return;
+    const sourceTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart));
     if (!playing || Math.abs(element.currentTime - sourceTime) > 0.25) element.currentTime = sourceTime;
-    if (playing) void element.play().catch(() => undefined);
-    else element.pause();
-  }, [playing, sourceTime]);
-
+    if (!playing) {
+      element.pause();
+    } else if (element.paused) {
+      void element.play().catch(() => undefined);
+    }
+  }, [playing, playhead, asset.trimStart, asset.trimEnd, asset.timelineStart]);
   if (asset.kind === 'image') return <img className={styles.stageLayerMedia} src={asset.url} alt="" draggable={false} />;
   return <video ref={video} className={styles.stageLayerMedia} src={asset.url} muted playsInline preload="auto" />;
 }
+
 
 // Keep only the current/next few timeline videos warm. The source is always a
 // local blob URL backed by the project's IndexedDB File cache, so this primes
@@ -2638,7 +2642,21 @@ export default function StudioPage() {
         void element.play().catch(() => undefined);
       }
     });
-  }, [playing, playhead, timelineAudioAssets]);
+    // The selected video plays natively through videoRef; align it to the
+    // shared clock too so it joins even when playback was seeded by audio or
+    // a gap. Past its trim end the rVFC loop pins it and the clock carries on.
+    const stageVideo = videoRef.current;
+    if (stageVideo && selected?.kind === 'video') {
+      const active = playhead >= selected.timelineStart && playhead < clipEnd(selected);
+      if (!playing || !active) {
+        if (!stageVideo.paused) stageVideo.pause();
+      } else if (stageVideo.currentTime < selected.trimEnd - 0.03) {
+        const sourceTime = selected.trimStart + Math.max(0, Math.min(clipDuration(selected), playhead - selected.timelineStart));
+        if (Math.abs(stageVideo.currentTime - sourceTime) > 0.3) stageVideo.currentTime = sourceTime;
+        if (stageVideo.paused) void stageVideo.play().catch(() => undefined);
+      }
+    }
+  }, [playing, playhead, timelineAudioAssets, selected]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -3262,12 +3280,16 @@ export default function StudioPage() {
     event.stopPropagation();
     const additive = event.metaKey || event.ctrlKey || event.shiftKey;
     let dragIDs = [asset.id];
+    let collapseOnClick = false;
     if (mode === 'move') {
-      if (selectedIDs.includes(asset.id)) dragIDs = selectedIDs;
-      else if (additive) {
-        dragIDs = [...selectedIDs, asset.id];
-        setSelectedIDs(dragIDs);
-        setSelectedID(asset.id);
+      const wasSelected = selectedIDs.includes(asset.id);
+      if (additive) {
+        selectClip(asset.id, true);
+        return;
+      }
+      if (wasSelected) {
+        dragIDs = selectedIDs;
+        collapseOnClick = selectedIDs.length > 1;
       } else {
         selectOnly(asset.id);
       }
@@ -3293,7 +3315,7 @@ export default function StudioPage() {
       targetID: asset.id,
       didMove: false,
       trackDelta: 0,
-      toggleOnClick: mode === 'move' && additive && selectedIDs.includes(asset.id),
+      collapseOnClick,
       originals,
       historySnapshot: snapshotEditor(),
     };
@@ -3301,17 +3323,18 @@ export default function StudioPage() {
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
-  function beginScrub(event: ReactPointerEvent<HTMLElement>) {
+  function beginScrub(event: ReactPointerEvent<HTMLElement>, marqueeable = false) {
     if (event.button !== 0) return;
-    if (event.shiftKey) {
-      const rect = timelineCanvasRef.current?.getBoundingClientRect();
-      if (!rect) return;
+    const rect = timelineCanvasRef.current?.getBoundingClientRect();
+    if (marqueeable && rect) {
       event.preventDefault();
+      const additive = event.shiftKey || event.metaKey || event.ctrlKey;
       timelineDragRef.current = {
         mode: 'marquee', pointerID: event.pointerId,
         startX: event.clientX, startY: event.clientY,
         pixelsPerSecond, trackHeight: 1, didMove: false, trackDelta: 0,
-        originals: new Map(), baseSelection: [...selectedIDs], marqueeIDs: [...selectedIDs],
+        originals: new Map(), baseSelection: additive ? [...selectedIDs] : [], marqueeIDs: [],
+        marqueeAdditive: additive,
       };
       setTimelineMarquee({
         left: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
@@ -3359,7 +3382,7 @@ export default function StudioPage() {
         const clip = element.getBoundingClientRect();
         return clip.right >= selectionLeft && clip.left <= selectionRight && clip.bottom >= selectionTop && clip.top <= selectionBottom;
       }).map((element) => element.dataset.timelineAsset || '').filter(Boolean);
-      const next = [...new Set([...(drag.baseSelection || []), ...hitIDs])];
+      const next = drag.marqueeAdditive ? [...new Set([...(drag.baseSelection || []), ...hitIDs])] : hitIDs;
       drag.marqueeIDs = next;
       setSelectedIDs(next);
       setSelectedID(hitIDs.at(-1) || next.at(-1) || '');
@@ -3414,8 +3437,8 @@ export default function StudioPage() {
       rememberSnapshot(drag.historySnapshot);
     }
     if (!drag.didMove && drag.targetID) {
-      if (drag.toggleOnClick) selectClip(drag.targetID, true);
-      else seekTimeline(timelineTimeAt(event.clientX, drag.pixelsPerSecond));
+      if (drag.collapseOnClick) selectOnly(drag.targetID);
+      seekTimeline(timelineTimeAt(event.clientX, drag.pixelsPerSecond));
     }
     if (drag.mode === 'move' && drag.didMove) {
       const movedIDs = new Set(drag.originals.keys());
@@ -3428,6 +3451,13 @@ export default function StudioPage() {
     }
     if (drag.mode === 'marquee') {
       setTimelineMarquee(null);
+      if (!drag.didMove) {
+        if (!drag.marqueeAdditive) {
+          setSelectedIDs([]);
+          setSelectedID('');
+        }
+        seekTimeline(timelineTimeAt(event.clientX, drag.pixelsPerSecond));
+      }
     }
     setActiveTimelineClip(null);
     timelineDragRef.current = null;
@@ -3569,50 +3599,38 @@ export default function StudioPage() {
       return;
     }
 
-    const activePlayable = playableTimelineAssets.filter((asset) => playhead >= asset.timelineStart && playhead < clipEnd(asset));
+    const startAt = playhead >= timelineDuration - .001 ? 0 : playhead;
+    // The shared clock always runs; clips join through the sync effects, so
+    // playback sweeps gaps, images, and every later clip instead of requiring
+    // a playable element under the start position.
+    if (startAt !== playhead) setPlayhead(startAt);
+    playbackClockRef.current = { wallStart: performance.now(), timelineStart: startAt };
+    setPlaying(true);
+    const activePlayable = playableTimelineAssets.filter((asset) => startAt >= asset.timelineStart && startAt < clipEnd(asset));
     const preferred = selected && (selected.kind === 'video' || selected.kind === 'audio') && activePlayable.some((asset) => asset.id === selected.id)
       ? selected
       : activePlayable[0];
     if (!preferred) return;
-    const startAt = playhead >= timelineDuration - .001 ? 0 : playhead;
-    if (startAt !== playhead) setPlayhead(startAt);
-    playbackClockRef.current = { wallStart: performance.now(), timelineStart: startAt };
+    const request = ++playbackRequestRef.current;
+    const startElement = (media: HTMLMediaElement) => {
+      const sourceTime = preferred.trimStart + Math.max(0, Math.min(clipDuration(preferred), startAt - preferred.timelineStart));
+      media.currentTime = sourceTime >= preferred.trimEnd ? preferred.trimStart : sourceTime;
+      // Best-effort gesture unlock. Failures self-heal: the sync effects
+      // retry play() while the clock keeps the timeline moving.
+      void waitForLocalMediaReady(media).then(() => {
+        if (request !== playbackRequestRef.current) return undefined;
+        return media.play();
+      }).catch(() => undefined);
+    };
     if (preferred.kind === 'audio') {
       const element = timelineAudioRefs.current.get(preferred.id);
-      if (!element) return;
-      const sourceTime = preferred.trimStart + Math.max(0, Math.min(clipDuration(preferred), startAt - preferred.timelineStart));
-      element.currentTime = sourceTime >= preferred.trimEnd ? preferred.trimStart : sourceTime;
-      const request = ++playbackRequestRef.current;
-      void waitForLocalMediaReady(element).then(() => {
-        if (request !== playbackRequestRef.current) return undefined;
-        return element.play();
-      }).then(() => {
-        if (request === playbackRequestRef.current) setPlaying(true);
-      }).catch((reason) => {
-        if (request === playbackRequestRef.current) {
-          setPlaying(false);
-          setError(reason instanceof Error ? reason.message : 'Audio playback could not start');
-        }
-      });
+      if (element) startElement(element);
       return;
     }
     if (preferred.kind !== 'video' || !videoRef.current) return;
     const perf = perfDiagnostics();
     perf.previewFrames = 0; perf.previewStartedAt = 0; perf.previewLastAt = 0;
-    const sourceTime = preferred.trimStart + Math.max(0, Math.min(clipDuration(preferred), startAt - preferred.timelineStart));
-    videoRef.current.currentTime = sourceTime >= preferred.trimEnd ? preferred.trimStart : sourceTime;
-    const request = ++playbackRequestRef.current;
-    void waitForLocalMediaReady(videoRef.current).then(() => {
-      if (request !== playbackRequestRef.current) return undefined;
-      return videoRef.current?.play();
-    }).then(() => {
-      if (request === playbackRequestRef.current) setPlaying(true);
-    }).catch((reason) => {
-      if (request === playbackRequestRef.current) {
-        setPlaying(false);
-        setError(reason instanceof Error ? reason.message : 'Video playback could not start');
-      }
-    });
+    startElement(videoRef.current);
   }
 
   useEffect(() => {
@@ -5244,14 +5262,14 @@ export default function StudioPage() {
         <div className={styles.timelineToolbar}>
           <div className={styles.timelineTools}><button title="Add media" onClick={() => fileInputRef.current?.click()}><Plus size={14} /> Add</button><button onClick={splitAtPlayhead} disabled={!selectedAssets.length} title="Split at playhead (S)"><Scissors size={14} /> Split</button><button data-testid="studio-layer-up" onClick={() => moveSelectionBetweenLayers(1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move up a layer (Ctrl/Cmd + ])"><ChevronUp size={14} /> Layer</button><button data-testid="studio-layer-down" onClick={() => moveSelectionBetweenLayers(-1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move down a layer (Ctrl/Cmd + [)"><ChevronDown size={14} /> Layer</button><button onClick={duplicateSelected} disabled={!selectedAssets.length} title="Duplicate selected clips"><Copy size={14} /></button><button onClick={removeSelected} disabled={!selectedAssets.length} title="Delete selected clips"><Trash2 size={14} /></button>{selectedAssets.length > 1 && <span className={styles.selectionCount}>{selectedAssets.length} selected</span>}</div>
           <div className={styles.transport}><button aria-label={playing ? 'Pause' : 'Play'} title="Play/pause (Space)" className={styles.playButton} onClick={togglePlayback} disabled={!playableTimelineAssets.length}>{playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}</button><span>{formatTime(playhead)} <i>/</i> {formatTime(timelineDuration)}</span></div>
-          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Shift-drag to select · Ctrl/Cmd [ ] to layer</span><span className={styles.mobileGestureHint}>Long-press + drag to move · drag edges to trim</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
+          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Drag empty space to select · Shift-drag adds · Ctrl/Cmd [ ] to layer</span><span className={styles.mobileGestureHint}>Long-press + drag to move · drag edges to trim</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
         </div>
         <div className={styles.timelineBody}>
           <div ref={timelineLabelsRef} className={styles.trackLabels} onWheel={(event) => { if (timelineContentRef.current) timelineContentRef.current.scrollTop += event.deltaY; }}><span>VIDEO</span>{Array.from({ length: visualTrackCount }, (_, index) => visualTrackCount - index - 1).map((track) => <div data-testid={`timeline-track-label-v${track + 1}`} key={track}>V{track + 1}</div>)}<div className={styles.audioLabel}><b>A1</b><label title="A1 track volume"><Volume2 size={11} /><input data-testid="studio-a1-volume" aria-label="A1 track volume" type="range" min="0" max="2" step="0.01" value={audioTrackVolume} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => setAudioTrackVolume(Number(event.target.value))} /></label></div></div>
           <div ref={timelineContentRef} data-testid="studio-timeline-dropzone" className={`${styles.trackContent} ${timelineDropTime !== null ? styles.timelineDropActive : ''}`} onScroll={(event) => { if (timelineLabelsRef.current) timelineLabelsRef.current.scrollTop = event.currentTarget.scrollTop; }} onDragOver={dragMediaOverTimeline} onDragLeave={leaveTimelineDrop} onDrop={(event) => void dropMediaOnTimeline(event)} onPointerMove={moveTimelinePointer} onPointerLeave={() => setTimelineHoverTime(null)} onPointerUp={endTimelinePointer} onPointerCancel={endTimelinePointer}>
             <div data-testid="studio-timeline-canvas" ref={timelineCanvasRef} className={styles.timelineCanvas} style={{ width: timelineWidth, minWidth: '100%' }}>
               <div data-testid="studio-timeline-ruler" className={styles.ruler} onPointerDown={beginScrub}>{Array.from({ length: Math.floor(rulerDuration / rulerStep) + 1 }, (_, index) => { const time = index * rulerStep; return <span key={time} style={{ left: time * pixelsPerSecond }}>{formatTime(time).slice(3)}</span>; })}</div>
-              <div className={styles.videoTracks} onPointerDown={beginScrub}>
+              <div className={styles.videoTracks} onPointerDown={(event) => beginScrub(event, true)}>
             {assets.filter((asset) => asset.kind !== 'audio').map((asset) => <div data-testid={`timeline-clip-${asset.id}`} data-timeline-asset={asset.id} data-visual-track={asset.visualTrack} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} onContextMenu={(event) => openStudioContextMenu(event, asset)} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} className={`${styles.timelineClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''} ${activeTimelineClip === asset.id ? styles.timelineClipActive : ''}`} style={{ '--track-from-top': visualTrackCount - asset.visualTrack - 1, left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) } as CSSProperties} title={`${asset.name} · V${asset.visualTrack + 1} · ${formatTime(clipDuration(asset))}`}>
                   <span className={`${styles.trimHandle} ${styles.trimHandleLeft}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-left')} title="Trim start" />
                   <span className={styles.clipThumb} style={{ backgroundImage: `url(${asset.kind === 'image' ? asset.url : ''})` }}>{asset.kind === 'video' && <Film size={15} />}</span>
@@ -5259,7 +5277,7 @@ export default function StudioPage() {
                   <span className={`${styles.trimHandle} ${styles.trimHandleRight}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-right')} title="Trim end" />
                 </div>)}
               </div>
-              <div className={styles.audioTrack} onPointerDown={beginScrub}>
+              <div className={styles.audioTrack} onPointerDown={(event) => beginScrub(event, true)}>
                 {assets.filter((asset) => asset.kind === 'audio').map((asset) => <div data-testid={`timeline-audio-${asset.id}`} data-timeline-asset={asset.id} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} className={`${styles.waveformClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''} ${activeTimelineClip === asset.id ? styles.timelineClipActive : ''}`} style={{ left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) }} onContextMenu={(event) => openStudioContextMenu(event, asset)} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} title={`${asset.name} · ${formatTime(clipDuration(asset))}`}>
                   <span className={`${styles.trimHandle} ${styles.trimHandleLeft}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-left')} title="Trim start" />
                   <TimelineWaveform asset={asset} /><b>{asset.name}</b>
@@ -5372,7 +5390,7 @@ export default function StudioPage() {
         </section>
         <section className={styles.shortcutTips} aria-label="Editing tips">
           <h3>Editing tips</h3>
-          <ul><li>Drop files anywhere to import them, or use <b>Add</b> in the timeline.</li><li>Drag clips left or right to retime them; drag vertically to change video layers.</li><li>Drag either end of a clip to trim it. Double-click a canvas element to center it.</li></ul>
+          <ul><li>Drop files anywhere to import them, or use <b>Add</b> in the timeline.</li><li>Drag clips left or right to retime them; drag vertically to change video layers.</li><li>Drag either end of a clip to trim it. Double-click a canvas element to center it.</li><li>Drag empty timeline space to rubber-band select clips; hold Shift while dragging to add to the selection.</li></ul>
         </section>
       </Modal>}
 

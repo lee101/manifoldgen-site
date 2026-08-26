@@ -55,7 +55,9 @@ def preprocess_video(source: Path, kind: str, max_seconds: int = 15, fps: int = 
     next_sample_time = 0.0
     for index, frame in enumerate(source_container.decode(stream)):
         frame_time = float(frame.time) if frame.time is not None else index / source_fps
-        if frame_time + 1e-6 < next_sample_time or written >= limit:
+        if written >= limit:
+            break
+        if frame_time + 1e-6 < next_sample_time:
             continue
         rgb = frame.to_ndarray(format="rgb24")
         if kind == "canny":
@@ -72,7 +74,9 @@ def preprocess_video(source: Path, kind: str, max_seconds: int = 15, fps: int = 
             out_stream.width, out_stream.height = width // 2 * 2, height // 2 * 2
             out_stream.pix_fmt = "yuv420p"
             out_stream.options = {"crf": "18", "preset": "fast"}
-        result = cv2.resize(result, (out_stream.width, out_stream.height), interpolation=cv2.INTER_AREA)
+        target = (out_stream.width, out_stream.height)
+        if (result.shape[1], result.shape[0]) != target:
+            result = cv2.resize(result, target, interpolation=cv2.INTER_AREA)
         for packet in out_stream.encode(av.VideoFrame.from_ndarray(result, format="rgb24")):
             encoded.mux(packet)
         written += 1

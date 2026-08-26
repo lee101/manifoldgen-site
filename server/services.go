@@ -410,7 +410,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"character_animation":      "five-second standard clip; fixed before dispatch (fast 2x, xfast 4x)",
 		"video_background_removal": "per second of source video (30 seconds maximum)",
 		"audio_generation":         "per music track by default; set kind to music or sfx",
-		"music_generation":         "per generated music track (30–300 seconds)",
+		"music_generation":         "per generated music track (30–300 seconds; fast 1.5x, xfast 2x)",
 		"sfx_generation":           "estimated 5-second sound effect; final price follows measured generation time",
 		"flux_image":               "per image",
 		"openpaths_image":          "per image; priced by selected model (gpt-image-2, nano-banana-2, grok-imagine, FLUX.2)",
@@ -489,6 +489,11 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 			"music_generation_base_usd":    0.25,
 			"music_generation_minimum_usd": music3PublicPriceUSD(30),
 			"music_generation_minute_usd":  0.15,
+			"music_generation_tiers": map[string]interface{}{
+				"standard": map[string]interface{}{"multiplier": 1.0, "lane": "cost-efficient scale-to-zero"},
+				"fast":     map[string]interface{}{"multiplier": 1.5, "lane": "higher burst capacity"},
+				"xfast":    map[string]interface{}{"multiplier": 2.0, "lane": "isolated priority queue"},
+			},
 			"music_generation_capacity":    music3CapacitySnapshot(),
 			"extend_input_second_usd":      studioExtendInputPerSec,
 			"extend_output_second_usd":     studioExtendOutputPerSec,
@@ -573,7 +578,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 					jsonError(ctx, http.StatusBadRequest, inputErr.Error())
 					return
 				}
-				handleMusic3Generation(ctx, user, prompt, req.Lyrics, duration, "audio")
+				handleMusic3Generation(ctx, user, prompt, req.Lyrics, duration, "audio", req.ServiceTier)
 			} else {
 				handleMusicGenerationAs(ctx, user, req.Prompt, req.Duration, "audio")
 			}
@@ -591,7 +596,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 				jsonError(ctx, http.StatusBadRequest, inputErr.Error())
 				return
 			}
-			handleMusic3Generation(ctx, user, prompt, req.Lyrics, duration, "music")
+			handleMusic3Generation(ctx, user, prompt, req.Lyrics, duration, "music", req.ServiceTier)
 		} else {
 			handleMusicGeneration(ctx, user, req.Prompt, req.Duration)
 		}

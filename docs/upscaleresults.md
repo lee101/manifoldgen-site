@@ -59,10 +59,14 @@ ESRGAN second stage on top of each path (portrait crops matter most):
   omitted = worker env default (`H3_LATENT_UPSCALE_ENABLED`, off in prod
   config). It stacks with, and is independent of, the Real-ESRGAN
   `studio_upscale` stage.
-- **Serve film_epoch200** as the upscaler checkpoint (drop-in:
-  `H3_LATENT_UPSCALER_MODEL=h3_clean_latent_upscaler_film_epoch200.safetensors`;
-  same Mamad8 architecture loader, file already SHA-verified in
-  `docs/upscale-results` sources under `/vfast/data/code/ComfyUI/models/h3_latent_upscalers/`).
+- **Serve film_epoch200** as the upscaler checkpoint (landed): baked into the
+  worker image from
+  `https://manifoldgenstatic.manifoldgen.com/models/h3_clean_latent_upscaler_film_epoch200.safetensors`
+  (sha256 `984afb58…d99b371d3e4`, same Mamad8 architecture loader), pinned via
+  `H3_LATENT_UPSCALER_MODEL` in `config/runpod-h3.json` and as the
+  `H3_LATENT_UPSCALER` default in `h3_workflow.py`. **Mamad8 v1 is dropped**:
+  waxy on faces and gives ESRGAN nothing to refine — excluded from serving and
+  from future comparison sheets (2026-08-26 review).
 - **Billing needs no change**: h3_video settles from measured RunPod
   `predict_seconds` × rate × margin (video.go), so extra upscale compute is
   billed automatically. The static homepage estimator will under-quote
