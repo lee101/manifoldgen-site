@@ -81,7 +81,7 @@ require_commands() {
   fi
 }
 
-require_commands aws curl find flock go jq npm rsync sha256sum sort xargs
+require_commands aws bun curl find flock go jq rsync sha256sum sort xargs
 
 if [ "$SKIP_LOCAL_INSTALL" != "0" ] && [ "$SKIP_LOCAL_INSTALL" != "1" ]; then
   echo "ERROR: MANIFOLDGEN_SKIP_LOCAL_INSTALL must be 0 or 1"
@@ -174,7 +174,7 @@ for ((attempt = 1; attempt <= build_attempts; attempt++)); do
   if NEXT_OUTPUT=export \
     NEXT_PUBLIC_STATIC_BASE_URL="$STATIC_BASE_URL" \
     NEXT_PUBLIC_SITE_URL="$APP_URL" \
-    npm run build && [ -d out ]; then
+    bun run build && [ -d out ]; then
     build_ok=1
     break
   fi
