@@ -1602,6 +1602,7 @@ export default function StudioPage() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [colorPicking, setColorPicking] = useState('');
+  const [propertiesOpen, setPropertiesOpen] = useState(true);
   const colorPickApplyRef = useRef<((hex: string) => void) | null>(null);
 
   useEffect(() => {
@@ -1780,6 +1781,7 @@ export default function StudioPage() {
     const selectedVisual = selected && selected.kind !== 'audio' ? selected : null;
     return selectedVisual ? [selectedVisual] : [];
   }, [activeVisualAssets, selected]);
+  const firstSelectedVideo = useMemo(() => selectedAssets.find((asset) => asset.kind === 'video') || null, [selectedAssets]);
   const timelineAudioAssets = useMemo(() => assets.filter((asset) => asset.kind === 'audio'), [assets]);
   const playableTimelineAssets = useMemo(() => assets.filter((asset) => asset.kind === 'video' || asset.kind === 'audio'), [assets]);
   const timelinePlaybackBuffers = useMemo(() => assets
@@ -1935,6 +1937,20 @@ export default function StudioPage() {
     rememberEdit(`asset:${id}:${Object.keys(update).sort().join(',')}`);
     setAssets((current) => current.map((item) => (item.id === id ? { ...item, ...update } : item)));
   }, [rememberEdit]);
+  // Properties-pane edits apply to every selected clip in one undoable step.
+  // Per-asset resolvers let fades clamp to each clip's own duration and let
+  // patch objects merge into each asset's existing shader adjustments.
+  const applyToSelection = useCallback((resolve: (asset: StudioAsset) => Partial<Omit<StudioAsset, 'adjustments'>> & { adjustments?: Partial<StudioAdjustments> } | null, mergeKey: string) => {
+    if (!selectedIDs.length) return;
+    rememberEdit(`selection:${mergeKey}:${[...selectedIDs].sort().join(',')}`);
+    setAssets((current) => current.map((item) => {
+      if (!selectedIDs.includes(item.id)) return item;
+      const patch = resolve(item);
+      if (!patch || !Object.keys(patch).length) return item;
+      const { adjustments, ...rest } = patch;
+      return adjustments ? { ...item, ...rest, adjustments: { ...item.adjustments, ...adjustments } } : { ...item, ...rest };
+    }));
+  }, [rememberEdit, selectedIDs]);
 
   const restoreEditor = useCallback((state: EditorHistoryState) => {
     historyMergeRef.current = null;
@@ -4921,7 +4937,7 @@ export default function StudioPage() {
         </aside>
       </div>}
 
-      <div className={styles.workspace}>
+      <div className={`${styles.workspace} ${propertiesOpen ? styles.workspaceProperties : ''}`}>
         <aside className={styles.rail}>
           {toolItems.map(({ id, label, icon: Icon }) => <button data-testid={`studio-tool-${id}`} key={id} title={`Open ${label} tools`} className={tool === id ? styles.railActive : ''} onClick={() => { setTool(id); setMobilePanelOpen(tool !== id || !mobilePanelOpen); }}><Icon size={19} /><span>{label}</span></button>)}
           <button data-testid="studio-content-library" title="Open content library" className={`${styles.railLibrary} ${tool === 'media' && mediaBrowserMode !== 'project' ? styles.railActive : ''}`} onClick={() => { setTool('media'); setMediaBrowserMode('videos'); setMobilePanelOpen(true); }}><Library size={19} /><span>Library</span></button>
@@ -5150,7 +5166,7 @@ export default function StudioPage() {
           <div className={styles.stageToolbar}>
             <div className={styles.stageLeft}><button className={styles.toolChip}><MousePointer2 size={14} /> Select</button><button className={styles.toolChip} disabled><Crop size={14} /> Crop</button></div>
             <div data-testid="studio-render-status" className={styles.stageStatus}>{designSize.width} × {designSize.height} design{selected && selected.kind !== 'audio' ? ` · ${selected.width} × ${selected.height} · GPU preview` : ''}</div>
-            <div className={styles.stageRight}><button className={styles.iconButton} data-testid="studio-copy-selection" onClick={() => void copyAssetToSystemClipboard(selected)} disabled={!selected} title="Copy selection to the system clipboard (Ctrl/Cmd+C)"><Copy size={14} /></button><button className={styles.iconButton} onClick={() => setStageZoom((value) => Math.max(.5, value - .1))}><Minus size={14} /></button><span>{Math.round(stageZoom * 100)}%</span><button className={styles.iconButton} onClick={() => setStageZoom((value) => Math.min(2, value + .1))}><Plus size={14} /></button><button className={styles.iconButton} onClick={centerStageElement} disabled={!selected || selected.kind === 'audio'} title="Center element"><Maximize size={14} /></button></div>
+            <div className={styles.stageRight}><button className={styles.iconButton} data-testid="studio-properties-toggle" aria-pressed={propertiesOpen} title="Properties pane" onClick={() => setPropertiesOpen((open) => !open)}><SlidersHorizontal size={14} /></button><button className={styles.iconButton} data-testid="studio-copy-selection" onClick={() => void copyAssetToSystemClipboard(selected)} disabled={!selected} title="Copy selection to the system clipboard (Ctrl/Cmd+C)"><Copy size={14} /></button><button className={styles.iconButton} onClick={() => setStageZoom((value) => Math.max(.5, value - .1))}><Minus size={14} /></button><span>{Math.round(stageZoom * 100)}%</span><button className={styles.iconButton} onClick={() => setStageZoom((value) => Math.min(2, value + .1))}><Plus size={14} /></button><button className={styles.iconButton} onClick={centerStageElement} disabled={!selected || selected.kind === 'audio'} title="Center element"><Maximize size={14} /></button></div>
           </div>
           <div ref={stageRef} data-testid="studio-stage" className={`${styles.stage} ${colorPicking ? styles.stageColorPicking : ''}`}>
             <div data-testid="studio-design-canvas" className={styles.designCanvas} style={{ aspectRatio: `${designSize.width}/${designSize.height}`, transform: `scale(${stageZoom})` }} />
@@ -5255,6 +5271,41 @@ export default function StudioPage() {
           </div>
           {(notice || error) && <div data-testid="studio-notice" className={`${styles.toast} ${error ? styles.toastError : ''}`}><span>{error || notice}</span><button onClick={() => { setError(''); setNotice(''); }}><X size={14} /></button></div>}
         </section>
+        {propertiesOpen && <aside data-testid="studio-properties" className={styles.propertiesPane}>
+          <div className={styles.panelHeader}><div><span className={styles.eyebrow}>INSPECTOR</span><h2>Properties</h2></div><button className={styles.smallIcon} aria-label="Hide properties pane" title="Hide" onClick={() => setPropertiesOpen(false)}><X size={14} /></button></div>
+          {!selected ? <div className={styles.panelEmpty}><MousePointer2 size={22} /><p>Select a timeline clip or click an element on the stage.</p></div> : <>
+            <div className={styles.propDetails}>
+              <b>{selectedAssets.length > 1 ? `${selectedAssets.length} clips selected` : selected.text?.content || selected.name}</b>
+              <span>Type<b>{selected.text ? 'Text' : selected.kind === 'video' ? 'Video' : selected.kind === 'image' ? 'Image' : 'Audio'}</b></span>
+              <span>{selected.kind === 'audio' ? 'Track' : 'Layer'}<b>{selected.kind === 'audio' ? 'A1' : `V${selected.visualTrack + 1}`}</b></span>
+              <span>Start · end<b>{formatTime(selected.timelineStart)} – {formatTime(clipEnd(selected))}</b></span>
+              <span>Length<b>{formatTime(clipDuration(selected))}</b></span>
+              {selected.kind !== 'audio' && <span>Source<b>{selected.width} × {selected.height}</b></span>}
+            </div>
+            {selectedAssets.some((asset) => asset.kind !== 'image') && <section className={styles.propSection}>
+              <span className={styles.sectionLabel}>SOUND</span>
+              <label className={styles.sliderRow}><span><b>Volume</b><output>{firstSelectedVideo?.sourceAudioMuted ? 'Muted' : `${Math.round(selected.volume * 100)}%${selectedAssets.length > 1 ? ' · all' : ''}`}</output></span><input data-testid="studio-properties-volume" type="range" min="0" max="2" step="0.01" value={selected.volume} disabled={!!firstSelectedVideo?.sourceAudioMuted} onChange={(event) => applyToSelection(() => ({ volume: Number(event.target.value) }), 'volume')} /></label>
+              <label className={styles.sliderRow}><span><b>Fade in</b><output>{selected.fadeIn.toFixed(1)}s</output></span><input data-testid="studio-properties-fade-in" type="range" min="0" max={Math.min(5, clipDuration(selected) / 2)} step="0.1" value={selected.fadeIn} onChange={(event) => applyToSelection((asset) => (asset.kind === 'image' ? null : { fadeIn: Math.min(Number(event.target.value), Math.min(5, clipDuration(asset) / 2)) }), 'fade-in')} /></label>
+              <label className={styles.sliderRow}><span><b>Fade out</b><output>{selected.fadeOut.toFixed(1)}s</output></span><input data-testid="studio-properties-fade-out" type="range" min="0" max={Math.min(5, clipDuration(selected) / 2)} step="0.1" value={selected.fadeOut} onChange={(event) => applyToSelection((asset) => (asset.kind === 'image' ? null : { fadeOut: Math.min(Number(event.target.value), Math.min(5, clipDuration(asset) / 2)) }), 'fade-out')} /></label>
+              {firstSelectedVideo && <button className={styles.settingCard} data-testid="studio-properties-mute" onClick={() => applyToSelection((asset) => (asset.kind === 'video' ? { sourceAudioMuted: !firstSelectedVideo.sourceAudioMuted } : null), 'mute')}>{firstSelectedVideo.sourceAudioMuted ? <Volume2 size={17} /> : <VolumeX size={17} />}<span><b>{firstSelectedVideo.sourceAudioMuted ? 'Restore source audio' : 'Mute source audio'}</b><small>{selectedAssets.length > 1 ? 'Every selected video' : 'Silent in preview and export'}</small></span></button>}
+            </section>}
+            {selected.kind !== 'audio' && <>
+              <section className={styles.propSection}>
+                <span className={styles.sectionLabel}>TRANSFORM</span>
+                <label className={styles.sliderRow}><span><b>Scale</b><output>{Math.round(selected.stageScale * 100)}%</output></span><input data-testid="studio-properties-scale" type="range" min="0.1" max="4" step="0.01" value={selected.stageScale} onChange={(event) => applyToSelection((asset) => (asset.kind === 'audio' ? null : { stageScale: Number(event.target.value) }), 'scale')} /></label>
+                <label className={styles.sliderRow}><span><b>Rotation</b><output>{Math.round(selected.stageRotation)}°</output></span><input data-testid="studio-properties-rotation" type="range" min="-180" max="180" step="1" value={selected.stageRotation} onChange={(event) => applyToSelection((asset) => (asset.kind === 'audio' ? null : { stageRotation: Number(event.target.value) }), 'rotation')} /></label>
+                <button data-testid="studio-properties-fit" className={styles.settingCard} onClick={() => applyToSelection((asset) => (asset.kind === 'audio' ? null : { stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0 }), 'fit')}><Maximize size={17} /><span><b>Fit &amp; center</b><small>Reset position, scale, rotation</small></span></button>
+              </section>
+              <section className={styles.propSection}>
+                <div className={styles.propSectionHead}><span className={styles.sectionLabel}>COLOR · GPU SHADER</span><button className={styles.smallIcon} aria-label="Reset colour" title="Reset colour" onClick={() => applyToSelection((asset) => (asset.kind === 'audio' ? null : { adjustments: { ...DEFAULT_ADJUSTMENTS } }), 'adjustments-reset')}><RotateCcw size={14} /></button></div>
+                <div className={styles.controls}>
+                  {ADJUSTMENTS.map((item) => <label key={item.key} className={styles.sliderRow}><span><b>{item.label}</b><output>{Math.round(selected.adjustments[item.key] * 100)}</output></span><input data-testid={`studio-properties-adjust-${item.key}`} type="range" min={item.min} max={item.max} step={item.step} value={selected.adjustments[item.key]} onChange={(event) => applyToSelection((asset) => (asset.kind === 'audio' ? null : { adjustments: { [item.key]: Number(event.target.value) } }), `adjust-${item.key}`)} /></label>)}
+                  <fieldset className={styles.toneHues}><legend>Hue by tonal range</legend><p>Shift colour without flattening light or contrast.</p>{([{ key: 'shadowHue', label: 'Shadows' }, { key: 'midtoneHue', label: 'Midtones' }, { key: 'highlightHue', label: 'Highlights' }] as const).map((tone) => <div key={tone.key} className={styles.hueRow}><label><span>{tone.label}</span><input aria-label={`${tone.label} hue colour`} type="color" value={hueToHex(selected.adjustments[tone.key])} onChange={(event) => applyToSelection((asset) => (asset.kind === 'audio' ? null : { adjustments: { [tone.key]: hexToHue(event.target.value) } }), `hue-${tone.key}`)} /><button type="button" aria-label={`Pick ${tone.label.toLowerCase()} hue from stage`} title="Eyedrop a hue from the stage" className={`${styles.colorPickButton} ${colorPicking === tone.key ? styles.colorPickActive : ''}`} onClick={() => beginColorPick(`${tone.label} hue`, (hex) => applyToSelection((asset) => (asset.kind === 'audio' ? null : { adjustments: { [tone.key]: hexToHue(hex) } }), `hue-${tone.key}`))}><Pipette size={11} /></button></label><input aria-label={`${tone.label} hue`} type="range" min="-180" max="180" step="1" value={selected.adjustments[tone.key]} onChange={(event) => applyToSelection((asset) => (asset.kind === 'audio' ? null : { adjustments: { [tone.key]: Number(event.target.value) } }), `hue-${tone.key}`)} /><output>{Math.round(selected.adjustments[tone.key])}°</output></div>)}</fieldset>
+                </div>
+              </section>
+            </>}
+          </>}
+        </aside>}
       </div>
 
       <section className={styles.timeline}>

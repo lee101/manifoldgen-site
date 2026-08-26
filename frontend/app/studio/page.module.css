@@ -103,6 +103,7 @@
 .menuLink small { overflow: hidden; color: #737b86; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 
 .workspace { display: grid; grid-template-columns: 64px var(--media-panel-width, 276px) 10px minmax(0, 1fr); min-height: 0; }
+.workspaceProperties { grid-template-columns: 64px var(--media-panel-width, 276px) 10px minmax(0, 1fr) clamp(236px, 19vw, 300px); }
 .rail { min-height: 0; overflow-y: auto; background: #10131a; border-right: 1px solid var(--line); padding: 8px 5px; display: flex; flex-direction: column; gap: 4px; scrollbar-width: thin; scrollbar-color: #343840 transparent; }
 .rail button { min-height: 51px; border: 0; border-radius: 9px; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: #8d96a5; cursor: pointer; }
 .rail button span { font-size: 9px; font-weight: 600; }
@@ -112,6 +113,16 @@
 .railBottom { margin-top: auto; }
 
 .panel { background: var(--panel); border-right: 1px solid var(--line); min-width: 0; overflow: auto; padding: 16px 14px; scrollbar-width: thin; scrollbar-color: #343840 transparent; }
+.propertiesPane { min-width: 0; overflow-y: auto; padding: 16px 14px; background: #12151b; border-left: 1px solid var(--line); scrollbar-width: thin; scrollbar-color: #343840 transparent; }
+.propertiesPane .panelHeader { margin-bottom: 12px; }
+.propertiesPane .controls { gap: 12px; }
+.propDetails { display: grid; gap: 7px; margin-bottom: 14px; padding: 11px; border: 1px solid #292d35; border-radius: 10px; background: #111318; }
+.propDetails > b { overflow: hidden; color: #e8eaee; font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.propDetails span { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.propDetails span b { overflow: hidden; flex: 0 1 auto; color: #bfc4cc; font-size: 10px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.propSection { display: grid; gap: 13px; padding-bottom: 15px; margin-bottom: 15px; border-bottom: 1px solid #22262d; }
+.propSection:last-child { padding-bottom: 0; margin-bottom: 0; border-bottom: 0; }
+.propSectionHead { display: flex; align-items: center; justify-content: space-between; }
 .libraryPanel { padding: 0; background: #0b0d10; }
 .libraryPanel .panelHeader { margin: 0; padding: 8px 6px 6px; }
 .libraryPanel .mediaTabs { margin: 0; padding: 3px 6px; border-right: 0; border-left: 0; border-radius: 0; }
@@ -624,6 +635,7 @@
 @media (max-width: 1050px) {
   .studio { min-width: 720px; grid-template-rows: 48px minmax(0, 1fr) var(--timeline-height, 224px); }
   .workspace { grid-template-columns: 56px 230px 8px minmax(0, 1fr); }
+  .workspaceProperties { grid-template-columns: 56px 230px 8px minmax(0, 1fr) 232px; }
   .saved, .creditDot, .projectName { display: none; }
   .panel { padding: 13px 11px; }
 }
@@ -643,6 +655,7 @@
   .exportButton { padding: 0 10px; }
   .workspace { position: relative; display: block; min-height: 0; }
   .panelResize { display: none; }
+  .propertiesPane { display: none; }
   .stageArea { height: 100%; padding-bottom: 62px; }
   .rail { position: absolute; z-index: 30; left: 7px; right: 7px; bottom: 7px; height: 51px; padding: 4px; flex-direction: row; gap: 2px; overflow-x: auto; border: 1px solid rgba(69,73,84,.8); border-radius: 13px; background: rgba(15,17,21,.9); box-shadow: 0 12px 35px rgba(0,0,0,.45); backdrop-filter: blur(16px); }
   .rail button { flex: 1 0 48px; min-height: 42px; gap: 2px; }

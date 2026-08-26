@@ -878,10 +878,12 @@ test('ctrl-click deselect cannot be undone by jitter and never moves deselected 
   // A ctrl-click that jitters must still deselect and must not move anything.
   const before = [await leftOf(0), await leftOf(1), await leftOf(2)];
   const box = await clips.nth(0).boundingBox();
+  await page.keyboard.down('Control');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 - 14, box.y + box.height / 2, { steps: 3 });
   await page.mouse.up();
+  await page.keyboard.up('Control');
   await expect(clips.nth(0)).toHaveAttribute('aria-selected', 'false');
   await expect(clips.nth(1)).toHaveAttribute('aria-selected', 'true');
   expect(await leftOf(0)).toBeCloseTo(before[0], 5);
@@ -892,7 +894,7 @@ test('ctrl-click deselect cannot be undone by jitter and never moves deselected 
   const solo = await clips.nth(1).boundingBox();
   await page.mouse.move(solo.x + Math.min(60, solo.width / 2), solo.y + solo.height / 2);
   await page.mouse.down();
-  await page.mouse.move(solo.x + Math.min(60, solo.width / 2) + 64, solo.y - 70, { steps: 4 });
+  await page.mouse.move(solo.x + Math.min(60, solo.width / 2) + 64, solo.y + solo.height / 2 - 70, { steps: 4 });
   await page.mouse.up();
   expect(await leftOf(1)).toBeGreaterThan(before[1] + 40);
   expect(await leftOf(0)).toBeCloseTo(before[0], 5);
@@ -906,7 +908,7 @@ test('ctrl-click deselect cannot be undone by jitter and never moves deselected 
   const member = await clips.nth(1).boundingBox();
   await page.mouse.move(member.x + Math.min(60, member.width / 2), member.y + member.height / 2);
   await page.mouse.down();
-  await page.mouse.move(member.x + Math.min(60, member.width / 2) + 48, member.y - 70, { steps: 4 });
+  await page.mouse.move(member.x + Math.min(60, member.width / 2) + 48, member.y + member.height / 2 - 70, { steps: 4 });
   await page.mouse.up();
   const groupAfter = [await leftOf(1), await leftOf(2)];
   expect(groupAfter[0] - groupBefore[0]).toBeGreaterThan(30);
@@ -1445,6 +1447,7 @@ test('spacebar toggles timeline playback even after the file input had focus', a
 test('visual elements can be dragged and nudged around the stage', async ({ page }) => {
   await installMocks(page);
   await page.goto('/studio');
+  await page.getByTestId('studio-properties-toggle').click();
   await page.locator('input[type=file]').setInputFiles(IMAGE);
   const element = page.getByTestId('studio-stage-element');
   await expect(element).toBeVisible();
@@ -1986,4 +1989,55 @@ test('cut and paste move clips through the internal clipboard', async ({ page })
   await page.locator('main').click({ button: 'right', position: { x: 700, y: 300 } });
   await page.getByTestId('studio-context-paste').click();
   await expect(clips).toHaveCount(2);
+});
+
+test('properties pane edits the selected timeline or stage clip, batches multi-selection volume, and toggles', async ({ page }) => {
+  const saves = [];
+  await installMocks(page, { onProjectSave: (project) => saves.push(project) });
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'properties-shot.png', mimeType: 'image/png', buffer: PNG_FIXTURE },
+    { name: 'properties-tone.wav', mimeType: 'audio/wav', buffer: wavFixture(2) },
+  ]);
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  const audioClips = page.locator('[data-testid^="timeline-audio-"]');
+  await expect(clips).toHaveCount(1);
+  await expect(audioClips).toHaveCount(1);
+
+  // Selecting a timeline clip fills the right-hand pane with its details.
+  await clips.nth(0).click();
+  const pane = page.getByTestId('studio-properties');
+  await expect(pane).toBeVisible();
+  await expect(pane.locator('[class*="propDetails"] > b')).toHaveText(/properties-shot\.png/);
+  await expect(pane.getByTestId('studio-properties-scale')).toBeVisible();
+  await expect(pane.locator('fieldset legend')).toHaveText('Hue by tonal range');
+
+  // Shader colour controls drive the same adjustments document field.
+  await page.getByTestId('studio-properties-adjust-exposure').fill('0.5');
+  await expect(page.getByTestId('studio-properties-adjust-exposure').locator('..')).toContainText('Exposure');
+  await expect(page.locator('label', { has: page.getByTestId('studio-properties-adjust-exposure') }).locator('output')).toHaveText('50');
+
+  // Clicking an audio clip swaps the pane to the sound controls.
+  await audioClips.nth(0).click();
+  await expect(pane.locator('[class*="propDetails"] span', { hasText: 'Track' })).toContainText('A1');
+  await page.getByTestId('studio-properties-volume').fill('1.4');
+  await expect(page.getByTestId('studio-properties-volume').locator('xpath=..')).toContainText('140%');
+
+  // Clicking an element on the stage shows that element's details too.
+  await page.locator('[data-testid^="studio-stage-layer-"]').click();
+  await expect(pane.locator('[class*="propDetails"] > b')).toHaveText(/properties-shot\.png/);
+  await expect(pane.getByTestId('studio-properties-volume')).toHaveCount(0);
+
+  // Volume changes apply to every selected clip at once.
+  await clips.nth(0).click();
+  await audioClips.nth(0).click({ modifiers: ['Shift'] });
+  await expect(pane.locator('[class*="propDetails"] > b')).toContainText('2 clips selected');
+  await page.getByTestId('studio-properties-volume').fill('0.3');
+  await expect(page.getByTestId('studio-properties-volume').locator('xpath=..')).toContainText('30%');
+
+  // The stage toolbar toggle collapses and restores the pane.
+  await page.getByTestId('studio-properties-toggle').click();
+  await expect(pane).toHaveCount(0);
+  await page.getByTestId('studio-properties-toggle').click();
+  await expect(pane).toBeVisible();
 });
