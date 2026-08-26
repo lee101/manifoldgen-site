@@ -49,6 +49,7 @@ test('song generator queues a music job and plays the finished track', async ({ 
   await page.getByTestId('music-prompt').fill('House remix, EDM techno at 128 BPM, saxophone hook');
   await page.getByTestId('music-lyrics').fill('[Verse]\nThere is a house in New Orleans');
   await page.getByTestId('music-duration').selectOption('60');
+  await page.getByTestId('music-seed').fill('20260826');
   await page.getByTestId('music-tier-fast').click();
   await expect(page.getByText('Estimate · $0.60')).toBeVisible();
   await page.getByTestId('music-run').click();
@@ -61,6 +62,7 @@ test('song generator queues a music job and plays the finished track', async ({ 
     lyrics: '[Verse]\nThere is a house in New Orleans',
     duration: 60,
     service_tier: 'fast',
+    seed: 20260826,
   });
 });
 

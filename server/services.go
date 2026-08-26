@@ -578,7 +578,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 					jsonError(ctx, http.StatusBadRequest, inputErr.Error())
 					return
 				}
-				handleMusic3Generation(ctx, user, prompt, req.Lyrics, duration, "audio", req.ServiceTier)
+				handleMusic3Generation(ctx, user, prompt, req.Lyrics, duration, "audio", req.ServiceTier, req.Seed)
 			} else {
 				handleMusicGenerationAs(ctx, user, req.Prompt, req.Duration, "audio")
 			}
@@ -596,7 +596,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 				jsonError(ctx, http.StatusBadRequest, inputErr.Error())
 				return
 			}
-			handleMusic3Generation(ctx, user, prompt, req.Lyrics, duration, "music", req.ServiceTier)
+			handleMusic3Generation(ctx, user, prompt, req.Lyrics, duration, "music", req.ServiceTier, req.Seed)
 		} else {
 			handleMusicGeneration(ctx, user, req.Prompt, req.Duration)
 		}

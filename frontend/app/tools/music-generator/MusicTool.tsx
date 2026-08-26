@@ -43,6 +43,7 @@ export default function MusicTool() {
   const [lyrics, setLyrics] = useState('');
   const [duration, setDuration] = useState(60);
   const [serviceTier, setServiceTier] = useState<ServiceTier>('standard');
+  const [seed, setSeed] = useState('');
   const [phase, setPhase] = useState<Phase>('idle');
   const [status, setStatus] = useState('Describe the track');
   const [audioURL, setAudioURL] = useState('');
@@ -63,7 +64,10 @@ export default function MusicTool() {
       const queued = await jsonResponse<{ result?: { job_id?: string; status_url?: string }; estimated_cost_usd?: number }>(
         await fetch('/api/service', {
           method: 'POST', headers: { Authorization: `Bearer ${user.api_key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ service: 'music', prompt: prompt.trim(), lyrics: lyrics.trim(), duration, service_tier: serviceTier }),
+          body: JSON.stringify({
+            service: 'music', prompt: prompt.trim(), lyrics: lyrics.trim(), duration, service_tier: serviceTier,
+            ...(seed.trim() ? { seed: Number(seed) } : {}),
+          }),
         }),
         'Could not start music generation',
       );
@@ -107,6 +111,7 @@ export default function MusicTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
+      <div className={styles.eyebrow}><Music4 size={14} /> MINIMAX MUSIC 3 · SONG GENERATOR</div>
       <h1>Write the song.<br /><span>Get the record.</span></h1>
       <p>Vocals and instrumental together, 32 kHz stereo, up to five minutes. The style caption decides the arrangement; the lyrics decide what gets sung.</p>
     </section>
@@ -129,6 +134,8 @@ export default function MusicTool() {
           </select></label>
           <button type="button" className={styles.example} disabled={busy}
             onClick={() => { setPrompt(EXAMPLE_PROMPT); setLyrics(EXAMPLE_LYRICS); }}>Use the example</button>
+          <label>Seed <input data-testid="music-seed" type="number" min="0" value={seed} disabled={busy}
+            onChange={(event) => setSeed(event.target.value)} placeholder="random" /></label>
         </div>
         <div className={styles.tiers} role="radiogroup" aria-label="Generation speed">
           {TIERS.map((tier) => <button key={tier.id} type="button" role="radio" aria-checked={serviceTier === tier.id}

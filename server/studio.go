@@ -718,6 +718,7 @@ func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 		Lyrics      string `json:"lyrics"`
 		Duration    int    `json:"duration"`
 		ServiceTier string `json:"service_tier"`
+		Seed        int    `json:"seed"`
 	}
 	if json.Unmarshal(ctx.PostBody(), &input) != nil {
 		jsonError(ctx, http.StatusBadRequest, "invalid json")
@@ -729,7 +730,7 @@ func handleStudioGenerateMusic(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	if music3EndpointID() != "" {
-		handleMusic3Generation(ctx, user, prompt, input.Lyrics, duration, "music", input.ServiceTier)
+		handleMusic3Generation(ctx, user, prompt, input.Lyrics, duration, "music", input.ServiceTier, input.Seed)
 		return
 	}
 	handleMusicGeneration(ctx, user, prompt, duration)
@@ -761,7 +762,7 @@ func handleMusicGenerationAs(ctx *fasthttp.RequestCtx, user *User, prompt string
 		return
 	}
 	if music3EndpointID() != "" {
-		handleMusic3Generation(ctx, user, prompt, "", duration, service, "standard")
+		handleMusic3Generation(ctx, user, prompt, "", duration, service, "standard", 0)
 		return
 	}
 	balance := user.Credits

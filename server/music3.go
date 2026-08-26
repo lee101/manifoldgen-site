@@ -144,7 +144,7 @@ func music3PrepareEndpoint(endpointID, tier string) error {
 		http.MethodPatch,
 		h3ControlBase()+"/endpoints/"+url.PathEscape(endpointID),
 		map[string]interface{}{
-			"workersMin": 0, "workersMax": music3TierWorkersMax(tier),
+			"workersMax":  music3TierWorkersMax(tier),
 			"idleTimeout": music3IdleTimeoutSeconds, "flashboot": true,
 			"scalerType": "REQUEST_COUNT", "scalerValue": 1,
 		},
@@ -234,7 +234,7 @@ func music3UploadTarget(userID string) (string, string, error) {
 	return uploadURL, fmt.Sprintf("https://%s/%s", r2PublicHost, objectKey), nil
 }
 
-func submitMusic3Job(user *User, prompt, lyrics string, duration int, serviceTier string) (*VideoJob, error) {
+func submitMusic3Job(user *User, prompt, lyrics string, duration int, serviceTier string, requestedSeed int) (*VideoJob, error) {
 	tier, err := normalizeMusic3ServiceTier(serviceTier)
 	if err != nil {
 		return nil, err
@@ -256,7 +256,10 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int, serviceTie
 	if tier == "standard" {
 		music3TuneCapacity(endpointID)
 	}
-	seed := time.Now().UnixNano() & math.MaxInt64
+	seed := int64(requestedSeed)
+	if seed <= 0 {
+		seed = time.Now().UnixNano() & math.MaxInt64
+	}
 	input := map[string]interface{}{
 		"workload": "minimax-music3", "prompt": prompt, "duration_seconds": duration,
 		"seed": seed, "output_upload_url": uploadURL, "output_public_url": publicURL,
@@ -303,7 +306,7 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int, serviceTie
 	return job, nil
 }
 
-func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics string, duration int, service, serviceTier string) {
+func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics string, duration int, service, serviceTier string, seed int) {
 	tier, tierErr := normalizeMusic3ServiceTier(serviceTier)
 	if tierErr != nil {
 		jsonError(ctx, http.StatusBadRequest, tierErr.Error())
@@ -313,7 +316,11 @@ func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
-	job, err := submitMusic3Job(user, prompt, lyrics, duration, tier)
+	if seed < 0 {
+		jsonError(ctx, http.StatusBadRequest, "seed must be a non-negative integer")
+		return
+	}
+	job, err := submitMusic3Job(user, prompt, lyrics, duration, tier, seed)
 	if err != nil {
 		log.Printf("[music3] submission failed: %v", err)
 		recordMusic3Event("music3_job_error", "", map[string]interface{}{"stage": "submission", "error": err.Error()})
@@ -328,6 +335,7 @@ func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics
 	}
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
 		"service": service, "kind": "music", "model": "MiniMax-Music3", "service_tier": tier,
+		"seed": music3RequestFromJob(job).Seed,
 		"result": map[string]interface{}{
 			"job_id": job.ID, "status": job.Status, "status_url": "/api/audio-jobs/" + job.ID,
 		},

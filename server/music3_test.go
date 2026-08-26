@@ -41,6 +41,26 @@ func TestMusic3EndpointByTier(t *testing.T) {
 	}
 }
 
+func TestMusic3PrepareEndpointDoesNotResetWarmWorker(t *testing.T) {
+	var body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		raw := make([]byte, request.ContentLength)
+		_, _ = request.Body.Read(raw)
+		body = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	t.Setenv("H3_RUNPOD_API_KEY", "test-key")
+	t.Setenv("H3_RUNPOD_CONTROL_URL", server.URL)
+	if err := music3PrepareEndpoint("music-id", "standard"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(body, `"workersMin"`) || !strings.Contains(body, `"workersMax":1`) {
+		t.Fatalf("prepare must preserve capacity controller workersMin: %s", body)
+	}
+}
+
 func TestMusic3CapacityUsesCurrentPatchEndpointAPI(t *testing.T) {
 	var method, path, body string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
