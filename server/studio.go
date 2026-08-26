@@ -54,8 +54,12 @@ func initStudioUpscaleUploadServer() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/upload/", handleStudioUpscaleOutputTransfer)
 	server := &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 50 * time.Minute, WriteTimeout: 10 * time.Minute}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatalf("studio upscale output receiver bind %s: %v", address, err)
+	}
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("studio upscale output receiver failed: %v", err)
 		}
 	}()

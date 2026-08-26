@@ -50,7 +50,7 @@ func handleSitemapPages(ctx *fasthttp.RequestCtx) {
 	setXML(ctx)
 	var b strings.Builder
 	b.WriteString(xml.Header)
-	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`)
+	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">`)
 	for _, path := range []string{
 		"/", "/tools", "/tools/h3-image", "/tools/music-generator", "/tools/make-image",
 		"/tools/style-transfer", "/tools/h3-image-editor", "/tools/character-animator",
@@ -62,16 +62,37 @@ func handleSitemapPages(ctx *fasthttp.RequestCtx) {
 		"/tool/animate-video", "/tool/image-editor", "/tool/anima",
 		"/api", "/api/video-generators", "/studio", "/voice", "/blog", "/privacy",
 	} {
-		fmt.Fprintf(&b, `<url><loc>%s%s</loc></url>`, sitemapSiteURL, path)
+		writeSitemapURL(&b, path)
 	}
 	for _, path := range seoRoutesFromExport() {
 		if !strings.HasPrefix(path, "/") || !publicSitemapURL(sitemapSiteURL+path) {
 			continue
 		}
-		fmt.Fprintf(&b, `<url><loc>%s%s</loc></url>`, sitemapSiteURL, path)
+		writeSitemapURL(&b, path)
 	}
 	b.WriteString(`</urlset>`)
 	ctx.SetBodyString(b.String())
+}
+
+// writeSitemapURL emits one <url> carrying the full hreflang alternates
+// cluster when precomputed translations cover the route; Google discovers
+// every locale URL from the cluster on the English entry.
+func writeSitemapURL(b *strings.Builder, path string) {
+	loadI18nManifest()
+	b.WriteString(`<url><loc>` + sitemapSiteURL + xmlText(path) + `</loc>`)
+	if langs := i18nRouteLangs[path]; len(langs) > 0 {
+		canonical := sitemapSiteURL + xmlText(path)
+		b.WriteString(`<xhtml:link rel="alternate" hreflang="en" href="` + canonical + `"/>`)
+		for _, lang := range langs {
+			loc := sitemapSiteURL + "/" + lang
+			if path != "/" {
+				loc += xmlText(path)
+			}
+			b.WriteString(`<xhtml:link rel="alternate" hreflang="` + lang + `" href="` + loc + `"/>`)
+		}
+		b.WriteString(`<xhtml:link rel="alternate" hreflang="x-default" href="` + canonical + `"/>`)
+	}
+	b.WriteString(`</url>`)
 }
 
 // seoRoutesFromExport reads the route list emitted by the frontend build
