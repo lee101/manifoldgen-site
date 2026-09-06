@@ -800,6 +800,7 @@ func handleStripeCheckoutCompleted(raw json.RawMessage) {
 	}
 	if credited {
 		log.Printf("stripe credited user=%s session=%s cute=%.2f balance=%.2f", userID, session.ID, cuteAmount, balance)
+		awardReferralAfterPurchase(userID)
 	}
 
 	if session.PaymentIntent != "" {
@@ -845,6 +846,9 @@ func handleStripeSubscriptionCheckoutCompleted(session stripeCheckoutSession, us
 		return
 	}
 	grantSubscriptionAPICredits(session, userID, plan)
+	if session.PaymentStatus == "paid" {
+		awardReferralAfterPurchase(userID)
+	}
 	log.Printf("stripe subscription updated user=%s subscription=%s status=%s plan=%s", userID, subscriptionID, status, plan)
 }
 

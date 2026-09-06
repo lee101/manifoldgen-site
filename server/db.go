@@ -114,6 +114,25 @@ func (db *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_billing_user ON billing_events(user_id);
 	CREATE INDEX IF NOT EXISTS idx_billing_type ON billing_events(event_type);
 
+	CREATE TABLE IF NOT EXISTS referral_codes (
+		user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		code TEXT UNIQUE NOT NULL,
+		created_at TIMESTAMPTZ DEFAULT NOW()
+	);
+
+	CREATE TABLE IF NOT EXISTS referrals (
+		id TEXT PRIMARY KEY,
+		referrer_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		referee_user_id TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		status TEXT NOT NULL DEFAULT 'pending',
+		reward_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+		created_at TIMESTAMPTZ DEFAULT NOW(),
+		rewarded_at TIMESTAMPTZ DEFAULT NULL,
+		CHECK (referrer_user_id <> referee_user_id)
+	);
+	CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_user_id, created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(status);
+
 	CREATE TABLE IF NOT EXISTS video_jobs (
 		id TEXT PRIMARY KEY,
 		user_id TEXT NOT NULL REFERENCES users(id),

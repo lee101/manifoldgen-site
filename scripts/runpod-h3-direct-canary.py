@@ -91,7 +91,6 @@ def main() -> int:
     parser.add_argument("--duration", type=float, default=5)
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--structured-prompt", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--style-lora", choices=("studio1939",))
     parser.add_argument("--output-path", type=Path)
     parser.add_argument("--summary-path", type=Path)
     parser.add_argument("--leave-active", action="store_true")
@@ -120,8 +119,6 @@ def main() -> int:
             "_output_public_url": public_url,
         }
     }
-    if args.style_lora:
-        payload["input"]["style_lora"] = args.style_lora
     base = f"https://api.runpod.ai/v2/{args.endpoint}"
     control_url = f"https://rest.runpod.io/v1/endpoints/{args.endpoint}"
     previous_max = int(request_json(control_url, runpod_key).get("workersMax") or 0)
@@ -176,7 +173,6 @@ def main() -> int:
             "total_seconds", "generation_seconds", "face_refine_seconds", "encode_seconds",
             "output_upload_seconds", "output_transport", "output_bytes", "frames", "width", "height",
             "attention_backend", "face_refine",
-            "style_lora",
         )},
         "error": state.get("error"),
     }

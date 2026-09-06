@@ -51,12 +51,20 @@ function CodeBlock({ children }: { children: string }) {
   return <pre className="overflow-x-auto rounded-2xl border border-white/10 bg-black/40 p-4 text-[13px] leading-6 text-white/75"><code>{children}</code></pre>;
 }
 
-function ExampleMedia({ src, poster, aspect, caption, seconds }: { src: string; poster?: string; aspect?: string; caption?: string; seconds?: number }) {
+function ExampleMedia({ src, poster, aspect, caption, seconds, sound, kind }: { src: string; poster?: string; aspect?: string; caption?: string; seconds?: number; sound?: boolean; kind?: string }) {
   const vertical = aspect === '9:16';
+  if (kind === 'audio' || src.endsWith('.opus') || src.endsWith('.mp3') || src.endsWith('.wav')) {
+    return (
+      <div className="w-full rounded-2xl border border-white/10 bg-black/30 p-4">
+        {caption && <p className="mb-2 text-sm text-white/70">{caption}</p>}
+        <audio className="w-full" controls preload="none" src={src} />
+      </div>
+    );
+  }
   if (src.endsWith('.webm') || src.endsWith('.mp4')) {
     return (
       <div className={vertical ? 'mx-auto w-full max-w-[300px]' : 'w-full'}>
-        <video className="aspect-video w-full rounded-2xl border border-white/10 bg-black object-cover" style={vertical ? { aspectRatio: '9 / 16' } : undefined} controls muted loop playsInline preload="metadata" poster={poster} src={src} />
+        <video className="aspect-video w-full rounded-2xl border border-white/10 bg-black object-cover" style={vertical ? { aspectRatio: '9 / 16' } : undefined} controls muted={!sound} loop={!sound} playsInline preload="metadata" poster={poster} src={src} />
         {(caption || seconds) && (
           <p className="mt-2 text-center text-xs text-white/35">{caption}{seconds ? ` · ${seconds}s` : ''}</p>
         )}
@@ -191,23 +199,30 @@ export default async function BlogArticlePage({ params }: ArticlePageProps) {
     <main className="min-h-screen bg-[var(--color-ink)] text-white">
       <ArticleJsonLd article={article} />
       <header className="border-b border-white/10 bg-[#07070a]/85">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
           <Link href="/blog" className="inline-flex items-center gap-2 text-sm text-white/60 hover:text-white"><ArrowLeft size={16} /> All notes</Link>
           <Link href="/studio" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold">Open Studio <ArrowRight size={14} /></Link>
         </div>
       </header>
 
-      <article className="mx-auto max-w-6xl px-5 pb-24 pt-14 sm:pt-20">
+      <article className="mx-auto max-w-7xl px-5 pb-24 pt-12 sm:pt-16">
         <header className="border-b border-white/10 pb-10">
           <div className="flex items-center gap-2 text-xs font-semibold tracking-[.14em] text-[#bcb2ff]"><BookOpen size={14} /> {article.category.toUpperCase()} · {formatDate(article.date)} · {article.readTime.toUpperCase()}</div>
-          <h1 className="mt-5 max-w-4xl font-display text-4xl font-700 tracking-tight sm:text-6xl">{article.title}</h1>
-          <p className="mt-5 max-w-3xl text-lg leading-8 text-white/55">{article.excerpt}</p>
+          <h1 className="mt-5 max-w-5xl font-display text-4xl font-700 tracking-tight sm:text-6xl">{article.title}</h1>
+          <p className="mt-5 max-w-4xl text-lg leading-8 text-white/55">{article.excerpt}</p>
         </header>
 
-        <div className="mt-12 max-w-3xl space-y-10 text-[16px] leading-8 text-white/65">
-          {article.blocks.map((block, index) => (
-            <BlockRenderer key={index} block={block} />
-          ))}
+        <div className="mt-10 grid gap-12 lg:grid-cols-[minmax(0,4fr)_minmax(180px,1fr)] lg:gap-16">
+          <div className="max-w-4xl space-y-10 text-[16px] leading-8 text-white/65">
+            {article.blocks.map((block, index) => (
+              <BlockRenderer key={index} block={block} />
+            ))}
+          </div>
+          <aside className="hidden border-l border-white/10 pl-6 text-xs leading-6 text-white/40 lg:block">
+            <p className="font-semibold tracking-[.14em] text-[#bcb2ff]">READING NOTE</p>
+            <p className="mt-3">A practical ManifoldGen field note, with examples and prompts you can run yourself.</p>
+            <p className="mt-6">{article.readTime} read</p>
+          </aside>
         </div>
 
         <section className="mt-16 flex flex-col justify-between gap-5 rounded-3xl border border-[var(--color-accent)]/25 bg-[var(--color-accent)]/[.08] p-7 sm:flex-row sm:items-center">

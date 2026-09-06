@@ -50,10 +50,21 @@ const (
 // ---------------------------------------------------------------------------
 
 type dramatizeRequest struct {
-	Prompt   string  `json:"prompt"`
-	VideoURL string  `json:"video_url"`
-	MaxShots int     `json:"max_shots,omitempty"`
-	Seconds  float64 `json:"shot_seconds,omitempty"`
+	Prompt               string  `json:"prompt"`
+	SettingPrompt        string  `json:"setting_prompt,omitempty"`
+	CharacterBible       string  `json:"character_bible,omitempty"`
+	ConsistentCharacters bool    `json:"consistent_characters,omitempty"`
+	ConsistencyPasses    int     `json:"consistency_passes,omitempty"`
+	VideoURL             string  `json:"video_url"`
+	MaxShots             int     `json:"max_shots,omitempty"`
+	Seconds              float64 `json:"shot_seconds,omitempty"`
+	Mode                 string  `json:"mode,omitempty"`
+	ImageModel           string  `json:"image_model,omitempty"`
+	VisionModel          string  `json:"vision_model,omitempty"`
+	VideoModel           string  `json:"video_model,omitempty"`
+	MusicPrompt          string  `json:"music_prompt,omitempty"`
+	Lyrics               string  `json:"lyrics,omitempty"`
+	Sketch               bool    `json:"sketch,omitempty"`
 }
 
 // dramatizeStep is one entry in the user-visible agent timeline.
@@ -67,30 +78,37 @@ type dramatizeStep struct {
 
 // dramatizeShotResult records what the executor actually produced per shot.
 type dramatizeShotResult struct {
-	Shot      DramatizeShot `json:"shot"`
-	ImageURL  string        `json:"image_url,omitempty"`
-	ClipURL   string        `json:"clip_url,omitempty"`
-	AssetURL  string        `json:"asset_url,omitempty"`
-	ObjectKey string        `json:"object_key,omitempty"`
-	AssetID   string        `json:"asset_id,omitempty"`
-	Size      int64         `json:"size,omitempty"`
-	Start     float64       `json:"timeline_start"`
-	Duration  float64       `json:"duration"`
-	Error     string        `json:"error,omitempty"`
+	Shot             DramatizeShot `json:"shot"`
+	ImageURL         string        `json:"image_url,omitempty"`
+	ClipURL          string        `json:"clip_url,omitempty"`
+	AssetURL         string        `json:"asset_url,omitempty"`
+	ObjectKey        string        `json:"object_key,omitempty"`
+	AssetID          string        `json:"asset_id,omitempty"`
+	Size             int64         `json:"size,omitempty"`
+	Start            float64       `json:"timeline_start"`
+	Duration         float64       `json:"duration"`
+	Error            string        `json:"error,omitempty"`
+	Regenerations    int           `json:"regenerations,omitempty"`
+	ConsistencyScore float64       `json:"consistency_score,omitempty"`
+	DriveAudioURL    string        `json:"drive_audio_url,omitempty"`
 }
 
 // dramatizeJobState is what lives in video_jobs.result_json. Fields prefixed
 // with an underscore are agent bookkeeping; the rest is the public result.
 type dramatizeJobState struct {
-	Request dramatizeRequest `json:"_dramatize_request"`
+	Request   dramatizeRequest `json:"_dramatize_request"`
+	AgentKind string           `json:"agent_kind,omitempty"`
+	Estimate  RemakeEstimate   `json:"estimate,omitempty"`
 
 	Step  int             `json:"_agent_step"`
 	Label string          `json:"_agent_label"`
 	Steps []dramatizeStep `json:"_agent_steps,omitempty"`
 
-	Plan  *DramatizePlan        `json:"plan,omitempty"`
-	Audio *AudioAnalysis        `json:"audio,omitempty"`
-	Shots []dramatizeShotResult `json:"shots,omitempty"`
+	Plan              *DramatizePlan           `json:"plan,omitempty"`
+	Audio             *AudioAnalysis           `json:"audio,omitempty"`
+	Shots             []dramatizeShotResult    `json:"shots,omitempty"`
+	References        []RemakeReferenceAsset   `json:"references,omitempty"`
+	ConsistencyAudits []RemakeConsistencyAudit `json:"consistency_audits,omitempty"`
 
 	VideoURL   string  `json:"video_url,omitempty"`
 	Duration   float64 `json:"duration,omitempty"`
@@ -98,10 +116,13 @@ type dramatizeJobState struct {
 	Height     int     `json:"height,omitempty"`
 	ProjectID  string  `json:"project_id,omitempty"`
 	ProjectURL string  `json:"project_url,omitempty"`
+	AudioURL   string  `json:"audio_url,omitempty"`
+	SpeechUSD  float64 `json:"speech_cost_usd,omitempty"`
 
-	ChargedUSD  float64 `json:"charged_usd,omitempty"`
-	CreditsUsed float64 `json:"credits_used,omitempty"`
-	Provider    string  `json:"planner,omitempty"`
+	ChargedUSD   float64 `json:"charged_usd,omitempty"`
+	CreditsUsed  float64 `json:"credits_used,omitempty"`
+	Provider     string  `json:"planner,omitempty"`
+	ReferenceUSD float64 `json:"reference_cost_usd,omitempty"`
 }
 
 func (s *dramatizeJobState) marshal() []byte {
@@ -283,13 +304,37 @@ func normalizeDramatizeRequest(req *dramatizeRequest) error {
 // agent. Reached through POST /api/service with service "video-dramatize".
 func handleVideoDramatizeService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User) {
 	input := dramatizeRequest{
-		Prompt:   req.Prompt,
-		VideoURL: req.VideoURL,
-		MaxShots: req.NumImages,
-		Seconds:  float64(req.Duration),
+		Prompt:               req.Prompt,
+		SettingPrompt:        req.SettingPrompt,
+		CharacterBible:       req.CharacterBible,
+		ConsistentCharacters: req.ConsistentCharacters,
+		ConsistencyPasses:    req.ConsistencyPasses,
+		VideoURL:             req.VideoURL,
+		MaxShots:             req.NumImages,
+		Seconds:              float64(req.Duration),
+		Mode:                 strings.ToLower(strings.TrimSpace(req.Kind)),
+		ImageModel:           strings.TrimSpace(req.ImageBackend),
+		VisionModel:          strings.TrimSpace(req.PromptExpansionMode),
+		VideoModel:           strings.TrimSpace(req.Model),
+		MusicPrompt:          strings.TrimSpace(req.MusicPrompt),
+		Lyrics:               strings.TrimSpace(req.Lyrics),
+		Sketch:               req.Sketch,
 	}
-	if err := normalizeDramatizeRequest(&input); err != nil {
-		jsonError(ctx, http.StatusBadRequest, err.Error())
+	if input.Mode == "trailer-sketch" {
+		input.Mode = "trailer"
+		input.Sketch = true
+	}
+	var normalizeErr error
+	switch input.Mode {
+	case "remake":
+		normalizeErr = normalizeRemakeRequest(&input)
+	case "trailer":
+		normalizeErr = normalizeTrailerRequest(&input)
+	default:
+		normalizeErr = normalizeDramatizeRequest(&input)
+	}
+	if normalizeErr != nil {
+		jsonError(ctx, http.StatusBadRequest, normalizeErr.Error())
 		return
 	}
 
@@ -300,6 +345,12 @@ func handleVideoDramatizeService(ctx *fasthttp.RequestCtx, req ServiceUsageReque
 	}
 
 	estimateUSD := dramatizeEstimateUSD(input.MaxShots)
+	switch input.Mode {
+	case "remake":
+		estimateUSD = remakeEstimateUSD(input)
+	case "trailer":
+		estimateUSD = trailerEstimateUSD(input)
+	}
 	credits := usdToCredits(estimateUSD)
 	if credits <= 0 {
 		jsonError(ctx, http.StatusServiceUnavailable, "credit pricing is temporarily unavailable")
@@ -327,15 +378,28 @@ func handleVideoDramatizeService(ctx *fasthttp.RequestCtx, req ServiceUsageReque
 		jsonError(ctx, http.StatusInternalServerError, "could not queue the dramatization")
 		return
 	}
-	state := dramatizeJobState{Request: input, Label: "Queued"}
+	state := dramatizeJobState{Request: input, AgentKind: input.Mode, Label: "Queued"}
+	if input.Mode == "remake" {
+		state.Estimate = remakeProvisionalEstimate(input)
+	}
+	if input.Mode == "trailer" {
+		state.Estimate = trailerEstimate(input)
+	}
 	if err := dbConn.UpdateVideoJob(job.ID, "queued", state.marshal(), ""); err != nil {
 		jsonError(ctx, http.StatusInternalServerError, "could not persist the dramatization request")
 		return
 	}
 	launchVideoJob(job.ID)
 
+	serviceName := "video-dramatize"
+	if input.Mode == "remake" {
+		serviceName = "video-remake"
+	}
+	if input.Mode == "trailer" {
+		serviceName = "trailer-agent"
+	}
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
-		"service": "video-dramatize",
+		"service": serviceName,
 		"result": map[string]interface{}{
 			"job_id":     job.ID,
 			"status":     "queued",
@@ -343,6 +407,7 @@ func handleVideoDramatizeService(ctx *fasthttp.RequestCtx, req ServiceUsageReque
 		},
 		"estimated_cost_usd": estimateUSD,
 		"estimated_credits":  credits,
+		"estimate":           state.Estimate,
 		"settlement":         "charged on completion from the shot plan the agent runs",
 	})
 }
@@ -356,8 +421,16 @@ func processVideoDramatizeJob(job *VideoJob) {
 	if len(job.Result) > 0 {
 		_ = json.Unmarshal(job.Result, &state)
 	}
+	if state.Request.Mode == "trailer" {
+		processTrailerAgentJob(job, &state)
+		return
+	}
 	if strings.TrimSpace(state.Request.VideoURL) == "" {
 		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "dramatization request was not persisted")
+		return
+	}
+	if state.Request.Mode == "remake" {
+		processVideoRemakeJob(job, &state)
 		return
 	}
 	// Restarting mid-run would re-charge for already-generated shots, so a
@@ -797,13 +870,21 @@ func dramatizeAnimateImage(ctx context.Context, shot DramatizeShot, imageURL str
 	if seconds < 2 {
 		seconds = 2
 	}
+	videoModel := strings.TrimSpace(shot.VideoModel)
+	if videoModel == "" {
+		videoModel = dramatizeVideoModel()
+	}
+	aspectRatio := strings.TrimSpace(shot.AspectRatio)
+	if aspectRatio == "" {
+		aspectRatio = "9:16"
+	}
 	result, err := proxyOpenPathsVideo(ServiceUsageRequest{
 		Service:     "video_generate",
-		Model:       dramatizeVideoModel(),
+		Model:       videoModel,
 		Prompt:      shot.MotionPrompt,
 		ImageURL:    imageURL,
 		Duration:    seconds,
-		AspectRatio: "9:16",
+		AspectRatio: aspectRatio,
 	})
 	if err != nil {
 		return "", fmt.Errorf("animate still: %w", err)
@@ -991,7 +1072,11 @@ func publishDramatizeStudioProject(
 		shot.ObjectKey = objectKey
 	}
 
-	blob, err := buildStudioDocument(timeline)
+	canvasWidth, canvasHeight := plan.Width, plan.Height
+	if canvasWidth <= 0 || canvasHeight <= 0 {
+		canvasWidth, canvasHeight = dramatizeCanvasWidth, dramatizeCanvasHeight
+	}
+	blob, err := buildStudioDocumentForCanvas(timeline, canvasWidth, canvasHeight)
 	if err != nil {
 		return "", "", err
 	}
@@ -1014,6 +1099,10 @@ func publishDramatizeStudioProject(
 // its measured start time, so opening the project shows the real edit rather
 // than one flattened render.
 func buildStudioDocument(timeline []dramatizeShotResult) ([]byte, error) {
+	return buildStudioDocumentForCanvas(timeline, dramatizeCanvasWidth, dramatizeCanvasHeight)
+}
+
+func buildStudioDocumentForCanvas(timeline []dramatizeShotResult, canvasWidth, canvasHeight int) ([]byte, error) {
 	assets := make([]map[string]interface{}, 0, len(timeline))
 	for i := range timeline {
 		shot := timeline[i]
@@ -1028,7 +1117,7 @@ func buildStudioDocument(timeline []dramatizeShotResult) ([]byte, error) {
 			"kind": "video",
 			// Studio derives clip length from trimEnd-trimStart, so these are
 			// the measured durations, not the planned ones.
-			"duration": shot.Duration, "width": dramatizeCanvasWidth, "height": dramatizeCanvasHeight,
+			"duration": shot.Duration, "width": canvasWidth, "height": canvasHeight,
 			"trimStart": 0.0, "trimEnd": shot.Duration, "timelineStart": shot.Start,
 			// Sequential cuts share lane 0; non-overlapping ranges keep them there.
 			"visualTrack": 0,

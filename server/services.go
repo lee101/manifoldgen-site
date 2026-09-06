@@ -48,6 +48,8 @@ var servicePricesUSD = map[string]float64{
 	"flux_image":               0.04,   // per image via fal.ai or netwrck
 	"nsfw_detect":              0.001,  // per image classification
 	"openpaths_image":          0.04,   // per image; the selected model overrides this base
+	"openpaths_tts":            1.20,   // per 1M text input tokens; audio output is $24 per 1M tokens
+	"lyria_generation":         0.08,   // per render; Clip overrides to $0.04
 	"extend_image":             0.10,   // per outpaint expansion through OpenPaths extend-image
 	"relight":                  0.12,   // per relit image through fal IC-Light v2
 	"upscale_image":            0.15,   // per 2x creative upscale through fal
@@ -102,6 +104,8 @@ var videoModelPricesPerSecondUSD = map[string]float64{
 	"fal-ai/veo3.1/image-to-video":                  0.40,
 	"fal-ai/veo3.1/fast":                            0.15,
 	"fal-ai/veo3.1/fast/image-to-video":             0.15,
+	"minimax/h3-max/text-to-video":                  0.04,
+	"minimax/h3-max/image-to-video":                 0.04,
 }
 
 // Reusable HTTP client with connection pooling
@@ -137,6 +141,8 @@ func initServices() {
 	serviceBackends["video_generate"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
 	serviceBackends["flux_image"] = "https://fal.run"
 	serviceBackends["openpaths_image"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
+	serviceBackends["openpaths_tts"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
+	serviceBackends["lyria_generation"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
 	serviceBackends["extend_image"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
 	serviceBackends["relight"] = "https://queue.fal.run"
 	serviceBackends["upscale_image"] = "https://queue.fal.run"
@@ -248,6 +254,12 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 	if req.Service == "openpaths_image" {
 		usdPrice = imageModelPriceUSD(req)
 	}
+	if req.Service == "openpaths_tts" {
+		return estimateGeminiTTSCostUSD(getTTSText(req))
+	}
+	if req.Service == "lyria_generation" && strings.Contains(strings.ToLower(req.Model), "clip") {
+		usdPrice = 0.04
+	}
 	if req.Service == "relight" {
 		usdPrice *= float64(clampImageCount(getImageCount(req)))
 	}
@@ -356,6 +368,8 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "video-dramatize", Internal: "video_dramatize"},
 	{Public: "safety", Internal: "nsfw_detect"},
 	{Public: "openpaths-image", Internal: "openpaths_image"},
+	{Public: "gemini-tts", Internal: "openpaths_tts"},
+	{Public: "lyria", Internal: "lyria_generation"},
 	{Public: "extend-image", Internal: "extend_image"},
 	{Public: "relight", Internal: "relight"},
 	{Public: "upscale-image", Internal: "upscale_image"},
@@ -414,6 +428,8 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"sfx_generation":           "estimated 5-second sound effect; final price follows measured generation time",
 		"flux_image":               "per image",
 		"openpaths_image":          "per image; priced by selected model (gpt-image-2, nano-banana-2, grok-imagine, FLUX.2)",
+		"openpaths_tts":            "$1.20 per 1M text input tokens + $24.00 per 1M audio output tokens",
+		"lyria_generation":         "per render; $0.04 Clip or $0.08 Pro through OpenPaths",
 		"extend_image":             "per outpaint expansion",
 		"relight":                  "per relit image",
 		"upscale_image":            "per 2x creative upscale",
@@ -545,6 +561,10 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		handleH3VideoService(ctx, req, user)
 		return
 	}
+	if req.Service == "video_generate" && isFalH3MaxModel(req.Model) {
+		handleDirectFalH3MaxService(ctx, req, user)
+		return
+	}
 	if req.Service == "h3_image" || req.Service == "h3_image_edit" {
 		handleH3ImageService(ctx, req, user)
 		return
@@ -618,8 +638,8 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	if req.Service == "tts" {
 		chars := float64(len(getTTSText(req)))
 		cuteCost = cuteCost * (chars / 100.0)
-		if cuteCost < getServicePriceCUTE("tts")*0.1 {
-			cuteCost = getServicePriceCUTE("tts") * 0.1 // Minimum charge
+		if cuteCost < getServicePriceCUTE(req.Service)*0.1 {
+			cuteCost = getServicePriceCUTE(req.Service) * 0.1 // Minimum charge
 		}
 	}
 
@@ -648,7 +668,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	// double-booking — the deduction above is a hold).
 	cutePrice := getCUTEPriceUSD()
 	usdEquiv := cuteCost * cutePrice
-	if req.Service != "lora_training" && !unlimitedImage {
+	if req.Service != "lora_training" && req.Service != "openpaths_tts" && !unlimitedImage {
 		go dbConn.CreateBillingEvent(&BillingEvent{
 			UserID:       user.ID,
 			EventType:    req.Service,
@@ -693,6 +713,38 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		}
 		jsonError(ctx, 502, "service temporarily unavailable")
 		return
+	}
+	if req.Service == "openpaths_tts" && !unlimitedImage {
+		actualUSD, inputTokens, outputTokens := geminiTTSResultCostUSD(result, usdEquiv)
+		actualCost := actualUSD / cutePrice
+		delta := actualCost - cuteCost
+		settledBalance := newBalance
+		if delta < 0 {
+			if balance, settleErr := dbConn.AddUserCredits(user.ID, -delta); settleErr == nil {
+				settledBalance = balance
+			} else {
+				log.Printf("Gemini TTS settlement refund failed for user=%s: %v", user.WalletAddress, settleErr)
+				actualCost = cuteCost
+				actualUSD = usdEquiv
+			}
+		} else if delta > 0 {
+			if balance, settleErr := dbConn.DeductUserCredits(user.ID, delta); settleErr == nil {
+				settledBalance = balance
+			} else {
+				log.Printf("Gemini TTS settlement overage held at reserve for user=%s: %v", user.WalletAddress, settleErr)
+				actualCost = cuteCost
+				actualUSD = usdEquiv
+			}
+		}
+		newBalance = settledBalance
+		cuteCost = actualCost
+		billableCost = actualCost
+		usdEquiv = actualUSD
+		go dbConn.CreateBillingEvent(&BillingEvent{
+			UserID: user.ID, EventType: req.Service, Amount: -actualCost, CuteAmount: actualCost,
+			USDAmount: actualUSD, CreditsAfter: settledBalance,
+			Description: fmt.Sprintf("%s usage (%d text tokens, %d audio tokens)", req.Service, inputTokens, outputTokens),
+		})
 	}
 	result = optimizeGeneratedVideo(req, user, result)
 
@@ -1149,6 +1201,12 @@ func proxyToBackend(req ServiceUsageRequest, backendURL string) ([]byte, error) 
 
 	case "openpaths_image":
 		return proxyOpenPathsModelImage(req)
+
+	case "openpaths_tts":
+		return proxyOpenPathsGeminiTTS(req)
+
+	case "lyria_generation":
+		return proxyOpenPathsLyria(req)
 
 	case "extend_image":
 		return proxyOpenPathsExtendImage(req)

@@ -95,3 +95,22 @@
 .preview.split{grid-template-columns:1fr}
 .footer{min-height:52px}
 }
+
+/* --- compact above-the-fold --- */
+@media(max-width:880px){
+.header{height:50px}
+.exampleCard{grid-template-columns:1fr;gap:8px;padding:0 14px 2px}
+.examplePreview img{aspect-ratio:21/9}
+.examplePrompts{display:flex;align-items:center;gap:7px;overflow-x:auto;padding-bottom:3px}
+.examplePrompts b,.examplePrompts small{display:none}
+.examplePrompts button{flex:0 0 auto;max-width:240px;padding:8px 10px}
+.console{padding:0 14px;gap:12px}
+.promptField textarea{min-height:88px}
+.notes,.gallery{padding-left:14px;padding-right:14px}
+}
+@media(max-width:600px){
+.promptField textarea{min-height:70px}
+.promptField textarea{min-height:78px}
+.run,.bar button{min-height:44px}
+.gallery{padding:12px 14px}
+}

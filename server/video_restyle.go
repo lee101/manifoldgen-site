@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -49,13 +50,16 @@ func normalizeVideoRestyleRequest(req *ServiceUsageRequest) error {
 	if req.Model != "wan-2.2" && req.Model != "h3-reference" && req.Model != "h3-control" && req.Model != "wan-animate-2" {
 		return fmt.Errorf("unsupported video restyle model")
 	}
-	if req.Prompt == "" {
+	if req.Prompt == "" && req.Model != "wan-animate-2" {
 		return fmt.Errorf("prompt is required")
 	}
 	if req.VideoURL == "" {
 		return fmt.Errorf("video_url is required")
 	}
 	if err := validateRestyleURL(req.VideoURL); err != nil {
+		return fmt.Errorf("video_url: %w", err)
+	}
+	if err := validateRestyleMediaKind(req.VideoURL, "video"); err != nil {
 		return fmt.Errorf("video_url: %w", err)
 	}
 	if req.Model == "h3-control" {
@@ -104,11 +108,21 @@ func normalizeVideoRestyleRequest(req *ServiceUsageRequest) error {
 			}
 		}
 	} else if req.Model == "wan-animate-2" {
+		req.AnimationMode = strings.ToLower(strings.TrimSpace(req.AnimationMode))
+		if req.AnimationMode == "" {
+			req.AnimationMode = "move"
+		}
+		if !videoStringIn(req.AnimationMode, "move", "replace") {
+			return fmt.Errorf("animation_mode must be move or replace")
+		}
 		req.ImageURL = strings.TrimSpace(req.ImageURL)
 		if req.ImageURL == "" {
 			return fmt.Errorf("image_url is required for animation transfer")
 		}
 		if err := validateRestyleURL(req.ImageURL); err != nil {
+			return fmt.Errorf("image_url: %w", err)
+		}
+		if err := validateRestyleMediaKind(req.ImageURL, "image"); err != nil {
 			return fmt.Errorf("image_url: %w", err)
 		}
 		if req.Duration == 0 {
@@ -123,23 +137,23 @@ func normalizeVideoRestyleRequest(req *ServiceUsageRequest) error {
 		if !videoIntIn(req.FramesPerSecond, 12, 16, 24, 30) {
 			return fmt.Errorf("frames_per_second must be 12, 16, 24, or 30")
 		}
-		if req.NumFrames == 0 {
-			req.NumFrames = 37
-		}
-		if req.NumFrames < 17 || req.NumFrames > 81 || (req.NumFrames-1)%4 != 0 {
-			return fmt.Errorf("num_frames must be 17 to 81 and equal 4n+1")
-		}
 		if req.NumSteps == 0 {
-			req.NumSteps = 10
+			req.NumSteps = 20
 		}
-		if req.NumSteps < 6 || req.NumSteps > 20 {
-			return fmt.Errorf("num_steps must be between 6 and 20")
+		if req.NumSteps < 2 || req.NumSteps > 40 {
+			return fmt.Errorf("num_steps must be between 2 and 40")
 		}
 		if req.Resolution == "" {
-			req.Resolution = "preview"
+			req.Resolution = "580p"
 		}
-		if !videoStringIn(req.Resolution, "preview", "balanced", "high") {
-			return fmt.Errorf("resolution must be preview, balanced, or high")
+		if !videoStringIn(req.Resolution, "480p", "580p", "720p") {
+			return fmt.Errorf("resolution must be 480p, 580p, or 720p")
+		}
+		if req.Guidance == 0 {
+			req.Guidance = 1
+		}
+		if req.Guidance < 1 || req.Guidance > 10 {
+			return fmt.Errorf("guidance must be between 1 and 10")
 		}
 	} else if req.Model == "h3-reference" {
 		if req.Duration == 0 {
@@ -221,6 +235,31 @@ func validateRestyleURL(value string) error {
 	return nil
 }
 
+var restyleImageExtensions = map[string]bool{
+	".avif": true, ".bmp": true, ".gif": true, ".heic": true, ".heif": true,
+	".jpeg": true, ".jpg": true, ".png": true, ".tif": true, ".tiff": true, ".webp": true,
+}
+
+var restyleVideoExtensions = map[string]bool{
+	".avi": true, ".m4v": true, ".mkv": true, ".mov": true, ".mp4": true,
+	".mpeg": true, ".mpg": true, ".ogv": true, ".webm": true,
+}
+
+func validateRestyleMediaKind(value, expected string) error {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return fmt.Errorf("invalid media URL")
+	}
+	ext := strings.ToLower(path.Ext(parsed.Path))
+	if expected == "video" && restyleImageExtensions[ext] {
+		return fmt.Errorf("expected a video file, got image extension %s", ext)
+	}
+	if expected == "image" && restyleVideoExtensions[ext] {
+		return fmt.Errorf("expected an image file, got video extension %s", ext)
+	}
+	return nil
+}
+
 func prependUniqueURL(first string, rest []string) []string {
 	out := []string{first}
 	for _, candidate := range rest {
@@ -240,9 +279,8 @@ func restyleFalProviderCost(req ServiceUsageRequest) float64 {
 		return (coldStart + perSecond*float64(req.Duration)) * factor
 	}
 	if req.Model == "wan-animate-2" {
-		base := restyleEnvFloat("WAN_ANIMATE_ESTIMATED_PROVIDER_USD_PER_SECOND", 0.10)
-		factor := map[string]float64{"preview": 1, "balanced": 1.6, "high": 3}[req.Resolution]
-		return base * factor * float64(req.Duration)
+		rate := map[string]float64{"480p": 0.04, "580p": 0.06, "720p": 0.08}[req.Resolution]
+		return rate * float64(req.Duration*req.FramesPerSecond) / 16
 	}
 	if req.Model == "h3-reference" {
 		rate := map[string]float64{"768p": 0.08, "2K": 0.13, "4K": 0.16}[req.Resolution]
@@ -254,9 +292,7 @@ func restyleFalProviderCost(req ServiceUsageRequest) float64 {
 
 func restyleEstimate(req ServiceUsageRequest) (float64, float64) {
 	markup := falRestyleMarkup
-	if req.Model == "wan-animate-2" {
-		markup = wanAnimateMarkup
-	} else if req.Model == "h3-control" {
+	if req.Model == "h3-control" {
 		markup = h3ControlMarkup
 	}
 	charged := math.Ceil(restyleFalProviderCost(req)*markup*100) / 100
@@ -286,9 +322,15 @@ func handleVideoRestyleService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 		return
 	}
 	stored, _ := json.Marshal(restyleStoredRequest{Input: req})
-	providerID, err := submitPrivateVideoRestyle(req)
-	if err != nil && allowsFalVideoRestyle(req) {
+	var providerID string
+	var err error
+	if req.Model == "wan-animate-2" {
 		providerID, err = submitFalVideoRestyle(req)
+	} else {
+		providerID, err = submitPrivateVideoRestyle(req)
+		if err != nil && allowsFalVideoRestyle(req) {
+			providerID, err = submitFalVideoRestyle(req)
+		}
 	}
 	if err != nil {
 		jsonError(ctx, http.StatusServiceUnavailable, "video restyling is temporarily unavailable")
@@ -337,7 +379,7 @@ func h3ControlRequestAllowed(ctx *fasthttp.RequestCtx) bool {
 }
 
 func allowsFalVideoRestyle(req ServiceUsageRequest) bool {
-	return req.Model != "wan-animate-2" && req.Model != "h3-control"
+	return req.Model != "h3-control"
 }
 
 func privateRestyleTemplate(req ServiceUsageRequest) string {
@@ -492,6 +534,20 @@ func privateRestyleProviderInput(req ServiceUsageRequest) map[string]interface{}
 }
 
 func restyleProviderInput(req ServiceUsageRequest) map[string]interface{} {
+	if req.Model == "wan-animate-2" {
+		input := map[string]interface{}{
+			"video_url": req.VideoURL, "image_url": req.ImageURL,
+			"guidance_scale": req.Guidance, "resolution": req.Resolution,
+			"num_inference_steps": req.NumSteps, "shift": 5,
+			"enable_safety_checker": true, "enable_output_safety_checker": true,
+			"video_quality": "high", "video_write_mode": "balanced",
+			"return_frames_zip": false, "use_turbo": false,
+		}
+		if req.Seed != 0 {
+			input["seed"] = req.Seed
+		}
+		return input
+	}
 	input := map[string]interface{}{
 		"video_url": req.VideoURL, "prompt": req.Prompt, "negative_prompt": req.NegativePrompt,
 		"model": req.Model, "resolution": req.Resolution, "aspect_ratio": req.AspectRatio,
@@ -506,6 +562,9 @@ func restyleProviderInput(req ServiceUsageRequest) map[string]interface{} {
 }
 
 func falRestylePath(req ServiceUsageRequest) string {
+	if req.Model == "wan-animate-2" {
+		return "fal-ai/wan/v2.2-14b/animate/" + req.AnimationMode
+	}
 	if req.Model == "h3-reference" {
 		return "minimax/h3/reference-to-video"
 	}
@@ -525,7 +584,9 @@ func submitFalVideoRestyle(req ServiceUsageRequest) (string, error) {
 	}
 	payload := restyleProviderInput(req)
 	delete(payload, "model")
-	if req.Model == "h3-reference" {
+	if req.Model == "wan-animate-2" {
+		// restyleProviderInput already emits the exact Move/Replace schema.
+	} else if req.Model == "h3-reference" {
 		delete(payload, "video_url")
 		delete(payload, "strength")
 		delete(payload, "num_frames")
@@ -596,7 +657,7 @@ func processVideoRestyleJob(job *VideoJob) {
 		if videoJobCancellationRequested(job.ID) {
 			return
 		}
-		if stored.Input.Model == "wan-animate-2" || stored.Input.Model == "h3-control" {
+		if stored.Input.Model == "h3-control" {
 			label := "animation transfer"
 			if stored.Input.Model == "h3-control" {
 				label = "H3 control video"

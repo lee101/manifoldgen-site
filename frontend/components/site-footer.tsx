@@ -97,6 +97,9 @@ export default function SiteFooter() {
               <Link href="/account" className="rounded-full border border-white/20 px-4 py-2 text-white/75 transition hover:border-white/40 hover:text-white">
                 Account
               </Link>
+              <Link href="/invite" className="rounded-full border border-[#b99aef]/30 px-4 py-2 text-[#d8c4fb] transition hover:border-[#b99aef]/60 hover:text-white">
+                Give $5, get $5
+              </Link>
             </div>
           </div>
 
@@ -138,6 +141,7 @@ export default function SiteFooter() {
           <span>© {new Date().getFullYear()} ManifoldGen. All rights reserved.</span>
           <nav className="flex flex-wrap items-center gap-x-6 gap-y-2" aria-label="Legal">
             <a href="https://manifoldgan.evangeler.com" className="transition hover:text-white">Affiliate program</a>
+            <Link href="/prompts" className="transition hover:text-white">Free prompt tools</Link>
             <Link href="/api" className="transition hover:text-white">API</Link>
             <Link href="/privacy" className="transition hover:text-white">Privacy</Link>
             <Link href="/terms" className="transition hover:text-white">Terms</Link>

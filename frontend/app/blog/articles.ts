@@ -1,10 +1,11 @@
 export type BlogMediaItem = {
-  kind: 'video' | 'image';
+  kind: 'video' | 'image' | 'audio';
   src: string;
   poster?: string;
   aspect?: '16:9' | '9:16' | '1:1';
   seconds?: number;
   caption?: string;
+  sound?: boolean;
 };
 
 export type BlogExample = {
@@ -37,6 +38,7 @@ export type BlogArticle = {
   blocks: BlogBlock[];
 };
 
+import { music3Float16EchoFix } from './content/music3-float16-echo-fix';
 import { howToMakeAiVideoFromScript } from './content/how-to-make-ai-video-from-script';
 import { howToMakeAiVideoLookReal } from './content/how-to-make-ai-video-look-real';
 import { aiContentForTiktok } from './content/ai-content-for-tiktok';
@@ -65,6 +67,7 @@ import { h3ShortFilmsEmberHollowOrbit } from './content/h3-short-films-ember-hol
 import { h3ControlVideoStyleTransfer } from './content/h3-control-video-style-transfer';
 
 export const articles: BlogArticle[] = [
+  music3Float16EchoFix,
   h3ControlVideoStyleTransfer,
   h3ShortFilmsEmberHollowOrbit,
   seedanceKlingVeoComparison,

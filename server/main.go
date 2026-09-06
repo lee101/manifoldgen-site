@@ -354,11 +354,16 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	case path == "/api/billing-history" && method == "GET":
 		handleGetBillingHistory(ctx)
 
+	case path == "/api/referrals" && method == "GET":
+		handleReferrals(ctx)
+
 	// AI Service usage
 	case path == "/api/h3-control-eligibility" && method == "GET":
 		handleH3ControlEligibility(ctx)
 	case path == "/api/service" && method == "POST":
 		handleServiceRequest(ctx)
+	case path == "/api/music-compose" && method == "POST":
+		handleMusicCompose(ctx)
 	case path == "/api/studio/remove-background" && method == "POST":
 		handleStudioRemoveBackground(ctx)
 	case path == "/api/image-editor/background" && method == "POST":
@@ -397,6 +402,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStudioVideoPreview(ctx)
 	case path == "/api/video-jobs" && method == "GET":
 		handleListVideoJobs(ctx)
+	case path == "/api/video-remake/estimate" && method == "POST":
+		handleVideoRemakeEstimate(ctx)
 	case path == "/api/audio-jobs" && method == "GET":
 		handleListAudioJobs(ctx)
 	case strings.HasPrefix(path, "/api/video-jobs/") && strings.HasSuffix(path, "/retry") && method == "POST":
@@ -800,6 +807,7 @@ func handleWalletAuth(ctx *fasthttp.RequestCtx) {
 		}
 		user = updated
 	}
+	captureReferralForNewUser(ctx, user, created)
 
 	cutePrice := getCUTEPriceUSD()
 	jsonResponse(ctx, 200, map[string]interface{}{
@@ -856,6 +864,7 @@ func handleEmailLogin(ctx *fasthttp.RequestCtx) {
 			return
 		}
 	}
+	captureReferralForNewUser(ctx, user, created)
 
 	if created || user.DripStep == 0 {
 		go func() {

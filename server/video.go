@@ -93,6 +93,8 @@ var allowedVideoModels = map[string]bool{
 	"fal-ai/veo3.1/image-to-video":                  true,
 	"fal-ai/veo3.1/fast":                            true,
 	"fal-ai/veo3.1/fast/image-to-video":             true,
+	"minimax/h3-max/text-to-video":                  true,
+	"minimax/h3-max/image-to-video":                 true,
 	"ra2v":                                          true,
 }
 
@@ -106,6 +108,7 @@ var imageRequiredVideoModels = map[string]bool{
 	"fal-ai/kling-video/v2.6/pro/image-to-video":    true,
 	"fal-ai/veo3.1/image-to-video":                  true,
 	"fal-ai/veo3.1/fast/image-to-video":             true,
+	"minimax/h3-max/image-to-video":                 true,
 }
 
 var referenceRequiredVideoModels = map[string]bool{
@@ -162,7 +165,13 @@ func proxyOpenPathsVideo(req ServiceUsageRequest) ([]byte, error) {
 	}
 
 	duration := req.Duration
-	if duration <= 0 || duration > 10 {
+	if isFalH3MaxModel(model) {
+		if duration < 5 {
+			duration = 5
+		} else if duration > 15 {
+			duration = 15
+		}
+	} else if duration <= 0 || duration > 10 {
 		duration = 5
 	}
 	aspect := strings.TrimSpace(req.AspectRatio)
@@ -506,18 +515,6 @@ func appNZH3Input(req ServiceUsageRequest) map[string]interface{} {
 	return input
 }
 
-// Style LoRAs are selected only by the server-side prompt router. Keeping this
-// out of ServiceUsageRequest prevents clients from naming arbitrary worker
-// weights. Studio 1939's published recipe also requires prompt expansion off.
-func applyH3StyleRoute(input map[string]interface{}, route h3WorkerRoute) {
-	if route.StyleLoRA == "" {
-		delete(input, "style_lora")
-		return
-	}
-	input["style_lora"] = route.StyleLoRA
-	input["structured_prompt"] = false
-}
-
 func handleSFXGeneration(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User) {
 	req.Service = "sfx_generation"
 	req.Kind = "sfx"
@@ -556,6 +553,11 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		return
 	}
 	route := h3RouteForPrompt(req.Prompt)
+	if route.Variant == h3NormalVariant && h3FalCanHandle(req) {
+		log.Printf("[h3] selected fal H3 Max mode=%s prompt_bytes=%d", h3FalMode(req), len(req.Prompt))
+		handleFalH3MaxService(ctx, req, user)
+		return
+	}
 	if route.RunpodEndpointID != "" {
 		logH3Route(req.Prompt, route)
 		handleRunpodH3VideoService(ctx, req, user, route)
@@ -567,7 +569,6 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		return
 	}
 	input := appNZH3Input(req)
-	applyH3StyleRoute(input, route)
 	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
 	envelope, upstreamStatus, err := callAppNZH3(http.MethodPost, "/api/cogs/run", map[string]interface{}{
 		"template": "minimax-h3", "name": "minimax-h3-shared", "input": input,
@@ -674,7 +675,6 @@ func callH3Runpod(endpointID, suffix string, method string, input interface{}, o
 
 func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, route h3WorkerRoute) {
 	input := appNZH3Input(req)
-	applyH3StyleRoute(input, route)
 	if err := prepareH3RunpodOutputTarget(input, user.ID); err != nil {
 		log.Printf("[video] prepare hosted output upload failed: %v", err)
 		jsonError(ctx, http.StatusServiceUnavailable, videoGenerationUnavailableMessage)
@@ -725,7 +725,6 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 
 func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User, route h3WorkerRoute) {
 	input := appNZH3Input(req)
-	applyH3StyleRoute(input, route)
 	// These keys are persisted for the internal worker only and removed before
 	// the request reaches Cog. They must never be controllable by a client.
 	input["_h3_cog_url"] = route.CogURL
@@ -1093,6 +1092,10 @@ func h3AudioAssetFromResult(job *VideoJob, result []byte) (*GeneratedAudio, erro
 }
 
 func processH3VideoJob(job *VideoJob) {
+	if strings.HasPrefix(job.ProviderJobID, "fal-h3-") {
+		processFalH3MaxJob(job)
+		return
+	}
 	if strings.HasPrefix(job.ProviderJobID, "runpod:") {
 		processRunpodH3VideoJob(job)
 		return
@@ -1487,7 +1490,6 @@ func fallbackRunpodH3ToLocal(job *VideoJob, endpointID, providerJobID, variant s
 	}
 	input["_h3_cog_url"] = route.CogURL
 	input["_h3_variant"] = variant
-	applyH3StyleRoute(input, route)
 	payload, _ := json.Marshal(input)
 	if err := dbConn.UpdateVideoJobProvider(job.ID, "local:sync", "queued", payload); err != nil {
 		log.Printf("[h3] queue fallback persistence failed job=%s: %v", job.ID, err)
@@ -1762,7 +1764,24 @@ func retryH3VideoJob(job *VideoJob) error {
 	}
 
 	route := h3RouteForPrompt(job.Prompt)
-	applyH3StyleRoute(input, route)
+	if route.Variant == h3NormalVariant {
+		req := h3FalStoredRequest(job)
+		if req.Prompt == "" {
+			req.Prompt = job.Prompt
+		}
+		if h3FalCanHandle(req) {
+			providerID, err := submitFalH3Max(req)
+			if err != nil {
+				return fmt.Errorf("could not queue fal H3 Max retry: %w", err)
+			}
+			payload := persistH3Request(req, h3FalPayload(req))
+			if err := dbConn.RequeueVideoJobProvider(job.ID, providerID, payload); err != nil {
+				return err
+			}
+			launchVideoJob(job.ID)
+			return nil
+		}
+	}
 	if route.RunpodEndpointID != "" {
 		delete(input, "_h3_cog_url")
 		input["_h3_variant"] = route.Variant
@@ -2190,6 +2209,14 @@ func cancelVideoProvider(job *VideoJob) error {
 			cogURL = h3LocalCogURL()
 		}
 		return cancelPredictionAt(cogURL, job.ID, "")
+	case strings.HasPrefix(providerID, "fal-h3-"):
+		_, requestID, ok := parseFalH3ProviderJob(providerID)
+		if !ok {
+			return nil
+		}
+		endpoint := strings.TrimRight(falQueueBaseURL, "/") + "/minimax/h3-max/requests/" + url.PathEscape(requestID) + "/cancel"
+		_, _, err := callFalQueue(http.MethodPut, endpoint, nil)
+		return err
 	case strings.HasPrefix(providerID, "private:"):
 		_, _, err := callAppNZH3(http.MethodPost, "/api/cogs/predictions/"+url.PathEscape(strings.TrimPrefix(providerID, "private:"))+"/cancel", nil)
 		return err

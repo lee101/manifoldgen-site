@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { loadStoredUser, refreshUser, saveUser, StoredUser } from '../../../lib/auth';
 import styles from './page.module.css';
 
-type Phase = 'idle' | 'queued' | 'processing' | 'done' | 'error';
+type Phase = 'idle' | 'composing' | 'queued' | 'processing' | 'done' | 'error';
 type ServiceTier = 'standard' | 'fast' | 'xfast';
 type JobPayload = {
   job?: {
@@ -16,6 +16,7 @@ type JobPayload = {
   };
 };
 
+const EXAMPLE_IDEA = 'A euphoric late-night house remix with old-school electro bass, a huge saxophone hook, electric guitar stabs, and soulful female vocals.';
 const EXAMPLE_PROMPT = 'House remix, EDM techno at 128 BPM, old-school electro bass, saxophone hook, electric guitar stabs, wide club production';
 const EXAMPLE_LYRICS = '[Verse]\nThere is a house in New Orleans\nThey call the Rising Sun\n[Chorus]\nOh mother tell your children\nNot to do what I have done';
 const DURATIONS = [30, 60, 90, 120, 180, 240, 300];
@@ -39,6 +40,7 @@ async function jsonResponse<T>(response: Response, fallback: string): Promise<T>
 
 export default function MusicTool() {
   const [user, setUser] = useState<StoredUser | null>(null);
+  const [idea, setIdea] = useState('');
   const [prompt, setPrompt] = useState('');
   const [lyrics, setLyrics] = useState('');
   const [duration, setDuration] = useState(60);
@@ -49,12 +51,34 @@ export default function MusicTool() {
   const [audioURL, setAudioURL] = useState('');
   const [cost, setCost] = useState<number | null>(null);
   const [length, setLength] = useState<number | null>(null);
+  const [compositionTitle, setCompositionTitle] = useState('');
+  const [compositionTags, setCompositionTags] = useState('');
 
   useEffect(() => {
     const stored = loadStoredUser();
     setUser(stored);
     if (stored?.api_key) void refreshUser(stored.api_key).then((fresh) => { if (fresh) { setUser(fresh); saveUser(fresh); } });
   }, []);
+
+  async function compose() {
+    if (!user?.api_key) { setPhase('error'); setStatus('Sign in to compose a song'); return; }
+    if (idea.trim().length < 10) { setPhase('error'); setStatus('Describe the song in at least 10 characters'); return; }
+    setPhase('composing'); setStatus('Writing the arrangement…');
+    try {
+      const result = await jsonResponse<{ title: string; tags: string; lyrics: string; caption: string; compose_ms?: number }>(
+        await fetch('/api/music-compose', {
+          method: 'POST', headers: { Authorization: `Bearer ${user.api_key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ description: idea.trim(), duration, instrumental: false }),
+        }),
+        'Could not compose the song',
+      );
+      setCompositionTitle(result.title); setCompositionTags(result.tags);
+      setPrompt(result.caption); setLyrics(result.lyrics);
+      setPhase('idle'); setStatus(result.compose_ms ? `Arrangement written in ${(result.compose_ms / 1000).toFixed(1)}s` : 'Arrangement ready');
+    } catch (reason) {
+      setPhase('error'); setStatus(reason instanceof Error ? reason.message : 'Song composition failed');
+    }
+  }
 
   async function generate() {
     if (!user?.api_key) { setPhase('error'); setStatus('Sign in to generate music'); return; }
@@ -104,7 +128,8 @@ export default function MusicTool() {
     }
   }
 
-  const busy = phase === 'queued' || phase === 'processing';
+  const composing = phase === 'composing';
+  const busy = composing || phase === 'queued' || phase === 'processing';
   return <main className={styles.page}>
     <header className={styles.header}>
       <Link href="/tools" className={styles.back}><ArrowLeft size={17} /> Tools</Link>
@@ -113,14 +138,24 @@ export default function MusicTool() {
     <section className={styles.hero}>
       <div className={styles.eyebrow}><Music4 size={14} /> MINIMAX MUSIC 3 · SONG GENERATOR</div>
       <h1>Write the song.<br /><span>Get the record.</span></h1>
-      <p>Vocals and instrumental together, 32 kHz stereo, up to five minutes. The style caption decides the arrangement; the lyrics decide what gets sung.</p>
+      <p>Describe the record in plain English. The composer writes Music3&apos;s full arrangement language and singable lyrics before the fast GPU pass.</p>
     </section>
     <section className={styles.workspace}>
       <div className={styles.controls}>
-        <label className={styles.promptLabel}>Style caption
-          <textarea data-testid="music-prompt" value={prompt} disabled={busy} maxLength={2000}
+        <label className={styles.promptLabel}>Song idea
+          <textarea data-testid="music-idea" value={idea} disabled={busy} maxLength={2000} rows={3}
+            onChange={(event) => setIdea(event.target.value)} placeholder={EXAMPLE_IDEA} />
+          <small>Genre, mood, story, voice, instruments—or simply the feeling you want.</small>
+        </label>
+        <button data-testid="music-compose" className={styles.compose} type="button" disabled={busy || idea.trim().length < 10}
+          onClick={() => void compose()}>
+          {composing ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={16} />}{composing ? status : 'Write arrangement + lyrics'}
+        </button>
+        {(compositionTitle || prompt) && <div className={styles.compositionMeta}><b>{compositionTitle || 'Custom arrangement'}</b><span>{compositionTags || status}</span></div>}
+        <label className={styles.promptLabel}>Balanced Music3 caption <span className={styles.optional}>editable</span>
+          <textarea data-testid="music-prompt" value={prompt} disabled={busy} maxLength={6000}
             onChange={(event) => setPrompt(event.target.value)} placeholder={EXAMPLE_PROMPT} />
-          <small>Name the genre, instruments, tempo and production character.</small>
+          <small>Global metadata and vocal direction, with a continuity-safe mix profile.</small>
         </label>
         <label className={styles.promptLabel}>Lyrics <span className={styles.optional}>optional</span>
           <textarea data-testid="music-lyrics" value={lyrics} disabled={busy} maxLength={8000} rows={3}
@@ -133,7 +168,7 @@ export default function MusicTool() {
             {DURATIONS.map((value) => <option key={value} value={value}>{value} seconds</option>)}
           </select></label>
           <button type="button" className={styles.example} disabled={busy}
-            onClick={() => { setPrompt(EXAMPLE_PROMPT); setLyrics(EXAMPLE_LYRICS); }}>Use the example</button>
+            onClick={() => { setIdea(EXAMPLE_IDEA); setPrompt(EXAMPLE_PROMPT); setLyrics(EXAMPLE_LYRICS); setCompositionTitle('House of Light'); setCompositionTags('house, female vocals, saxophone, euphoric'); }}>Use the example</button>
           <label>Seed <input data-testid="music-seed" type="number" min="0" value={seed} disabled={busy}
             onChange={(event) => setSeed(event.target.value)} placeholder="random" /></label>
         </div>
@@ -146,7 +181,7 @@ export default function MusicTool() {
         </div>
         <button data-testid="music-run" className={styles.run} type="button" disabled={busy || prompt.trim().length < 10}
           onClick={() => void generate()}>
-          {busy ? <LoaderCircle className={styles.spin} size={19} /> : <Sparkles size={18} />}{busy ? status : 'Generate track'}
+          {(phase === 'queued' || phase === 'processing') ? <LoaderCircle className={styles.spin} size={19} /> : <Music4 size={18} />}{phase === 'queued' || phase === 'processing' ? status : 'Record track'}
         </button>
         <div className={styles.price}><span>Estimate · ${priceUSD(duration, serviceTier).toFixed(2)}</span><span>{serviceTier === 'standard' ? 'Lowest cost · may cold start' : serviceTier === 'fast' ? 'Higher concurrency when queues form' : 'Separate queue from standard jobs'}</span></div>
         {phase === 'error' && <div data-testid="music-error" className={styles.error}>{status}</div>}

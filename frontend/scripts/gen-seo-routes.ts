@@ -6,6 +6,7 @@ import { VIDEO_MODELS } from '../lib/seo/models';
 import { CATEGORIES, comparePairs } from '../lib/seo/benchmarks';
 import { articles } from '../app/blog/articles';
 import { guides } from '../app/blog/guides/registry';
+import { PROMPT_TOOLS } from '../lib/prompt-tools';
 
 const routes = [...new Set([
   '/ai-video-generator',
@@ -19,6 +20,9 @@ const routes = [...new Set([
   '/models',
   ...VIDEO_MODELS.map((model) => `/models/${model.slug}`),
   '/leaderboard',
+  '/prompts',
+  ...PROMPT_TOOLS.map((tool) => `/prompts/${tool.slug}`),
+  '/invite',
   ...articles.map((article) => `/blog/${article.slug}`),
   ...guides.map((guide) => `/blog/guides/${guide.slug}`),
 ])];

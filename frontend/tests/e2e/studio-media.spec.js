@@ -2065,3 +2065,30 @@ test('properties pane edits the selected timeline or stage clip, batches multi-s
   await page.getByTestId('studio-properties-toggle').click();
   await expect(pane).toBeVisible();
 });
+
+test('glitch lab presets and controls persist GPU shader settings', async ({ page }) => {
+  const saves = [];
+  await installMocks(page, { onProjectSave: (project) => saves.push(project) });
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles({ name: 'glitch-source.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
+  await page.getByTestId('studio-tool-effects').click();
+
+  await expect(page.getByRole('heading', { name: 'Looks & glitch' })).toBeVisible();
+  await page.getByTestId('studio-glitch-preset-neon-tears').click();
+  await expect(page.getByTestId('studio-glitch-glitchTear')).toHaveValue('0.9');
+  await expect(page.getByTestId('studio-glitch-glitchColor')).toHaveValue('0.84');
+
+  await page.getByTestId('studio-glitch-glitchAmount').fill('0.91');
+  await page.getByTestId('studio-glitch-glitchBlocks').fill('0.66');
+  await page.getByLabel('Glitch corruption color').fill('#ff0000');
+  await expect.poll(() => saves.at(-1)?.document?.assets?.[0]?.adjustments, { timeout: 20_000 }).toMatchObject({
+    glitchAmount: 0.91,
+    glitchRGB: 0.42,
+    glitchTear: 0.9,
+    glitchBlocks: 0.66,
+    glitchColor: 0.84,
+    glitchScanlines: 0.16,
+    glitchSpeed: 0.7,
+    glitchHue: 0,
+  });
+});

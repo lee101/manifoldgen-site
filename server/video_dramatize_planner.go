@@ -47,6 +47,23 @@ type DramatizeShot struct {
 	// generated / restyled_source
 	ImagePrompt  string `json:"image_prompt,omitempty"`
 	MotionPrompt string `json:"motion_prompt,omitempty"`
+	// Remake mode keeps the vision model's literal observation separate from
+	// the creative edit instruction so users can guide or revise either one.
+	VisualDescription  string   `json:"visual_description,omitempty"`
+	Action             string   `json:"action,omitempty"`
+	Camera             string   `json:"camera,omitempty"`
+	Lighting           string   `json:"lighting,omitempty"`
+	Environment        string   `json:"environment,omitempty"`
+	Emotion            string   `json:"emotion,omitempty"`
+	Continuity         string   `json:"continuity,omitempty"`
+	VisibleTraits      []string `json:"visible_traits,omitempty"`
+	RemoveArtifacts    []string `json:"remove_artifacts,omitempty"`
+	Characters         []string `json:"characters,omitempty"`
+	DirectorNote       string   `json:"director_note,omitempty"`
+	DialogueTranscript string   `json:"dialogue_transcript,omitempty"`
+	ImageModel         string   `json:"image_model,omitempty"`
+	VideoModel         string   `json:"video_model,omitempty"`
+	AspectRatio        string   `json:"aspect_ratio,omitempty"`
 	// SourceFrameTime picks the frame of the original that a restyled shot
 	// repaints, which is how source footage gets carried into the new style.
 	SourceFrameTime float64 `json:"source_frame_time,omitempty"`
@@ -60,12 +77,15 @@ type DramatizeShot struct {
 
 // DramatizePlan is the validated output of the planning stage.
 type DramatizePlan struct {
-	Title    string          `json:"title"`
-	Concept  string          `json:"concept"`
-	Provider string          `json:"provider"`
-	Width    int             `json:"width"`
-	Height   int             `json:"height"`
-	Shots    []DramatizeShot `json:"shots"`
+	Title          string                 `json:"title"`
+	Concept        string                 `json:"concept"`
+	Provider       string                 `json:"provider"`
+	Width          int                    `json:"width"`
+	Height         int                    `json:"height"`
+	Shots          []DramatizeShot        `json:"shots"`
+	References     []RemakeReferenceAsset `json:"references,omitempty"`
+	StyleBible     RemakeStyleBible       `json:"style_bible,omitempty"`
+	CharacterSpecs []RemakeCharacterSpec  `json:"character_specs,omitempty"`
 }
 
 // TotalSeconds is the planned runtime of the finished edit.

@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { CSSProperties } from 'react';
-import { ArrowLeft, ArrowUpRight, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight } from 'lucide-react';
 import ToolsIndex from './ToolsIndex';
 import { tools } from '@/lib/tools-catalog';
 import { VIDEO_GENERATORS } from '@/lib/video-generators';
@@ -22,7 +22,7 @@ export default function ToolsPage() {
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 
   return <main className={styles.page}>
-    <header><Link href="/"><ArrowLeft size={16} /> ManifoldGen</Link><span><Sparkles size={13} /> CREATIVE SPACES</span><Link href="/account">Account</Link></header>
+    <header><Link href="/"><ArrowLeft size={16} /> ManifoldGen</Link><Link href="/account">Account</Link></header>
     <ToolsIndex tools={tools} />
     <section className={styles.videoStrip}>
       <div className={styles.videoStripHead}>

@@ -3,6 +3,8 @@ import { Bebas_Neue, Cormorant_Garamond, DM_Sans, IBM_Plex_Mono, Playfair_Displa
 import './globals.css';
 import PaymentProvider from '../components/payment-provider';
 import SiteFooter from '../components/site-footer';
+import InviteFriendsPill from '../components/invite-friends-pill';
+import ReferralCapture from '../components/referral-capture';
 
 const syne = Syne({
   subsets: ['latin'],
@@ -31,11 +33,11 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   applicationName: 'ManifoldGen',
   title: {
-    default: 'ManifoldGen | AI Video Creator and Generator',
+    default: 'ManifoldGen | Every Creative AI Model. One Balance.',
     template: '%s | ManifoldGen',
   },
   description:
-    'Create AI video from text, images, and reference media with ManifoldGen, an AI video creator for cinematic generation, audio, and editing.',
+    'One creative AI studio for video, images, music, voice, editing, and API access. Run every leading model with one account and one balance.',
   keywords: [
     'AI video',
     'AI video creator',
@@ -71,8 +73,8 @@ export const metadata: Metadata = {
     type: 'website',
     url: siteUrl,
     siteName: 'ManifoldGen',
-    title: 'ManifoldGen | AI Video Creator and Generator',
-    description: 'Create cinematic AI video from text, images, and reference media.',
+    title: 'ManifoldGen | Every Creative AI Model. One Balance.',
+    description: 'Video, images, music, voice, editing, and API access in one creative AI studio.',
     images: [
       {
         url: socialImage,
@@ -84,8 +86,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'ManifoldGen | AI Video Creator and Generator',
-    description: 'Create cinematic AI video from text, images, and reference media.',
+    title: 'ManifoldGen | Every Creative AI Model. One Balance.',
+    description: 'Video, images, music, voice, editing, and API access in one creative AI studio.',
     images: [socialImage],
   },
   icons: {
@@ -103,7 +105,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     '@type': 'SoftwareApplication',
     name: 'ManifoldGen',
     url: siteUrl,
-    description: 'A web-based AI video creator for generating and editing cinematic video from text prompts, images, and reference media.',
+    description: 'A creative AI studio for generating and editing video, images, music, and voice across leading models with one balance.',
     applicationCategory: 'MultimediaApplication',
     operatingSystem: 'Web',
   };
@@ -111,7 +113,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${syne.variable} ${dmSans.variable} ${spaceGrotesk.variable} ${playfair.variable} ${cormorant.variable} ${bebas.variable} ${ibmPlexMono.variable} dark`}>
       <body className="min-h-screen antialiased">
+        <ReferralCapture />
         <PaymentProvider>{children}</PaymentProvider>
+        <InviteFriendsPill />
         <SiteFooter />
         <script
           type="application/ld+json"

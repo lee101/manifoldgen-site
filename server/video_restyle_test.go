@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/valyala/fasthttp"
@@ -54,13 +55,13 @@ func TestH3ControlEstimateUsesMeasuredColdStartAndDuration(t *testing.T) {
 
 func TestNormalizeWanAnimationTransferDefaults(t *testing.T) {
 	req := ServiceUsageRequest{
-		Model: "wan-animate", Prompt: "A red stage costume", ImageURL: "https://cdn.example/subject.png",
+		Model: "wan-animate", ImageURL: "https://cdn.example/subject.png",
 		VideoURL: "https://cdn.example/dance.mp4",
 	}
 	if err := normalizeVideoRestyleRequest(&req); err != nil {
 		t.Fatal(err)
 	}
-	if req.Model != "wan-animate-2" || req.Duration != 5 || req.FramesPerSecond != 24 || req.NumFrames != 37 || req.NumSteps != 10 || req.Resolution != "preview" {
+	if req.Model != "wan-animate-2" || req.AnimationMode != "move" || req.Duration != 5 || req.FramesPerSecond != 24 || req.NumSteps != 20 || req.Resolution != "580p" || req.Guidance != 1 {
 		t.Fatalf("unexpected animation defaults: %+v", req)
 	}
 }
@@ -72,30 +73,71 @@ func TestWanAnimationTransferRequiresSubjectImage(t *testing.T) {
 	}
 }
 
-func TestWanAnimationTransferProviderContractAndMargin(t *testing.T) {
-	preserveAudio := false
+func TestWanAnimationMoveAndReplaceProviderContracts(t *testing.T) {
 	req := ServiceUsageRequest{
-		Model: "wan-animate-2", Prompt: "A dancer", ImageURL: "https://cdn.example/subject.png",
-		VideoURL: "https://cdn.example/dance.mp4", Resolution: "preview", Duration: 5,
-		FramesPerSecond: 24, NumFrames: 37, NumSteps: 10, Seed: 42, IncludeAudio: &preserveAudio,
+		Model: "wan-animate-2", AnimationMode: "replace", ImageURL: "https://cdn.example/subject.png",
+		VideoURL: "https://cdn.example/dance.mp4", Resolution: "720p", Duration: 5,
+		FramesPerSecond: 24, NumSteps: 20, Guidance: 1, Seed: 42,
 	}
-	input := privateRestyleProviderInput(req)
-	if input["image"] != req.ImageURL || input["driving_video"] != req.VideoURL || input["quality"] != "preview" || input["max_seconds"] != 5 || input["frames_per_segment"] != 37 || input["preserve_audio"] != false || input["cgtaylor"] != false {
-		t.Fatalf("unexpected worker input: %#v", input)
+	input := restyleProviderInput(req)
+	if input["image_url"] != req.ImageURL || input["video_url"] != req.VideoURL || input["resolution"] != "720p" || input["num_inference_steps"] != 20 || input["video_quality"] != "high" || input["use_turbo"] != false {
+		t.Fatalf("unexpected FAL input: %#v", input)
+	}
+	if got := falRestylePath(req); got != "fal-ai/wan/v2.2-14b/animate/replace" {
+		t.Fatalf("replace path = %q", got)
+	}
+	req.AnimationMode = "move"
+	if got := falRestylePath(req); got != "fal-ai/wan/v2.2-14b/animate/move" {
+		t.Fatalf("move path = %q", got)
 	}
 	provider := restyleFalProviderCost(req)
 	charged, credits := restyleEstimate(req)
-	if math.Abs(provider-0.50) > 0.000001 || math.Abs(charged-1.00) > 0.000001 || math.Abs(credits-100) > 0.000001 {
+	if math.Abs(provider-0.60) > 0.000001 || math.Abs(charged-0.72) > 0.000001 || math.Abs(credits-72) > 0.000001 {
 		t.Fatalf("provider=%f charged=%f credits=%f", provider, charged, credits)
 	}
 }
 
-func TestWanAnimationTransferDoesNotAllowFalRestyleFallback(t *testing.T) {
-	if allowsFalVideoRestyle(ServiceUsageRequest{Model: "wan-animate-2"}) {
-		t.Fatal("animation transfer must not fall back to ordinary video restyling")
+func TestWanAnimationUsesFalButH3ControlDoesNot(t *testing.T) {
+	if !allowsFalVideoRestyle(ServiceUsageRequest{Model: "wan-animate-2"}) {
+		t.Fatal("Wan Move/Replace must use their exact FAL endpoints")
 	}
-	if !allowsFalVideoRestyle(ServiceUsageRequest{Model: "wan-2.2"}) {
-		t.Fatal("ordinary video restyling should retain its FAL fallback")
+	if allowsFalVideoRestyle(ServiceUsageRequest{Model: "h3-control"}) {
+		t.Fatal("H3 control must not use an unrelated FAL fallback")
+	}
+}
+
+func TestWanAnimationRejectsSwappedMediaAndUnknownMode(t *testing.T) {
+	base := ServiceUsageRequest{
+		Model: "wan-animate-2", AnimationMode: "move",
+		ImageURL: "https://cdn.example/subject.png", VideoURL: "https://cdn.example/dance.mp4",
+	}
+	badVideo := base
+	badVideo.VideoURL = "https://cdn.example/not-video.png"
+	if err := normalizeVideoRestyleRequest(&badVideo); err == nil || !strings.Contains(err.Error(), "expected a video file") {
+		t.Fatalf("expected image-as-video rejection, got %v", err)
+	}
+	badImage := base
+	badImage.ImageURL = "https://cdn.example/not-image.mp4"
+	if err := normalizeVideoRestyleRequest(&badImage); err == nil || !strings.Contains(err.Error(), "expected an image file") {
+		t.Fatalf("expected video-as-image rejection, got %v", err)
+	}
+	badMode := base
+	badMode.AnimationMode = "restyle"
+	if err := normalizeVideoRestyleRequest(&badMode); err == nil || !strings.Contains(err.Error(), "move or replace") {
+		t.Fatalf("expected animation mode rejection, got %v", err)
+	}
+}
+
+func TestMCPGenerateMediaExposesWanModes(t *testing.T) {
+	schema := manifoldGenerateSchema()
+	properties := schema["properties"].(map[string]interface{})
+	mode := properties["animation_mode"].(map[string]interface{})
+	choices := mode["enum"].([]string)
+	if len(choices) != 2 || choices[0] != "move" || choices[1] != "replace" {
+		t.Fatalf("animation_mode enum = %#v", choices)
+	}
+	if _, ok := properties["model"]; !ok {
+		t.Fatal("MCP generate_media is missing model")
 	}
 }
 

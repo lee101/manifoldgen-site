@@ -103,7 +103,6 @@ export default function AnimaTool() {
 
     <section className={styles.hero}>
       <div className={styles.heroCopy}>
-        <div className={styles.eyebrow}><Sparkles size={14} /> ANIMA · CHARACTER ILLUSTRATION</div>
         <h1>Design a character.<br /><span>Give them a world.</span></h1>
         <p>An art-first studio for expressive anime characters, key art, and polished illustration. Seeded controls keep a look repeatable.</p>
         <div className={styles.chips}><span>Anime-native</span><span>Up to 1 MP</span><span>28-step default</span><span>$0.04 / image</span></div>

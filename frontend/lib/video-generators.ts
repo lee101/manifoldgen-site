@@ -93,6 +93,20 @@ export const VIDEO_GENERATORS: VideoGenerator[] = [
     price: 'from ~101 Manifold credits', accent: '#7c6cff', manifold: true, example: EXAMPLES.manifold,
   },
   {
+    slug: 'h3-max', model: 'minimax/h3-max/text-to-video', name: 'H3 Max', shortName: 'H3 Max', family: 'MiniMax', mode: 'text',
+    description: 'fal H3 Max text-to-video with stronger prompt adherence, polished aesthetics, and fast hosted inference.',
+    strengths: ['Prompt adherence', 'Fast throughput', '5–15 second clips'], durations: [5, 10, 15],
+    aspectRatios: [...COMMON_RATIOS, '21:9'], resolutions: ['480p', '768p'], audio: false,
+    price: 'from $0.15 equivalent', accent: '#8b5cf6',
+  },
+  {
+    slug: 'h3-max-image', model: 'minimax/h3-max/image-to-video', name: 'H3 Max Image to Video', shortName: 'H3 Max Image', family: 'MiniMax', mode: 'image',
+    description: 'Animate a starting image—and optionally land on an ending image—with fal H3 Max.',
+    strengths: ['Start-frame fidelity', 'Optional end frame', 'Fast throughput'], durations: [5, 10, 15],
+    aspectRatios: COMMON_RATIOS, resolutions: ['480p', '768p'], audio: false,
+    price: 'from $0.15 equivalent', accent: '#a78bfa',
+  },
+  {
     slug: 'seedance-2-fast', model: 'seedance-2.0-fast-text-to-video', name: 'Seedance 2 Fast', shortName: 'Seedance Fast', family: 'Seedance', mode: 'text',
     description: 'Fast text-to-video for concepts, social cuts, motion studies, and rapid iteration.',
     strengths: ['Fast iteration', 'Prompt motion', 'Social formats'], durations: [4, 5, 8, 10],

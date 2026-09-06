@@ -785,6 +785,34 @@ const FILTERS: { name: string; values: Partial<StudioAdjustments>; colors: strin
   { name: 'Mist', values: { fade: 0.58, contrast: -0.18, highlights: 0.22 }, colors: '#d6e2e4,#8590a2' },
 ];
 
+const GLITCH_CONTROLS: { key: keyof StudioAdjustments; label: string; min: number; max: number; step: number }[] = [
+  { key: 'glitchAmount', label: 'Amount', min: 0, max: 1, step: 0.01 },
+  { key: 'glitchRGB', label: 'RGB split', min: 0, max: 1, step: 0.01 },
+  { key: 'glitchTear', label: 'Horizontal tear', min: 0, max: 1, step: 0.01 },
+  { key: 'glitchBlocks', label: 'Block patches', min: 0, max: 1, step: 0.01 },
+  { key: 'glitchColor', label: 'Color corruption', min: 0, max: 1, step: 0.01 },
+  { key: 'glitchScanlines', label: 'Scanlines', min: 0, max: 1, step: 0.01 },
+  { key: 'glitchSpeed', label: 'Speed', min: 0, max: 1, step: 0.01 },
+];
+
+const GLITCH_DEFAULTS: Partial<StudioAdjustments> = {
+  glitchAmount: 0,
+  glitchRGB: 0,
+  glitchTear: 0,
+  glitchBlocks: 0,
+  glitchColor: 0,
+  glitchScanlines: 0,
+  glitchSpeed: DEFAULT_ADJUSTMENTS.glitchSpeed,
+  glitchHue: DEFAULT_ADJUSTMENTS.glitchHue,
+};
+
+const GLITCH_PRESETS: { name: string; values: Partial<StudioAdjustments>; colors: string }[] = [
+  { name: 'Signal break', values: { glitchAmount: 0.62, glitchRGB: 0.58, glitchTear: 0.74, glitchBlocks: 0.28, glitchColor: 0.18, glitchScanlines: 0.22, glitchSpeed: 0.64 }, colors: '#ff335f,#22d7ff,#101217' },
+  { name: 'RGB shred', values: { glitchAmount: 0.72, glitchRGB: 1, glitchTear: 0.5, glitchBlocks: 0.12, glitchColor: 0.1, glitchScanlines: 0.08, glitchSpeed: 0.82 }, colors: '#ff174c,#18e3ff,#171aff' },
+  { name: 'Data blocks', values: { glitchAmount: 0.68, glitchRGB: 0.2, glitchTear: 0.18, glitchBlocks: 0.92, glitchColor: 0.54, glitchScanlines: 0.04, glitchSpeed: 0.42, glitchHue: 298 }, colors: '#171b24,#c436ff,#45f0d0' },
+  { name: 'Neon tears', values: { glitchAmount: 0.78, glitchRGB: 0.42, glitchTear: 0.9, glitchBlocks: 0.18, glitchColor: 0.84, glitchScanlines: 0.16, glitchSpeed: 0.7, glitchHue: 178 }, colors: '#12131b,#00ffd5,#fa2d91' },
+];
+
 function formatTime(value: number) {
   if (!Number.isFinite(value)) return '00:00.00';
   const minutes = Math.floor(value / 60);
@@ -2583,7 +2611,7 @@ export default function StudioPage() {
         perfDiagnostics().previewMediaTime = video.currentTime;
       }
     } else if (imageRef.current) {
-      renderer.draw(imageRef.current, selected.adjustments, 0);
+      renderer.draw(imageRef.current, selected.adjustments, playheadRef.current * 24);
     }
   }, [selected]);
 
@@ -2618,6 +2646,17 @@ export default function StudioPage() {
   useEffect(() => {
     drawCurrent();
   }, [drawCurrent]);
+
+  useEffect(() => {
+    if (!playing || selected?.kind !== 'image' || selected.adjustments.glitchAmount <= 0) return undefined;
+    let animationFrame = 0;
+    const animateGlitch = () => {
+      drawCurrent();
+      animationFrame = requestAnimationFrame(animateGlitch);
+    };
+    animationFrame = requestAnimationFrame(animateGlitch);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [drawCurrent, playing, selected?.adjustments.glitchAmount, selected?.kind]);
 
   useEffect(() => {
     if (!selected) return;
@@ -4665,6 +4704,8 @@ export default function StudioPage() {
       asset: StudioAsset;
       /** Images composite from a persistent raster; videos share sharedRaster. */
       rasterCanvas: HTMLCanvasElement | null;
+      /** Glitched stills retain their source so the shader can animate them. */
+      imageSource: HTMLImageElement | null;
       input: Input | null;
       iterator: AsyncIterator<VideoSample> | null;
       current: VideoSample | null;
@@ -4732,21 +4773,26 @@ export default function StudioPage() {
       }
 
       for (const asset of visualAssets) {
-        const state: ExportVisualState = { asset, rasterCanvas: null, input: null, iterator: null, current: null, next: null };
+        const state: ExportVisualState = { asset, rasterCanvas: null, imageSource: null, input: null, iterator: null, current: null, next: null };
         if (asset.kind === 'image') {
           const image = new Image();
           image.src = asset.url;
           await image.decode();
-          resizeSharedRaster(asset.width, asset.height);
-          sharedRenderer.draw(image, asset.adjustments, 0);
-          // Images composite every frame but filter once, so they keep a
-          // persistent raster while videos reuse the shared one per frame.
-          const rasterCanvas = document.createElement('canvas');
-          rasterCanvas.width = sharedRaster.width;
-          rasterCanvas.height = sharedRaster.height;
-          sharedRenderer.copyToCanvas(sharedRasterContext);
-          rasterCanvas.getContext('2d')?.drawImage(sharedRaster, 0, 0);
-          state.rasterCanvas = rasterCanvas;
+          if (asset.adjustments.glitchAmount > 0) {
+            state.imageSource = image;
+          } else {
+            resizeSharedRaster(asset.width, asset.height);
+            sharedRenderer.draw(image, asset.adjustments, 0);
+            // Ordinary images filter once and keep a persistent raster. An
+            // animated glitch still instead goes through the shared renderer
+            // per output frame below, just like video.
+            const rasterCanvas = document.createElement('canvas');
+            rasterCanvas.width = sharedRaster.width;
+            rasterCanvas.height = sharedRaster.height;
+            sharedRenderer.copyToCanvas(sharedRasterContext);
+            rasterCanvas.getContext('2d')?.drawImage(sharedRaster, 0, 0);
+            state.rasterCanvas = rasterCanvas;
+          }
         } else {
           state.input = new Input({ source: new BlobSource(asset.file), formats: ALL_FORMATS });
           const track = await state.input.getPrimaryVideoTrack();
@@ -4806,7 +4852,12 @@ export default function StudioPage() {
         for (const state of orderedStates) {
           const { asset } = state;
           if (timestamp < asset.timelineStart || timestamp >= clipEnd(asset)) continue;
-          if (asset.kind === 'video') {
+          if (state.imageSource) {
+            if (sharedContextLost) throw new Error('The graphics context was lost during export. Retry the export once other graphics-heavy tabs are closed.');
+            resizeSharedRaster(asset.width, asset.height);
+            sharedRenderer.draw(state.imageSource, asset.adjustments, timestamp * 24);
+            sharedRenderer.copyToCanvas(sharedRasterContext!);
+          } else if (asset.kind === 'video') {
             const sourceTime = asset.trimStart + timestamp - asset.timelineStart;
             while (state.next && state.next.timestamp <= sourceTime + 1e-7) {
               state.current?.close();
@@ -4819,7 +4870,7 @@ export default function StudioPage() {
             if (sharedContextLost) throw new Error('The graphics context was lost during export. Retry the export once other graphics-heavy tabs are closed.');
             resizeSharedRaster(asset.width, asset.height);
             const frame = sample.toVideoFrame();
-            sharedRenderer.draw(frame, asset.adjustments, index);
+            sharedRenderer.draw(frame, asset.adjustments, timestamp * 24);
             sharedRenderer.copyToCanvas(sharedRasterContext!);
             frame.close();
           }
@@ -5188,8 +5239,22 @@ export default function StudioPage() {
           </>}
 
           {tool === 'effects' && <>
-            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>PRESETS</span><h2>Looks</h2></div></div>
-            {!selected || selected.kind === 'audio' ? <PanelEmpty /> : <div className={styles.lookGrid}>{FILTERS.map((filter) => <button key={filter.name} onClick={() => updateAsset(selected.id, { adjustments: { ...DEFAULT_ADJUSTMENTS, ...filter.values } })}><span style={{ background: `linear-gradient(135deg, ${filter.colors})` }} /><b>{filter.name}</b></button>)}</div>}
+            <div className={styles.panelHeader}><div><span className={styles.eyebrow}>GPU EFFECTS</span><h2>Looks & glitch</h2></div></div>
+            {!selected || selected.kind === 'audio' ? <PanelEmpty /> : <div className={styles.effectsPanel}>
+              <section className={styles.effectSection}>
+                <span className={styles.sectionLabel}>COLOR LOOKS</span>
+                <div className={styles.lookGrid}>{FILTERS.map((filter) => <button key={filter.name} onClick={() => updateAsset(selected.id, { adjustments: { ...DEFAULT_ADJUSTMENTS, ...filter.values } })}><span style={{ background: `linear-gradient(135deg, ${filter.colors})` }} /><b>{filter.name}</b></button>)}</div>
+              </section>
+              <section className={styles.effectSection}>
+                <div className={styles.effectSectionHead}><span className={styles.sectionLabel}>GLITCH LAB</span><button type="button" onClick={() => updateAsset(selected.id, { adjustments: { ...selected.adjustments, ...GLITCH_DEFAULTS } })}>Reset</button></div>
+                <p className={styles.effectHint}>Layer channel splits, torn stripes, displaced patches, and animated color damage.</p>
+                <div className={styles.glitchPresets}>{GLITCH_PRESETS.map((preset) => <button data-testid={`studio-glitch-preset-${preset.name.toLowerCase().replace(/\s+/g, '-')}`} key={preset.name} onClick={() => updateAsset(selected.id, { adjustments: { ...selected.adjustments, ...GLITCH_DEFAULTS, ...preset.values } })}><span style={{ background: `linear-gradient(110deg, ${preset.colors})` }} /><b>{preset.name}</b></button>)}</div>
+                <div className={styles.glitchControls}>
+                  {GLITCH_CONTROLS.map((item) => <label key={item.key} className={styles.sliderRow}><span><b>{item.label}</b><output>{Math.round(selected.adjustments[item.key] * 100)}</output></span><input data-testid={`studio-glitch-${item.key}`} type="range" min={item.min} max={item.max} step={item.step} value={selected.adjustments[item.key]} onChange={(event) => updateAsset(selected.id, { adjustments: { ...selected.adjustments, [item.key]: Number(event.target.value) } })} /></label>)}
+                  <div className={styles.glitchHueRow}><span><b>Corruption color</b><small>{Math.round(selected.adjustments.glitchHue)}°</small></span><div><input aria-label="Glitch corruption color" type="color" value={hueToHex(selected.adjustments.glitchHue)} onChange={(event) => updateAsset(selected.id, { adjustments: { ...selected.adjustments, glitchHue: hexToHue(event.target.value) } })} /><button type="button" aria-label="Pick glitch color from stage" title="Eyedrop a glitch hue from the stage" className={`${styles.colorPickButton} ${colorPicking === 'glitchHue' ? styles.colorPickActive : ''}`} onClick={() => beginColorPick('Glitch color', (hex) => updateAsset(selected.id, { adjustments: { ...selected.adjustments, glitchHue: hexToHue(hex) } }))}><Pipette size={12} /></button></div></div>
+                </div>
+              </section>
+            </div>}
           </>}
 
           {tool === 'crop' && <>

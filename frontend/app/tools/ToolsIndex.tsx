@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowUpRight, Check, Search } from 'lucide-react';
+import { ArrowUpRight, Search } from 'lucide-react';
 import styles from './page.module.css';
 
 import type { ToolCard } from '@/lib/tools-catalog';
@@ -34,9 +34,7 @@ export default function ToolsIndex({ tools }: { tools: readonly ToolCard[] }) {
     </section>
     <section className={styles.grid}>
       {filtered.map((tool, index) => <Link key={tool.href} href={tool.href} className={`${styles.card} ${index === 0 && !query ? styles.featured : ''}`}>
-        <div className={styles.media}>{tool.kind === 'video' ? <video src={tool.src} muted autoPlay loop playsInline /> : <img src={tool.src} alt={`${tool.name} real output`} loading="lazy" />}
-          <span className={styles.real}><Check size={11} /> REAL OUTPUT</span>
-        </div>
+        <div className={styles.media}>{tool.kind === 'video' ? <video src={tool.src} muted autoPlay loop playsInline /> : <img src={tool.src} alt={`${tool.name} real output`} loading="lazy" />}</div>
         <div className={styles.copy}><small>{tool.label}</small><h2>{tool.name}</h2><p>{tool.copy}</p><footer><span>{tool.meta}</span><ArrowUpRight size={18} /></footer></div>
       </Link>)}
       {filtered.length === 0 ? <p className={styles.empty} data-testid="tools-empty">No tool matches “{query}”.</p> : null}

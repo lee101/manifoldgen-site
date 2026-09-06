@@ -13,6 +13,14 @@ export type StudioAdjustments = {
   fade: number;
   vignette: number;
   grain: number;
+  glitchAmount: number;
+  glitchRGB: number;
+  glitchTear: number;
+  glitchBlocks: number;
+  glitchColor: number;
+  glitchScanlines: number;
+  glitchSpeed: number;
+  glitchHue: number;
 };
 
 export const DEFAULT_ADJUSTMENTS: StudioAdjustments = {
@@ -30,6 +38,14 @@ export const DEFAULT_ADJUSTMENTS: StudioAdjustments = {
   fade: 0,
   vignette: 0,
   grain: 0,
+  glitchAmount: 0,
+  glitchRGB: 0,
+  glitchTear: 0,
+  glitchBlocks: 0,
+  glitchColor: 0,
+  glitchScanlines: 0,
+  glitchSpeed: 0.5,
+  glitchHue: 180,
 };
 
 const VERTEX = `#version 300 es
@@ -59,6 +75,14 @@ uniform float u_tint;
 uniform float u_fade;
 uniform float u_vignette;
 uniform float u_grain;
+uniform float u_glitchAmount;
+uniform float u_glitchRGB;
+uniform float u_glitchTear;
+uniform float u_glitchBlocks;
+uniform float u_glitchColor;
+uniform float u_glitchScanlines;
+uniform float u_glitchSpeed;
+uniform float u_glitchHue;
 uniform float u_seed;
 uniform float u_fxaa;
 in vec2 v_texCoord;
@@ -66,6 +90,10 @@ out vec4 outColor;
 
 float random(vec2 p) {
   return fract(sin(dot(p, vec2(12.9898, 78.233)) + u_seed) * 43758.5453);
+}
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
 
 vec3 rgbToHsv(vec3 color) {
@@ -117,7 +145,33 @@ vec4 antiAlias(sampler2D image, vec2 uv) {
 }
 
 void main() {
-  vec4 sampleColor = u_fxaa > 0.5 ? antiAlias(u_image, v_texCoord) : texture(u_image, v_texCoord);
+  float glitch = clamp(u_glitchAmount, 0.0, 1.0);
+  float glitchFrame = floor(u_seed * mix(0.04, 1.0, clamp(u_glitchSpeed, 0.0, 1.0)));
+  float tearRows = mix(7.0, 78.0, clamp(u_glitchTear, 0.0, 1.0));
+  float tearRow = floor(v_texCoord.y * tearRows);
+  float tearNoise = hash(vec2(tearRow, glitchFrame + 17.0));
+  float tearMask = step(1.0 - u_glitchTear * glitch * 0.42, tearNoise);
+  float tearOffset = (hash(vec2(tearRow + 41.0, glitchFrame)) - 0.5)
+    * (0.035 + u_glitchTear * 0.19) * tearMask * glitch;
+
+  vec2 blockGrid = vec2(12.0, 18.0);
+  vec2 blockCell = floor(v_texCoord * blockGrid);
+  float blockNoise = hash(blockCell + vec2(glitchFrame * 1.7, glitchFrame * 0.73));
+  float blockMask = step(1.0 - u_glitchBlocks * glitch * 0.34, blockNoise);
+  vec2 blockOffset = vec2(
+    hash(blockCell + vec2(glitchFrame, 91.0)) - 0.5,
+    hash(blockCell + vec2(53.0, glitchFrame)) - 0.5
+  ) * vec2(0.14, 0.055) * blockMask * glitch;
+
+  vec2 displacedUV = clamp(v_texCoord + vec2(tearOffset, 0.0) + blockOffset, 0.0, 1.0);
+  vec4 sampleColor = u_fxaa > 0.5 ? antiAlias(u_image, displacedUV) : texture(u_image, displacedUV);
+  float split = u_glitchRGB * glitch * (0.004 + 0.026 * max(tearMask, blockMask));
+  vec3 splitColor = vec3(
+    texture(u_image, clamp(displacedUV + vec2(split, 0.0), 0.0, 1.0)).r,
+    sampleColor.g,
+    texture(u_image, clamp(displacedUV - vec2(split, 0.0), 0.0, 1.0)).b
+  );
+  sampleColor.rgb = mix(sampleColor.rgb, splitColor, clamp(u_glitchRGB * glitch * 1.2, 0.0, 1.0));
   vec3 color = sampleColor.rgb * exp2(u_exposure);
   color += u_brightness;
   color = (color - 0.5) * (1.0 + u_contrast) + 0.5;
@@ -143,6 +197,19 @@ void main() {
   float edge = smoothstep(0.2, 0.72, length(uv));
   color *= 1.0 - edge * u_vignette * 0.78;
   color += (random(gl_FragCoord.xy) - 0.5) * u_grain * 0.12;
+
+  float colorStripe = hash(vec2(floor(v_texCoord.y * 32.0), glitchFrame + 211.0));
+  float colorBlock = hash(blockCell + vec2(glitchFrame + 79.0, 133.0));
+  float colorMask = max(
+    step(1.0 - u_glitchColor * glitch * 0.44, colorStripe),
+    step(1.0 - u_glitchColor * glitch * 0.28, colorBlock)
+  );
+  float glitchLuma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  vec3 glitchTint = hsvToRgb(vec3(fract(u_glitchHue / 360.0), 0.88, clamp(glitchLuma * 1.18, 0.0, 1.0)));
+  color = mix(color, glitchTint, colorMask * glitch * (0.32 + u_glitchColor * 0.68));
+
+  float scanline = pow(0.5 + 0.5 * sin(gl_FragCoord.y * 3.14159265), 8.0);
+  color *= 1.0 - scanline * u_glitchScanlines * glitch * 0.34;
   outColor = vec4(clamp(color, 0.0, 1.0), sampleColor.a);
 }`;
 
@@ -214,7 +281,7 @@ export class StudioRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.useProgram(program);
 
-    const names = ['exposure', 'brightness', 'contrast', 'highlights', 'shadows', 'shadowHue', 'midtoneHue', 'highlightHue', 'saturation', 'temperature', 'tint', 'fade', 'vignette', 'grain', 'seed', 'fxaa'];
+    const names = ['exposure', 'brightness', 'contrast', 'highlights', 'shadows', 'shadowHue', 'midtoneHue', 'highlightHue', 'saturation', 'temperature', 'tint', 'fade', 'vignette', 'grain', 'glitchAmount', 'glitchRGB', 'glitchTear', 'glitchBlocks', 'glitchColor', 'glitchScanlines', 'glitchSpeed', 'glitchHue', 'seed', 'fxaa'];
     this.uniforms = Object.fromEntries(names.map((name) => [name, gl.getUniformLocation(program, `u_${name}`)]));
     this.uniforms.resolution = gl.getUniformLocation(program, 'u_resolution');
   }

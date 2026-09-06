@@ -39,13 +39,14 @@ test('Animation Transfer uploads both sources, prices measured compute, and hand
   await page.goto('/tool/animate-video');
   await page.getByTestId('animate-image-drop').locator('input').setInputFiles({ name: 'character.png', mimeType: 'image/png', buffer: Buffer.from('image') });
   await page.getByTestId('animate-video-drop').locator('input').setInputFiles({ name: 'dance.mp4', mimeType: 'video/mp4', buffer: Buffer.from('video') });
-  await expect(page.getByTestId('animate-estimate')).toContainText('100 credits');
+  await page.getByTestId('animate-mode-replace').click();
+  await expect(page.getByTestId('animate-estimate')).toContainText('54 credits');
   await page.getByTestId('animate-submit').click();
   await expect(page.getByTestId('animate-output')).toHaveAttribute('src', 'https://media.example/animated.mp4', { timeout: 10_000 });
   expect(requestBody).toMatchObject({
     service: 'video_restyle', model: 'wan-animate-2', image_url: 'https://media.example/character.png',
-    video_url: 'https://media.example/dance.mp4', resolution: 'preview', duration: 5,
-    frames_per_second: 24, num_frames: 37, num_steps: 10, include_audio: true,
+    video_url: 'https://media.example/dance.mp4', animation_mode: 'replace', resolution: '580p', duration: 5,
+    frames_per_second: 24, num_steps: 20, guidance: 1,
   });
   await expect(page.getByRole('link', { name: /Open in Studio/ })).toHaveAttribute('href', /\/studio\?video_url=https%3A%2F%2Fmedia\.example%2Fanimated\.mp4/);
 });

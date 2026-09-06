@@ -40,7 +40,26 @@ DANCING = [
     "turns and dances slowly through the space, cloth and hair trailing the movement",
     "moves in a loose rhythmic groove, hands rising with the music, head nodding on the downbeat",
 ]
+IDLE = [
+    "listens to the music with eyes half closed, breathing slowly, small movements of the head with the phrasing, lips closed",
+    "looks away from the camera then back, a slow blink, hands moving gently with the music, lips closed",
+    "moves slowly through the space in time with the music, glancing at the camera, lips closed",
+]
 AMBIENT = "environment alive around them, drifting particles, cloth and hair moving, cinematic lighting"
+
+
+def load_images_dir(directory: Path) -> list[dict]:
+    images = []
+    for meta_path in sorted(directory.glob("*.json")):
+        image = next((meta_path.with_suffix(ext) for ext in (".png", ".webp", ".jpg") if meta_path.with_suffix(ext).exists()), None)
+        if image is None:
+            continue
+        meta = json.loads(meta_path.read_text())
+        images.append({"id": meta_path.stem, "path": str(image), "prompt": meta["prompt"],
+                       "width": meta.get("width", 0), "height": meta.get("height", 0)})
+    if not images:
+        raise SystemExit(f"no stills in {directory}")
+    return images
 
 
 def load_images() -> list[dict]:
@@ -64,12 +83,13 @@ def load_images() -> list[dict]:
 
 def subject_of(prompt: str) -> str:
     head = prompt.split(",")[0].strip()
+    head = re.sub(r"^(a|an|the)\s+", "", head, flags=re.I)
     return re.sub(r"\s+", " ", head)
 
 
-def build_prompt(image: dict, singing: bool, index: int) -> str:
+def build_prompt(image: dict, singing: bool, index: int, idle: bool = False) -> str:
     subject = subject_of(image["prompt"])
-    action = (SINGING if singing else DANCING)[index % 3]
+    action = (IDLE if idle else SINGING if singing else DANCING)[index % 3]
     camera = CAMERAS[index % len(CAMERAS)]
     return (f"The {subject} {action}. Camera: {camera}. {AMBIENT}. "
             "Performance music video shot, consistent character identity, no text or captions.")
@@ -161,7 +181,8 @@ def assign_images(shots: list[dict], images: list[dict], seed: int) -> None:
     pool = list(order)
     for shot in shots:
         if not pool:
-            pool = [image for image in order if image["id"] != shots[-1]["image_id"]]
+            last = shots[shot["index"] - 1]["image_id"] if shot["index"] else None
+            pool = [image for image in order if image["id"] != last]
         image = pool.pop(0)
         if len(shots) > 1 and shot["index"] and image["id"] == shots[shot["index"] - 1]["image_id"] and pool:
             pool.append(image)
@@ -192,18 +213,23 @@ def main() -> int:
                         help="minimum generated seconds discarded off the end of every shot")
     parser.add_argument("--vocal-threshold", type=float, default=0.25)
     parser.add_argument("--seed", type=int, default=20260819)
+    parser.add_argument("--images-dir", type=Path, default=None)
+    parser.add_argument("--force-singing", action="store_true")
+    parser.add_argument("--no-dance", action="store_true")
+    parser.add_argument("--idle-threshold", type=float, default=0.08)
     args = parser.parse_args()
 
     keys = json.loads(args.keys.read_text())
-    images = load_images()
+    images = load_images_dir(args.images_dir) if args.images_dir else load_images()
     shots = plan_shots(args, keys)
     assign_images(shots, images, args.seed)
 
     args.prompts.mkdir(parents=True, exist_ok=True)
     for shot in shots:
-        shot["singing"] = shot["vocal"] >= args.vocal_threshold
+        shot["idle"] = not args.force_singing and shot["vocal"] < args.idle_threshold
+        shot["singing"] = args.force_singing or shot["vocal"] >= args.vocal_threshold or (args.no_dance and not shot["idle"])
         shot["prompt"] = build_prompt(
-            {"prompt": shot["image_prompt"]}, shot["singing"], shot["index"])
+            {"prompt": shot["image_prompt"]}, shot["singing"], shot["index"], shot.get("idle", False))
         (args.prompts / f"{shot['index']:03d}_{shot['image_id']}.txt").write_text(shot["prompt"] + "\n")
 
     used = sum(shot["use_frames"] for shot in shots)

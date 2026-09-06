@@ -62,6 +62,10 @@ make install
 make server      # :8116
 make frontend    # :3006, proxies /api → :8116
 
+# Build the exported frontend and run the Go server against it:
+cd frontend && NEXT_OUTPUT=export bun run build && cd ../server
+PORT=8116 DIST_DIR=../frontend/out go run .
+
 # HTTPS frontend for browser/auth testing
 make dev-https   # https://manifoldgen.local:3006, proxies API calls to production
 # To exercise the local API over HTTPS instead:
@@ -74,6 +78,12 @@ fuser -k 3006/tcp 2>/dev/null || true; fuser -k 8116/tcp 2>/dev/null || true; \
   (cd server && go build -o manifoldgen-server . && PORT=8116 DIST_DIR=../frontend/out ./manifoldgen-server) & \
   MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev-https
 ```
+
+The exported build serves the static site and API from the Go process at
+`http://localhost:8116`. Run the frontend and server in separate terminals if
+you want hot reload during UI development; use the exported build workflow
+when testing server-side static files, localized routes, or production-like
+serving.
 
 Production-backed HTTPS dev keeps its browser login separate from the local API login.
 
@@ -220,13 +230,31 @@ roughly thousands of US dollars before storage and egress.
 ## Video restyle
 
 `video_restyle` supports Wan 2.2 video-to-video controls and ordered H3-style
-image/video/audio references. Requests prefer the private app.nz/RunPod template
+image/video/audio references. Ordinary restyle requests prefer the private app.nz/RunPod template
 from `VIDEO_RESTYLE_APPNZ_MODEL_ID` (or `VIDEO_RESTYLE_APPNZ_TEMPLATE`); failed submissions or worker executions move
 to the standby queue without changing the public job ID. Standby costs are settled
 with a 20% multiplier. Configure the private endpoint from
 `config/runpod-video-restyle.json`: zero minimum workers, 30-second idle scale-down,
 FlashBoot, and shared cached weights keep idle spend at zero without mixing the Wan
 weights into the warm 32 GB H3 process.
+
+Wan Animate uses the exact FAL Move/Replace contracts:
+
+```json
+{
+  "service": "video_restyle",
+  "model": "wan-animate-2",
+  "animation_mode": "replace",
+  "video_url": "https://cdn.example/driving.mp4",
+  "image_url": "https://cdn.example/character.png",
+  "resolution": "580p",
+  "num_steps": 20
+}
+```
+
+`move` animates the complete reference image and keeps its setting. `replace`
+keeps the driving video's scene and substitutes its performer. Known image
+extensions are rejected for `video_url` before a paid job is queued.
 
 ## Video background removal
 

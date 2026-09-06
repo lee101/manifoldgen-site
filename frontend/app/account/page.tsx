@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, CreditCard, KeyRound, Loader2, LogOut, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, Check, CreditCard, Download, Film, KeyRound, Loader2, LogOut, Sparkles, UserPlus, X } from 'lucide-react';
 import {
   clearUser,
   loadStoredUser,
@@ -64,6 +64,21 @@ type AuthResponse = Parameters<typeof userFromAuthResponse>[0] & {
   reset_token?: string;
 };
 
+type RemakeEstimate = {
+  exact?: boolean; shot_count?: number; total_images?: number; motion_clips?: number;
+  motion_billable_seconds?: number; estimated_cost_usd?: number; estimated_credits?: number;
+};
+type RemakeAccountResult = {
+  agent_kind?: string; _agent_label?: string; video_url?: string; project_url?: string;
+  duration?: number; charged_usd?: number; estimate?: RemakeEstimate;
+  plan?: { shots?: unknown[] };
+};
+type RemakeAccountJob = {
+  job_id: string; service: string; status: string; prompt?: string; error?: string;
+  charged_usd?: number; credits_used?: number; created_at: string; updated_at: string;
+  result?: RemakeAccountResult;
+};
+
 export default function AccountPage() {
   const [apiKey, setApiKey] = useState('');
   const [email, setEmail] = useState('');
@@ -81,6 +96,8 @@ export default function AccountPage() {
   const [clientSecret, setClientSecret] = useState('');
   const [publishableKey, setPublishableKey] = useState('');
   const [checkoutMeta, setCheckoutMeta] = useState('');
+  const [remakeJobs, setRemakeJobs] = useState<RemakeAccountJob[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
   const checkoutMountRef = useRef<HTMLDivElement | null>(null);
   const embeddedCheckoutRef = useRef<StripeEmbeddedCheckout | null>(null);
 
@@ -120,6 +137,32 @@ export default function AccountPage() {
     setCreditsUsd(stored.credits_usd ?? stored.credits * price);
     void refreshSession(stored.api_key);
   }, [refreshSession]);
+
+  useEffect(() => {
+    if (!apiKey) { setRemakeJobs([]); return; }
+    let active = true;
+    let timer = 0;
+    const loadJobs = async () => {
+      try {
+        setJobsLoading(true);
+        const payload = await parseJSONResponse<{ jobs?: RemakeAccountJob[] }>(
+          await fetch(`${API}/video-jobs`, { headers: { Authorization: `Bearer ${apiKey}` } }),
+          'Could not load generation jobs',
+        );
+        if (!active) return;
+        setRemakeJobs((payload.jobs || []).filter((job) => job.result?.agent_kind === 'remake'));
+      } catch {
+        // Account and billing remain usable if generation history is temporarily unavailable.
+      } finally {
+        if (active) {
+          setJobsLoading(false);
+          timer = window.setTimeout(loadJobs, 5000);
+        }
+      }
+    };
+    void loadJobs();
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [apiKey]);
 
   useEffect(() => {
     if (!clientSecret || !publishableKey || !checkoutMountRef.current) return;
@@ -252,6 +295,7 @@ export default function AccountPage() {
     setClientSecret('');
     setPublishableKey('');
     setCheckoutMeta('');
+    setRemakeJobs([]);
     setMessage('');
     setError('');
     embeddedCheckoutRef.current?.destroy();
@@ -360,7 +404,7 @@ export default function AccountPage() {
 
   return (
     <main className="min-h-screen bg-[var(--color-ink)] px-4 py-10 text-white">
-      <div className="mx-auto max-w-lg">
+      <div className="mx-auto max-w-4xl">
         <Link href="/studio" className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-mute)]">
           <ArrowLeft size={16} /> Back to studio
         </Link>
@@ -512,6 +556,54 @@ export default function AccountPage() {
                 Copy API key
               </button>
             </div>
+
+            <section className="mt-6" data-testid="account-remake-jobs">
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Video remake agent</h2>
+                  <p className="mt-1 text-sm text-[var(--color-mute)]">Queued jobs stay here while you leave the tool or close the browser.</p>
+                </div>
+                <Link href="/tools/video-remake" className="shrink-0 text-sm text-[var(--color-accent-2)]">New remake</Link>
+              </div>
+              <div className="mt-3 space-y-3">
+                {jobsLoading && remakeJobs.length === 0 ? <div className="flex items-center gap-2 rounded-2xl border border-white/10 p-4 text-sm text-white/60"><Loader2 className="animate-spin" size={16} /> Loading remake jobs…</div> : null}
+                {!jobsLoading && remakeJobs.length === 0 ? <div className="rounded-2xl border border-dashed border-white/15 p-4 text-sm text-white/55">No remake jobs yet. Upload a film and approve its shot estimate to start one.</div> : null}
+                {remakeJobs.map((job) => {
+                  const activeJob = ['queued', 'processing', 'running', 'accepted'].includes(job.status.toLowerCase());
+                  const completed = job.status.toLowerCase() === 'completed';
+                  const estimate = job.result?.estimate;
+                  const shots = estimate?.shot_count || job.result?.plan?.shots?.length || 0;
+                  const displayedUSD = completed ? (job.charged_usd || job.result?.charged_usd || 0) : (estimate?.estimated_cost_usd || 0);
+                  return <article key={job.job_id} className="rounded-2xl border border-white/10 bg-black/20 p-4" data-testid={`account-remake-job-${job.job_id}`}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-white/55">
+                          {activeJob ? <Loader2 className="animate-spin text-[var(--color-accent-2)]" size={14} /> : completed ? <Check className="text-emerald-300" size={14} /> : <Film size={14} />}
+                          {job.status.replace('_', ' ')}
+                        </div>
+                        <h3 className="mt-2 line-clamp-2 text-sm font-medium text-white/90">{job.prompt || 'Guided video remake'}</h3>
+                        <p className="mt-1 text-xs text-white/55">{activeJob ? job.result?._agent_label || 'Queued for the remake agent' : completed ? 'Finished remake' : job.error || 'The job stopped before completion'}</p>
+                      </div>
+                      <div className="text-right text-xs text-white/60">
+                        <b className="block text-base text-white">{displayedUSD > 0 ? `$${displayedUSD.toFixed(2)}` : 'Estimating…'}</b>
+                        <span>{completed ? 'final charge' : 'current ceiling'}</span>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
+                      <span>{shots || '—'} shots</span>
+                      {estimate?.total_images ? <span>{estimate.total_images} max images</span> : null}
+                      {estimate?.motion_clips ? <span>{estimate.motion_clips} H3 clips</span> : null}
+                      {estimate?.motion_billable_seconds ? <span>{estimate.motion_billable_seconds}s H3 billing</span> : null}
+                      <span>{new Date(job.created_at).toLocaleString()}</span>
+                    </div>
+                    {(job.result?.video_url || job.result?.project_url) ? <div className="mt-3 flex flex-wrap gap-2">
+                      {job.result.video_url ? <a href={job.result.video_url} className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1.5 text-xs"><Download size={13} /> Download remake</a> : null}
+                      {job.result.project_url ? <Link href={job.result.project_url} className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-accent)] px-3 py-1.5 text-xs font-semibold"><Sparkles size={13} /> Open timeline</Link> : null}
+                    </div> : null}
+                  </article>;
+                })}
+              </div>
+            </section>
 
             <section id="credits" className="scroll-mt-24">
               <h2 className="mt-6 text-lg font-semibold">Add funds</h2>

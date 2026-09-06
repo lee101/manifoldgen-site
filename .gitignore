@@ -66,6 +66,7 @@ frontend/.next-music-build
 frontend/.next-music-e2e
 audio-images-to-vid/
 testresults/
+experimentresults/
 frontend/public/examples/robotrun.mp4
 testreview/
 
@@ -77,3 +78,19 @@ testreview/
 h3_clean_latent_upscaler_film_epoch200.safetensors
 createdfilms/
 docs/upscale-results/
+conjurerssoul/
+media
+frontend/.next
+frontend/.next-check
+frontend/.next-dev
+frontend/.next-dev-test
+frontend/.next-gallery-search
+frontend/.next-glitch-test
+frontend/.next-music-build
+frontend/.next-playwright
+frontend/.next-playwright-hook
+frontend/.next-upscale-3319
+frontend/.next-visual
+musicresults
+docs/face-refine-results/
+docs/h3-max-results/

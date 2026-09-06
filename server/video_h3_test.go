@@ -28,56 +28,6 @@ func TestH3RouteKeepsNormalPromptOnNormalWorker(t *testing.T) {
 	}
 }
 
-func TestH3RouteSelectsStudio1939OnlyForOldCartoonPrompt(t *testing.T) {
-	t.Setenv("H3_NORMAL_RUNPOD_ENDPOINT", "normal-endpoint")
-	t.Setenv("H3_STUDIO1939_ENABLED", "true")
-	for _, prompt := range []string{
-		"A rubber hose cartoon frog dances beside a pond",
-		"A 1930s animation of a rabbit conducting a brass band",
-		"An early theatrical cartoon with painted backgrounds",
-	} {
-		route := h3RouteForPrompt(prompt)
-		if route.StyleLoRA != h3Studio1939LoRA {
-			t.Fatalf("style route for %q = %#v", prompt, route)
-		}
-	}
-}
-
-func TestH3RouteDoesNotApplyStudio1939ToNearbyStyles(t *testing.T) {
-	t.Setenv("H3_NORMAL_RUNPOD_ENDPOINT", "normal-endpoint")
-	t.Setenv("H3_STUDIO1939_ENABLED", "true")
-	for _, prompt := range []string{
-		"A live action drama set in 1930s Chicago",
-		"A modern anime woman walking through Tokyo",
-		"A contemporary 3D animated family film",
-		"A vintage photograph from 1927",
-	} {
-		route := h3RouteForPrompt(prompt)
-		if route.StyleLoRA != "" {
-			t.Fatalf("unexpected style route for %q = %#v", prompt, route)
-		}
-	}
-}
-
-func TestH3Studio1939RouteDefaultsOffAfterQualityGate(t *testing.T) {
-	t.Setenv("H3_NORMAL_RUNPOD_ENDPOINT", "normal-endpoint")
-	if route := h3RouteForPrompt("A 1930s rubber hose cartoon"); route.StyleLoRA != "" {
-		t.Fatalf("disabled route = %#v", route)
-	}
-}
-
-func TestApplyH3StyleRouteIsInternalAndDisablesExpansion(t *testing.T) {
-	input := map[string]interface{}{"structured_prompt": true, "style_lora": "client-value"}
-	applyH3StyleRoute(input, h3WorkerRoute{})
-	if _, ok := input["style_lora"]; ok {
-		t.Fatalf("unrouted style LoRA survived: %#v", input)
-	}
-	applyH3StyleRoute(input, h3WorkerRoute{StyleLoRA: h3Studio1939LoRA})
-	if input["style_lora"] != h3Studio1939LoRA || input["structured_prompt"] != false {
-		t.Fatalf("styled input = %#v", input)
-	}
-}
-
 func TestParseRunpodH3ProviderJob(t *testing.T) {
 	endpoint, job, ok := parseRunpodH3ProviderJob("runpod:endpoint-1:job-1")
 	if !ok || endpoint != "endpoint-1" || job != "job-1" {

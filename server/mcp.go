@@ -181,9 +181,16 @@ func manifoldMCPTools() []map[string]interface{} {
 
 func manifoldGenerateSchema() map[string]interface{} {
 	properties := map[string]interface{}{
-		"service": map[string]interface{}{"type": "string", "enum": []string{"image", "video", "audio", "music", "sfx", "video_restyle", "video_background_removal"}},
-		"prompt":  map[string]string{"type": "string"},
-		"kind":    map[string]interface{}{"type": "string", "enum": []string{"music", "sfx"}},
+		"service": map[string]interface{}{"type": "string", "enum": []string{"image", "video", "audio", "music", "sfx", "video_restyle", "character_animation", "video_background_removal"}},
+		"model": map[string]interface{}{
+			"type": "string", "description": "Model or workflow. Use wan-animate-2 with animation_mode move or replace.",
+		},
+		"animation_mode": map[string]interface{}{
+			"type": "string", "enum": []string{"move", "replace"},
+			"description": "Move animates the supplied image and keeps its setting; Replace substitutes the source-video performer while preserving that video's scene.",
+		},
+		"prompt": map[string]string{"type": "string"},
+		"kind":   map[string]interface{}{"type": "string", "enum": []string{"music", "sfx"}},
 		"lyrics": map[string]interface{}{
 			"type": "string",
 			"description": "Sung lyrics for music generation. Put [Verse], [Chorus], [Bridge] or [Outro] on their own line; " +

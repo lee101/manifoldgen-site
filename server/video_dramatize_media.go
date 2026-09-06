@@ -140,6 +140,12 @@ func portraitFilter(width, height, fps int) string {
 // A silent stereo track is synthesised when the input has none, otherwise the
 // concat demuxer drops audio for the whole timeline.
 func renderSegment(ctx context.Context, source string, start, duration float64, hasAudio bool, dest string) error {
+	return renderSegmentCanvas(ctx, source, start, duration, hasAudio, dramatizeCanvasWidth, dramatizeCanvasHeight, dest)
+}
+
+// renderSegmentCanvas is the format-preserving variant used by remake mode.
+// Dramatize mode remains portrait, while remakes inherit their source canvas.
+func renderSegmentCanvas(ctx context.Context, source string, start, duration float64, hasAudio bool, width, height int, dest string) error {
 	args := []string{"-y", "-v", "error"}
 	if start > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", start))
@@ -154,7 +160,7 @@ func renderSegment(ctx context.Context, source string, start, duration float64, 
 	args = append(args,
 		"-map", "0:v:0",
 		"-map", map[bool]string{true: "0:a:0", false: "1:a:0"}[hasAudio],
-		"-vf", portraitFilter(dramatizeCanvasWidth, dramatizeCanvasHeight, dramatizeFPS),
+		"-vf", portraitFilter(width, height, dramatizeFPS),
 		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
 		"-pix_fmt", "yuv420p",
 		"-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
@@ -166,6 +172,37 @@ func renderSegment(ctx context.Context, source string, start, duration float64, 
 	)
 	if combined, err := exec.CommandContext(ctx, "ffmpeg", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("render segment %s: %w: %s", filepath.Base(dest), err, tailOutput(combined))
+	}
+	return nil
+}
+
+// replaceAudioTrack copies the rendered picture and remuxes the untouched
+// source soundtrack. Re-encoding only audio avoids timestamp/container
+// incompatibilities while keeping the original mix and exact source length.
+func replaceAudioTrack(ctx context.Context, videoPath, sourcePath, dest string, duration float64) error {
+	copyDest := dest + ".audio-copy.mp4"
+	copyArgs := []string{"-y", "-v", "error", "-i", videoPath, "-i", sourcePath,
+		"-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy", "-c:a", "copy"}
+	if duration > 0 {
+		copyArgs = append(copyArgs, "-t", fmt.Sprintf("%.6f", duration))
+	}
+	copyArgs = append(copyArgs, "-movflags", "+faststart", copyDest)
+	if _, err := exec.CommandContext(ctx, "ffmpeg", copyArgs...).CombinedOutput(); err == nil {
+		if err := os.Rename(copyDest, dest); err == nil {
+			return nil
+		}
+	}
+	_ = os.Remove(copyDest)
+
+	args := []string{"-y", "-v", "error", "-i", videoPath, "-i", sourcePath,
+		"-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy", "-c:a", "aac",
+		"-b:a", "192k", "-ar", "48000", "-ac", "2"}
+	if duration > 0 {
+		args = append(args, "-t", fmt.Sprintf("%.6f", duration))
+	}
+	args = append(args, "-movflags", "+faststart", dest)
+	if combined, err := exec.CommandContext(ctx, "ffmpeg", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("replace soundtrack: %w: %s", err, tailOutput(combined))
 	}
 	return nil
 }

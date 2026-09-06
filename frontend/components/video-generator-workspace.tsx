@@ -123,7 +123,7 @@ export function VideoGeneratorWorkspace({ generator, apiOnly = false }: { genera
             <SlidersHorizontal size={14} /> Generator controls
           </div>
           <label className="block text-sm font-semibold text-white/75">Describe the shot</label>
-          <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={5} className="mt-2 w-full resize-none rounded-2xl border border-white/15 bg-[#171b27] p-4 text-sm leading-6 outline-none transition focus:border-white/35" />
+          <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} className="mt-2 w-full resize-none rounded-2xl border border-white/15 bg-[#171b27] p-4 text-sm leading-6 outline-none transition focus:border-white/35" />
           {generator.mode !== 'text' && (
             <div className="mt-5">
               <label htmlFor={`${generator.slug}-source-image`} className="block text-sm font-semibold text-white/75">{generator.mode === 'reference' ? 'Reference image URL' : 'Starting image URL'}</label>
@@ -137,7 +137,7 @@ export function VideoGeneratorWorkspace({ generator, apiOnly = false }: { genera
               <input value={imageURL} onChange={(event) => setImageURL(event.target.value)} placeholder="https://…/first-frame.webp" className="mt-2 w-full rounded-xl border border-white/15 bg-[#171b27] px-4 py-3 text-sm outline-none focus:border-white/35" />
             </div>
           )}
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className="mt-4 grid grid-cols-2 gap-3">
             <Field label="Duration"><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{generator.durations.map((value) => <option key={value} value={value}>{value} seconds</option>)}</select></Field>
             <Field label="Aspect ratio"><select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value)}>{generator.aspectRatios.map((value) => <option key={value}>{value}</option>)}</select></Field>
             <Field label="Resolution"><select value={resolution} onChange={(event) => setResolution(event.target.value)}>{generator.resolutions.map((value) => <option key={value}>{value}</option>)}</select></Field>

@@ -156,45 +156,52 @@ type ServiceUsageRequest struct {
 	WalletAddress string `json:"wallet_address"`
 	Service       string `json:"service"` // defaults to zimage; other values: chronos2, tts, stt, gemma4, caption
 	// Common fields
-	Prompt   string `json:"prompt,omitempty"`
-	Lyrics   string `json:"lyrics,omitempty"`
-	Kind     string `json:"kind,omitempty"`
-	ImageURL string `json:"image_url,omitempty"`
-	Text     string `json:"text,omitempty"`
-	Input    string `json:"input,omitempty"`
-	AudioURL string `json:"audio_url,omitempty"`
+	Prompt               string `json:"prompt,omitempty"`
+	SettingPrompt        string `json:"setting_prompt,omitempty"`
+	CharacterBible       string `json:"character_bible,omitempty"`
+	ConsistentCharacters bool   `json:"consistent_characters,omitempty"`
+	ConsistencyPasses    int    `json:"consistency_passes,omitempty"`
+	Sketch               bool   `json:"sketch,omitempty"`
+	Lyrics               string `json:"lyrics,omitempty"`
+	Kind                 string `json:"kind,omitempty"`
+	ImageURL             string `json:"image_url,omitempty"`
+	Text                 string `json:"text,omitempty"`
+	Input                string `json:"input,omitempty"`
+	AudioURL             string `json:"audio_url,omitempty"`
 	// video generation fields
-	VideoURL           string   `json:"video_url,omitempty"`
-	NegativePrompt     string   `json:"negative_prompt,omitempty"`
-	Resolution         string   `json:"resolution,omitempty"`
-	Strength           float64  `json:"strength,omitempty"`
-	NumFrames          int      `json:"num_frames,omitempty"`
-	FramesPerSecond    int      `json:"frames_per_second,omitempty"`
-	ReferenceImageURLs []string `json:"reference_image_urls,omitempty"`
-	ReferenceVideoURLs []string `json:"reference_video_urls,omitempty"`
-	ReferenceAudioURLs []string `json:"reference_audio_urls,omitempty"`
-	Duration           int      `json:"duration,omitempty"`
-	AspectRatio        string   `json:"aspect_ratio,omitempty"`
-	OutputFormat       string   `json:"output_format,omitempty"`
-	FirstFrame         string   `json:"first_frame,omitempty"`
-	LastFrame          string   `json:"last_frame,omitempty"`
-	Keyframes          []string `json:"keyframes,omitempty"`
-	Size               string   `json:"size,omitempty"`
-	Loop               bool     `json:"loop,omitempty"`
-	IncludeAudio       *bool    `json:"include_audio,omitempty"`
-	Structured         *bool    `json:"structured_prompt,omitempty"`
-	EncodeQuality      int      `json:"encode_quality,omitempty"`
-	BackgroundColor    string   `json:"background_color,omitempty"`
-	PreserveAudio      *bool    `json:"preserve_audio,omitempty"`
-	MaxQuality         *bool    `json:"max_quality,omitempty"`
-	LatentUpscale      *bool    `json:"latent_upscale,omitempty"`
-	MaskURL            string   `json:"mask_url,omitempty"`
-	MaskVideoURL       string   `json:"mask_video_url,omitempty"`
-	ControlType        string   `json:"control_type,omitempty"`
-	ControlScale       float64  `json:"control_scale,omitempty"`
-	ControlPreprocess  *bool    `json:"control_preprocess,omitempty"`
-	AcceptH3License    bool     `json:"accept_h3_license,omitempty"`
-	AddTransparency    *bool    `json:"add_transparency,omitempty"`
+	VideoURL            string   `json:"video_url,omitempty"`
+	AnimationMode       string   `json:"animation_mode,omitempty"`
+	NegativePrompt      string   `json:"negative_prompt,omitempty"`
+	Resolution          string   `json:"resolution,omitempty"`
+	PromptExpansionMode string   `json:"prompt_expansion_mode,omitempty"`
+	Strength            float64  `json:"strength,omitempty"`
+	NumFrames           int      `json:"num_frames,omitempty"`
+	FramesPerSecond     int      `json:"frames_per_second,omitempty"`
+	ReferenceImageURLs  []string `json:"reference_image_urls,omitempty"`
+	ReferenceVideoURLs  []string `json:"reference_video_urls,omitempty"`
+	ReferenceAudioURLs  []string `json:"reference_audio_urls,omitempty"`
+	Duration            int      `json:"duration,omitempty"`
+	AspectRatio         string   `json:"aspect_ratio,omitempty"`
+	OutputFormat        string   `json:"output_format,omitempty"`
+	FirstFrame          string   `json:"first_frame,omitempty"`
+	LastFrame           string   `json:"last_frame,omitempty"`
+	Keyframes           []string `json:"keyframes,omitempty"`
+	Size                string   `json:"size,omitempty"`
+	Loop                bool     `json:"loop,omitempty"`
+	IncludeAudio        *bool    `json:"include_audio,omitempty"`
+	Structured          *bool    `json:"structured_prompt,omitempty"`
+	EncodeQuality       int      `json:"encode_quality,omitempty"`
+	BackgroundColor     string   `json:"background_color,omitempty"`
+	PreserveAudio       *bool    `json:"preserve_audio,omitempty"`
+	MaxQuality          *bool    `json:"max_quality,omitempty"`
+	LatentUpscale       *bool    `json:"latent_upscale,omitempty"`
+	MaskURL             string   `json:"mask_url,omitempty"`
+	MaskVideoURL        string   `json:"mask_video_url,omitempty"`
+	ControlType         string   `json:"control_type,omitempty"`
+	ControlScale        float64  `json:"control_scale,omitempty"`
+	ControlPreprocess   *bool    `json:"control_preprocess,omitempty"`
+	AcceptH3License     bool     `json:"accept_h3_license,omitempty"`
+	AddTransparency     *bool    `json:"add_transparency,omitempty"`
 	// extend_image outpaint controls: each expand side is a fraction (0..1)
 	// of the source dimension; zoom_out_percentage shrinks the subject into
 	// a larger canvas instead of extending a single side.
@@ -237,9 +244,11 @@ type ServiceUsageRequest struct {
 	Speed    float64 `json:"speed,omitempty"`
 	Steps    int     `json:"steps,omitempty"`
 	// gemma4 fields
-	Messages    []map[string]interface{} `json:"messages,omitempty"`
-	MaxTokens   int                      `json:"max_tokens,omitempty"`
-	Temperature float64                  `json:"temperature,omitempty"`
+	Messages      []map[string]interface{} `json:"messages,omitempty"`
+	MaxTokens     int                      `json:"max_tokens,omitempty"`
+	Temperature   float64                  `json:"temperature,omitempty"`
+	AutoEmotion   bool                     `json:"auto_emotion,omitempty"`
+	SpeakerVoices []ServiceSpeakerVoice    `json:"speaker_voices,omitempty"`
 	// lora_training fields
 	Model        string      `json:"model,omitempty"` // "zimage" or "chronos2"
 	DatasetName  string      `json:"dataset_name,omitempty"`
@@ -249,6 +258,11 @@ type ServiceUsageRequest struct {
 	LearningRate float64     `json:"learning_rate,omitempty"`
 	TrainSteps   int         `json:"train_steps,omitempty"`
 	TrainBatch   int         `json:"train_batch,omitempty"`
+}
+
+type ServiceSpeakerVoice struct {
+	Speaker string `json:"speaker"`
+	Voice   string `json:"voice"`
 }
 
 // ServicePricing holds the current pricing for a service

@@ -1,10 +1,10 @@
 {
-  "image": "ghcr.io/lee101/h3-cog:cu130-20260826-studio1939-r4",
+  "image": "ghcr.io/lee101/h3-cog:cu130-20260826-face-judge-r7",
   "dockerStartCmd": ["python", "-u", "/src/rp_handler.py"],
   "env": {
     "H3_ACCEL_PROFILE": "balanced",
     "H3_ATTENTION_BACKEND": "ck",
-    "H3_FACE_REFINE_ENABLED": "1",
+    "H3_FACE_REFINE_ENABLED": "0",
     "H3_FACE_REFINE_REQUIRED": "0",
     "H3_FACE_REFINE_VISION_JUDGE": "1",
     "H3_FACE_REFINE_GATE_SAMPLES": "7",
@@ -21,7 +21,7 @@
     "H3_FACE_JUDGE_MODEL": "deepseek-v4-flash-vision-exp",
     "H3_FACE_JUDGE_MIN_CONFIDENCE": "0.75",
     "H3_FACE_REFINE_MIN_DETAIL_GAIN_RATIO": "1.02",
-    "H3_MODEL_SET": "fl2va,ref2va,face_refine,style_loras",
+    "H3_MODEL_SET": "fl2va,ref2va",
     "H3_LAZY_REF2VA": "1",
     "H3_LATENT_UPSCALE_ENABLED": "0",
     "H3_LATENT_UPSCALER_MODEL": "h3_clean_latent_upscaler_film_epoch200.safetensors"
@@ -66,5 +66,5 @@
       ]
     }
   ],
-  "notes": "Both variants use the native handler and scale to zero after five idle seconds. H100 remains the validated default; REF2VA is an allowed lazy capability so text/video cold starts do not pay its load cost, while image edits load it on demand. Studio 1939 worker support is allowlisted and pinned to immutable revision 19214d4c3989de6caca673d534d0d4b16b73b0f7; r4 carries the light r16 adapter at 0.8 and rejects arbitrary filenames. Production prompt routing remains disabled: deepseek-v4-flash-vision-exp chose base H3 at 0.90 confidence in all three strong-r64 0.65 matched video pairs, and again chose base at 0.90 on the hard light-r16 0.8 canary because anatomy and requested action degraded. Strong r64 1.0 was also rejected manually on two pairs. The shared H3 base remains resident and the style patch swaps without base-model reload. Face refinement remains preview-gated and preserves the original on missing, failed, or ambiguous judge responses. PinkCherry beta-0.6 remains pinned to an immutable revision. A40 remains excluded after second-pass crashes."
+  "notes": "Both variants use the native handler and scale to zero after five idle seconds. H100 remains the validated default; REF2VA is an allowed lazy capability so text/video cold starts do not pay its load cost, while image edits load it on demand. Studio 1939 was removed after every representative A/B preferred base H3 on coherence and prompt adherence. The H3 face-refine pass is disabled and omitted from H3_MODEL_SET: repeated single- and multi-face audits found skips, no visible gain, or substantial detail loss. Re-enable only for a different restorer that wins a representative temporal A/B. PinkCherry beta-0.6 remains pinned to an immutable revision. A40 remains excluded after second-pass crashes."
 }

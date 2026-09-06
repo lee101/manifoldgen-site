@@ -21,6 +21,7 @@ import { VIDEO_CONTROL_TOOLS } from '../lib/video-controls';
 import type { BlogBlock } from '../app/blog/articles';
 import type { GuideBlock } from '../app/blog/guides/types';
 import { VIDEO_GENERATORS } from '../lib/video-generators';
+import { PROMPT_TOOLS } from '../lib/prompt-tools';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_DIR = join(ROOT, 'translations');
 
@@ -37,7 +38,7 @@ function add(route: string, key: string, value: unknown): void {
   (routes[route] ??= {})[key] = value;
 }
 const STATIC_METAS: [string, string, string][] = [
-  ['/', 'ManifoldGen | AI Video Creator and Generator', 'Create AI video from text, images, and reference media with ManifoldGen, an AI video creator for cinematic generation, audio, and editing.'],
+  ['/', 'ManifoldGen | Every Creative AI Model. One Balance.', 'One creative AI studio for video, images, music, voice, editing, and API access. Run every leading model with one account and one balance.'],
   ['/tools', 'AI Creative Tools — ManifoldGen', 'Purpose-built spaces for AI art, image editing, relighting, upscaling, character animation, and video finishing.'],
   ['/ai-video-generator', 'AI Video Generator for Every Job — Ads, TikTok, VFX, Anime', 'Programmatic playbooks for AI video: product ads, UGC, TikTok, YouTube Shorts, music videos, VFX, anime and more — with model picks, prices, and real examples.'],
   ['/compare', 'AI Model Comparisons — Seedance vs Wan, LTX vs Manifold & More', 'Head-to-head AI video and image model comparisons on real ManifoldGen output: prices per clip, resolution, audio, and which model wins for which job.'],
@@ -47,6 +48,8 @@ const STATIC_METAS: [string, string, string][] = [
   ['/blog', 'Blog — AI Video Guides and Prompt Craft', 'Practical guides for AI video: scripts to video, realism, TikTok content, documentaries, product shots, faceless channels, character consistency, and camera control — every example generated with ManifoldGen.'],
   ['/blog/guides', 'AI Creation Guides — ManifoldGen', 'Practical guides on making money with AI — faceless channels, ad pipelines, UGC, product photos — plus character consistency, AI personas, scene continuity, ComfyUI thinking, and directing agents.'],
   ['/blog/anime-styles', 'One Elf, 1000 Anime Styles — An Interactive Style Explorer', 'We took one prompt — aesthetic elf woman — and re-ran it 1000 times, changing only the style modifier: art movements, printmaking, retro games, subculture fashion, lighting grades. Browse every result with the exact prompt that made it.'],
+  ['/prompts', 'Free AI Video Prompt Generators — Seedance, Kling, Veo & More', 'Free no-login prompt builders for cinematic AI video, product ads, anime, image-to-video, Seedance, Kling, Veo, TikTok, storyboards, and camera moves.'],
+  ['/invite', 'Invite Friends — Give $5, Get $5 in Generation Credits', 'Invite another creator to ManifoldGen. After their first successful purchase, you both receive $5 in AI generation credits.'],
   ['/api', 'API Documentation', 'Build image, native video, music, and AI voice generation into your product with the ManifoldGen API.'],
   ['/api/video-generators', 'Video Generator API Directory', 'Build with Manifold, Seedance, LTX, Wan, Happy Horse, and other video generators through one ManifoldGen API.'],
   ['/tool/animate-video', 'AI Character Animation Transfer', 'Use AI character animation to transfer body motion, facial expression, timing, and optional audio from a driving video onto a reference character with Wan Animate 2.'],
@@ -72,6 +75,27 @@ for (const useCase of USE_CASES) {
   });
   useCase.recommendedModels.forEach((rec, i) => add(route, `recommendedModels.${i}.why`, rec.why));
   useCase.faqs.forEach((faq, i) => {
+    add(route, `faqs.${i}.q`, faq.q);
+    add(route, `faqs.${i}.a`, faq.a);
+  });
+}
+
+// --- Free prompt tools (/prompts/<slug>).
+for (const tool of PROMPT_TOOLS) {
+  const route = `/prompts/${tool.slug}`;
+  add(route, 'name', tool.name);
+  add(route, 'h1', tool.h1);
+  add(route, 'title', tool.title);
+  add(route, 'metaDescription', tool.metaDescription);
+  add(route, 'eyebrow', tool.eyebrow);
+  add(route, 'intro', tool.intro);
+  add(route, 'audience', tool.audience);
+  add(route, 'recommendedModel', tool.recommendedModel);
+  Object.entries(tool.defaults).forEach(([key, value]) => add(route, `defaults.${key}`, value));
+  add(route, 'suffix', tool.suffix);
+  tool.examples.forEach((value, i) => add(route, `examples.${i}`, value));
+  tool.tips.forEach((value, i) => add(route, `tips.${i}`, value));
+  tool.faqs.forEach((faq, i) => {
     add(route, `faqs.${i}.q`, faq.q);
     add(route, `faqs.${i}.a`, faq.a);
   });

@@ -11,6 +11,7 @@ export function SeoHeader() {
           <Link href="/ai-video-generator" className="rounded-full px-3 py-2 hover:text-white">Use cases</Link>
           <Link href="/models" className="rounded-full px-3 py-2 hover:text-white">Models</Link>
           <Link href="/compare" className="rounded-full px-3 py-2 hover:text-white">Compare</Link>
+          <Link href="/prompts" className="hidden rounded-full px-3 py-2 hover:text-white md:block">Free prompts</Link>
           <Link href="/best" className="hidden rounded-full px-3 py-2 hover:text-white sm:block">Answers</Link>
           <Link href="/studio" className="rounded-full bg-white px-4 py-2 font-semibold text-black">Studio</Link>
         </nav>

@@ -192,7 +192,17 @@ echo "  ✓ Frontend built"
 
 # Precomputed translations: localized static pages under frontend/out/<lang>/.
 # Best-effort — a failure ships the English site unchanged.
-if (cd frontend && bun scripts/i18n-build.ts); then
+i18n_run() {
+  if command -v bun >/dev/null 2>&1; then
+    (cd frontend && bun scripts/i18n-build.ts)
+  elif [ -f frontend/node_modules/.bin/tsx ]; then
+    (cd frontend && ./node_modules/.bin/tsx scripts/i18n-build.ts)
+  else
+    echo "  ⚠ no bun/tsx available; skipping i18n-build"
+    return 1
+  fi
+}
+if i18n_run; then
   echo "  ✓ Localized pages generated"
 else
   echo "  ⚠ i18n-build failed; shipping English-only"

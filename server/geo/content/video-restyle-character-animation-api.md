@@ -16,6 +16,7 @@ These are v2v and animation problems, and they have different economics than t2v
 ## Key Takeaways
 
 *   **Wan 2.2 restyle:** Video-to-video with motion controls and ordered image/video/audio references; $0.48 estimated for a default clip.
+*   **Wan Animate modes:** `move` animates the reference image's world; `replace` preserves the driving-video scene while swapping its performer.
 *   **Fixed-price animation:** Character clips cost $0.75 for five seconds standard tier, locked before dispatch — fast costs 2x, xfast 4x, stated up front.
 *   **Failover routing:** Restyle jobs move to a standby queue on provider failure without changing the public job ID.
 *   **One pipeline:** Outputs feed directly into the platform's matting, music, and speech services.
@@ -31,6 +32,11 @@ Reliability follows the same engineering pattern as the rest of the platform: pr
 ## Key Capabilities
 
 Video restyle accepts source clips plus Wan 2.2 control parameters and ordered reference lists (images, videos, audio), enabling consistent multi-shot treatment — apply one style grade and character set across a whole sequence rather than clip-by-clip improvisation.
+
+For character motion, send `model: "wan-animate-2"` with `animation_mode:
+"move"` or `"replace"`, plus a real video URL and character image URL. The API
+rejects obvious media-type swaps before dispatch and exposes the same setting in
+the web tool and MCP schema.
 
 Character animation generates five-second standard clips from reference imagery with quality tiers selected per request. Fixed pre-dispatch pricing makes budget math trivial: ten variations of a walk cycle cost $7.50 standard, knowable before submitting.
 

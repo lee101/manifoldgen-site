@@ -26,7 +26,7 @@ export const FOOTER_TOOL_GROUPS: { title: string; links: FooterLink[]; more?: Fo
   },
   {
     title: 'Motion & audio',
-    links: byHref(['/tools/character-animator', '/tools/cinematic-cameras', '/tools/video-background-remover', '/tools/music-generator', '/voice']),
+    links: byHref(['/tools/character-animator', '/tools/cinematic-cameras', '/tools/video-background-remover', '/tools/trailer-agent', '/tools/music-generator', '/voice']),
     more: { href: '/tools', label: 'All tools' },
   },
 ];
@@ -37,6 +37,8 @@ export const FOOTER_VIDEO_MODEL_LINKS: FooterLink[] = [
   { href: '/tools/ltx-2-3', label: 'LTX 2.3' },
   { href: '/tools/wan', label: 'Wan Video' },
   { href: '/tools/ra2v', label: 'RA2V' },
+  { href: '/tools/h3-max', label: 'H3 Max' },
+  { href: '/tools/h3-max-image', label: 'H3 Max Image' },
 ];
 
 export const FOOTER_BLOG_LINKS: FooterLink[] = [

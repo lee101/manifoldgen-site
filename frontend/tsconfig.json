@@ -39,14 +39,15 @@
     ".next-dev-test/types/**/*.ts",
     ".next-dev/types/**/*.ts",
     ".next-export-visual/types/**/*.ts",
+    ".next-glitch-test/types/**/*.ts",
     ".next-guides-check/types/**/*.ts",
     ".next-inpaint-e2e/types/**/*.ts",
     ".next-playwright/types/**/*.ts",
+    ".next-probe/types/**/*.ts",
     ".next-upscale-3319/types/**/*.ts",
     ".next-visual/types/**/*.ts",
     ".next/types/**/*.ts",
-    "next-env.d.ts",
-    ".next-probe/types/**/*.ts"
+    "next-env.d.ts"
   ],
   "exclude": [
     "node_modules",
