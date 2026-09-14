@@ -13,6 +13,11 @@ updated only after RunPod confirmed deletion. Its approximately $253.70/month
 baseline is removed. Flex endpoint capacity remains available with minimum
 workers zero; the Pixal3D endpoint idle timeout was reduced to five seconds.
 
+The subsequent 08:00–09:00 UTC pod bill was prorated to 898,572 ms (about
+15 minutes), costing $0.08799. The 09:00–09:13 UTC billing query returned no
+pod or endpoint charges. Billing can lag; the independent live pod inventory
+also remained empty.
+
 ## Root cause and safeguards
 
 The app.nz Cog idle reaper selected only `ready` models. Error-state models
