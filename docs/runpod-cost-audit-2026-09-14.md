@@ -83,3 +83,9 @@ tools and five ManifoldGen tools). Browser checks of Studio and the Cog sign-in
 gate returned HTTP 200 with no JavaScript errors; screenshots were inspected.
 These were read-only checks, not paid inference requests. After deployment, the
 installed guard reported no direct pods, no errors, and 712 GB retained storage.
+
+Both R2 uploads completed. ManifoldGen's 29,328-file static export was resumed
+with 32 concurrent transfers after the initial upload proved slow. The deploy
+script initially skipped its CDN purge because project-local R2 credentials
+prevented loading the shared zone credential; the script now loads missing
+purge settings independently. Both zones' targeted CDN purges then succeeded.

@@ -56,6 +56,18 @@ CF_ZONE_ID="${CLOUDFLARE_ZONE_MANIFOLDGEN:-e76d8743fa762b019b526fea3b461105}"
 CF_API_KEY="${CLOUDFLARE_API_KEY:-${CLOUDFLARE_KEY:-${CLOUDFLARE_API:-}}}"
 CF_EMAIL="${CLOUDFLARE_EMAIL:-leepenkman@gmail.com}"
 
+# R2 credentials can be project-local while zone management is shared. Load
+# only the missing purge settings without replacing this project's environment.
+if [ -z "$CF_API_KEY" ] && [ -f /nvme0n1-disk/code/app-site/.env ]; then
+  mapfile -t shared_cf_settings < <(
+    set +u
+    source /nvme0n1-disk/code/app-site/.env
+    printf '%s\n' "${CLOUDFLARE_API_KEY:-${CLOUDFLARE_KEY:-${CLOUDFLARE_API:-}}}" "${CLOUDFLARE_EMAIL:-}"
+  )
+  CF_API_KEY="${shared_cf_settings[0]:-}"
+  CF_EMAIL="${shared_cf_settings[1]:-$CF_EMAIL}"
+fi
+
 export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-${CLOUDFLARE_R2_ACCESS_KEY_ID:-}}"
 export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}}"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
