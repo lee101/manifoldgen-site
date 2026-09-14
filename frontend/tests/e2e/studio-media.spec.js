@@ -1508,7 +1508,7 @@ test('visual elements can be dragged and nudged around the stage', async ({ page
   await expect(element).toHaveAttribute('data-rotation', '0.00');
 });
 
-test('a gallery image handoff loads through the same-origin proxy and fills the Studio stage', async ({ page }) => {
+test('a gallery image handoff loads through the same-origin proxy and fits the design canvas', async ({ page }) => {
   await installMocks(page);
   let proxyRequest = '';
   await page.route('**/api/gallery-assets/originals/gallery-fixture.webp?**', (route) => {
@@ -1521,11 +1521,15 @@ test('a gallery image handoff loads through the same-origin proxy and fills the 
   await expect(element).toBeVisible();
   expect(proxyRequest).toContain('/api/gallery-assets/originals/gallery-fixture.webp?v=1');
 
-  const stageBox = await page.getByTestId('studio-stage').boundingBox();
-  const box = await element.boundingBox();
-  const expectedSize = Math.min(stageBox.width - 24, stageBox.height - 24);
-  expect(box.width).toBeGreaterThan(expectedSize - 3);
-  expect(box.height).toBeGreaterThan(expectedSize - 3);
+  // A square image fits inside the default 16:9 design, not the surrounding
+  // stage. Wait for the ResizeObserver update before checking its fitted size.
+  await expect.poll(async () => {
+    const stageBox = await page.getByTestId('studio-stage').boundingBox();
+    const box = await element.boundingBox();
+    if (!stageBox || !box) return Number.POSITIVE_INFINITY;
+    const expectedSize = Math.min((stageBox.width - 24) * 9 / 16, stageBox.height - 24);
+    return Math.max(Math.abs(box.width - expectedSize), Math.abs(box.height - expectedSize));
+  }).toBeLessThan(3);
 });
 test('multiple PNGs export the complete slideshow as a local WebM video', async ({ page }) => {
   test.setTimeout(120_000);
@@ -1702,14 +1706,12 @@ test('Media Music searches real catalog-shaped results, imports a track, and gen
   await expect(page.getByRole('heading', { name: 'Generate music' })).toBeVisible();
   await page.getByTestId('studio-audio-prompt').fill('Warm analog synth pulse with glass harmonics');
   await page.getByTestId('studio-music-lyrics').fill('[Verse]\nNeon on the water\n[Chorus]\nCarry us home');
-  await page.getByTestId('studio-music-tier-xfast').click();
   await page.getByTestId('studio-audio-generate').click();
   await expect(page.locator('[data-timeline-asset]')).toHaveCount(2);
   expect(generationRequest).toEqual({
     prompt: 'Warm analog synth pulse with glass harmonics',
     lyrics: '[Verse]\nNeon on the water\n[Chorus]\nCarry us home',
     duration: 30,
-    service_tier: 'xfast',
   });
   await expect(page.getByText('Music added · MiniMax-Music3')).toBeVisible();
 });

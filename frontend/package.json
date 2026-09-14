@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test:unit": "bun test tests/*.test.ts",
     "build:standalone": "next build",
     "test:e2e": "playwright test",
     "test:e2e:hook": "playwright test tests/e2e/studio-media.spec.js tests/e2e/api-pricing.spec.js --grep-invert 'visual fidelity benchmark|2K preview stays'",

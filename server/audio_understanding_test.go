@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"math"
 	"os"
@@ -200,5 +201,50 @@ func writeParityFixture(t *testing.T, dir string, got *AudioAnalysis) {
 	blob, _ := json.MarshalIndent(&slim, "", "  ")
 	if err := os.WriteFile(dir+"/robotrun.go.json", blob, 0o644); err != nil {
 		t.Fatalf("write json: %v", err)
+	}
+}
+
+// TestAudioParityPCM exports current Go analysis for the browser parity suite.
+// The default fixture is committed, so this check also runs on clean CI hosts.
+func TestAudioParityPCM(t *testing.T) {
+	path := os.Getenv("AUDIO_PARITY_PCM")
+	if path == "" {
+		path = "../frontend/tests/fixtures/robotrun.f32le"
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) == 0 || len(raw)%4 != 0 {
+		t.Fatal("expected nonempty float32 PCM")
+	}
+	pcm := make([]float64, len(raw)/4)
+	for i := range pcm {
+		pcm[i] = float64(math.Float32frombits(binary.LittleEndian.Uint32(raw[i*4:])))
+	}
+	opts := DefaultAudioAnalysisOptions()
+	opts.IncludeSeries = true
+	got := AnalyzeAudioSamples(pcm, opts)
+	if got.Duration <= 0 || len(got.OnsetTimes) == 0 {
+		t.Fatal("fixture produced no audio analysis")
+	}
+	if output := os.Getenv("AUDIO_PARITY_OUTPUT"); output != "" {
+		blob, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(output, blob, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkAudioAnalysis(b *testing.B) {
+	pcm := synthClickTrack(audioDefaultSampleRate, 120, 8)
+	opts := DefaultAudioAnalysisOptions()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		AnalyzeAudioSamples(pcm, opts)
 	}
 }

@@ -18,4 +18,5 @@ test -z "$(gofmt -l server)" || {
 
 (cd server && go test ./...)
 (cd frontend && bun scripts/i18n-check.ts)
-(cd frontend && npx tsc --noEmit)
+(cd frontend && bun run typecheck)
+(cd frontend && bun run test:unit)

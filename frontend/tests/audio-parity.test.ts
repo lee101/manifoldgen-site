@@ -3,12 +3,12 @@
 // so any divergence is a real algorithm difference rather than a decode
 // difference. Run with: bun test tests/audio-parity.test.ts
 //
-// The fixtures are produced by the Go test itself (AUDIO_PARITY_DIR), so this
-// exercises the shipping Go code path rather than a hand-written expectation.
+// The committed PCM is analyzed by the current Go implementation on every run.
+// No private source video, FFmpeg, or saved expected JSON is required.
 
 import { describe, expect, test, beforeAll } from 'bun:test';
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import {
@@ -21,22 +21,27 @@ import {
 
 const FIXTURE_DIR = join(import.meta.dir, 'fixtures');
 const PCM_PATH = join(FIXTURE_DIR, 'robotrun.f32le');
-const GO_JSON_PATH = join(FIXTURE_DIR, 'robotrun.go.json');
 const SERVER_DIR = resolve(import.meta.dir, '../../server');
-const SOURCE_VIDEO = '/vfast/data/code/vids/robotrun.mp4';
 
-/** Regenerates both fixtures by running the Go test that writes them. */
-async function ensureFixtures(): Promise<boolean> {
-  if (existsSync(PCM_PATH) && existsSync(GO_JSON_PATH)) return true;
-  if (!existsSync(SOURCE_VIDEO)) return false;
-  const proc = Bun.spawn(['go', 'test', '-run', 'TestAnalyzeRobotRunVideo', '.'], {
-    cwd: SERVER_DIR,
-    env: { ...process.env, AUDIO_PARITY_DIR: FIXTURE_DIR },
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  await proc.exited;
-  return existsSync(PCM_PATH) && existsSync(GO_JSON_PATH);
+/** Compare current implementations; never reuse a stale expected Go result. */
+async function analyzeWithGo(): Promise<AudioAnalysis> {
+  const outputDir = await mkdtemp(join(tmpdir(), 'manifold-audio-parity-'));
+  const outputPath = join(outputDir, 'analysis.json');
+  try {
+    const proc = Bun.spawn(['go', 'test', '-count=1', '-run', '^TestAudioParityPCM$', '.'], {
+      cwd: SERVER_DIR,
+      env: { ...process.env, AUDIO_PARITY_PCM: PCM_PATH, AUDIO_PARITY_OUTPUT: outputPath },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [code, stdout, stderr] = await Promise.all([
+      proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text(),
+    ]);
+    if (code !== 0) throw new Error(`Go audio analysis failed (exit ${code}):\n${stdout}\n${stderr}`);
+    return JSON.parse(await readFile(outputPath, 'utf8')) as AudioAnalysis;
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
 }
 
 async function loadPCM(): Promise<Float64Array> {
@@ -53,12 +58,11 @@ let goResult: AudioAnalysis;
 let tsResult: AudioAnalysis;
 
 beforeAll(async () => {
-  available = await ensureFixtures();
-  if (!available) return;
   pcm = await loadPCM();
-  goResult = JSON.parse(await readFile(GO_JSON_PATH, 'utf8')) as AudioAnalysis;
+  goResult = await analyzeWithGo();
+  available = true;
   tsResult = analyzeAudioSamples(pcm, { includeSeries: true });
-});
+}, 120_000);
 
 describe('Go/TypeScript audio-understanding parity', () => {
   test('fixtures are available', () => {

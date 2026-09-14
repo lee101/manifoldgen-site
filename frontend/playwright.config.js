@@ -44,7 +44,9 @@ module.exports = defineConfig({
     : {
         command: `bunx next dev --hostname 127.0.0.1 --port ${port}`,
         url: baseURL,
-        reuseExistingServer: true,
+        // Own the test server lifecycle; sharing another run's server can lose
+        // it during teardown. Local reuse must be explicitly requested.
+        reuseExistingServer: process.env.PLAYWRIGHT_REUSE_SERVER === '1',
         timeout: 120_000,
         env: {
           ...process.env,
