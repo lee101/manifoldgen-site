@@ -280,6 +280,8 @@ else
     /etc/nginx/sites-enabled \
     /etc/nginx/ssl
   "${SUDO[@]}" install -d -o www-data -g www-data -m 755 "$DEPLOY_ROOT/logs"
+  # Keep the scheduled cost inventory in sync with the deployed application.
+  "${SUDO[@]}" install -D -m 755 "$ROOT/scripts/runpod_cost_guard.py" "$DEPLOY_ROOT/scripts/runpod_cost_guard.py"
 
   "${SUDO[@]}" rsync -a --chown=www-data:www-data \
     "$OUT_DIR/" "$DEPLOY_ROOT/frontend/out/"

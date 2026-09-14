@@ -3,7 +3,8 @@
 
 The guard is intentionally narrow: it only watches ManifoldGen H3 and Music3
 Serverless endpoints and requires repeated idle observations before changing
-capacity. It never deletes endpoints or production Pods; only allowlisted
+capacity. Account-wide direct pods and persistent volumes are inventoried so
+storage charges and failed non-scratch workloads remain visible. It never deletes endpoints or production Pods; only allowlisted
 scratch probes can be cleaned up after exceeding a separate age budget for two
 checks. Dry-run is the default.
 """
@@ -72,8 +73,10 @@ def managed_endpoint(name: str, prefixes: tuple[str, ...]) -> bool:
 
 
 def active_jobs(health: dict[str, Any]) -> int:
-    jobs = health.get("jobs") or {}
-    return int(jobs.get("inProgress") or 0) + int(jobs.get("inQueue") or 0)
+    jobs = health.get("jobs")
+    if not isinstance(jobs, dict) or any(name not in jobs for name in ("inProgress", "inQueue")):
+        raise ValueError("incomplete queue health; refusing to infer that endpoint is idle")
+    return int(jobs["inProgress"]) + int(jobs["inQueue"])
 
 
 def live_workers(health: dict[str, Any]) -> int:
@@ -179,6 +182,8 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool) -> 
         "pod_counts": {},
         "endpoints": [],
         "direct_pods": [],
+        "network_volumes": [],
+        "allocated_storage_gb": 0,
         "pod_alerts": [],
         "actions": [],
         "errors": [],
@@ -200,8 +205,12 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool) -> 
             report["errors"].append({"endpoint": name, "error": str(error)})
             continue
 
-        jobs = active_jobs(health)
-        workers = live_workers(health)
+        try:
+            jobs = active_jobs(health)
+            workers = live_workers(health)
+        except (TypeError, ValueError) as error:
+            report["errors"].append({"endpoint": name, "error": str(error)})
+            continue
         workers_min = int(endpoint.get("workersMin") or 0)
         pinned_count = consecutive(int(previous.get("pinned_min") or 0), workers_min > 0 and jobs == 0)
         idle_count = consecutive(
@@ -278,7 +287,9 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool) -> 
             )
             if pod_id:
                 report["pod_counts"][pod_id] = stale_count
-            if scratch:
+            if running and not scratch and age_hours >= 24:
+                report["pod_alerts"].append({"id": pod_id, "name": name, "status": "direct pod running over 24 hours; verify owner and active jobs", "cost_per_hour": pod.get("costPerHr")})
+            if running:
                 report["direct_pods"].append(
                     {
                         "id": pod_id,
@@ -289,11 +300,11 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool) -> 
                         "stale_checks": stale_count,
                     }
                 )
-                if image.startswith("ghcr.io/") and not pod.get("containerRegistryAuthId"):
+                if scratch and image.startswith("ghcr.io/") and not pod.get("containerRegistryAuthId"):
                     report["pod_alerts"].append(
                         {"id": pod_id, "name": name, "status": "private GHCR image has no registry auth"}
                     )
-                if stale_count >= 2:
+                if scratch and stale_count >= 2:
                     action = {
                         "pod": name,
                         "reason": f"scratch probe exceeded {max_scratch_hours:g} hours for two checks",
@@ -319,6 +330,17 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool) -> 
                 )
     except Exception as error:
         report["errors"].append({"scope": "pods", "error": str(error)})
+
+    # Allocated network storage keeps billing with zero workers. Inventory it
+    # explicitly; never delete data just because its endpoint is currently idle.
+    try:
+        volumes = normalize_list(request_json(f"{REST_BASE}/networkvolumes", api_key))
+        for volume in volumes:
+            size = int(volume.get("size") or 0)
+            report["allocated_storage_gb"] += size
+            report["network_volumes"].append({"id": volume.get("id"), "name": volume.get("name"), "size_gb": size, "data_center": volume.get("dataCenterId")})
+    except Exception as error:
+        report["errors"].append({"scope": "network_volumes", "error": str(error)})
 
     if report["errors"]:
         report["status"] = "error"

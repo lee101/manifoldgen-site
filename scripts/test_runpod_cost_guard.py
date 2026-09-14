@@ -2,6 +2,9 @@
 
 import unittest
 import datetime as dt
+import pathlib
+import tempfile
+from unittest.mock import patch
 
 import runpod_cost_guard as guard
 
@@ -32,6 +35,31 @@ class RunPodCostGuardTest(unittest.TestCase):
         now = dt.datetime(2026, 8, 26, 6, tzinfo=dt.timezone.utc)
         pod = {"createdAt": "2026-08-26 05:12:10.217 +0000 UTC"}
         self.assertAlmostEqual(guard.pod_age_hours(pod, now), 0.7972, places=3)
+
+
+class RunPodCostInventoryTest(unittest.TestCase):
+    def test_missing_health_never_counts_as_idle(self):
+        for health in ({}, {"jobs": {}}, {"jobs": {"inProgress": 0}}):
+            with self.assertRaises(ValueError):
+                guard.active_jobs(health)
+
+    def test_non_scratch_pods_and_storage_are_visible_but_not_deleted(self):
+        def request(url, key, method="GET", payload=None, **kwargs):
+            self.assertEqual(method, "GET")
+            if url.endswith("/endpoints"):
+                return []
+            if url.endswith("/pods"):
+                return [{"id": "failed-cog", "name": "cog-pixal3d-example", "desiredStatus": "RUNNING", "costPerHr": .34, "createdAt": "2020-01-01T00:00:00Z"}]
+            if url.endswith("/networkvolumes"):
+                return [{"id": "models", "name": "model-cache", "size": 256, "dataCenterId": "US-IL-1"}]
+            raise AssertionError(url)
+        with tempfile.TemporaryDirectory() as work, patch.object(guard, "request_json", side_effect=request):
+            report = guard.run("test-key", pathlib.Path(work) / "state.json", 2, True)
+        self.assertEqual(report["allocated_storage_gb"], 256)
+        self.assertEqual(report["direct_pods"][0]["cost_per_hour"], .34)
+        self.assertEqual(report["pod_alerts"][0]["id"], "failed-cog")
+        self.assertEqual(report["actions"], [])
+        self.assertEqual(report["status"], "warning")
 
 
 if __name__ == "__main__":
