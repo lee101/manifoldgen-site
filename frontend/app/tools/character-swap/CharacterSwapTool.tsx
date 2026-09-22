@@ -8,12 +8,15 @@ import { parseJSONResponse } from '../../../lib/http';
 import styles from '../audio-spaces.module.css';
 
 type Phase = 'idle' | 'queued' | 'processing' | 'done' | 'error';
+type Resolution = '768P' | '2K' | '720p' | '580p';
 type SwapEstimate = {
   estimated_cost_usd?: number;
   estimated_credits?: number;
   source_seconds?: number;
   chunks?: number;
   rate_usd_per_second?: number;
+  rate_usd_per_second_per_character?: number;
+  people?: number;
   image_included?: boolean;
   estimated_generation_seconds?: number;
   shots?: number;
@@ -34,6 +37,8 @@ type JobResult = {
   swapped_image_url?: string;
   video_url?: string;
   duration_seconds?: number;
+  pose_error?: number;
+  people?: number;
   charged_usd?: number;
   credits_used?: number;
 };
@@ -43,6 +48,7 @@ const SAMPLE_VIDEO = 'https://manifoldgenstatic.manifoldgen.com/static/tools/cha
 const SAMPLE_FRAME = 'https://manifoldgenstatic.manifoldgen.com/static/tools/character-swap/rapvid-frame.png';
 const SAMPLE_SWAPPED = 'https://manifoldgenstatic.manifoldgen.com/static/tools/character-swap/rapvid-swapped.png';
 const SAMPLE_OUTPUT = 'https://manifoldgenstatic.manifoldgen.com/static/tools/character-swap/rapvid-elon-optimus.mp4';
+const SAMPLE_OUTPUT_EXACT = 'https://manifoldgenstatic.manifoldgen.com/static/tools/character-swap/rapvid-elon-optimus-exact.mp4';
 const DEFAULT_CHARACTER_PROMPT = 'Recreate this exact frame with the characters swapped: the person on the left becomes Elon Musk singing into the same microphone, standing in the exact same pose and position, and the figure on the right becomes a Tesla Optimus humanoid robot standing in the exact same place and pose as the original character. Keep the vivid orange background, the microphone, the framing, camera angle, lighting and composition identical. Photorealistic, music video still.';
 const DEFAULT_VIDEO_PROMPT = 'Image 1 is the exact target look: Elon Musk in a black blazer on the left singing into the hanging silver studio microphone, and a white-and-black Tesla Optimus humanoid robot with a glossy dark faceplate on the right, in front of a vivid bright orange studio wall. Video 1 is only the motion and camera reference. From the very first frame, show only Elon Musk and the Optimus robot, never the original two men. Elon Musk performs every move, gesture, lip movement and timing of the man on the left in Video 1; the Optimus robot performs every move of the man on the right. Same camera angles, same framing, same cuts, same microphone, and the bright orange background of Image 1 throughout. Photorealistic music video.';
 const FRAME_PRICE_USD = 0.24;
@@ -123,7 +129,21 @@ async function extractFirstFrame(file: File): Promise<{ blob: Blob; duration: nu
   }
 }
 
-function stageLabel(result?: JobResult): string {
+function stageLabel(result?: JobResult, exact?: boolean): string {
+  if (exact) {
+    switch (result?.stage) {
+      case 'frame': return 'Extracting the reference frame';
+      case 'image': return 'Drawing the new characters';
+      case 'track': return 'Tracking the performers';
+      case 'mux': return 'Compositing and laying the soundtrack back on';
+      case 'video': {
+        const total = result?.chunks_total ?? 0;
+        const done = result?.chunks_completed ?? 0;
+        return total > 0 ? `Replacing performer passes ${done}/${total}` : 'Replacing performer passes';
+      }
+      default: return 'Working…';
+    }
+  }
   switch (result?.stage) {
     case 'frame': return 'Extracting the reference frame';
     case 'image': return 'Drawing the new characters';
@@ -138,7 +158,8 @@ function stageLabel(result?: JobResult): string {
   }
 }
 
-export default function CharacterSwapTool() {
+export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact' }) {
+  const exact = lane === 'exact';
   const inputRef = useRef<HTMLInputElement>(null);
   const estimateSequence = useRef(0);
   const [user, setUser] = useState<StoredUser | null>(null);
@@ -157,7 +178,8 @@ export default function CharacterSwapTool() {
   const [frameBusy, setFrameBusy] = useState(false);
   const [frameError, setFrameError] = useState('');
   const [videoPrompt, setVideoPrompt] = useState(DEFAULT_VIDEO_PROMPT);
-  const [resolution, setResolution] = useState<'768P' | '2K'>('768P');
+  const [resolution, setResolution] = useState<Resolution>(exact ? '720p' : '768P');
+  const [characters, setCharacters] = useState(2);
   const [audioReference, setAudioReference] = useState(false);
   const [perShotFrames, setPerShotFrames] = useState(false);
   const [estimate, setEstimate] = useState<SwapEstimate | null>(null);
@@ -167,6 +189,7 @@ export default function CharacterSwapTool() {
   const [videoError, setVideoError] = useState('');
   const [outputURL, setOutputURL] = useState('');
   const [outputFrame, setOutputFrame] = useState('');
+  const [poseError, setPoseError] = useState<number | null>(null);
   const [chargedUSD, setChargedUSD] = useState<number | null>(null);
   const [creditsUsed, setCreditsUsed] = useState<number | null>(null);
 
@@ -190,7 +213,9 @@ export default function CharacterSwapTool() {
           await fetch('/api/character-swap/estimate', {
             method: 'POST',
             headers: { Authorization: `Bearer ${currentUser.api_key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ video_url: videoURL, image_url: swappedImageURL, resolution, prompt: videoPrompt.trim(), include_audio: audioReference, max_quality: perShotFrames }),
+            body: JSON.stringify(exact
+              ? { video_url: videoURL, image_url: swappedImageURL, kind: 'exact', resolution, characters }
+              : { video_url: videoURL, image_url: swappedImageURL, resolution, prompt: videoPrompt.trim(), include_audio: audioReference, max_quality: perShotFrames }),
           }),
           'Could not estimate the swap',
         );
@@ -202,7 +227,7 @@ export default function CharacterSwapTool() {
       }
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [videoURL, swappedImageURL, resolution, videoPrompt, audioReference, perShotFrames, user]);
+  }, [videoURL, swappedImageURL, resolution, videoPrompt, audioReference, perShotFrames, characters, exact, user]);
 
   function resetSample() {
     estimateSequence.current += 1;
@@ -210,7 +235,7 @@ export default function CharacterSwapTool() {
     setFrameURL(SAMPLE_FRAME); setFrameLink('');
     setSwappedImageURL(SAMPLE_SWAPPED); setSwappedLink('');
     setFrameGenerated(false); setDuration(0);
-    setEstimate(null); setOutputURL(''); setOutputFrame('');
+    setEstimate(null); setOutputURL(''); setOutputFrame(''); setPoseError(null);
     setChargedUSD(null); setCreditsUsed(null);
     setSourceError(''); setFrameError(''); setVideoError('');
     setPhase('idle'); setStatus('Describe the swap');
@@ -231,7 +256,7 @@ export default function CharacterSwapTool() {
       setFrameURL(uploadedFrame); setFrameLink('');
       setDuration(seconds);
       setSwappedImageURL(''); setSwappedLink(''); setFrameGenerated(false);
-      setOutputURL(''); setOutputFrame('');
+      setOutputURL(''); setOutputFrame(''); setPoseError(null);
     } catch (reason) {
       setSourceError(reason instanceof Error ? reason.message : 'Could not upload the video');
     } finally {
@@ -246,7 +271,7 @@ export default function CharacterSwapTool() {
     setVideoURL(url);
     setFrameURL(''); setFrameLink('');
     setSwappedImageURL(''); setSwappedLink(''); setFrameGenerated(false);
-    setDuration(0); setEstimate(null); setOutputURL(''); setOutputFrame('');
+    setDuration(0); setEstimate(null); setOutputURL(''); setOutputFrame(''); setPoseError(null);
     setSourceError('');
   }
 
@@ -282,25 +307,35 @@ export default function CharacterSwapTool() {
     if (!currentUser?.api_key) { setPhase('error'); setVideoError('Sign in to generate.'); return; }
     if (!videoURL) { setPhase('error'); setVideoError('Choose a source video first.'); return; }
     if (!swappedImageURL) { setPhase('error'); setVideoError('Generate the character frame first.'); return; }
-    if (videoPrompt.trim().length < 10) { setPhase('error'); setVideoError('Describe the re-performance in at least 10 characters.'); return; }
-    setVideoError(''); setOutputURL(''); setOutputFrame(''); setChargedUSD(null); setCreditsUsed(null);
+    if (!exact && videoPrompt.trim().length < 10) { setPhase('error'); setVideoError('Describe the re-performance in at least 10 characters.'); return; }
+    setVideoError(''); setOutputURL(''); setOutputFrame(''); setPoseError(null); setChargedUSD(null); setCreditsUsed(null);
     setPhase('queued'); setStatus('Job added');
     try {
       const queued = await parseJSONResponse<ServiceResponse>(
         await fetch('/api/service', {
           method: 'POST',
           headers: { Authorization: `Bearer ${currentUser.api_key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            service: 'character_swap_video',
-            video_url: videoURL,
-            image_url: swappedImageURL,
-            prompt: videoPrompt.trim(),
-            resolution,
-            prompt_expansion_mode: 'disabled',
-            include_audio: audioReference,
-            max_quality: perShotFrames,
-            character_prompt: characterPrompt.trim(),
-          }),
+          body: JSON.stringify(exact
+            ? {
+              service: 'character_swap_video',
+              video_url: videoURL,
+              image_url: swappedImageURL,
+              kind: 'exact',
+              resolution,
+              characters,
+              character_prompt: characterPrompt.trim(),
+            }
+            : {
+              service: 'character_swap_video',
+              video_url: videoURL,
+              image_url: swappedImageURL,
+              prompt: videoPrompt.trim(),
+              resolution,
+              prompt_expansion_mode: 'disabled',
+              include_audio: audioReference,
+              max_quality: perShotFrames,
+              character_prompt: characterPrompt.trim(),
+            }),
         }),
         'Could not start the character swap',
       );
@@ -319,6 +354,7 @@ export default function CharacterSwapTool() {
           if (!url) throw new Error('Generation completed without a video');
           setOutputURL(url);
           setOutputFrame(result?.swapped_image_url || swappedImageURL);
+          setPoseError(typeof result?.pose_error === 'number' ? result.pose_error : null);
           setChargedUSD(result?.charged_usd ?? null);
           setCreditsUsed(result?.credits_used ?? null);
           setPhase('done'); setStatus('Music video ready');
@@ -329,7 +365,7 @@ export default function CharacterSwapTool() {
           throw new Error(payload.job?.error || (next === 'payment_required' ? 'Top up to render this video' : 'Character swap generation failed'));
         }
         setPhase(next === 'processing' ? 'processing' : 'queued');
-        setStatus(next === 'processing' ? stageLabel(result) : 'Job added');
+        setStatus(next === 'processing' ? stageLabel(result, exact) : 'Job added');
         await sleep(3000);
       }
       throw new Error('The job remains available in your account');
@@ -342,25 +378,33 @@ export default function CharacterSwapTool() {
   const signedIn = Boolean(user?.api_key);
   const busy = phase === 'queued' || phase === 'processing';
   const frameCredits = Math.ceil(FRAME_PRICE_USD / (creditPrice || 0.01));
+  const resolutionOptions = exact ? ['720p', '580p'] as const : ['768P', '2K'] as const;
   const estimateLine = estimating
     ? 'Pricing the swap…'
     : estimate && typeof estimate.estimated_credits === 'number' && typeof estimate.estimated_cost_usd === 'number'
-      ? `≈ ${estimate.estimated_credits} credits ($${estimate.estimated_cost_usd.toFixed(2)}) · ${estimate.shots ?? 1} shots · ${estimate.chunks ?? '?'} clips · ${Math.round(estimate.source_seconds ?? 0)} s · about ${Math.max(1, Math.round((estimate.estimated_generation_seconds ?? 0) / 60))} min`
+      ? exact
+        ? `≈ ${estimate.estimated_credits} credits ($${estimate.estimated_cost_usd.toFixed(2)}) · ${estimate.people ?? characters} performers · ${Math.round(estimate.source_seconds ?? 0)} s · about ${Math.max(1, Math.round((estimate.estimated_generation_seconds ?? 0) / 60))} min`
+        : `≈ ${estimate.estimated_credits} credits ($${estimate.estimated_cost_usd.toFixed(2)}) · ${estimate.shots ?? 1} shots · ${estimate.chunks ?? '?'} clips · ${Math.round(estimate.source_seconds ?? 0)} s · about ${Math.max(1, Math.round((estimate.estimated_generation_seconds ?? 0) / 60))} min`
       : 'Estimate appears when signed in';
 
   return <>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}><Music4 size={13} /> GPT IMAGE 2 FRAME · MINIMAX H3 RE-PERFORMANCE · ORIGINAL AUDIO</div>
-      <h1>Swap the performers, keep the performance.</h1>
-      <p>Redraw the first frame with your new characters, then H3 re-performs the footage clip by clip: every clip gets the exact source motion, continues from the previous frame, is checked by a vision model, and the untouched original soundtrack goes back on top.</p>
+      <div className={styles.eyebrow}><Music4 size={13} /> {exact ? 'GPT IMAGE 2 FRAME · WAN 2.2 ANIMATE · EXACT MOTION · ORIGINAL AUDIO' : 'GPT IMAGE 2 FRAME · MINIMAX H3 RE-PERFORMANCE · ORIGINAL AUDIO'}</div>
+      <h1>{exact ? 'Swap the performers. Keep every frame.' : 'Swap the performers, keep the performance.'}</h1>
+      <p>{exact
+        ? 'Each performer is replaced in the original footage with pose-exact motion transfer, one performer at a time, then composited back: identical choreography, cuts, camera moves and background, with the untouched soundtrack.'
+        : 'Redraw the first frame with your new characters, then H3 re-performs the footage clip by clip: every clip gets the exact source motion, continues from the previous frame, is checked by a vision model, and the untouched original soundtrack goes back on top.'}</p>
+      {exact
+        ? <Link href="/tools/character-swap" className="mt-4 inline-block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Cheaper stylised re-performance: Character Swap (H3)</Link>
+        : <Link href="/tools/character-swap-exact" className="mt-4 inline-block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Need frame-exact motion? Try the Exact Motion lane</Link>}
     </section>
     <div className="mx-auto grid max-w-[1320px] gap-3.5 px-6 pb-16">
       <div className={styles.panel}>
         <div className={styles.panelHead}><div><span>EXAMPLE OUTPUT</span><h2>Source rappers → Elon Musk + Optimus</h2></div><Clapperboard size={17} /></div>
         <div className={styles.output}>
           <div className={styles.outputHead}><span>SAMPLE SWAP</span><span className={styles.ready}>READY</span></div>
-          <video data-testid="swap-example" src={SAMPLE_OUTPUT} muted autoPlay loop playsInline controls />
-          <div className={styles.price} style={{ padding: '0 12px 12px' }}><span>Same moves, same track</span><span>1280×720 · 24 fps</span></div>
+          <video data-testid="swap-example" src={exact ? SAMPLE_OUTPUT_EXACT : SAMPLE_OUTPUT} muted autoPlay loop playsInline controls />
+          <div className={styles.price} style={{ padding: '0 12px 12px' }}><span>{exact ? 'Frame-exact: same dance, same cuts, same room' : 'Same moves, same track'}</span><span>1280×720 · 24 fps</span></div>
         </div>
       </div>
       <div className={styles.panel}>
@@ -430,26 +474,30 @@ export default function CharacterSwapTool() {
         </div>
       </div>
       <div className={styles.panel}>
-        <div className={styles.panelHead}><div><span>03 / VIDEO</span><h2>Re-perform the video with MiniMax H3</h2></div><Sparkles size={17} /></div>
-        <label className={styles.field}>Re-performance prompt
+        <div className={styles.panelHead}><div><span>03 / VIDEO</span><h2>{exact ? 'Replace the performers with Wan 2.2 Animate' : 'Re-perform the video with MiniMax H3'}</h2></div><Sparkles size={17} /></div>
+        {!exact && <label className={styles.field}>Re-performance prompt
           <textarea data-testid="swap-video-prompt" rows={6} maxLength={2000} disabled={busy}
             value={videoPrompt} onChange={(event) => setVideoPrompt(event.target.value)} placeholder={DEFAULT_VIDEO_PROMPT} />
-        </label>
+        </label>}
         <div className={styles.segment}>
-          {(['768P', '2K'] as const).map((value) => <button key={value} type="button" disabled={busy}
-            className={resolution === value ? styles.active : ''} onClick={() => setResolution(value)}>{value}</button>)}
+          {resolutionOptions.map((value) => <button key={value} type="button" disabled={busy}
+            className={resolution === value ? styles.active : ''} onClick={() => setResolution(value)}>{exact ? value.toUpperCase() : value}</button>)}
         </div>
-        <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        {exact && <label className={styles.field}>Performers to replace
+          <input data-testid="swap-characters" type="number" min={1} max={3} step={1} value={characters} disabled={busy} style={{ maxWidth: 120 }}
+            onChange={(event) => setCharacters(Math.min(3, Math.max(1, Math.floor(Number(event.target.value) || 1))))} />
+        </label>}
+        {!exact && <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <input data-testid="swap-per-shot" type="checkbox" checked={perShotFrames} disabled={busy} onChange={(event) => setPerShotFrames(event.target.checked)} />
           Experimental: redraw one frame per detected shot so close-ups and angles follow each cut (+$0.30 per extra shot; the set can drift between shots)
-        </label>
-        <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        </label>}
+        {!exact && <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <input data-testid="swap-audio" type="checkbox" checked={audioReference} disabled={busy} onChange={(event) => setAudioReference(event.target.checked)} />
           Also give H3 the song as an audio reference (experimental lip-sync guidance)
-        </label>
-        <div className={styles.price}><span>{estimateLine}</span><span>{resolution} · $0.16/s{resolution === '2K' ? ' → $0.30/s' : ''}</span></div>
+        </label>}
+        <div className={styles.price}><span>{estimateLine}</span><span>{exact ? '$0.24 per second per performer at 720P, $0.18 at 580P' : `${resolution} · $0.16/s${resolution === '2K' ? ' → $0.30/s' : ''}`}</span></div>
         {signedIn
-          ? <button data-testid="swap-run" className={styles.run} type="button" disabled={busy || !videoURL || !swappedImageURL || videoPrompt.trim().length < 10} onClick={() => void generateVideo()}>
+          ? <button data-testid="swap-run" className={styles.run} type="button" disabled={busy || !videoURL || !swappedImageURL || (!exact && videoPrompt.trim().length < 10)} onClick={() => void generateVideo()}>
             {busy ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={16} />}{busy ? status : 'Generate music video'}
           </button>
           : <Link data-testid="swap-run" href="/account" className={styles.run}>Sign in to generate</Link>}
@@ -463,6 +511,7 @@ export default function CharacterSwapTool() {
             </>
             : <div className={`${styles.empty} p-8`}>{busy ? <><LoaderCircle className={styles.spin} size={22} /><p>{status}</p></> : <p>No video yet. Finish steps 1–2, then render.</p>}</div>}
         </div>
+        {exact && poseError !== null && <div className={styles.price}><span>Motion match: {((1 - Math.min(poseError, 1)) * 100 | 0)}% (joint error {poseError.toFixed(3)})</span></div>}
         {outputURL && <div className={styles.price}>
           <span>1280×720 · 24 fps · H.264 + AAC · original audio · ready for X/Twitter</span>
           <span>{creditsUsed === null ? '' : `${Math.ceil(creditsUsed)} credits used`}{chargedUSD === null ? '' : ` · $${chargedUSD.toFixed(2)}`}</span>

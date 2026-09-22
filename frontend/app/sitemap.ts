@@ -17,7 +17,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const base = 'https://manifoldgen.com';
   const now = new Date();
   const staticRoutes = ['', '/tools', '/tool/animate-video', '/tool/image-editor', '/api', '/api/video-generators', '/studio', '/blog', '/blog/anime-styles', '/blog/guides', '/account', '/privacy', '/ai-video-generator', '/compare', '/best', '/models', '/leaderboard', '/prompts', '/invite'];
-  const toolSlugs = ['make-image', 'style-transfer', 'h3-image', 'h3-image-editor', 'character-animator', 'video-background-remover', 'music-generator', 'lofi-loop', 'lyria', 'gemini-tts', 'cinematic-cameras', 'relight', 'inpaint', 'image-upscale', 'outpaint', 'moodboard', 'nano-banana', 'grok-imagine', 'flux-2', 'gpt-image', 'video-remake', 'character-swap', 'trailer-agent'];
+  const toolSlugs = ['make-image', 'style-transfer', 'h3-image', 'h3-image-editor', 'character-animator', 'video-background-remover', 'music-generator', 'lofi-loop', 'lyria', 'gemini-tts', 'cinematic-cameras', 'relight', 'inpaint', 'image-upscale', 'outpaint', 'moodboard', 'nano-banana', 'grok-imagine', 'flux-2', 'gpt-image', 'video-remake', 'character-swap', 'character-swap-exact', 'trailer-agent'];
   return [
     ...staticRoutes.map((path) => ({ url: `${base}${path}`, lastModified: now, changeFrequency: path === '' ? 'daily' as const : 'weekly' as const, priority: path === '' ? 1 : 0.8 })),
     ...VIDEO_GENERATORS.flatMap((generator) => [

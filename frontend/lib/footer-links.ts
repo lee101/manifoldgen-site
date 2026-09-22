@@ -26,7 +26,7 @@ export const FOOTER_TOOL_GROUPS: { title: string; links: FooterLink[]; more?: Fo
   },
   {
     title: 'Motion & audio',
-    links: byHref(['/tools/character-animator', '/tools/cinematic-cameras', '/tools/video-background-remover', '/tools/trailer-agent', '/tools/character-swap', '/tools/music-generator', '/tools/lofi-loop', '/voice']),
+    links: byHref(['/tools/character-animator', '/tools/cinematic-cameras', '/tools/video-background-remover', '/tools/trailer-agent', '/tools/character-swap', '/tools/character-swap-exact', '/tools/music-generator', '/tools/lofi-loop', '/voice']),
     more: { href: '/tools', label: 'All tools' },
   },
 ];
