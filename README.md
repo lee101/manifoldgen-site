@@ -51,6 +51,7 @@ focused on H3 video (app.nz cogs) with optional omniserve-native LTX.
 | DB | Postgres (`users`, `video_jobs`, Stripe cols) |
 | Billing | Stripe checkout + webhook, prepaid credits + monthly/annual |
 | Video | `h3_video` via `APPNZ_*` (estimated up front, settled from actual compute) |
+| Lofi loop video | `lofi_loop` — cover art, parallax motion, audio visualizer, loop mux (`server/lofiloop`, `cmd/makevideo`, `../lowfi-cli`) |
 | UI | Next.js dark full-bleed studio, settings cog, prompt box |
 
 ## Quick start

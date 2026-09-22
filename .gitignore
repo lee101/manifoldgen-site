@@ -8,6 +8,7 @@ frontend/playwright-report/
 test-results/
 .local-certs/
 server/manifoldgen-server
+server/cmd/makevideo/makevideo
 .env
 .env.*
 *.env

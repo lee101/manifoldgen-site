@@ -215,6 +215,22 @@ type ServiceUsageRequest struct {
 	MusicVideo    bool   `json:"music_video,omitempty"`
 	MusicPrompt   string `json:"music_prompt,omitempty"`
 	MusicDuration int    `json:"music_duration,omitempty"`
+	// lofi_loop (seamless looping lofi video) fields. The cover still is drawn
+	// from CharacterPrompt + ScenePrompt, given periodic parallax motion, and
+	// the Visualizer overlay is composited over it.
+	CharacterPrompt string  `json:"character_prompt,omitempty"`
+	ScenePrompt     string  `json:"scene_prompt,omitempty"`
+	Visualizer      string  `json:"visualizer,omitempty"`
+	VisualizerAlpha float64 `json:"viz_alpha,omitempty"`
+	Preset          string  `json:"preset,omitempty"`
+	Palette         string  `json:"palette,omitempty"`
+	Motion          string  `json:"motion,omitempty"`
+	Grain           float64 `json:"grain,omitempty"`
+	LoopSeconds     int     `json:"loop_seconds,omitempty"`
+	LoopStart       float64 `json:"loop_start,omitempty"`
+	// SeamSeconds is the loop crossfade; 0 means "use the spec default" and a
+	// negative value is never sent by clients.
+	SeamSeconds float64 `json:"seam_seconds,omitempty"`
 	// H3 weight profile: int8_convrot (stable default) or w4a8 (experimental opt-in).
 	Quant string `json:"quant,omitempty"`
 	// GPU execution lane selected by OmniServe: auto, small, balanced, or throughput.
