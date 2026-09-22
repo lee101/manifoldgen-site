@@ -159,7 +159,7 @@ export default function CharacterSwapTool() {
   const [videoPrompt, setVideoPrompt] = useState(DEFAULT_VIDEO_PROMPT);
   const [resolution, setResolution] = useState<'768P' | '2K'>('768P');
   const [audioReference, setAudioReference] = useState(false);
-  const [perShotFrames, setPerShotFrames] = useState(true);
+  const [perShotFrames, setPerShotFrames] = useState(false);
   const [estimate, setEstimate] = useState<SwapEstimate | null>(null);
   const [estimating, setEstimating] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -441,7 +441,7 @@ export default function CharacterSwapTool() {
         </div>
         <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <input data-testid="swap-per-shot" type="checkbox" checked={perShotFrames} disabled={busy} onChange={(event) => setPerShotFrames(event.target.checked)} />
-          Follow every cut: redraw one frame per detected shot so wide shots, close-ups and angles match the source (+$0.30 per extra shot)
+          Experimental: redraw one frame per detected shot so close-ups and angles follow each cut (+$0.30 per extra shot; the set can drift between shots)
         </label>
         <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <input data-testid="swap-audio" type="checkbox" checked={audioReference} disabled={busy} onChange={(event) => setAudioReference(event.target.checked)} />

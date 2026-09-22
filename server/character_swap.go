@@ -164,10 +164,11 @@ func characterSwapUsesAudio(req ServiceUsageRequest) bool {
 }
 
 // characterSwapPerShot reports whether every detected shot gets its own
-// redrawn reference frame (default) so framing and camera distance follow the
-// source cut by cut.
+// redrawn reference frame so framing and camera distance follow the source
+// cut by cut. Opt-in: the redraws can reinterpret the set between shots, so
+// the single consistent frame stays the default.
 func characterSwapPerShot(req ServiceUsageRequest) bool {
-	return req.MaxQuality == nil || *req.MaxQuality
+	return req.MaxQuality != nil && *req.MaxQuality
 }
 
 func characterSwapShotCount(chunks []characterSwapChunk) int {
