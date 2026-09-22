@@ -53,6 +53,9 @@ type characterSwapChunk struct {
 	OutputURL   string  `json:"output_url,omitempty"`
 	Status      string  `json:"status,omitempty"`
 	ProviderUSD float64 `json:"provider_usd"`
+	Retries     int     `json:"retries,omitempty"`
+	QAReason    string  `json:"qa_reason,omitempty"`
+	LocalPath   string  `json:"-"`
 }
 
 type characterSwapState struct {
@@ -388,7 +391,7 @@ func processCharacterSwapJob(job *VideoJob) {
 		failCharacterSwap(job, state, false, err.Error())
 		return
 	}
-	if err := runCharacterSwapChunks(ctx, job, &state); err != nil {
+	if err := runCharacterSwapChunks(ctx, job, &state, workDir); err != nil {
 		failCharacterSwap(job, state, false, err.Error())
 		return
 	}
@@ -468,7 +471,7 @@ func characterSwapFalInput(state characterSwapState, chunk characterSwapChunk) m
 	return input
 }
 
-func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *characterSwapState) error {
+func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *characterSwapState, workDir string) error {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	errs := make([]error, len(state.Chunks))
@@ -510,10 +513,50 @@ func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *character
 				errs[i] = fmt.Errorf("clip %d: %w", chunk.Index+1, err)
 				return
 			}
+			passUSD := characterSwapRates[state.Request.Resolution] * float64(chunk.Duration)
 			mu.Lock()
 			state.Chunks[i].OutputURL = outputURL
+			state.Chunks[i].Status = "checking"
+			state.Chunks[i].ProviderUSD += passUSD
+			mu.Unlock()
+			persist()
+			localPath := filepath.Join(workDir, fmt.Sprintf("out-%02d.mp4", chunk.Index))
+			leaked, reason := false, ""
+			if characterSwapQAEnabled() {
+				if err := downloadURLToFile(ctx, outputURL, localPath); err == nil {
+					leaked, reason = checkCharacterSwapClip(ctx, *state, localPath)
+				}
+			}
+			if leaked && !videoJobCancellationRequested(job.ID) {
+				log.Printf("[character-swap] job=%s clip %d leaked source performers (%s); regenerating", job.ID, chunk.Index+1, reason)
+				retryInput := characterSwapFalInput(*state, chunk)
+				retryInput["seed"] = int(time.Now().UnixNano()%2_000_000_000) + chunk.Index
+				if data, _, err := callFalQueue(http.MethodPost, "https://queue.fal.run/"+characterSwapFalPath, retryInput); err == nil {
+					var queued falQueueResponse
+					if json.Unmarshal(data, &queued) == nil && queued.RequestID != "" {
+						if retryURL, err := waitCharacterSwapChunk(ctx, job.ID, queued.RequestID); err == nil {
+							retryPath := filepath.Join(workDir, fmt.Sprintf("out-%02d-retry.mp4", chunk.Index))
+							mu.Lock()
+							state.Chunks[i].ProviderUSD += passUSD
+							state.Chunks[i].Retries++
+							mu.Unlock()
+							if err := downloadURLToFile(ctx, retryURL, retryPath); err == nil {
+								retryLeaked, retryReason := checkCharacterSwapClip(ctx, *state, retryPath)
+								if !retryLeaked {
+									outputURL, localPath, leaked, reason = retryURL, retryPath, false, "regenerated: "+reason
+								} else {
+									reason = "kept first pass; retry also leaked: " + retryReason
+								}
+							}
+						}
+					}
+				}
+			}
+			mu.Lock()
+			state.Chunks[i].OutputURL = outputURL
+			state.Chunks[i].LocalPath = localPath
 			state.Chunks[i].Status = "completed"
-			state.Chunks[i].ProviderUSD = characterSwapRates[state.Request.Resolution] * float64(chunk.Duration)
+			state.Chunks[i].QAReason = reason
 			mu.Unlock()
 			persist()
 		}(i)
@@ -575,9 +618,12 @@ func muxCharacterSwapVideo(ctx context.Context, state characterSwapState, source
 	args := []string{"-y", "-loglevel", "error"}
 	var filter strings.Builder
 	for i, chunk := range state.Chunks {
-		clipPath := filepath.Join(workDir, fmt.Sprintf("out-%02d.mp4", chunk.Index))
-		if err := downloadURLToFile(ctx, chunk.OutputURL, clipPath); err != nil {
-			return "", fmt.Errorf("download clip %d: %w", chunk.Index+1, err)
+		clipPath := chunk.LocalPath
+		if info, err := os.Stat(clipPath); clipPath == "" || err != nil || info.Size() == 0 {
+			clipPath = filepath.Join(workDir, fmt.Sprintf("out-%02d.mp4", chunk.Index))
+			if err := downloadURLToFile(ctx, chunk.OutputURL, clipPath); err != nil {
+				return "", fmt.Errorf("download clip %d: %w", chunk.Index+1, err)
+			}
 		}
 		args = append(args, "-i", clipPath)
 		trimStart := characterSwapHeadTrim
@@ -604,8 +650,12 @@ func muxCharacterSwapVideo(ctx context.Context, state characterSwapState, source
 }
 
 func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, outputPath string) {
-	providerUSD := characterSwapProviderUSD(state.Request.Resolution, state.Chunks)
-	chargedUSD := math.Ceil(providerUSD*characterSwapMarkup*100) / 100
+	chargedUSD := math.Ceil(characterSwapProviderUSD(state.Request.Resolution, state.Chunks)*characterSwapMarkup*100) / 100
+	providerUSD, retries := 0.0, 0
+	for _, chunk := range state.Chunks {
+		providerUSD += chunk.ProviderUSD
+		retries += chunk.Retries
+	}
 	cutePrice := getCUTEPriceUSD()
 	if cutePrice <= 0 || math.IsNaN(cutePrice) || math.IsInf(cutePrice, 0) {
 		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "credit pricing unavailable; retry status")
@@ -620,6 +670,7 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 		"stage":             "completed",
 		"duration_seconds":  math.Round(duration*100) / 100,
 		"chunks":            len(state.Chunks),
+		"clip_retries":      retries,
 		"resolution":        state.Request.Resolution,
 		"fps":               24,
 		"format":            "mp4/h264+aac",
