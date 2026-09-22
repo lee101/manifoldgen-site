@@ -219,6 +219,7 @@ type ServiceUsageRequest struct {
 	// from CharacterPrompt + ScenePrompt, given periodic parallax motion, and
 	// the Visualizer overlay is composited over it.
 	CharacterPrompt string  `json:"character_prompt,omitempty"`
+	Characters      int     `json:"characters,omitempty"`
 	ScenePrompt     string  `json:"scene_prompt,omitempty"`
 	Visualizer      string  `json:"visualizer,omitempty"`
 	VisualizerAlpha float64 `json:"viz_alpha,omitempty"`

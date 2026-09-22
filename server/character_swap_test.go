@@ -167,3 +167,45 @@ func TestCharacterSwapFalInput(t *testing.T) {
 		t.Fatalf("audio reference prompt missing: %v %q", err, audio.Prompt)
 	}
 }
+
+func TestPlanExactChunks(t *testing.T) {
+	chunks := planExactChunks(30.16, []float64{0.5, 5, 8.25, 12.17, 15.92, 19.42, 22.29, 26.58})
+	if len(chunks) != 3 || chunks[0][0] != 0 || math.Abs(chunks[2][1]-30.16) > 1e-9 {
+		t.Fatalf("unexpected exact chunks %v", chunks)
+	}
+	if math.Abs(chunks[0][1]-8.25) > 1e-9 || math.Abs(chunks[1][1]-19.42) > 1e-9 {
+		t.Fatalf("boundaries should snap to nearby cuts: %v", chunks)
+	}
+	for _, c := range chunks {
+		if c[1]-c[0] > exactChunkSeconds+1.5 || c[1] <= c[0] {
+			t.Fatalf("bad chunk %v", c)
+		}
+	}
+	if single := planExactChunks(9, nil); len(single) != 1 || single[0][1] != 9 {
+		t.Fatalf("short source should be one chunk: %v", single)
+	}
+}
+
+func TestExactPricing(t *testing.T) {
+	if usd := exactChargeUSD("720p", 30.16, 2); math.Abs(usd-14.48) > 1e-9 {
+		t.Fatalf("720p two performers %.4f", usd)
+	}
+	if usd := exactChargeUSD("580p", 30, 1); math.Abs(usd-5.40) > 1e-9 {
+		t.Fatalf("580p one performer %.4f", usd)
+	}
+	if usd := exactProviderUSD("720p", 30); math.Abs(usd-3.60) > 1e-9 {
+		t.Fatalf("provider 720p 30s %.4f", usd)
+	}
+	req := ServiceUsageRequest{VideoURL: "https://x/a.mp4", ImageURL: "https://x/b.png", Kind: "EXACT", Resolution: "768P"}
+	if err := normalizeCharacterSwapRequest(&req); err != nil || req.Resolution != "720p" || req.Kind != "exact" || exactPeople(req) != 2 {
+		t.Fatalf("exact normalisation: %v %+v", err, req)
+	}
+	usd, _, _, err := characterSwapEstimate(req, 30.16, 5, 15)
+	if err != nil || math.Abs(usd-14.48) > 1e-9 {
+		t.Fatalf("exact estimate %.4f %v", usd, err)
+	}
+	bad := ServiceUsageRequest{VideoURL: "https://x/a.mp4", ImageURL: "https://x/b.png", Kind: "exact", Characters: 5}
+	if err := normalizeCharacterSwapRequest(&bad); err == nil {
+		t.Fatal("too many characters should be rejected")
+	}
+}

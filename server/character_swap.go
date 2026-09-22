@@ -91,6 +91,7 @@ type characterSwapState struct {
 	Cuts             []float64            `json:"cuts,omitempty"`
 	ShotFeeUSD       float64              `json:"shot_fee_usd"`
 	ShotImageUSD     float64              `json:"shot_image_usd"`
+	Exact            *exactState          `json:"exact,omitempty"`
 	EstimatedUSD     float64              `json:"estimated_usd"`
 	EstimatedCredits float64              `json:"estimated_credits"`
 }
@@ -125,6 +126,9 @@ func normalizeCharacterSwapRequest(req *ServiceUsageRequest) error {
 		}
 	} else if req.CharacterPrompt == "" {
 		return fmt.Errorf("character_prompt is required when image_url is not supplied")
+	}
+	if characterSwapIsExact(*req) {
+		return normalizeCharacterSwapExact(req)
 	}
 	if req.Prompt == "" {
 		req.Prompt = characterSwapDefaultVideoPrompt
@@ -288,6 +292,9 @@ func characterSwapEstimate(req ServiceUsageRequest, seconds float64, cuts ...flo
 		return 0, 0, nil, err
 	}
 	charged := characterSwapChargeUSD(req.Resolution, math.Min(seconds, characterSwapMaxSeconds)) + characterSwapShotFee(req, chunks)
+	if characterSwapIsExact(req) {
+		charged = exactChargeUSD(req.Resolution, math.Min(seconds, characterSwapMaxSeconds), exactPeople(req))
+	}
 	if req.ImageURL == "" {
 		charged += servicePricesUSD["gpt_image"]
 	}
@@ -326,6 +333,18 @@ func handleCharacterSwapEstimate(ctx *fasthttp.RequestCtx) {
 	generation := 50 * len(chunks)
 	if characterSwapPerShot(req) && shots > 1 {
 		generation += 90 * ((shots + characterSwapShotSlots - 1) / characterSwapShotSlots)
+	}
+	if characterSwapIsExact(req) {
+		exactChunks := planExactChunks(seconds, cuts)
+		passes := len(exactChunks) * exactPeople(req)
+		generation = 120 + int(60*math.Ceil(seconds/float64(len(exactChunks))))*((passes+exactPassSlots-1)/exactPassSlots)
+		jsonResponse(ctx, http.StatusOK, map[string]interface{}{
+			"estimated_cost_usd": usd, "estimated_credits": credits, "kind": characterSwapExactKind,
+			"source_seconds": math.Round(seconds*100) / 100, "shots": shots, "chunks": passes, "people": exactPeople(req),
+			"resolution": req.Resolution, "image_included": req.ImageURL == "", "image_cost_usd": servicePricesUSD["gpt_image"],
+			"rate_usd_per_second_per_character": exactPriceRates[req.Resolution], "estimated_generation_seconds": generation,
+		})
+		return
 	}
 	jsonResponse(ctx, http.StatusOK, map[string]interface{}{
 		"estimated_cost_usd": usd, "estimated_credits": credits,
@@ -400,7 +419,7 @@ func handleCharacterSwapService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 			"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID, "stage": state.Stage,
 		},
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
-		"source_seconds": math.Round(seconds*100) / 100, "chunks": len(chunks), "shots": characterSwapShotCount(chunks),
+		"source_seconds": math.Round(seconds*100) / 100, "chunks": len(chunks), "shots": characterSwapShotCount(chunks), "kind": strings.TrimSpace(req.Kind),
 		"settlement": "final price based on generated seconds",
 	})
 }
@@ -506,6 +525,15 @@ func processCharacterSwapJob(job *VideoJob) {
 			return
 		}
 		state.Chunks = planned
+	}
+	if characterSwapIsExact(state.Request) {
+		outputURL, outputPath, err := processCharacterSwapExact(ctx, job, user, &state, sourcePath, workDir)
+		if err != nil {
+			failCharacterSwap(job, state, false, err.Error())
+			return
+		}
+		settleCharacterSwap(job, state, outputURL, outputPath)
+		return
 	}
 	if characterSwapPerShot(state.Request) && characterSwapShotCount(state.Chunks) > 1 {
 		state.Stage = "shots"
@@ -967,6 +995,12 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 		providerUSD += chunk.ProviderUSD
 		retries += chunk.Retries
 	}
+	if state.Exact != nil {
+		chargedUSD = exactChargeUSD(state.Request.Resolution, state.SourceSeconds, state.Exact.People)
+		for _, pass := range state.Exact.Passes {
+			providerUSD += pass.ProviderUSD
+		}
+	}
 	cutePrice := getCUTEPriceUSD()
 	if cutePrice <= 0 || math.IsNaN(cutePrice) || math.IsInf(cutePrice, 0) {
 		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "credit pricing unavailable; retry status")
@@ -983,6 +1017,7 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 		"chunks":            len(state.Chunks),
 		"clip_retries":      retries,
 		"cuts":              state.Cuts,
+		"kind":              strings.TrimSpace(state.Request.Kind),
 		"shots":             characterSwapShotCount(state.Chunks),
 		"per_shot_frames":   characterSwapPerShot(state.Request),
 		"shot_fee_usd":      state.ShotFeeUSD,
@@ -995,6 +1030,12 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 		"image_charged_usd": state.ImageUSD,
 		"cute_price_usd":    cutePrice,
 		"credits_used":      chargedUSD/cutePrice + state.ImageCredits,
+	}
+	if state.Exact != nil {
+		result["people"] = state.Exact.People
+		result["pose_error"] = state.Exact.PoseError
+		result["pose_bad_fraction"] = state.Exact.PoseBad
+		result["chunks"] = len(state.Exact.Passes)
 	}
 	payload, _ := json.Marshal(result)
 	_, _, err := dbConn.SettleGeneratedVideoJob(job.ID, payload, providerUSD, chargedUSD, cutePrice)
@@ -1039,6 +1080,22 @@ func exposePublicCharacterSwapStatus(payload map[string]interface{}) {
 	for _, key := range []string{"swapped_image_url", "frame_url"} {
 		if value, ok := internal[key].(string); ok && strings.HasPrefix(value, "https://") {
 			payload[key] = value
+		}
+	}
+	if exact, ok := internal["exact"].(map[string]interface{}); ok {
+		if passes, ok := exact["passes"].([]interface{}); ok && len(passes) > 0 {
+			done := 0
+			for _, raw := range passes {
+				if pass, ok := raw.(map[string]interface{}); ok && pass["status"] == "completed" {
+					done++
+				}
+			}
+			payload["chunks_total"] = len(passes)
+			payload["chunks_completed"] = done
+			if people, ok := exact["people"].(float64); ok {
+				payload["people"] = int(people)
+			}
+			return
 		}
 	}
 	if chunks, ok := internal["chunks"].([]interface{}); ok {
