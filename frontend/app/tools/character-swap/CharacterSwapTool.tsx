@@ -397,6 +397,7 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
       {exact
         ? <Link href="/tools/character-swap" className="mt-4 inline-block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Cheaper stylised re-performance: Character Swap (H3)</Link>
         : <Link href="/tools/character-swap-exact" className="mt-4 inline-block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Need frame-exact motion? Try the Exact Motion lane</Link>}
+      <Link href="/tools/reference-video" className="mt-2 block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Want the most faithful performance with face-free characters? Try Reference Video Studio</Link>
     </section>
     <div className="mx-auto grid max-w-[1320px] gap-3.5 px-6 pb-16">
       <div className={styles.panel}>

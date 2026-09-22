@@ -179,6 +179,42 @@ def cmd_composite(a):
     print(json.dumps({'frames': n, 'coverage': [round(float(c / max(n, 1)), 4) for c in cov]}))
 
 
+def cmd_blurfaces(a):
+    m = model()
+    probe = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', a.src], capture_output=True, text=True).stdout.strip().split(',')
+    w, h = int(probe[0]), int(probe[1])
+    F = read_frames(a.src, w, h)
+    out = writer(a.out, w, h)
+    hidden = 0
+    for f in F:
+        g = f.copy()
+        r = m.predict(f, verbose=False, conf=0.25)[0]
+        if r.keypoints is not None and r.keypoints.xy is not None:
+            kps = r.keypoints.xy.cpu().numpy(); kcs = r.keypoints.conf.cpu().numpy() if r.keypoints.conf is not None else None
+            boxes = r.boxes.xyxy.cpu().numpy() if r.boxes is not None else []
+            for i, kp in enumerate(kps):
+                pts = [kp[j] for j in range(5) if kcs is None or kcs[i][j] > 0.3]
+                if len(pts) < 2:
+                    if i < len(boxes):
+                        x0, y0, x1, y1 = boxes[i]; bh = y1 - y0
+                        pts = [(x0 + (x1 - x0) * 0.3, y0), (x1 - (x1 - x0) * 0.3, y0 + bh * 0.18)]
+                    else:
+                        continue
+                pts = np.array(pts)
+                cx, cy = pts[:, 0].mean(), pts[:, 1].mean()
+                span = max(np.ptp(pts[:, 0]), np.ptp(pts[:, 1]), 20) * 1.9
+                x0, x1 = int(max(0, cx - span)), int(min(w, cx + span)); y0, y1 = int(max(0, cy - span * 1.2)), int(min(h, cy + span * 1.1))
+                if x1 - x0 < 4 or y1 - y0 < 4:
+                    continue
+                roi = g[y0:y1, x0:x1]
+                small = cv2.resize(roi, (max(1, (x1 - x0) // 14), max(1, (y1 - y0) // 14)), interpolation=cv2.INTER_LINEAR)
+                g[y0:y1, x0:x1] = cv2.resize(small, (x1 - x0, y1 - y0), interpolation=cv2.INTER_NEAREST)
+                hidden += 1
+        out.stdin.write(g.tobytes())
+    out.stdin.close(); out.wait()
+    print(json.dumps({'frames': len(F), 'faces': hidden}))
+
+
 def cmd_posecheck(a):
     m = model()
     A = read_frames(a.src, 640, 360); B = read_frames(a.out, 640, 360)
@@ -208,6 +244,7 @@ def main():
     b = s.add_parser('boxout'); b.add_argument('--src', required=True); b.add_argument('--boxes', required=True); b.add_argument('--keep', type=int, required=True); b.add_argument('--out', required=True); b.add_argument('--start', type=float, default=0.0); b.add_argument('--end', type=float, default=None); b.set_defaults(f=cmd_boxout)
     c = s.add_parser('crops'); c.add_argument('--image', required=True); c.add_argument('--boxes', required=True); c.add_argument('--frame-index', type=int, default=0); c.add_argument('--out-dir', required=True); c.set_defaults(f=cmd_crops)
     k = s.add_parser('composite'); k.add_argument('--src', required=True); k.add_argument('--boxes', required=True); k.add_argument('--out', required=True); k.add_argument('--pair', action='append', required=True); k.set_defaults(f=cmd_composite)
+    f = s.add_parser('blurfaces'); f.add_argument('--src', required=True); f.add_argument('--out', required=True); f.set_defaults(f=cmd_blurfaces)
     q = s.add_parser('posecheck'); q.add_argument('--src', required=True); q.add_argument('--out', required=True); q.set_defaults(f=cmd_posecheck)
     a = p.parse_args(); a.f(a)
 

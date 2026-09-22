@@ -59,6 +59,9 @@ type referenceVideoSegment struct {
 	OutputURL   string  `json:"output_url,omitempty"`
 	Status      string  `json:"status,omitempty"`
 	ProviderUSD float64 `json:"provider_usd"`
+	Attempts    int     `json:"attempts,omitempty"`
+	FacesHidden bool    `json:"faces_hidden,omitempty"`
+	localPath   string
 }
 
 type referenceVideoState struct {
@@ -75,6 +78,7 @@ type referenceVideoState struct {
 	OutputSeconds  float64                 `json:"output_seconds"`
 	EstimatedUSD   float64                 `json:"estimated_usd"`
 	SoundtrackPath string                  `json:"-"`
+	videoPaths     []string
 }
 
 type referenceVideoEnvelope struct {
@@ -395,7 +399,7 @@ func processReferenceVideoJob(job *VideoJob) {
 	}
 	state.Stage = "video"
 	_ = persistReferenceVideoState(job.ID, "processing", state)
-	if err := runReferenceVideoSegments(ctx, job, &state); err != nil {
+	if err := runReferenceVideoSegments(ctx, job, &state, workDir); err != nil {
 		failReferenceVideo(job, err.Error())
 		return
 	}
@@ -435,6 +439,7 @@ func prepareReferenceVideoMedia(ctx context.Context, job *VideoJob, state *refer
 			return fmt.Errorf("could not read reference video %d", i+1)
 		}
 		videoPaths = append(videoPaths, norm)
+		state.videoPaths = append(state.videoPaths, norm)
 		if i == 0 && referenceVideoKeepsSoundtrack(req) && len(req.ReferenceAudioURLs) == 0 {
 			track := filepath.Join(workDir, "soundtrack.m4a")
 			if lofiloop.RunFFmpeg(ctx, "-y", "-loglevel", "error", "-i", raw, "-vn", "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2", track) == nil {
@@ -497,6 +502,7 @@ func prepareReferenceVideoMedia(ctx context.Context, job *VideoJob, state *refer
 			return fmt.Errorf("could not store reference segment %d", seg.Index+1)
 		}
 		seg.VideoURL = videoURL
+		seg.localPath = clip
 		if len(audioPaths) > 0 {
 			audioClip := filepath.Join(workDir, fmt.Sprintf("segment-%02d.mp3", seg.Index))
 			start := seg.Start
@@ -539,19 +545,64 @@ func referenceVideoFalInput(state referenceVideoState, seg referenceVideoSegment
 	return input
 }
 
-func referenceVideoFalError(data []byte) string {
+type referenceVideoPolicyError struct{ detail string }
+
+func (e referenceVideoPolicyError) Error() string { return referenceVideoPolicyMessage }
+
+func referenceVideoFalError(data []byte) error {
 	text := string(data)
 	if strings.Contains(text, "content_policy") || strings.Contains(text, "likeness") || strings.Contains(text, "Invalid parameters") {
-		return referenceVideoPolicyMessage
+		return referenceVideoPolicyError{detail: truncateString(text, 300)}
 	}
-	return "the video model rejected the request"
+	var payload struct {
+		Detail []struct {
+			Msg string `json:"msg"`
+		} `json:"detail"`
+	}
+	if json.Unmarshal(data, &payload) == nil && len(payload.Detail) > 0 && payload.Detail[0].Msg != "" {
+		return fmt.Errorf("the video model rejected the request: %s", truncateString(payload.Detail[0].Msg, 200))
+	}
+	return fmt.Errorf("the video model rejected the request")
 }
 
-func runReferenceVideoSegments(ctx context.Context, job *VideoJob, state *referenceVideoState) error {
+// hideReferenceVideoFaces pixelates the performers' faces in a reference clip
+// so a provider likeness filter passes while the body motion stays intact.
+func hideReferenceVideoFaces(ctx context.Context, job *VideoJob, src, workDir string, index int) (string, error) {
+	if src == "" {
+		return "", fmt.Errorf("no local reference clip")
+	}
+	out := filepath.Join(workDir, fmt.Sprintf("faceless-%02d.mp4", index))
+	if _, err := runExactHelper(ctx, "blurfaces", "--src", src, "--out", out); err != nil {
+		return "", err
+	}
+	return uploadCharacterSwapFile(ctx, out, job.UserID, "video/mp4")
+}
+
+func runReferenceVideoSegments(ctx context.Context, job *VideoJob, state *referenceVideoState, workDir string) error {
 	endpoint := referenceVideoEndpoints[state.Request.Model]
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	errs := make([]error, len(state.Segments))
+	submit := func(i int) (string, error) {
+		mu.Lock()
+		seg := state.Segments[i]
+		input := referenceVideoFalInput(*state, seg)
+		mu.Unlock()
+		data, _, err := callFalQueue(http.MethodPost, "https://queue.fal.run/"+endpoint, input)
+		if err != nil {
+			return "", referenceVideoFalError(data)
+		}
+		var queued falQueueResponse
+		if json.Unmarshal(data, &queued) != nil || queued.RequestID == "" {
+			return "", fmt.Errorf("the video model returned no job")
+		}
+		mu.Lock()
+		state.Segments[i].RequestID, state.Segments[i].Status = queued.RequestID, "queued"
+		state.Segments[i].Attempts++
+		_ = persistReferenceVideoState(job.ID, "processing", *state)
+		mu.Unlock()
+		return waitReferenceVideoSegment(ctx, job.ID, queued.RequestID)
+	}
 	for i := range state.Segments {
 		if state.Segments[i].OutputURL != "" {
 			continue
@@ -559,32 +610,48 @@ func runReferenceVideoSegments(ctx context.Context, job *VideoJob, state *refere
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			mu.Lock()
-			seg := state.Segments[i]
-			mu.Unlock()
-			if seg.RequestID == "" {
-				data, _, err := callFalQueue(http.MethodPost, "https://queue.fal.run/"+endpoint, referenceVideoFalInput(*state, seg))
-				if err != nil {
-					errs[i] = fmt.Errorf("%s", referenceVideoFalError(data))
-					return
-				}
-				var queued falQueueResponse
-				if json.Unmarshal(data, &queued) != nil || queued.RequestID == "" {
-					errs[i] = fmt.Errorf("the video model returned no job")
-					return
-				}
-				seg.RequestID = queued.RequestID
-				mu.Lock()
-				state.Segments[i].RequestID, state.Segments[i].Status = queued.RequestID, "queued"
-				_ = persistReferenceVideoState(job.ID, "processing", *state)
-				mu.Unlock()
+			var outputURL string
+			var err error
+			if rid := state.Segments[i].RequestID; rid != "" {
+				outputURL, err = waitReferenceVideoSegment(ctx, job.ID, rid)
+			} else {
+				outputURL, err = submit(i)
 			}
-			outputURL, err := waitReferenceVideoSegment(ctx, job.ID, seg.RequestID)
+			for attempt := 0; err != nil && attempt < 2; attempt++ {
+				if _, policy := err.(referenceVideoPolicyError); !policy || videoJobCancellationRequested(job.ID) {
+					break
+				}
+				log.Printf("[reference-video] job=%s segment %d rejected by the likeness filter; retrying (%d)", job.ID, i+1, attempt+1)
+				outputURL, err = submit(i)
+			}
+			if _, policy := err.(referenceVideoPolicyError); policy && !videoJobCancellationRequested(job.ID) {
+				mu.Lock()
+				local := state.Segments[i].localPath
+				if !state.Long && len(state.videoPaths) > 0 {
+					local = state.videoPaths[0]
+				}
+				mu.Unlock()
+				if faceless, ferr := hideReferenceVideoFaces(ctx, job, local, workDir, i); ferr == nil {
+					log.Printf("[reference-video] job=%s segment %d resubmitting with faces pixelated", job.ID, i+1)
+					mu.Lock()
+					if state.Long {
+						state.Segments[i].VideoURL = faceless
+					} else if len(state.VideoURLs) > 0 {
+						state.VideoURLs[0] = faceless
+					}
+					state.Segments[i].FacesHidden = true
+					mu.Unlock()
+					outputURL, err = submit(i)
+				} else {
+					log.Printf("[reference-video] job=%s face pixelation failed: %v", job.ID, ferr)
+				}
+			}
 			if err != nil {
 				errs[i] = err
 				return
 			}
 			mu.Lock()
+			seg := state.Segments[i]
 			state.Segments[i].OutputURL, state.Segments[i].Status = outputURL, "completed"
 			inputSeconds := 0.0
 			if state.Long {
@@ -600,6 +667,9 @@ func runReferenceVideoSegments(ctx context.Context, job *VideoJob, state *refere
 	wg.Wait()
 	for _, err := range errs {
 		if err != nil {
+			if pe, ok := err.(referenceVideoPolicyError); ok {
+				log.Printf("[reference-video] job=%s provider rejection: %s", job.ID, pe.detail)
+			}
 			return err
 		}
 	}
@@ -624,7 +694,7 @@ func waitReferenceVideoSegment(ctx context.Context, jobID, requestID string) (st
 			case "completed", "succeeded":
 				result, _, err := callFalQueue(http.MethodGet, base, nil)
 				if err != nil {
-					return "", fmt.Errorf("%s", referenceVideoFalError(result))
+					return "", referenceVideoFalError(result)
 				}
 				var payload map[string]interface{}
 				if err := json.Unmarshal(result, &payload); err != nil {
@@ -635,7 +705,7 @@ func waitReferenceVideoSegment(ctx context.Context, jobID, requestID string) (st
 						return outputURL, nil
 					}
 				}
-				return "", fmt.Errorf("%s", referenceVideoFalError(result))
+				return "", referenceVideoFalError(result)
 			case "failed", "cancelled", "canceled":
 				return "", fmt.Errorf("video generation failed")
 			}
