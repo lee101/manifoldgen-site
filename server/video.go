@@ -822,12 +822,20 @@ func processVideoJob(jobID string) {
 		processMusicVideoJob(job)
 		return
 	}
+	if job.Service == lofiLoopService {
+		processLofiLoopJob(job)
+		return
+	}
 	if job.Service == dramatizeServiceName {
 		processVideoDramatizeJob(job)
 		return
 	}
 	if job.Service == "video_restyle" {
 		processVideoRestyleJob(job)
+		return
+	}
+	if job.Service == characterSwapService {
+		processCharacterSwapJob(job)
 		return
 	}
 	if job.Service == "character_animation" {
@@ -1979,7 +1987,7 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 	// Provider settlement inputs stay server-side. Public callers only see the
 	// amount actually charged to their account.
 	out.ProviderCost = 0
-	if job.Service == "h3_video" || job.Service == "h3_image" || job.Service == "h3_image_edit" || job.Service == "anima" || job.Service == "sfx_generation" || job.Service == "music_generation" || job.Service == "music_video" {
+	if job.Service == "h3_video" || job.Service == "h3_image" || job.Service == "h3_image_edit" || job.Service == "anima" || job.Service == "sfx_generation" || job.Service == "music_generation" || job.Service == "music_video" || job.Service == lofiLoopService {
 		switch strings.ToLower(strings.TrimSpace(job.Status)) {
 		case "cancelled", "canceled":
 			out.Error = videoGenerationCancelledMessage
@@ -1997,6 +2005,12 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 		if json.Unmarshal(job.Result, &result) == nil {
 			if job.Service == musicVideoService {
 				exposePublicMusicVideoStatus(result)
+			}
+			if job.Service == lofiLoopService {
+				exposePublicLofiLoopStatus(result)
+			}
+			if job.Service == characterSwapService {
+				exposePublicCharacterSwapStatus(result)
 			}
 			for key := range result {
 				if strings.HasPrefix(key, "_agent") && job.Service == dramatizeServiceName {

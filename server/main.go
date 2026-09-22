@@ -360,6 +360,11 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	// AI Service usage
 	case path == "/api/h3-control-eligibility" && method == "GET":
 		handleH3ControlEligibility(ctx)
+	case path == "/api/character-swap/estimate" && method == "POST":
+		handleCharacterSwapEstimate(ctx)
+		return
+	case path == "/api/lofi-loop/spec" && method == "GET":
+		handleLofiLoopSpec(ctx)
 	case path == "/api/service" && method == "POST":
 		handleServiceRequest(ctx)
 	case path == "/api/music-compose" && method == "POST":

@@ -48,9 +48,9 @@ func handleSitemapIndex(ctx *fasthttp.RequestCtx) {
 }
 
 var staticSitemapPages = []string{
-	"/", "/tools", "/tools/h3-image", "/tools/music-generator", "/tools/lyria", "/tools/gemini-tts", "/tools/make-image",
+	"/", "/tools", "/tools/h3-image", "/tools/music-generator", "/tools/lofi-loop", "/tools/lyria", "/tools/gemini-tts", "/tools/make-image",
 	"/tools/style-transfer", "/tools/h3-image-editor", "/tools/character-animator",
-	"/tools/video-background-remover", "/tools/video-dramatizer", "/tools/video-remake", "/tools/trailer-agent",
+	"/tools/video-background-remover", "/tools/video-dramatizer", "/tools/video-remake", "/tools/character-swap", "/tools/trailer-agent",
 	"/tools/canny-video", "/tools/depth-video", "/tools/hed-video", "/tools/mlsd-video", "/tools/pose-video", "/tools/video-inpainting",
 	"/tools/cinematic-cameras", "/tools/relight", "/tools/inpaint",
 	"/tools/image-upscale", "/tools/outpaint", "/tools/moodboard",
