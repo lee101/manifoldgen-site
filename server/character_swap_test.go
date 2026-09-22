@@ -130,6 +130,18 @@ func TestCharacterSwapLeakCount(t *testing.T) {
 	}
 }
 
+func TestCharacterSwapHostedImage(t *testing.T) {
+	if got := characterSwapHostedImage([]byte(`{"data":[{"b64_json":"abc"}],"saved_image_url":"https://cdn/x.png"}`)); got != "https://cdn/x.png" {
+		t.Fatalf("saved_image_url not preferred: %q", got)
+	}
+	if got := characterSwapHostedImage([]byte(`{"data":[{"url":"https://prov/y.png"}]}`)); got != "https://prov/y.png" {
+		t.Fatalf("provider url not found: %q", got)
+	}
+	if got := characterSwapHostedImage([]byte(`{"data":[{"b64_json":"abc"}]}`)); got != "" {
+		t.Fatalf("expected no url, got %q", got)
+	}
+}
+
 func TestCharacterSwapFalInput(t *testing.T) {
 	state := characterSwapState{Request: ServiceUsageRequest{Prompt: "p", Resolution: "768P", AspectRatio: "adaptive", PromptExpansionMode: "disabled", Seed: 7}, SwappedImageURL: "https://x/i.png"}
 	input := characterSwapFalInput(state, characterSwapChunk{Index: 2, Duration: 10, SourceURL: "https://x/c.mp4", PrevFrame: "https://x/p.png", AudioURL: "https://x/a.mp3"})

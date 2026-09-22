@@ -553,12 +553,28 @@ func generateCharacterSwapImage(user *User, state characterSwapState) (string, e
 		return "", err
 	}
 	result, _ = persistGeneratedZImage(req, user, result)
-	for _, candidate := range extractPayloadImageURLs(result) {
-		if strings.HasPrefix(candidate, "https://") {
-			return candidate, nil
-		}
+	if hosted := characterSwapHostedImage(result); hosted != "" {
+		return hosted, nil
 	}
 	return "", fmt.Errorf("no hosted image was returned")
+}
+
+// characterSwapHostedImage returns the durable https URL of a persisted image
+// edit: the gallery copy written by persistGeneratedZImage when the provider
+// answered with base64, otherwise a hosted URL from the provider payload.
+func characterSwapHostedImage(result []byte) string {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(result, &payload); err == nil {
+		if saved, _ := payload["saved_image_url"].(string); strings.HasPrefix(saved, "https://") {
+			return saved
+		}
+	}
+	for _, candidate := range extractPayloadImageURLs(result) {
+		if strings.HasPrefix(candidate, "https://") {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // redrawCharacterSwapShots gives every shot after the first its own swapped
@@ -608,16 +624,16 @@ func redrawCharacterSwapShots(ctx context.Context, job *VideoJob, user *User, st
 			}
 			editReq := ServiceUsageRequest{Service: "image_edit", Prompt: prompt, ImageURL: frameURL, Width: 1536, Height: 1024}
 			result, _ = persistGeneratedZImage(editReq, user, result)
-			for _, candidate := range extractPayloadImageURLs(result) {
-				if strings.HasPrefix(candidate, "https://") {
-					mu.Lock()
-					state.Chunks[i].ShotImage = candidate
-					state.ShotImageUSD += servicePricesUSD["gpt_image"]
-					_ = persistCharacterSwapState(job.ID, "processing", *state)
-					mu.Unlock()
-					break
-				}
+			hosted := characterSwapHostedImage(result)
+			mu.Lock()
+			state.ShotImageUSD += servicePricesUSD["gpt_image"]
+			if hosted != "" {
+				state.Chunks[i].ShotImage = hosted
+			} else {
+				log.Printf("[character-swap] job=%s shot at %.2fs redraw returned no hosted image", job.ID, chunk.Start)
 			}
+			_ = persistCharacterSwapState(job.ID, "processing", *state)
+			mu.Unlock()
 		}(i, chunk)
 	}
 	wg.Wait()
@@ -934,6 +950,13 @@ func muxCharacterSwapVideo(ctx context.Context, state characterSwapState, source
 }
 
 func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, outputPath string) {
+	redrawn := 0
+	for _, chunk := range state.Chunks {
+		if chunk.ShotStart && chunk.ShotImage != "" && chunk.ShotImage != state.SwappedImageURL {
+			redrawn++
+		}
+	}
+	state.ShotFeeUSD = math.Round(float64(redrawn)*characterSwapShotFeeUSD*100) / 100
 	chargedUSD := characterSwapChargeUSD(state.Request.Resolution, state.SourceSeconds) + state.ShotFeeUSD
 	providerUSD, retries := state.ShotImageUSD*0.88, 0
 	for _, chunk := range state.Chunks {
