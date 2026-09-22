@@ -15,6 +15,7 @@ type SwapEstimate = {
   chunks?: number;
   rate_usd_per_second?: number;
   image_included?: boolean;
+  estimated_generation_seconds?: number;
 };
 type ServiceResponse = {
   result?: { job_id?: string; status?: string; status_url?: string; stage?: string };
@@ -153,6 +154,7 @@ export default function CharacterSwapTool() {
   const [frameError, setFrameError] = useState('');
   const [videoPrompt, setVideoPrompt] = useState(DEFAULT_VIDEO_PROMPT);
   const [resolution, setResolution] = useState<'768P' | '2K'>('768P');
+  const [audioReference, setAudioReference] = useState(false);
   const [estimate, setEstimate] = useState<SwapEstimate | null>(null);
   const [estimating, setEstimating] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -183,7 +185,7 @@ export default function CharacterSwapTool() {
           await fetch('/api/character-swap/estimate', {
             method: 'POST',
             headers: { Authorization: `Bearer ${currentUser.api_key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ video_url: videoURL, image_url: swappedImageURL, resolution, prompt: videoPrompt.trim() }),
+            body: JSON.stringify({ video_url: videoURL, image_url: swappedImageURL, resolution, prompt: videoPrompt.trim(), include_audio: audioReference }),
           }),
           'Could not estimate the swap',
         );
@@ -195,7 +197,7 @@ export default function CharacterSwapTool() {
       }
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [videoURL, swappedImageURL, resolution, videoPrompt, user]);
+  }, [videoURL, swappedImageURL, resolution, videoPrompt, audioReference, user]);
 
   function resetSample() {
     estimateSequence.current += 1;
@@ -290,6 +292,7 @@ export default function CharacterSwapTool() {
             prompt: videoPrompt.trim(),
             resolution,
             prompt_expansion_mode: 'disabled',
+            include_audio: audioReference,
           }),
         }),
         'Could not start the character swap',
@@ -335,14 +338,14 @@ export default function CharacterSwapTool() {
   const estimateLine = estimating
     ? 'Pricing the swap…'
     : estimate && typeof estimate.estimated_credits === 'number' && typeof estimate.estimated_cost_usd === 'number'
-      ? `≈ ${estimate.estimated_credits} credits ($${estimate.estimated_cost_usd.toFixed(2)}) · ${estimate.chunks ?? '?'} clips · ${Math.round(estimate.source_seconds ?? 0)} s source`
+      ? `≈ ${estimate.estimated_credits} credits ($${estimate.estimated_cost_usd.toFixed(2)}) · ${estimate.chunks ?? '?'} clips · ${Math.round(estimate.source_seconds ?? 0)} s source · about ${Math.max(1, Math.round((estimate.estimated_generation_seconds ?? 0) / 60))} min`
       : 'Estimate appears when signed in';
 
   return <>
     <section className={styles.hero}>
       <div className={styles.eyebrow}><Music4 size={13} /> GPT IMAGE 2 FRAME · MINIMAX H3 RE-PERFORMANCE · ORIGINAL AUDIO</div>
       <h1>Swap the performers, keep the performance.</h1>
-      <p>Redraw the first frame with your new characters, then H3 re-performs every shot with the same moves, lip sync, and timing on the untouched original soundtrack.</p>
+      <p>Redraw the first frame with your new characters, then H3 re-performs the footage clip by clip: every clip gets the exact source motion, continues from the previous frame, is checked by a vision model, and the untouched original soundtrack goes back on top.</p>
     </section>
     <div className="mx-auto grid max-w-[1320px] gap-3.5 px-6 pb-16">
       <div className={styles.panel}>
@@ -429,7 +432,11 @@ export default function CharacterSwapTool() {
           {(['768P', '2K'] as const).map((value) => <button key={value} type="button" disabled={busy}
             className={resolution === value ? styles.active : ''} onClick={() => setResolution(value)}>{value}</button>)}
         </div>
-        <div className={styles.price}><span>{estimateLine}</span><span>{resolution}</span></div>
+        <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <input data-testid="swap-audio" type="checkbox" checked={audioReference} disabled={busy} onChange={(event) => setAudioReference(event.target.checked)} />
+          Also give H3 the song as an audio reference (experimental lip-sync guidance)
+        </label>
+        <div className={styles.price}><span>{estimateLine}</span><span>{resolution} · $0.16/s{resolution === '2K' ? ' → $0.30/s' : ''}</span></div>
         {signedIn
           ? <button data-testid="swap-run" className={styles.run} type="button" disabled={busy || !videoURL || !swappedImageURL || videoPrompt.trim().length < 10} onClick={() => void generateVideo()}>
             {busy ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={16} />}{busy ? status : 'Generate music video'}

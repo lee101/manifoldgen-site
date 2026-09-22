@@ -54,7 +54,7 @@ var servicePricesUSD = map[string]float64{
 	"relight":                  0.12,   // per relit image through fal IC-Light v2
 	"upscale_image":            0.15,   // per 2x creative upscale through fal
 	"lofi_loop":                0.12,   // per looping video: cover still + motion + visualizer + loop mux
-	"character_swap_video":     3.60,   // 30 s source at 768P: seven 5 s H3 reference clips at $0.08/s x1.2 plus one GPT Image 2 frame
+	"character_swap_video":     5.04,   // 30 s source at 768P: $0.16 per source second plus one GPT Image 2 frame
 }
 
 var zimageDefaultSteps = 8
@@ -438,7 +438,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"relight":                  "per relit image",
 		"upscale_image":            "per 2x creative upscale",
 		"lofi_loop":                "per looping video (cover still, motion, visualizer, loop mux); add music at the track rate",
-		"character_swap_video":     "per generated second of H3 reference video ($0.096/s at 768P, $0.156/s at 2K) plus one GPT Image 2 frame when no image_url is supplied",
+		"character_swap_video":     "per second of source video ($0.16/s at 768P, $0.30/s at 2K) plus one GPT Image 2 frame when no image_url is supplied",
 	}
 	pricing := make([]ServicePricing, 0, len(publicServiceAliases))
 	for _, alias := range publicServiceAliases {
