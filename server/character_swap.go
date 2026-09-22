@@ -175,6 +175,16 @@ func characterSwapPerShot(req ServiceUsageRequest) bool {
 	return req.MaxQuality != nil && *req.MaxQuality
 }
 
+// characterSwapPlannedUnits is the number of provider generations the job
+// will run: reference clips for the H3 lane, performer passes for the exact
+// lane.
+func characterSwapPlannedUnits(req ServiceUsageRequest, seconds float64, cuts []float64, chunks []characterSwapChunk) int {
+	if characterSwapIsExact(req) {
+		return len(planExactChunks(seconds, cuts)) * exactPeople(req)
+	}
+	return len(chunks)
+}
+
 func characterSwapShotCount(chunks []characterSwapChunk) int {
 	count := 0
 	for _, chunk := range chunks {
@@ -419,7 +429,7 @@ func handleCharacterSwapService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 			"job_id": job.ID, "status": "queued", "status_url": "/api/video-jobs/" + job.ID, "stage": state.Stage,
 		},
 		"estimated_cost_usd": estimatedUSD, "estimated_credits": estimatedCredits,
-		"source_seconds": math.Round(seconds*100) / 100, "chunks": len(chunks), "shots": characterSwapShotCount(chunks), "kind": strings.TrimSpace(req.Kind),
+		"source_seconds": math.Round(seconds*100) / 100, "chunks": characterSwapPlannedUnits(req, seconds, cuts, chunks), "shots": characterSwapShotCount(chunks), "kind": strings.TrimSpace(req.Kind),
 		"settlement": "final price based on generated seconds",
 	})
 }
