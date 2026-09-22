@@ -200,7 +200,7 @@ export default function LofiLoopTool() {
   const vizLabel = visualizers.find((option) => option.id === (vizUsed || visualizer))?.label || (vizUsed || visualizer);
   return <>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}><Music4 size={13} /> Z-IMAGE COVER · PARALLAX LOOP · AUDIO VISUALIZER</div>
+      <div className={styles.eyebrow}><Music4 size={13} /> RA2 COVER · PARALLAX LOOP · AUDIO VISUALIZER</div>
       <h1>Turn a track into a looping lofi world.</h1>
       <p>Paint the first frame, drift it into a seamless parallax loop, overlay a live audio visualizer, and download the finished video.</p>
     </section>

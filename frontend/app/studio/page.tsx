@@ -2965,9 +2965,9 @@ export default function StudioPage() {
       for (const [index, item] of generated.entries()) {
         if (item.base64) {
           const file = base64File(item.base64.replace(/^data:[^,]+,/, ''), 'image/webp', `generated-${index + 1}.webp`);
-          imported.push(await addGeneratedFile(file, 'image', `${styleSource ? 'GPT Image 2 · Style transfer' : premiumGPT ? 'GPT Image 2 · OpenPaths' : imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
+          imported.push(await addGeneratedFile(file, 'image', `${styleSource ? 'GPT Image 2 · Style transfer' : premiumGPT ? 'GPT Image 2 · OpenPaths' : imageEngine === 'images3' ? 'RA1 · Images3' : 'RA2 · OmniServe Native'} · ${prompt}`));
         } else if (item.url) {
-          imported.push(await addRemoteMedia(item.url, `generated-${index + 1}`, 'image', `${styleSource ? 'GPT Image 2 · Style transfer' : premiumGPT ? 'GPT Image 2 · OpenPaths' : imageEngine === 'images3' ? 'RA1 · Images3' : 'Z-Image · OmniServe Native'} · ${prompt}`));
+          imported.push(await addRemoteMedia(item.url, `generated-${index + 1}`, 'image', `${styleSource ? 'GPT Image 2 · Style transfer' : premiumGPT ? 'GPT Image 2 · OpenPaths' : imageEngine === 'images3' ? 'RA1 · Images3' : 'RA2 · OmniServe Native'} · ${prompt}`));
         }
       }
       if (!imported.length) throw new Error('Generated images could not be imported');
@@ -4484,7 +4484,7 @@ export default function StudioPage() {
 		  const blob = await media.blob();
 		  await addGeneratedFile(new File([blob], `music-${Date.now()}.wav`, { type: blob.type || 'audio/wav' }), 'audio', 'Generated music');
 		  if (typeof data.credits_remain === 'number') { const next = { ...user, credits: data.credits_remain }; setUser(next); saveUser(next); }
-		  setNotice(data.credits_used === 0 ? 'Music added · unlimited' : 'Music added · MiniMax-Music3');
+		  setNotice(data.credits_used === 0 ? 'Music added · unlimited' : 'Music added · Manifold Music Generator');
 		} else {
 		  setNotice('Starting sound generation…');
 		  const prompt = audioPrompt.trim();
@@ -5142,7 +5142,7 @@ export default function StudioPage() {
                 <textarea data-testid="studio-image-prompt" value={imagePrompt} maxLength={2000} rows={4} onChange={(event) => setImagePrompt(event.target.value)} placeholder="Describe the image you want…" />
                 <div className={styles.engineChoices}>
                   <button disabled={imageUseGPT2} data-testid="studio-image-engine-images3" className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
-                  <button disabled={imageUseGPT2} data-testid="studio-image-engine-omniserve" className={imageEngine === 'omniserve' ? styles.engineActive : ''} onClick={() => setImageEngine('omniserve')}><b>Z-Image</b><small>OmniServe Native</small></button>
+                  <button disabled={imageUseGPT2} data-testid="studio-image-engine-omniserve" className={imageEngine === 'omniserve' ? styles.engineActive : ''} onClick={() => setImageEngine('omniserve')}><b>RA2</b><small>OmniServe Native</small></button>
                 </div>
                 <label className={styles.premiumImageToggle}><input data-testid="studio-image-gpt2" type="checkbox" checked={imageUseGPT2} onChange={(event) => setImageUseGPT2(event.target.checked)} /><span><b>Use GPT Image 2</b><small>{gptImageCredits} credits per image · always paid, including unlimited plans</small></span></label>
                 <div className={styles.imageSettings}>
@@ -5273,7 +5273,7 @@ export default function StudioPage() {
           {tool === 'audio' && <>
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>SOUND</span><h2>Audio</h2></div></div>
             <div className={styles.quickGenerate}>
-              <button onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><Music2 size={17} /><span><b>Music</b><small>MiniMax-Music3 · from $0.50</small></span></button>
+              <button onClick={() => { setAudioMode('music'); setAudioDuration(30); setAudioGenerateOpen(true); }}><Music2 size={17} /><span><b>Music</b><small>Manifold Music Generator · from $0.50</small></span></button>
               <button onClick={() => { setAudioMode('sfx'); setAudioGenerateOpen(true); }}><AudioLines size={17} /><span><b>Sound</b><small>AI · metered</small></span></button>
               <button onClick={() => { setAudioMode('speech'); setAudioGenerateOpen(true); }}><Mic2 size={17} /><span><b>Speech</b><small>from {speechCredits.toFixed(2)} cr</small></span></button>
             </div>
@@ -5547,7 +5547,7 @@ export default function StudioPage() {
         <label className={styles.field}><span>Prompt</span><textarea data-testid="studio-image-modal-prompt" value={imagePrompt} maxLength={2000} rows={5} onChange={(event) => setImagePrompt(event.target.value)} placeholder="Describe the image you want…" /></label>
         <div className={styles.engineChoices}>
           <button disabled={imageUseGPT2 || !!imageStyleTransferSource} className={imageEngine === 'images3' ? styles.engineActive : ''} onClick={() => setImageEngine('images3')}><b>RA1</b><small>Images3 · netwrck</small></button>
-          <button disabled={imageUseGPT2 || !!imageStyleTransferSource} className={imageEngine === 'omniserve' ? styles.engineActive : ''} onClick={() => setImageEngine('omniserve')}><b>Z-Image</b><small>OmniServe Native</small></button>
+          <button disabled={imageUseGPT2 || !!imageStyleTransferSource} className={imageEngine === 'omniserve' ? styles.engineActive : ''} onClick={() => setImageEngine('omniserve')}><b>RA2</b><small>OmniServe Native</small></button>
         </div>
         {!imageStyleTransferSource && <label className={styles.premiumImageToggle}><input data-testid="studio-image-modal-gpt2" type="checkbox" checked={imageUseGPT2} onChange={(event) => setImageUseGPT2(event.target.checked)} /><span><b>Use GPT Image 2</b><small>{gptImageCredits} credits per image · always paid, including unlimited plans</small></span></label>}
         <div className={styles.imageSettings}>
@@ -5716,7 +5716,7 @@ export default function StudioPage() {
           <div className={styles.durationChoices}>{(audioMode === 'music' ? [30, 45, 60, 90, 180] : [5, 10, 20, 30, 45]).map((duration) => <button key={duration} className={audioDuration === duration ? styles.durationActive : ''} onClick={() => setAudioDuration(duration)}>{duration}s</button>)}</div>
           <div className={styles.priceLine}><span>{audioMode === 'music' ? 'Price' : 'Estimate'}</span><b>{audioMode === 'music' ? `$${Math.max(.5, Math.ceil((.4 + .2 * audioDuration / 60) * 100) / 100).toFixed(2)}` : `~$${audioEstimateUSD.toFixed(2)}`}</b></div>
         </>}
-        <p className={styles.billingNote}>{audioMode === 'music' ? 'Built with MiniMax-Music3 · AI-generated audio. ' : ''}Search and editing are free. You only pay for successful generation.</p>
+        <p className={styles.billingNote}>{audioMode === 'music' ? 'Built with Manifold Music Generator · AI-generated audio. ' : ''}Search and editing are free. You only pay for successful generation.</p>
         <button data-testid="studio-audio-generate" className={styles.modalPrimary} disabled={audioMode === 'speech' ? !speechText.trim() : !audioPrompt.trim()} onClick={() => void generateAudio()}><Sparkles size={16} /> Generate</button>
       </Modal>}
       {contextMenu && <div className={styles.contextMenuBackdrop} onPointerDown={() => setContextMenu(null)} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); }}><div data-testid="studio-context-menu" className={styles.contextMenu} ref={(el) => {

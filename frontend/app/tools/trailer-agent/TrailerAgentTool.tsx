@@ -48,7 +48,7 @@ export default function TrailerAgentTool({ example = '' }: { example?: string })
     if (!brief.trim()) { setError('A trailer brief is required.'); return; }
     setError(''); setResult(null);
     try {
-      setPhase('queued'); setStatus(sketch ? 'Queuing the Z-Image sketch…' : 'Queuing the trailer agent…');
+      setPhase('queued'); setStatus(sketch ? 'Queuing the RA2 sketch…' : 'Queuing the trailer agent…');
       const queued = await parseJSONResponse<{ result?: { job_id?: string; status_url?: string } }>(
         await fetch('/api/service', {
           method: 'POST',
@@ -103,7 +103,7 @@ export default function TrailerAgentTool({ example = '' }: { example?: string })
 
     <section className={styles.hero}>
       <h1>One brief.<br /><span>Locked characters.</span></h1>
-      <p>Grok 4.6 writes the cut. Sketch on Z-Image until the world and faces hold. Then GPT Image 2 builds identity sheets, Flash reviews 800px stills, style-transfers into start frames, and H3 animates the accepted stills driven by Gemini speech mixed with the score.</p>
+      <p>Grok 4.6 writes the cut. Sketch on RA2 until the world and faces hold. Then GPT Image 2 builds identity sheets, Flash reviews 800px stills, style-transfers into start frames, and H3 animates the accepted stills driven by Gemini speech mixed with the score.</p>
     </section>
 
     <section className={styles.workspace}>
@@ -133,7 +133,7 @@ export default function TrailerAgentTool({ example = '' }: { example?: string })
           <label><span>Shots</span><select value={maxShots} onChange={(event) => setMaxShots(Number(event.target.value))}><option value={6}>6</option><option value={8}>8</option><option value={10}>10</option><option value={12}>12</option></select></label>
           {consistentCharacters && <label><span>Identity repair passes</span><select value={consistencyPasses} onChange={(event) => setConsistencyPasses(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label>}
         </div>
-        <button className={styles.run} type="button" disabled={busy || !brief.trim()} onClick={() => void run(true)}>{busy ? <Loader2 className={styles.spin} size={18} /> : <Wand2 size={18} />}{busy ? status || 'Working…' : 'Sketch on Z-Image'}</button>
+        <button className={styles.run} type="button" disabled={busy || !brief.trim()} onClick={() => void run(true)}>{busy ? <Loader2 className={styles.spin} size={18} /> : <Wand2 size={18} />}{busy ? status || 'Working…' : 'Sketch on RA2'}</button>
         <button className={styles.run} type="button" style={{ marginTop: 8 }} disabled={busy || !brief.trim()} onClick={() => void run(false)}>{busy ? <Loader2 className={styles.spin} size={18} /> : <Sparkles size={18} />}{busy ? status || 'Working…' : 'Make the trailer (GPT Image + H3)'}</button>
         {error && <div className={styles.error} role="alert">{error}</div>}
       </div>
@@ -144,7 +144,7 @@ export default function TrailerAgentTool({ example = '' }: { example?: string })
         {(result?._agent_steps?.length || 0) > 0 && <ol className={styles.steps}>{result!._agent_steps!.map((step) => <li key={step.name} className={styles[step.status]}><i>{step.status === 'done' ? <Check size={12} /> : step.status === 'failed' ? <X size={12} /> : <Loader2 className={styles.spin} size={12} />}</i><span><b>{step.label}</b>{step.detail && <small>{step.detail}</small>}</span>{step.elapsed_seconds ? <em>{step.elapsed_seconds.toFixed(0)}s</em> : null}</li>)}</ol>}
         {references.length > 0 && <div className={styles.references}><div className={styles.shotsHead}><span><Sparkles size={13} /> WORLD + SHEETS</span></div><div className={styles.referenceGrid}>{references.map((reference) => <div key={`${reference.kind}-${reference.id}`} className={styles.referenceCard}>{reference.image_url ? <img src={reference.image_url} alt={reference.name} /> : <div className={styles.referenceMissing}><X size={15} /></div>}<span><b>{reference.name}</b><small>{reference.kind}{reference.error ? ' · unavailable' : ''}</small></span></div>)}</div></div>}
         {shots.length > 0 && <div className={styles.shots}><div className={styles.shotsHead}><span><ScanSearch size={13} /> SHOTS</span><small>{result?.planner}</small></div>{shots.map((shot) => <div key={shot.id} className={styles.shot} data-kind="generated"><b>{shot.id}</b><span>{shot.visual_description || shot.image_prompt}{shot.dialogue_transcript ? ` · ${shot.dialogue_transcript}` : ''}</span><em>{shot.seconds}s</em></div>)}</div>}
-        <div className={styles.footer}><span>{result?.duration ? `${result.duration.toFixed(1)}s${result.charged_usd ? ` · $${result.charged_usd.toFixed(2)}` : ''}` : stills ? `${stills} planned shots` : 'Grok 4.6 · Z-Image sketch · GPT Image sheets · Flash 800px · Gemini TTS · H3 cog · Music3'}</span><div className={styles.actions}>{result?.video_url && <a href={result.video_url} download><Download size={15} /> Download</a>}{result?.project_url && <Link href={result.project_url} className={styles.primary}><Sparkles size={15} /> Open in Studio</Link>}</div></div>
+        <div className={styles.footer}><span>{result?.duration ? `${result.duration.toFixed(1)}s${result.charged_usd ? ` · $${result.charged_usd.toFixed(2)}` : ''}` : stills ? `${stills} planned shots` : 'Grok 4.6 · RA2 sketch · GPT Image sheets · Flash 800px · Gemini TTS · H3 cog · Manifold Music Generator'}</span><div className={styles.actions}>{result?.video_url && <a href={result.video_url} download><Download size={15} /> Download</a>}{result?.project_url && <Link href={result.project_url} className={styles.primary}><Sparkles size={15} /> Open in Studio</Link>}</div></div>
       </div>
     </section>
   </main>;

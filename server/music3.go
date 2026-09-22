@@ -89,6 +89,9 @@ type music3RunpodStatus struct {
 }
 
 func music3EndpointID() string {
+	if id := musicYueEndpointID(); id != "" {
+		return id
+	}
 	return strings.TrimSpace(os.Getenv("MUSIC3_RUNPOD_ENDPOINT_ID"))
 }
 
@@ -104,6 +107,9 @@ func normalizeMusic3ServiceTier(value string) (string, error) {
 }
 
 func music3TierMultiplier(tier string) float64 {
+	if musicBackendIsYue() {
+		return 1
+	}
 	switch tier {
 	case "fast":
 		return 1.5
@@ -115,6 +121,9 @@ func music3TierMultiplier(tier string) float64 {
 }
 
 func music3EndpointIDForTier(tier string) string {
+	if id := musicYueEndpointID(); id != "" {
+		return id
+	}
 	if tier == "xfast" {
 		if endpointID := strings.TrimSpace(os.Getenv("MUSIC3_XFAST_RUNPOD_ENDPOINT_ID")); endpointID != "" {
 			return endpointID
@@ -155,6 +164,9 @@ func music3PrepareEndpoint(endpointID, tier string) error {
 func music3GPUUSDPerHour() float64 {
 	value, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("MUSIC3_RUNPOD_GPU_USD_PER_HOUR")), 64)
 	if err != nil || value <= 0 {
+		if musicBackendIsYue() {
+			return musicYueDefaultGPUUSD
+		}
 		return music3DefaultGPUUSDPerHour
 	}
 	return value
@@ -222,12 +234,8 @@ func music3PromptGuard(prompt, lyrics string) error {
 }
 
 func music3UploadTarget(userID string) (string, string, error) {
-	shortID := sanitizeUploadName(userID)
-	if len(shortID) > 12 {
-		shortID = shortID[:12]
-	}
-	objectKey := fmt.Sprintf("%s/%s/audio/%s-minimax-music3.wav", strings.TrimSuffix(r2PathPrefix, "/"), shortID, newUUID())
-	uploadURL, err := presignR2PutObject(objectKey, "audio/wav", 3600)
+	objectKey := musicUploadObjectKey(userID)
+	uploadURL, err := presignR2PutObject(objectKey, musicUploadContentType(), 3600)
 	if err != nil {
 		return "", "", err
 	}
@@ -266,6 +274,9 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int, serviceTie
 	}
 	if structured := music3StructureLyrics(lyrics); structured != "" {
 		input["lyrics"] = structured
+	}
+	if musicBackendIsYue() {
+		input = musicYueInput(prompt, lyrics, duration, seed, uploadURL, publicURL)
 	}
 	var queued h3RunpodQueuedJob
 	var status int
@@ -334,7 +345,7 @@ func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics
 		credits = price / cutePrice
 	}
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
-		"service": service, "kind": "music", "model": "MiniMax-Music3", "service_tier": tier,
+		"service": service, "kind": "music", "model": musicPublicModelName, "service_tier": tier,
 		"seed": music3RequestFromJob(job).Seed,
 		"result": map[string]interface{}{
 			"job_id": job.ID, "status": job.Status, "status_url": "/api/audio-jobs/" + job.ID,
@@ -389,6 +400,9 @@ func processMusic3Job(job *VideoJob) {
 				return
 			}
 			request := music3RequestFromJob(job)
+			if state.Output.Seed == 0 {
+				state.Output.Seed = request.Seed
+			}
 			predictSeconds := math.Max(float64(state.ExecutionTime)/1000, 1)
 			providerUSD := music3GPUUSDPerHour() * predictSeconds / 3600
 			tier, _ := normalizeMusic3ServiceTier(request.ServiceTier)
@@ -403,7 +417,7 @@ func processMusic3Job(job *VideoJob) {
 			result, _ := json.Marshal(map[string]interface{}{
 				"service": "music", "kind": "music", "audio_id": h3AudioID(job),
 				"audio_url": state.Output.AudioURL, "duration_seconds": request.Duration,
-				"model": "MiniMax-Music3", "seed": state.Output.Seed,
+				"model": musicPublicModelName, "seed": state.Output.Seed,
 				"provider": "runpod", "provider_cost_usd": providerUSD,
 				"charged_usd": chargedUSD, "service_tier": tier, "metrics": state.Output.Metrics,
 			})

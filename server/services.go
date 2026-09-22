@@ -1588,12 +1588,14 @@ type namedBackend struct {
 
 func zimageBackendOrder(req ServiceUsageRequest, primaryURL string) []namedBackend {
 	prefer := strings.ToLower(strings.TrimSpace(req.ImageBackend))
+	ra2 := strings.TrimSpace(ra2BackendURL())
 	omni := strings.TrimSpace(getEnv("OMNISERVE_NATIVE_URL", "http://127.0.0.1:8791"))
 	images3 := strings.TrimSpace(getEnv("IMAGES3_URL", "https://images3.netwrck.com"))
 	r1 := strings.TrimSpace(getEnv("RA1_URL", getEnv("R1_URL", "https://ra.netwrck.com")))
 	legacy := strings.TrimSpace(primaryURL)
 
 	ordered := []namedBackend{
+		{name: "ra2", url: ra2},
 		{name: "omniserve", url: omni},
 		{name: "images3", url: images3},
 		{name: "r1", url: r1},
@@ -1634,6 +1636,8 @@ func filterNonEmptyBackends(in []namedBackend) []namedBackend {
 
 func proxyZImageBackend(req ServiceUsageRequest, name, backendURL string) ([]byte, error) {
 	switch name {
+	case "ra2":
+		return proxyOmniserveZImageAs(req, backendURL, ra2BackendSecret(), "ra2")
 	case "omniserve":
 		return proxyOmniserveZImage(req, backendURL)
 	case "images3":
@@ -1645,7 +1649,22 @@ func proxyZImageBackend(req ServiceUsageRequest, name, backendURL string) ([]byt
 	}
 }
 
+// ra2BackendURL is the RA2 image lane: a second omniserve-native instance
+// (default port 8792) that fronts the RA2 model. It is tried before the RA1
+// gateway on 8791 so every image tool renders on RA2 when it is up.
+func ra2BackendURL() string {
+	return strings.TrimRight(strings.TrimSpace(getEnv("RA2_BACKEND_URL", "http://127.0.0.1:8792")), "/")
+}
+
+func ra2BackendSecret() string {
+	return strings.TrimSpace(getEnv("RA2_BACKEND_SECRET", ""))
+}
+
 func proxyOmniserveZImage(req ServiceUsageRequest, backendURL string) ([]byte, error) {
+	return proxyOmniserveZImageAs(req, backendURL, "", "")
+}
+
+func proxyOmniserveZImageAs(req ServiceUsageRequest, backendURL, secret, publicModel string) ([]byte, error) {
 	width := req.Width
 	if width <= 0 {
 		width = 1024
@@ -1670,6 +1689,11 @@ func proxyOmniserveZImage(req ServiceUsageRequest, backendURL string) ([]byte, e
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if secret != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+secret)
+		httpReq.Header.Set("X-API-Key", secret)
+		httpReq.Header.Set("secret", secret)
+	}
 	resp, err := backendClient.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -1716,7 +1740,7 @@ func proxyOmniserveZImage(req ServiceUsageRequest, backendURL string) ([]byte, e
 		"height":       height,
 		"format":       "webp",
 		"engine":       "omniserve-native",
-		"model":        openai.Model,
+		"model":        firstNonEmpty(publicModel, openai.Model),
 		"prompt":       req.Prompt,
 	})
 	return normalized, nil

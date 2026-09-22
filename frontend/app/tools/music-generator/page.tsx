@@ -1,8 +1,8 @@
 import MusicTool from './MusicTool';
 
 export const metadata = {
-  title: 'AI Song Generator — MiniMax Music 3 — ManifoldGen',
-  description: 'Describe a song in plain English, expand it into a production-ready Music3 arrangement, then generate the full record.',
+  title: 'AI Song Generator — Manifold Music Generator — ManifoldGen',
+  description: 'Describe a song in plain English, expand it into a production-ready Manifold Music Generator arrangement, then generate the full record.',
 };
 
 export default function MusicGeneratorPage() {

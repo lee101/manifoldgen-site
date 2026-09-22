@@ -1466,7 +1466,7 @@ export default function HomePage() {
                       ? 'bg-fuchsia-600 text-white'
                       : 'bg-white/5 text-[var(--color-mute)] hover:text-white'
                   }`}
-                  title="Compose a MiniMax soundtrack first, then use it to drive H3"
+                  title="Compose a soundtrack with the Manifold Music Generator first, then use it to drive H3"
                 >
                   <Music2 size={14} />
                   Music video

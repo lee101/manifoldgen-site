@@ -18,7 +18,7 @@ interface PromptBatch {
 }
 
 const ENGINES: { id: Engine; name: string; detail: string }[] = [
-  { id: 'omniserve', name: 'Z-Image', detail: 'Z-Image · OmniServe Native' },
+  { id: 'omniserve', name: 'RA2', detail: 'RA2 · OmniServe Native' },
   { id: 'images3', name: 'RA1', detail: 'RA1 · images3.netwrck.com' },
   { id: 'r1', name: 'R1', detail: 'R1 · ra.netwrck.com' },
 ];
@@ -178,7 +178,7 @@ export default function BulkImageTool() {
 
       <section className={styles.hero}>
         <h1>Drop a prompt.<br /><span>Get a full test of ideas.</span></h1>
-        <p>One prompt per line becomes its own variant batch across the Z-Image, RA1, and R1 lanes. Compare directions, and refill any batch that looks worth chasing.</p>
+        <p>One prompt per line becomes its own variant batch across the RA2, RA1, and R1 lanes. Compare directions, and refill any batch that looks worth chasing.</p>
       </section>
 
       <section className={styles.console}>
@@ -215,7 +215,7 @@ export default function BulkImageTool() {
           {busy ? progress || 'Generating…' : `Generate ${total} image${total === 1 ? '' : 's'}`}
         </button>
         <div className={styles.estimate}>
-          <span>Z-Image lane · {renderEngineName(engine)}</span>
+          <span>RA2 lane · {renderEngineName(engine)}</span>
           <b>~{Math.ceil(total * 0.04 / creditPrice).toLocaleString()} credits · ${(total * 0.04).toFixed(2)}</b>
         </div>
         {error && <div className={styles.error} role="alert">{error}</div>}
@@ -245,7 +245,7 @@ export default function BulkImageTool() {
 
       <section className={styles.notes}>
         <div><Sparkles size={17} /><span><b>Bulk explore each prompt</b>Several prompts, several variants each, all compared on one grid.</span></div>
-        <div><WandSparkles size={17} /><span><b>Three image lanes</b>Z-Image on OmniServe Native, RA1 on images3.netwrck.com, and R1 on ra.netwrck.com.</span></div>
+        <div><WandSparkles size={17} /><span><b>Three image lanes</b>RA2 on OmniServe Native, RA1 on images3.netwrck.com, and R1 on ra.netwrck.com.</span></div>
         <div><Check size={17} /><span><b>Keep refilling</b>“Make more variants” tops up any prompt with the same visual direction.</span></div>
       </section>
     </main>

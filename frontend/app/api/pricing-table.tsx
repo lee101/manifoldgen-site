@@ -148,7 +148,7 @@ export function PricingTable() {
             <div className="text-sm text-white/45">Music generation</div>
             <div className="mt-2 text-2xl font-semibold">from {money(musicMinimum)}</div>
             <div className="mt-1 text-sm text-white/50">{money(musicPerMinute)}/minute + base</div>
-            <div className="mt-3 border-t border-white/10 pt-3 text-xs leading-5 text-white/35">Built with MiniMax-Music3 · successful generations only</div>
+            <div className="mt-3 border-t border-white/10 pt-3 text-xs leading-5 text-white/35">Built with Manifold Music Generator · successful generations only</div>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
             <div className="text-sm text-white/45">Text to speech</div>

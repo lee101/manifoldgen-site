@@ -265,7 +265,7 @@ const ENTRIES: Entry[] = [
       },
       {
         claim: 'Image models span budget to premium.',
-        support: 'FLUX.2 [klein] $0.03, FLUX.2 [dev] $0.04, Grok Imagine $0.04, Z-Image $0.04, Nano Banana 2 $0.16, GPT Image 2 $0.24 per image.',
+        support: 'FLUX.2 [klein] $0.03, FLUX.2 [dev] $0.04, Grok Imagine $0.04, RA2 $0.04, Nano Banana 2 $0.16, GPT Image 2 $0.24 per image.',
       },
       {
         claim: 'Audio generation is included too.',
@@ -382,7 +382,7 @@ const ENTRIES: Entry[] = [
       },
       {
         claim: 'Images are the true fast lane.',
-        support: 'Z-Image is a native 4-step turbo generator at $0.04 per image when a still frame answers faster than any video render.',
+        support: 'RA2 is a native 4-step turbo generator at $0.04 per image when a still frame answers faster than any video render.',
       },
       {
         claim: 'No fabricated latency claims.',
@@ -391,7 +391,7 @@ const ENTRIES: Entry[] = [
     ],
     runnersUp: [
       'LTX 2 at ~$0.09 per clip for rapid previs iteration',
-      'Z-Image at $0.04 per image when a still frame is enough',
+      'RA2 at $0.04 per image when a still frame is enough',
     ],
     faqs: [
       {
@@ -404,7 +404,7 @@ const ENTRIES: Entry[] = [
       },
       {
         q: 'What is the fastest way to preview a shot?',
-        a: 'Generate an LTX 2 clip from 9 credits (~$0.09), or a Z-Image still at $0.04, before spending on Seedance 2 renders.',
+        a: 'Generate an LTX 2 clip from 9 credits (~$0.09), or an RA2 still at $0.04, before spending on Seedance 2 renders.',
       },
     ],
   },
@@ -437,7 +437,7 @@ const ENTRIES: Entry[] = [
       },
       {
         claim: 'Speed and 2K options exist mid-range.',
-        support: 'Grok Imagine runs $0.04 ($0.09 at 2K) for punchy aesthetics; Z-Image is a native 4-step turbo at $0.04.',
+        support: 'Grok Imagine runs $0.04 ($0.09 at 2K) for punchy aesthetics; RA2 is a native 4-step turbo at $0.04.',
       },
       {
         claim: 'Upscaling stays affordable.',
@@ -451,7 +451,7 @@ const ENTRIES: Entry[] = [
         ['FLUX.2 [dev]', '$0.04', 'Open-weight workhorse, strong adherence'],
         ['FLUX.2 [pro]', '$0.06', 'Higher-fidelity FLUX tier'],
         ['Grok Imagine', '$0.04 ($0.09 at 2K)', 'Fast, punchy aesthetics'],
-        ['Z-Image (native)', '$0.04', '4-step turbo speed'],
+        ['RA2 (native)', '$0.04', '4-step turbo speed'],
         ['Nano Banana 2', '$0.16', 'Best edits and text rendering'],
         ['GPT Image 2', '$0.24', 'Highest instruction following'],
       ],

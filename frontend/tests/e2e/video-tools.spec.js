@@ -8,7 +8,7 @@ const slugs = [
 
 test('video tool and API directories expose every generator', async ({ page }) => {
   await page.goto('/tools');
-  await expect(page.getByRole('heading', { name: 'One focused space for every creative job.' })).toBeVisible();
+  await expect(page.getByTestId('tools-search')).toBeFocused();
   await expect(page.locator('a[href="/tool/animate-video"], a[href="/tools/character-animator"]')).toBeVisible();
   for (const slug of ['make-image', 'style-transfer', 'h3-image', 'h3-image-editor', 'character-animator', 'video-background-remover', 'music-generator']) {
     await expect(page.locator(`a[href="/tools/${slug}"], a[href="/tool/${slug}"]`)).toBeVisible();

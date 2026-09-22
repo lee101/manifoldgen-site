@@ -45,7 +45,7 @@ test('song generator queues a music job and plays the finished track', async ({ 
   }));
 
   await page.goto('/tools/music-generator');
-  await expect(page.getByText('MINIMAX MUSIC 3 · SONG GENERATOR')).toBeVisible();
+  await expect(page.getByText('MANIFOLD MUSIC GENERATOR · SONG GENERATOR')).toBeVisible();
   await page.getByTestId('music-prompt').fill('House remix, EDM techno at 128 BPM, saxophone hook');
   await page.getByTestId('music-lyrics').fill('[Verse]\nThere is a house in New Orleans');
   await page.getByTestId('music-duration').selectOption('60');

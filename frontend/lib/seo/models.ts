@@ -206,7 +206,7 @@ export const IMAGE_MODELS = [
   { slug: 'flux-2-dev', name: 'FLUX.2 [dev]', priceUSD: 0.04, note: 'open-weight workhorse, strong prompt adherence' },
   { slug: 'flux-2-klein', name: 'FLUX.2 [klein]', priceUSD: 0.03, note: 'cheapest image on the platform' },
   { slug: 'grok-imagine', name: 'Grok Imagine', priceUSD: 0.04, note: 'fast, punchy aesthetics; $0.09 at 2K' },
-  { slug: 'z-image', name: 'Z-Image (native)', priceUSD: 0.04, note: 'our native fast lane, 4-step turbo' },
+  { slug: 'z-image', name: 'RA2 (native)', priceUSD: 0.04, note: 'our native fast lane, 4-step turbo' },
   { slug: 'nano-banana-2', name: 'Nano Banana 2', priceUSD: 0.16, note: 'Google Gemini image, best edits & text rendering' },
   { slug: 'gpt-image-2', name: 'GPT Image 2', priceUSD: 0.24, note: 'highest instruction following' },
 ] as const;

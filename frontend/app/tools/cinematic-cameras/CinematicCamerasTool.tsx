@@ -13,7 +13,7 @@ interface APIResponse { result?: unknown; error?: string; credits_used?: number;
 const EXAMPLE = 'https://manifoldgenstatic.manifoldgen.com/gallery/originals/d9e1b11a3ec6e66f_22e5d455.webp';
 
 const ENGINES: { id: Engine; name: string; rate: number }[] = [
-  { id: 'zimage', name: 'Z-Image (fast)', rate: 0.04 },
+  { id: 'zimage', name: 'RA2 (fast)', rate: 0.04 },
   { id: 'gpt-image-2', name: 'GPT Image 2', rate: 0.24 },
 ];
 
@@ -167,7 +167,7 @@ export default function CinematicCamerasTool() {
 
       <section className={styles.hero}>
         <h1>Direct the camera.<br /><span>The model frames the shot.</span></h1>
-        <p>Pick camera moves and lens language as chips, stack up to three per shot, and render through Z-Image or GPT Image 2.</p>
+        <p>Pick camera moves and lens language as chips, stack up to three per shot, and render through RA2 or GPT Image 2.</p>
       </section>
 
       <section className={styles.workspace}>
@@ -273,7 +273,7 @@ export default function CinematicCamerasTool() {
 
       <section className={styles.notes}>
         <div><WandSparkles size={17} /><span><b>Camera language as chips</b>Stack up to three presets — angle, move, lens — appended to your prompt verbatim.</span></div>
-        <div><Sparkles size={17} /><span><b>Two engines</b>Z-Image is fast at $0.04 a frame; GPT Image 2 renders richer detail at $0.24.</span></div>
+        <div><Sparkles size={17} /><span><b>Two engines</b>RA2 is fast at $0.04 a frame; GPT Image 2 renders richer detail at $0.24.</span></div>
         <div><Check size={17} /><span><b>Framing control</b>Square, landscape, and portrait map to fixed resolutions each engine supports natively.</span></div>
       </section>
     </main>

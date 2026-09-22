@@ -58,6 +58,15 @@ async function captureHomepageGallery(browser, viewport, device) {
   await page.close();
 }
 
+async function captureTools(browser, viewport, device) {
+  const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
+  await page.goto(`${baseURL}/tools`, { waitUntil: 'networkidle' });
+  await page.getByTestId('tools-search').waitFor({ state: 'visible' });
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: path.join(outputDir, `tools-${device}.png`) });
+  await page.close();
+}
+
 async function capture(browser, viewport, device, mode) {
   const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
   await proxyProductionCatalog(page);
@@ -128,6 +137,8 @@ async function captureGalleryImage(browser, viewport, device) {
     await captureHomepageGallery(browser, { width: 390, height: 844 }, 'mobile');
     await captureGalleryImage(browser, { width: 1440, height: 1000 }, 'desktop');
     await captureGalleryImage(browser, { width: 390, height: 844 }, 'mobile');
+    await captureTools(browser, { width: 1440, height: 1000 }, 'desktop');
+    await captureTools(browser, { width: 390, height: 844 }, 'mobile');
     if (process.env.VISUALBENCH_GALLERY_ONLY !== '1') {
       for (const mode of ['videos', 'images', 'music']) {
         await capture(browser, { width: 1440, height: 1000 }, 'desktop', mode);

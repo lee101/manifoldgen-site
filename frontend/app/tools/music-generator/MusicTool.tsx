@@ -136,9 +136,9 @@ export default function MusicTool() {
       <Link href="/account" className={styles.account}>{user ? `${(user.credits_usd ?? user.credits * (user.credit_price_usd || .01)).toFixed(2)} USD` : 'Sign in'}</Link>
     </header>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}><Music4 size={14} /> MINIMAX MUSIC 3 · SONG GENERATOR</div>
+      <div className={styles.eyebrow}><Music4 size={14} /> MANIFOLD MUSIC GENERATOR · SONG GENERATOR</div>
       <h1>Write the song.<br /><span>Get the record.</span></h1>
-      <p>Describe the record in plain English. The composer writes Music3&apos;s full arrangement language and singable lyrics before the fast GPU pass.</p>
+      <p>Describe the record in plain English. The composer writes Manifold Music Generator&apos;s full arrangement language and singable lyrics before the fast GPU pass.</p>
     </section>
     <section className={styles.workspace}>
       <div className={styles.controls}>
@@ -152,7 +152,7 @@ export default function MusicTool() {
           {composing ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={16} />}{composing ? status : 'Write arrangement + lyrics'}
         </button>
         {(compositionTitle || prompt) && <div className={styles.compositionMeta}><b>{compositionTitle || 'Custom arrangement'}</b><span>{compositionTags || status}</span></div>}
-        <label className={styles.promptLabel}>Balanced Music3 caption <span className={styles.optional}>editable</span>
+        <label className={styles.promptLabel}>Balanced Manifold Music Generator caption <span className={styles.optional}>editable</span>
           <textarea data-testid="music-prompt" value={prompt} disabled={busy} maxLength={6000}
             onChange={(event) => setPrompt(event.target.value)} placeholder={EXAMPLE_PROMPT} />
           <small>Global metadata and vocal direction, with a continuity-safe mix profile.</small>
@@ -194,7 +194,7 @@ export default function MusicTool() {
             : <div className={styles.emptyOutput}>{busy ? <LoaderCircle className={styles.spin} size={35} /> : <Waves size={35} />}<b>{busy ? status : 'No track yet'}</b><span>{busy ? 'A three-minute song renders in about a minute of GPU time.' : 'Describe a style, then generate.'}</span></div>}
         </div>
         <div className={styles.resultFooter}>
-          <div><b>{phase === 'done' ? 'Saved to your audio library' : 'MiniMax-Music3'}</b>
+          <div><b>{phase === 'done' ? 'Saved to your audio library' : 'Manifold Music Generator'}</b>
             <span>{cost === null ? 'Vocals and instrumental in one pass' : `$${cost.toFixed(2)} charged${length ? ` · ${Math.round(length)}s` : ''}`}</span></div>
           {audioURL && <a href={audioURL} download><Download size={16} /> Download</a>}
         </div>
@@ -202,7 +202,7 @@ export default function MusicTool() {
     </section>
     <section className={styles.notes}>
       <div><ShieldCheck size={17} /><span><strong>No voice cloning</strong>Requests that target a real person&apos;s voice are refused.</span></div>
-      <div><Waves size={17} /><span><strong>32 kHz stereo</strong>Full song audio, not a stem or a loop.</span></div>
+      <div><Waves size={17} /><span><strong>48 kHz stereo</strong>Full song audio, not a stem or a loop.</span></div>
       <div><Sparkles size={17} /><span><strong>Usage-based</strong>You pay per finished track, only when it succeeds.</span></div>
     </section>
   </main>;

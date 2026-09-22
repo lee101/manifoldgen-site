@@ -1713,7 +1713,7 @@ test('Media Music searches real catalog-shaped results, imports a track, and gen
     lyrics: '[Verse]\nNeon on the water\n[Chorus]\nCarry us home',
     duration: 30,
   });
-  await expect(page.getByText('Music added · MiniMax-Music3')).toBeVisible();
+  await expect(page.getByText('Music added · Manifold Music Generator')).toBeVisible();
 });
 
 test('licensed Netwrck catalog result imports as an editable audio clip for free', async ({ page }) => {
