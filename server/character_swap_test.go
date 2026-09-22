@@ -12,7 +12,7 @@ func TestPlanCharacterSwapChunks(t *testing.T) {
 		minLen  float64
 		maxDur  int
 	}{
-		{5, 1, 5, 6}, {8.5, 1, 8.5, 10}, {10, 2, 5, 6}, {10.5, 2, 5.25, 7}, {30.16, 4, 7.54, 9}, {30, 4, 7.5, 9}, {60, 8, 7.5, 9}, {11, 2, 5.5, 7},
+		{5, 1, 5, 6}, {9, 2, 4.5, 5}, {10, 3, 3.33, 5}, {30.16, 7, 4.31, 5}, {30, 7, 4.29, 5}, {60, 14, 4.29, 5}, {11, 3, 3.67, 5},
 	}
 	for _, tc := range cases {
 		chunks, err := planCharacterSwapChunks(tc.seconds)
@@ -45,10 +45,10 @@ func TestPlanCharacterSwapChunks(t *testing.T) {
 
 func TestCharacterSwapProviderUSD(t *testing.T) {
 	chunks, _ := planCharacterSwapChunks(30)
-	if usd := characterSwapProviderUSD("768P", chunks); math.Abs(usd-2.88) > 1e-9 {
+	if usd := characterSwapProviderUSD("768P", chunks); math.Abs(usd-2.80) > 1e-9 {
 		t.Fatalf("768P 30s provider cost %.4f", usd)
 	}
-	if usd := characterSwapProviderUSD("2K", chunks); math.Abs(usd-4.68) > 1e-9 {
+	if usd := characterSwapProviderUSD("2K", chunks); math.Abs(usd-4.55) > 1e-9 {
 		t.Fatalf("2K 30s provider cost %.4f", usd)
 	}
 }
@@ -77,6 +77,12 @@ func TestNormalizeCharacterSwapRequest(t *testing.T) {
 	withPrompt := ServiceUsageRequest{VideoURL: "https://example.com/a.mp4", CharacterPrompt: "Elon Musk on the left"}
 	if err := normalizeCharacterSwapRequest(&withPrompt); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCharacterSwapLeakCount(t *testing.T) {
+	if characterSwapLeakCount("frames [4 5 6]: humans") != 3 || characterSwapLeakCount("clean") != 0 || characterSwapLeakCount("frames []: x") != 0 {
+		t.Fatal("leak count parsing")
 	}
 }
 

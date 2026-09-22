@@ -27,7 +27,9 @@ const (
 	characterSwapMaxSeconds     = 60
 	characterSwapMinSeconds     = 5
 	characterSwapChunkSeconds   = 10
-	characterSwapSegmentSeconds = 8.5
+	characterSwapSegmentSeconds = 4.5
+	characterSwapMaxRetries     = 2
+	characterSwapMinSlack       = 0.5
 	characterSwapJobTimeout     = 90 * time.Minute
 	characterSwapChunkTimeout   = 40 * time.Minute
 	characterSwapMaxArtifact    = 768 << 20
@@ -132,10 +134,11 @@ func normalizeCharacterSwapRequest(req *ServiceUsageRequest) error {
 	return nil
 }
 
-// planCharacterSwapChunks splits the source into equal segments short enough
-// that each provider clip (5-10 s, integer) carries at least ~1 s of slack: the
-// model copies the reference video's opening frames, and that slack is trimmed
-// off the head of every clip before concatenation.
+// planCharacterSwapChunks splits the source into equal segments of at most
+// 4.5 s. H3 drifts back toward the reference footage the longer a clip runs,
+// so short clips leak far less, and each 5 s provider clip still carries >=0.5 s
+// of slack that is trimmed off the head (the model copies the reference
+// video's opening frames). Cost per source second is unchanged.
 func planCharacterSwapChunks(seconds float64) ([]characterSwapChunk, error) {
 	if seconds < characterSwapMinSeconds-0.05 {
 		return nil, fmt.Errorf("source video must be at least %d seconds", characterSwapMinSeconds)
@@ -145,14 +148,14 @@ func planCharacterSwapChunks(seconds float64) ([]characterSwapChunk, error) {
 	}
 	seconds = math.Min(seconds, characterSwapMaxSeconds)
 	count := int(math.Ceil(seconds / characterSwapSegmentSeconds))
-	if count < 1 {
+	if count < 1 || seconds <= characterSwapMinSeconds {
 		count = 1
 	}
 	length := seconds / float64(count)
 	chunks := make([]characterSwapChunk, 0, count)
 	for i := 0; i < count; i++ {
 		start := float64(i) * length
-		duration := int(math.Ceil(length-1e-6)) + 1
+		duration := int(math.Ceil(length + characterSwapMinSlack))
 		if duration < characterSwapMinSeconds {
 			duration = characterSwapMinSeconds
 		}
@@ -527,29 +530,42 @@ func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *character
 					leaked, reason = checkCharacterSwapClip(ctx, *state, localPath)
 				}
 			}
-			if leaked && !videoJobCancellationRequested(job.ID) {
-				log.Printf("[character-swap] job=%s clip %d leaked source performers (%s); regenerating", job.ID, chunk.Index+1, reason)
+			bestLeakCount := 0
+			if leaked {
+				bestLeakCount = characterSwapLeakCount(reason)
+			}
+			for attempt := 1; leaked && attempt <= characterSwapMaxRetries && !videoJobCancellationRequested(job.ID); attempt++ {
+				log.Printf("[character-swap] job=%s clip %d leaked source performers (%s); regenerating (attempt %d)", job.ID, chunk.Index+1, reason, attempt)
 				retryInput := characterSwapFalInput(*state, chunk)
-				retryInput["seed"] = int(time.Now().UnixNano()%2_000_000_000) + chunk.Index
-				if data, _, err := callFalQueue(http.MethodPost, "https://queue.fal.run/"+characterSwapFalPath, retryInput); err == nil {
-					var queued falQueueResponse
-					if json.Unmarshal(data, &queued) == nil && queued.RequestID != "" {
-						if retryURL, err := waitCharacterSwapChunk(ctx, job.ID, queued.RequestID); err == nil {
-							retryPath := filepath.Join(workDir, fmt.Sprintf("out-%02d-retry.mp4", chunk.Index))
-							mu.Lock()
-							state.Chunks[i].ProviderUSD += passUSD
-							state.Chunks[i].Retries++
-							mu.Unlock()
-							if err := downloadURLToFile(ctx, retryURL, retryPath); err == nil {
-								retryLeaked, retryReason := checkCharacterSwapClip(ctx, *state, retryPath)
-								if !retryLeaked {
-									outputURL, localPath, leaked, reason = retryURL, retryPath, false, "regenerated: "+reason
-								} else {
-									reason = "kept first pass; retry also leaked: " + retryReason
-								}
-							}
-						}
-					}
+				retryInput["seed"] = int(time.Now().UnixNano()%2_000_000_000) + chunk.Index + attempt
+				data, _, err := callFalQueue(http.MethodPost, "https://queue.fal.run/"+characterSwapFalPath, retryInput)
+				if err != nil {
+					break
+				}
+				var queued falQueueResponse
+				if json.Unmarshal(data, &queued) != nil || queued.RequestID == "" {
+					break
+				}
+				retryURL, err := waitCharacterSwapChunk(ctx, job.ID, queued.RequestID)
+				if err != nil {
+					break
+				}
+				mu.Lock()
+				state.Chunks[i].ProviderUSD += passUSD
+				state.Chunks[i].Retries++
+				mu.Unlock()
+				persist()
+				retryPath := filepath.Join(workDir, fmt.Sprintf("out-%02d-retry%d.mp4", chunk.Index, attempt))
+				if err := downloadURLToFile(ctx, retryURL, retryPath); err != nil {
+					continue
+				}
+				retryLeaked, retryReason := checkCharacterSwapClip(ctx, *state, retryPath)
+				if !retryLeaked {
+					outputURL, localPath, leaked, reason = retryURL, retryPath, false, fmt.Sprintf("regenerated on attempt %d: %s", attempt, reason)
+					break
+				}
+				if count := characterSwapLeakCount(retryReason); count < bestLeakCount {
+					outputURL, localPath, bestLeakCount, reason = retryURL, retryPath, count, "kept least-leaking attempt: "+retryReason
 				}
 			}
 			mu.Lock()
@@ -804,6 +820,17 @@ func characterSwapMediaKind(value, expected string) error {
 		return fmt.Errorf("expected an image file, got video extension %s", ext)
 	}
 	return nil
+}
+
+// characterSwapLeakCount parses the "frames [a b c]" prefix written by the QA
+// check so retries can keep the least-leaking attempt.
+func characterSwapLeakCount(reason string) int {
+	start := strings.Index(reason, "[")
+	end := strings.Index(reason, "]")
+	if start < 0 || end <= start {
+		return 0
+	}
+	return len(strings.Fields(reason[start+1 : end]))
 }
 
 func trimSeconds(value float64) string {
