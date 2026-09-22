@@ -209,3 +209,40 @@ func TestExactPricing(t *testing.T) {
 		t.Fatal("too many characters should be rejected")
 	}
 }
+
+func TestReferenceVideoPlanning(t *testing.T) {
+	segs := planReferenceVideoSegments(30.16, []float64{0.5, 5, 8.25, 12.17, 15.92, 19.42, 22.29, 26.58})
+	if len(segs) < 2 {
+		t.Fatalf("30 s should split: %+v", segs)
+	}
+	end := 0.0
+	for _, s := range segs {
+		if s.Length > referenceVideoMaxSegment+1e-6 || s.Length < referenceVideoMinSegment-1e-6 || math.Abs(s.Start-end) > 1e-6 {
+			t.Fatalf("bad segment %+v", s)
+		}
+		end = s.Start + s.Length
+	}
+	if math.Abs(end-30.16) > 1e-6 || math.Abs(segs[0].Length-12.17) > 1e-6 {
+		t.Fatalf("segments should end on cuts and cover the source: %+v", segs)
+	}
+	req := ServiceUsageRequest{Prompt: "p", ReferenceVideoURLs: []string{"https://x/a.mp4"}}
+	if err := normalizeReferenceVideoRequest(&req); err != nil || req.Model != "mini" || req.Resolution != "720p" {
+		t.Fatalf("defaults: %v %+v", err, req)
+	}
+	_, long, out, in, err := referenceVideoPlan(req, 15, nil)
+	if err != nil || long || out != 15 || in != 15 {
+		t.Fatalf("15 s plan %v %v %v %v", long, out, in, err)
+	}
+	if usd := referenceVideoChargeUSD(referenceVideoProviderUSD(req, out, in)); math.Abs(usd-5.57) > 1e-9 {
+		t.Fatalf("15 s mini 720p charge %.4f", usd)
+	}
+	_, long, out, _, err = referenceVideoPlan(req, 30.16, []float64{12.17, 22.29})
+	if err != nil || !long || out < 30 {
+		t.Fatalf("30 s plan %v %v %v", long, out, err)
+	}
+	for _, bad := range []ServiceUsageRequest{{Prompt: "p"}, {ReferenceVideoURLs: []string{"https://x/a.mp4"}}, {Prompt: "p", Model: "ultra", ReferenceImageURLs: []string{"https://x/a.png"}}, {Prompt: "p", Resolution: "1080p", ReferenceImageURLs: []string{"https://x/a.png"}}} {
+		if err := normalizeReferenceVideoRequest(&bad); err == nil {
+			t.Fatalf("should reject %+v", bad)
+		}
+	}
+}

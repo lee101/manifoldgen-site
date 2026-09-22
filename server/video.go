@@ -838,6 +838,10 @@ func processVideoJob(jobID string) {
 		processCharacterSwapJob(job)
 		return
 	}
+	if job.Service == referenceVideoService {
+		processReferenceVideoJob(job)
+		return
+	}
 	if job.Service == "character_animation" {
 		processCharacterAnimationJob(job)
 		return
@@ -1890,7 +1894,7 @@ func handleRetryVideoJob(ctx *fasthttp.RequestCtx, jobID string) {
 		jsonError(ctx, http.StatusConflict, "only failed generations can be retried")
 		return
 	}
-	if job.Service != "h3_video" && job.Service != "sfx_generation" && job.Service != musicVideoService && job.Service != "video_restyle" && job.Service != characterSwapService {
+	if job.Service != "h3_video" && job.Service != "sfx_generation" && job.Service != musicVideoService && job.Service != "video_restyle" && job.Service != characterSwapService && job.Service != referenceVideoService {
 		jsonError(ctx, http.StatusConflict, "this generation cannot be retried; start a new generation")
 		return
 	}
@@ -1898,6 +1902,8 @@ func handleRetryVideoJob(ctx *fasthttp.RequestCtx, jobID string) {
 		err = retryVideoRestyleJob(job)
 	} else if job.Service == characterSwapService {
 		err = retryCharacterSwapJob(job)
+	} else if job.Service == referenceVideoService {
+		err = retryReferenceVideoJob(job)
 	} else {
 		err = retryH3VideoJob(job)
 	}
@@ -2013,6 +2019,9 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 			}
 			if job.Service == characterSwapService {
 				exposePublicCharacterSwapStatus(result)
+			}
+			if job.Service == referenceVideoService {
+				exposePublicReferenceVideoStatus(result)
 			}
 			for key := range result {
 				if strings.HasPrefix(key, "_agent") && job.Service == dramatizeServiceName {

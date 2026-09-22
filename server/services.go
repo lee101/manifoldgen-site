@@ -54,6 +54,7 @@ var servicePricesUSD = map[string]float64{
 	"relight":                  0.12,   // per relit image through fal IC-Light v2
 	"upscale_image":            0.15,   // per 2x creative upscale through fal
 	"lofi_loop":                0.12,   // per looping video: cover still + motion + visualizer + loop mux
+	"reference_video":          3.72,   // 15 s Seedance 2.0 Mini 720p with a 15 s reference video, 1.5x
 	"character_swap_video":     5.04,   // 30 s source at 768P: $0.16 per source second plus one GPT Image 2 frame
 }
 
@@ -377,6 +378,7 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "upscale-image", Internal: "upscale_image"},
 	{Public: "lofi_loop", Internal: "lofi_loop"},
 	{Public: "character_swap_video", Internal: "character_swap_video"},
+	{Public: "reference-video", Internal: "reference_video"},
 }
 
 func requestedServiceName(service string) string {
@@ -438,6 +440,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"relight":                  "per relit image",
 		"upscale_image":            "per 2x creative upscale",
 		"lofi_loop":                "per looping video (cover still, motion, visualizer, loop mux); add music at the track rate",
+		"reference_video":          "Seedance 2.0 reference-to-video: Mini $0.23/s output + $0.14/s reference video at 720p ($0.11 + $0.07 at 480p); Pro $0.46 + $0.27 at 720p, $1.02 + $0.61 at 1080p",
 		"character_swap_video":     "per second of source video ($0.16/s at 768P, $0.30/s at 2K), plus $0.30 per detected shot after the first for per-shot reference frames, plus one GPT Image 2 frame when no image_url is supplied",
 	}
 	pricing := make([]ServicePricing, 0, len(publicServiceAliases))
@@ -585,6 +588,10 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 	if req.Service == "video_restyle" {
 		handleVideoRestyleService(ctx, req, user)
+		return
+	}
+	if req.Service == referenceVideoService {
+		handleReferenceVideoService(ctx, req, user)
 		return
 	}
 	if req.Service == characterSwapService {
