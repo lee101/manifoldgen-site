@@ -131,13 +131,17 @@ func TestCharacterSwapLeakCount(t *testing.T) {
 }
 
 func TestCharacterSwapHostedImage(t *testing.T) {
-	if got := characterSwapHostedImage([]byte(`{"data":[{"b64_json":"abc"}],"saved_image_url":"https://cdn/x.png"}`)); got != "https://cdn/x.png" {
+	r2PublicHost, r2PathPrefix = "cdn.example", "gallery"
+	if got := characterSwapHostedImage([]byte(`{"data":[{"b64_json":"abc"}]}`), &GeneratedImage{FilePath: "originals/a_b.webp"}); got != "https://cdn.example/gallery/originals/a_b.webp" {
+		t.Fatalf("gallery record not used: %q", got)
+	}
+	if got := characterSwapHostedImage([]byte(`{"data":[{"b64_json":"abc"}],"saved_image_url":"https://cdn/x.png"}`), nil); got != "https://cdn/x.png" {
 		t.Fatalf("saved_image_url not preferred: %q", got)
 	}
-	if got := characterSwapHostedImage([]byte(`{"data":[{"url":"https://prov/y.png"}]}`)); got != "https://prov/y.png" {
+	if got := characterSwapHostedImage([]byte(`{"data":[{"url":"https://prov/y.png"}]}`), nil); got != "https://prov/y.png" {
 		t.Fatalf("provider url not found: %q", got)
 	}
-	if got := characterSwapHostedImage([]byte(`{"data":[{"b64_json":"abc"}]}`)); got != "" {
+	if got := characterSwapHostedImage([]byte(`{"data":[{"b64_json":"abc"}]}`), nil); got != "" {
 		t.Fatalf("expected no url, got %q", got)
 	}
 }

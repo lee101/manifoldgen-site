@@ -552,8 +552,8 @@ func generateCharacterSwapImage(user *User, state characterSwapState) (string, e
 	if err != nil {
 		return "", err
 	}
-	result, _ = persistGeneratedZImage(req, user, result)
-	if hosted := characterSwapHostedImage(result); hosted != "" {
+	result, saved := persistGeneratedZImage(req, user, result)
+	if hosted := characterSwapHostedImage(result, saved); hosted != "" {
 		return hosted, nil
 	}
 	return "", fmt.Errorf("no hosted image was returned")
@@ -562,7 +562,10 @@ func generateCharacterSwapImage(user *User, state characterSwapState) (string, e
 // characterSwapHostedImage returns the durable https URL of a persisted image
 // edit: the gallery copy written by persistGeneratedZImage when the provider
 // answered with base64, otherwise a hosted URL from the provider payload.
-func characterSwapHostedImage(result []byte) string {
+func characterSwapHostedImage(result []byte, saved *GeneratedImage) string {
+	if saved != nil && saved.FilePath != "" {
+		return fmt.Sprintf("https://%s/%s/%s", r2PublicHost, strings.TrimSuffix(r2PathPrefix, "/"), strings.TrimLeft(saved.FilePath, "/"))
+	}
 	var payload map[string]interface{}
 	if err := json.Unmarshal(result, &payload); err == nil {
 		if saved, _ := payload["saved_image_url"].(string); strings.HasPrefix(saved, "https://") {
@@ -623,8 +626,8 @@ func redrawCharacterSwapShots(ctx context.Context, job *VideoJob, user *User, st
 				return
 			}
 			editReq := ServiceUsageRequest{Service: "image_edit", Prompt: prompt, ImageURL: frameURL, Width: 1536, Height: 1024}
-			result, _ = persistGeneratedZImage(editReq, user, result)
-			hosted := characterSwapHostedImage(result)
+			result, saved := persistGeneratedZImage(editReq, user, result)
+			hosted := characterSwapHostedImage(result, saved)
 			mu.Lock()
 			state.ShotImageUSD += servicePricesUSD["gpt_image"]
 			if hosted != "" {
