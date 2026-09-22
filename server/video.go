@@ -1890,12 +1890,14 @@ func handleRetryVideoJob(ctx *fasthttp.RequestCtx, jobID string) {
 		jsonError(ctx, http.StatusConflict, "only failed generations can be retried")
 		return
 	}
-	if job.Service != "h3_video" && job.Service != "sfx_generation" && job.Service != musicVideoService && job.Service != "video_restyle" {
+	if job.Service != "h3_video" && job.Service != "sfx_generation" && job.Service != musicVideoService && job.Service != "video_restyle" && job.Service != characterSwapService {
 		jsonError(ctx, http.StatusConflict, "this generation cannot be retried; start a new generation")
 		return
 	}
 	if job.Service == "video_restyle" {
 		err = retryVideoRestyleJob(job)
+	} else if job.Service == characterSwapService {
+		err = retryCharacterSwapJob(job)
 	} else {
 		err = retryH3VideoJob(job)
 	}

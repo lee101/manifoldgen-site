@@ -622,17 +622,26 @@ func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *character
 			return fmt.Errorf("cancelled")
 		}
 		chunk := state.Chunks[i]
-		if chunk.OutputURL != "" && chunk.LocalPath != "" {
+		if chunk.OutputURL != "" && chunk.Status == "completed" {
 			continue
 		}
 		if i > 0 && !chunk.ShotStart && chunk.PrevFrame == "" {
 			prev := state.Chunks[i-1]
+			prevPath := prev.LocalPath
+			if info, err := os.Stat(prevPath); prevPath == "" || err != nil || info.Size() == 0 {
+				prevPath = filepath.Join(workDir, fmt.Sprintf("out-%02d.mp4", prev.Index))
+				if err := downloadURLToFile(ctx, prev.OutputURL, prevPath); err != nil {
+					prevPath = ""
+				}
+			}
 			framePath := filepath.Join(workDir, fmt.Sprintf("prev-%02d.png", chunk.Index))
 			at := prev.Lead + prev.Length - 1.0/24
-			if err := lofiloop.RunFFmpeg(ctx, "-y", "-loglevel", "error", "-ss", trimSeconds(at), "-i", prev.LocalPath, "-frames:v", "1", "-update", "1", framePath); err == nil {
-				if frameURL, err := uploadCharacterSwapFile(ctx, framePath, job.UserID, "image/png"); err == nil {
-					chunk.PrevFrame = frameURL
-					state.Chunks[i].PrevFrame = frameURL
+			if prevPath != "" {
+				if err := lofiloop.RunFFmpeg(ctx, "-y", "-loglevel", "error", "-ss", trimSeconds(at), "-i", prevPath, "-frames:v", "1", "-update", "1", framePath); err == nil {
+					if frameURL, err := uploadCharacterSwapFile(ctx, framePath, job.UserID, "image/png"); err == nil {
+						chunk.PrevFrame = frameURL
+						state.Chunks[i].PrevFrame = frameURL
+					}
 				}
 			}
 		}
@@ -750,7 +759,7 @@ func muxCharacterSwapVideo(ctx context.Context, state characterSwapState, source
 		if trimStart < 0 {
 			trimStart = 0
 		}
-		fmt.Fprintf(&filter, "[%d:v]trim=start=%s,setpts=PTS-STARTPTS,fps=24,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=stop_mode=clone:stop_duration=1,trim=duration=%s,setpts=PTS-STARTPTS,format=yuv420p[v%d];",
+		fmt.Fprintf(&filter, "[%d:v]trim=start=%s,setpts=PTS-STARTPTS,fps=24,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=stop_mode=clone:stop_duration=1,trim=duration=%s,setpts=PTS-STARTPTS,settb=AVTB,format=yuv420p[v%d];",
 			i, trimSeconds(trimStart), trimSeconds(keep), i)
 	}
 	if len(state.Chunks) == 1 {
@@ -831,6 +840,21 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 	}
 	indexCompletedVideo(job, payload)
 	maybeTriggerAutoTopup(job.UserID)
+}
+
+// retryCharacterSwapJob re-queues a failed swap. Completed clips are kept in
+// the persisted state, so only the missing clips and the final assembly run
+// again.
+func retryCharacterSwapJob(job *VideoJob) error {
+	state, err := readCharacterSwapState(job)
+	if err != nil {
+		return err
+	}
+	if err := persistCharacterSwapState(job.ID, "queued", state); err != nil {
+		return err
+	}
+	launchVideoJob(job.ID)
+	return nil
 }
 
 func exposePublicCharacterSwapStatus(payload map[string]interface{}) {
