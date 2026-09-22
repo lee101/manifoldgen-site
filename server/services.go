@@ -728,6 +728,24 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, 502, "service temporarily unavailable")
 		return
 	}
+	if req.Service == "image_edit" && !unlimitedImage && cutePrice > 0 && resultEngine(result) == "ra2" && usdEquiv > ra2ImageEditPriceUSD {
+		// The RA2 lane is far cheaper than the metered OpenPaths edit price
+		// that was reserved up front; return the difference.
+		actualCost := ra2ImageEditPriceUSD / cutePrice
+		if balance, settleErr := dbConn.AddUserCredits(user.ID, cuteCost-actualCost); settleErr == nil {
+			newBalance = balance
+			go dbConn.CreateBillingEvent(&BillingEvent{
+				UserID: user.ID, EventType: "refund", Amount: cuteCost - actualCost, CuteAmount: cuteCost - actualCost,
+				USDAmount: usdEquiv - ra2ImageEditPriceUSD, CreditsAfter: balance,
+				Description: "image_edit served by RA2 at the RA2 price",
+			})
+			cuteCost = actualCost
+			billableCost = actualCost
+			usdEquiv = ra2ImageEditPriceUSD
+		} else {
+			log.Printf("RA2 image edit settlement refund failed for user=%s: %v", user.WalletAddress, settleErr)
+		}
+	}
 	if req.Service == "openpaths_tts" && !unlimitedImage {
 		actualUSD, inputTokens, outputTokens := geminiTTSResultCostUSD(result, usdEquiv)
 		actualCost := actualUSD / cutePrice
@@ -1211,6 +1229,11 @@ func proxyToBackend(req ServiceUsageRequest, backendURL string) ([]byte, error) 
 		return proxyOpenPathsImageGeneration(req)
 
 	case "image_edit":
+		if result, err := proxyRA2ImageEdit(req); err == nil {
+			return result, nil
+		} else {
+			log.Printf("ra2 image edit unavailable, using OpenPaths: %v", err)
+		}
 		return proxyOpenPathsImageEdit(req)
 
 	case "openpaths_image":
@@ -1415,6 +1438,89 @@ func proxyZImageWithFallbacks(req ServiceUsageRequest, primaryURL string) ([]byt
 		return proxyZImageBatch(req, primaryURL, n)
 	}
 	return proxySingleZImageWithFallbacks(req, primaryURL)
+}
+
+// ra2ImageEditPriceUSD is what an RA2 reference edit costs the user; the
+// OpenPaths route keeps the metered image_edit price.
+const ra2ImageEditPriceUSD = 0.04
+
+// proxyRA2ImageEdit runs a reference edit on the local RA2 lane. The instance
+// only accepts inline bytes, so the source is fetched first.
+func proxyRA2ImageEdit(req ServiceUsageRequest) ([]byte, error) {
+	backend := ra2BackendURL()
+	if backend == "" {
+		return nil, fmt.Errorf("RA2 backend is not configured")
+	}
+	if strings.TrimSpace(req.ImageURL) == "" || strings.TrimSpace(req.Prompt) == "" {
+		return nil, fmt.Errorf("image_url and prompt are required")
+	}
+	parsed, err := url.ParseRequestURI(req.ImageURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+		return nil, fmt.Errorf("image_url must be an absolute http(s) URL")
+	}
+	source, err := downloadRemoteImage(req.ImageURL)
+	if err != nil {
+		return nil, err
+	}
+	width, height := req.Width, req.Height
+	if width <= 0 || height <= 0 {
+		width, height = 1024, 1024
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"prompt": strings.TrimSpace(req.Prompt), "image_base64": base64.StdEncoding.EncodeToString(source),
+		"size": fmt.Sprintf("%dx%d", width, height), "n": 1,
+	})
+	httpReq, err := http.NewRequest(http.MethodPost, backend+"/v1/images/edits", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if secret := ra2BackendSecret(); secret != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+secret)
+		httpReq.Header.Set("X-API-Key", secret)
+		httpReq.Header.Set("secret", secret)
+	}
+	resp, err := backendClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("ra2 edit returned %d: %s", resp.StatusCode, truncateString(strings.TrimSpace(string(respBody)), 300))
+	}
+	var openai struct {
+		Data []struct {
+			B64JSON string `json:"b64_json"`
+			URL     string `json:"url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &openai); err != nil || len(openai.Data) == 0 || (openai.Data[0].B64JSON == "" && openai.Data[0].URL == "") {
+		return nil, fmt.Errorf("ra2 edit returned no image")
+	}
+	item := map[string]interface{}{}
+	if openai.Data[0].B64JSON != "" {
+		item["image_base64"] = openai.Data[0].B64JSON
+	}
+	if openai.Data[0].URL != "" {
+		item["image_url"] = openai.Data[0].URL
+	}
+	return json.Marshal(map[string]interface{}{
+		"image_base64": openai.Data[0].B64JSON, "images": []map[string]interface{}{item}, "n": 1,
+		"width": width, "height": height, "format": "webp", "engine": "ra2", "model": "ra2",
+		"prompt": req.Prompt, "charged_usd": ra2ImageEditPriceUSD,
+	})
+}
+
+func resultEngine(result []byte) string {
+	var probe struct {
+		Engine string `json:"engine"`
+	}
+	_ = json.Unmarshal(result, &probe)
+	return probe.Engine
 }
 
 // proxyOpenPathsImageEdit sends one logical edit route to OpenPaths. Provider
