@@ -16,6 +16,9 @@ type SwapEstimate = {
   rate_usd_per_second?: number;
   image_included?: boolean;
   estimated_generation_seconds?: number;
+  shots?: number;
+  shot_fee_usd?: number;
+  per_shot_frames?: boolean;
 };
 type ServiceResponse = {
   result?: { job_id?: string; status?: string; status_url?: string; stage?: string };
@@ -124,6 +127,7 @@ function stageLabel(result?: JobResult): string {
   switch (result?.stage) {
     case 'frame': return 'Extracting the reference frame';
     case 'image': return 'Drawing the new characters';
+    case 'shots': return 'Redrawing one frame per shot';
     case 'mux': return 'Laying the original soundtrack back on';
     case 'video': {
       const total = result?.chunks_total ?? 0;
@@ -155,6 +159,7 @@ export default function CharacterSwapTool() {
   const [videoPrompt, setVideoPrompt] = useState(DEFAULT_VIDEO_PROMPT);
   const [resolution, setResolution] = useState<'768P' | '2K'>('768P');
   const [audioReference, setAudioReference] = useState(false);
+  const [perShotFrames, setPerShotFrames] = useState(true);
   const [estimate, setEstimate] = useState<SwapEstimate | null>(null);
   const [estimating, setEstimating] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -185,7 +190,7 @@ export default function CharacterSwapTool() {
           await fetch('/api/character-swap/estimate', {
             method: 'POST',
             headers: { Authorization: `Bearer ${currentUser.api_key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ video_url: videoURL, image_url: swappedImageURL, resolution, prompt: videoPrompt.trim(), include_audio: audioReference }),
+            body: JSON.stringify({ video_url: videoURL, image_url: swappedImageURL, resolution, prompt: videoPrompt.trim(), include_audio: audioReference, max_quality: perShotFrames }),
           }),
           'Could not estimate the swap',
         );
@@ -197,7 +202,7 @@ export default function CharacterSwapTool() {
       }
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [videoURL, swappedImageURL, resolution, videoPrompt, audioReference, user]);
+  }, [videoURL, swappedImageURL, resolution, videoPrompt, audioReference, perShotFrames, user]);
 
   function resetSample() {
     estimateSequence.current += 1;
@@ -293,6 +298,8 @@ export default function CharacterSwapTool() {
             resolution,
             prompt_expansion_mode: 'disabled',
             include_audio: audioReference,
+            max_quality: perShotFrames,
+            character_prompt: characterPrompt.trim(),
           }),
         }),
         'Could not start the character swap',
@@ -338,7 +345,7 @@ export default function CharacterSwapTool() {
   const estimateLine = estimating
     ? 'Pricing the swap…'
     : estimate && typeof estimate.estimated_credits === 'number' && typeof estimate.estimated_cost_usd === 'number'
-      ? `≈ ${estimate.estimated_credits} credits ($${estimate.estimated_cost_usd.toFixed(2)}) · ${estimate.chunks ?? '?'} clips · ${Math.round(estimate.source_seconds ?? 0)} s source · about ${Math.max(1, Math.round((estimate.estimated_generation_seconds ?? 0) / 60))} min`
+      ? `≈ ${estimate.estimated_credits} credits ($${estimate.estimated_cost_usd.toFixed(2)}) · ${estimate.shots ?? 1} shots · ${estimate.chunks ?? '?'} clips · ${Math.round(estimate.source_seconds ?? 0)} s · about ${Math.max(1, Math.round((estimate.estimated_generation_seconds ?? 0) / 60))} min`
       : 'Estimate appears when signed in';
 
   return <>
@@ -432,6 +439,10 @@ export default function CharacterSwapTool() {
           {(['768P', '2K'] as const).map((value) => <button key={value} type="button" disabled={busy}
             className={resolution === value ? styles.active : ''} onClick={() => setResolution(value)}>{value}</button>)}
         </div>
+        <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <input data-testid="swap-per-shot" type="checkbox" checked={perShotFrames} disabled={busy} onChange={(event) => setPerShotFrames(event.target.checked)} />
+          Follow every cut: redraw one frame per detected shot so wide shots, close-ups and angles match the source (+$0.30 per extra shot)
+        </label>
         <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <input data-testid="swap-audio" type="checkbox" checked={audioReference} disabled={busy} onChange={(event) => setAudioReference(event.target.checked)} />
           Also give H3 the song as an audio reference (experimental lip-sync guidance)

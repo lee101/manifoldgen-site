@@ -438,7 +438,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"relight":                  "per relit image",
 		"upscale_image":            "per 2x creative upscale",
 		"lofi_loop":                "per looping video (cover still, motion, visualizer, loop mux); add music at the track rate",
-		"character_swap_video":     "per second of source video ($0.16/s at 768P, $0.30/s at 2K) plus one GPT Image 2 frame when no image_url is supplied",
+		"character_swap_video":     "per second of source video ($0.16/s at 768P, $0.30/s at 2K), plus $0.30 per detected shot after the first for per-shot reference frames, plus one GPT Image 2 frame when no image_url is supplied",
 	}
 	pricing := make([]ServicePricing, 0, len(publicServiceAliases))
 	for _, alias := range publicServiceAliases {

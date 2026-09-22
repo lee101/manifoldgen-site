@@ -84,6 +84,17 @@ func TestCharacterSwapProviderUSD(t *testing.T) {
 	if usd := characterSwapChargeUSD("2K", 30.16); math.Abs(usd-9.05) > 1e-9 {
 		t.Fatalf("2K 30.16s charge %.4f", usd)
 	}
+	shots, _ := planCharacterSwapChunks(30.16, 5, 10, 20)
+	if fee := characterSwapShotFee(ServiceUsageRequest{}, shots); math.Abs(fee-0.90) > 1e-9 {
+		t.Fatalf("shot fee %.4f", fee)
+	}
+	if fee := characterSwapShotFee(ServiceUsageRequest{MaxQuality: boolPtr(false)}, shots); fee != 0 {
+		t.Fatalf("shot fee should be waived when per-shot frames are off: %.4f", fee)
+	}
+	usd, _, _, err := characterSwapEstimate(ServiceUsageRequest{Resolution: "768P", ImageURL: "https://x/i.png"}, 30.16, 5, 10, 20)
+	if err != nil || math.Abs(usd-(4.83+0.90)) > 1e-9 {
+		t.Fatalf("estimate with shots %.4f %v", usd, err)
+	}
 }
 
 func TestNormalizeCharacterSwapRequest(t *testing.T) {
@@ -129,6 +140,11 @@ func TestCharacterSwapFalInput(t *testing.T) {
 	first := characterSwapFalInput(state, characterSwapChunk{Index: 0, Duration: 5, SourceURL: "https://x/c.mp4"})
 	if len(first["reference_image_urls"].([]string)) != 1 || first["prompt"] != "p" {
 		t.Fatalf("first clip should not reference a previous frame: %+v", first)
+	}
+	shot := characterSwapFalInput(state, characterSwapChunk{Index: 3, Duration: 5, SourceURL: "https://x/c.mp4", ShotImage: "https://x/s.png", PrevFrame: "https://x/p.png"})
+	shotImages := shot["reference_image_urls"].([]string)
+	if len(shotImages) != 3 || shotImages[0] != "https://x/s.png" || shotImages[1] != "https://x/i.png" || !strings.Contains(shot["prompt"].(string), "Image 3 is the exact frame") {
+		t.Fatalf("shot clip references wrong: %+v", shot)
 	}
 	audio := ServiceUsageRequest{VideoURL: "https://example.com/a.mp4", ImageURL: "https://example.com/b.png", IncludeAudio: boolPtr(true)}
 	if err := normalizeCharacterSwapRequest(&audio); err != nil || !strings.Contains(audio.Prompt, "Audio 1") {
