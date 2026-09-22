@@ -54,7 +54,7 @@ var servicePricesUSD = map[string]float64{
 	"relight":                  0.12,   // per relit image through fal IC-Light v2
 	"upscale_image":            0.15,   // per 2x creative upscale through fal
 	"lofi_loop":                0.12,   // per looping video: cover still + motion + visualizer + loop mux
-	"character_swap_video":     3.12,   // 30 s source at 768P: three 10 s H3 reference clips at $0.08/s x1.2 plus one GPT Image 2 frame
+	"character_swap_video":     3.70,   // 30 s source at 768P: four 9 s H3 reference clips at $0.08/s x1.2 plus one GPT Image 2 frame
 }
 
 var zimageDefaultSteps = 8

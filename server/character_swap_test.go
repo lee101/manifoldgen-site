@@ -12,7 +12,7 @@ func TestPlanCharacterSwapChunks(t *testing.T) {
 		minLen  float64
 		maxDur  int
 	}{
-		{5, 1, 5, 5}, {10, 1, 10, 10}, {10.5, 2, 5.25, 6}, {30.16, 4, 7.54, 8}, {30, 3, 10, 10}, {60, 6, 10, 10}, {11, 2, 5.5, 6},
+		{5, 1, 5, 6}, {8.5, 1, 8.5, 10}, {10, 2, 5, 6}, {10.5, 2, 5.25, 7}, {30.16, 4, 7.54, 9}, {30, 4, 7.5, 9}, {60, 8, 7.5, 9}, {11, 2, 5.5, 7},
 	}
 	for _, tc := range cases {
 		chunks, err := planCharacterSwapChunks(tc.seconds)
@@ -45,10 +45,10 @@ func TestPlanCharacterSwapChunks(t *testing.T) {
 
 func TestCharacterSwapProviderUSD(t *testing.T) {
 	chunks, _ := planCharacterSwapChunks(30)
-	if usd := characterSwapProviderUSD("768P", chunks); math.Abs(usd-2.40) > 1e-9 {
+	if usd := characterSwapProviderUSD("768P", chunks); math.Abs(usd-2.88) > 1e-9 {
 		t.Fatalf("768P 30s provider cost %.4f", usd)
 	}
-	if usd := characterSwapProviderUSD("2K", chunks); math.Abs(usd-3.90) > 1e-9 {
+	if usd := characterSwapProviderUSD("2K", chunks); math.Abs(usd-4.68) > 1e-9 {
 		t.Fatalf("2K 30s provider cost %.4f", usd)
 	}
 }

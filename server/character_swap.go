@@ -27,19 +27,21 @@ const (
 	characterSwapMaxSeconds     = 60
 	characterSwapMinSeconds     = 5
 	characterSwapChunkSeconds   = 10
+	characterSwapSegmentSeconds = 8.5
 	characterSwapJobTimeout     = 90 * time.Minute
 	characterSwapChunkTimeout   = 40 * time.Minute
 	characterSwapMaxArtifact    = 768 << 20
 	characterSwapFalPath        = "minimax/h3/reference-to-video"
 	characterSwapFalRequestBase = "minimax/h3"
 	characterSwapHeadTrim       = 0.125
+	characterSwapMaxHeadTrim    = 1.5
 )
 
 var characterSwapRates = map[string]float64{"768P": 0.08, "2K": 0.13}
 
 var characterSwapRenderSlots = make(chan struct{}, 2)
 
-const characterSwapDefaultVideoPrompt = "Image 1 shows the new characters and the exact scene. Video 1 is the motion reference. Recreate Video 1 shot-for-shot: every character keeps the identical position, pose, gesture, lip movement and timing as the corresponding person in Video 1, but with the appearance, wardrobe, background and lighting of Image 1. Same camera angle, same framing, same microphone. Photorealistic music video."
+const characterSwapDefaultVideoPrompt = "Image 1 is the exact target look: the new characters, their wardrobe, the set and the background. Video 1 is only the motion and camera reference. From the very first frame show only the characters of Image 1, never the original people. Each new character performs every move, gesture, lip movement and timing of the corresponding person in Video 1, in the identical position and scale. Same camera angles, same framing, same cuts, same props, and the background of Image 1 throughout. Photorealistic music video."
 
 type characterSwapChunk struct {
 	Index       int     `json:"index"`
@@ -127,8 +129,10 @@ func normalizeCharacterSwapRequest(req *ServiceUsageRequest) error {
 	return nil
 }
 
-// planCharacterSwapChunks splits the source into equal segments no longer
-// than the provider's 10 s reference window and never shorter than 5 s.
+// planCharacterSwapChunks splits the source into equal segments short enough
+// that each provider clip (5-10 s, integer) carries at least ~1 s of slack: the
+// model copies the reference video's opening frames, and that slack is trimmed
+// off the head of every clip before concatenation.
 func planCharacterSwapChunks(seconds float64) ([]characterSwapChunk, error) {
 	if seconds < characterSwapMinSeconds-0.05 {
 		return nil, fmt.Errorf("source video must be at least %d seconds", characterSwapMinSeconds)
@@ -137,7 +141,7 @@ func planCharacterSwapChunks(seconds float64) ([]characterSwapChunk, error) {
 		return nil, fmt.Errorf("source video must be at most %d seconds; trim it first", characterSwapMaxSeconds)
 	}
 	seconds = math.Min(seconds, characterSwapMaxSeconds)
-	count := int(math.Ceil(seconds / characterSwapChunkSeconds))
+	count := int(math.Ceil(seconds / characterSwapSegmentSeconds))
 	if count < 1 {
 		count = 1
 	}
@@ -145,7 +149,7 @@ func planCharacterSwapChunks(seconds float64) ([]characterSwapChunk, error) {
 	chunks := make([]characterSwapChunk, 0, count)
 	for i := 0; i < count; i++ {
 		start := float64(i) * length
-		duration := int(math.Ceil(length - 1e-6))
+		duration := int(math.Ceil(length-1e-6)) + 1
 		if duration < characterSwapMinSeconds {
 			duration = characterSwapMinSeconds
 		}
@@ -577,9 +581,8 @@ func muxCharacterSwapVideo(ctx context.Context, state characterSwapState, source
 		}
 		args = append(args, "-i", clipPath)
 		trimStart := characterSwapHeadTrim
-		clipSeconds, err := lofiloop.ProbeDurationSeconds(ctx, clipPath)
-		if err == nil && clipSeconds-trimStart < chunk.Length {
-			trimStart = math.Max(0, clipSeconds-chunk.Length)
+		if clipSeconds, err := lofiloop.ProbeDurationSeconds(ctx, clipPath); err == nil {
+			trimStart = math.Max(0, math.Min(characterSwapMaxHeadTrim, clipSeconds-chunk.Length))
 		}
 		fmt.Fprintf(&filter, "[%d:v]trim=start=%s,setpts=PTS-STARTPTS,fps=24,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=stop_mode=clone:stop_duration=1,trim=duration=%s,setpts=PTS-STARTPTS[v%d];",
 			i, trimSeconds(trimStart), trimSeconds(chunk.Length), i)
