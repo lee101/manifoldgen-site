@@ -215,6 +215,45 @@ def cmd_blurfaces(a):
     print(json.dumps({'frames': len(F), 'faces': hidden}))
 
 
+def cmd_align(a):
+    m = model()
+    A = read_frames(a.ref, 640, 360); B = read_frames(a.out, 640, 360)
+    step = 2
+    def kps(F):
+        res = []
+        for i in range(0, len(F), step):
+            ps = [p for p in detect(m, F[i]) if p['kc'] is not None and (p['kc'] > 0.3).sum() >= 6]
+            ps.sort(key=lambda p: (p['box'][0] + p['box'][2]) / 2)
+            res.append(ps)
+        return res
+    ka, kb = kps(A), kps(B)
+    def err(x, y):
+        if not x or len(x) != len(y):
+            return None
+        d = []
+        for p, q in zip(x, y):
+            mm = (p['kc'] > 0.3) & (q['kc'] > 0.3)
+            if mm.sum() >= 4:
+                d.append(float(np.mean(np.linalg.norm(p['kp'][mm] - q['kp'][mm], axis=1))))
+        return float(np.mean(d)) if d else None
+    best, best_lag, zero = None, 0, None
+    max_lag = int(a.max_lag * FPS / step)
+    for lag in range(-max_lag, max_lag + 1):
+        es = [err(ka[i], kb[i + lag]) for i in range(len(ka)) if 0 <= i + lag < len(kb)]
+        es = [e for e in es if e is not None]
+        if len(es) < max(6, len(ka) // 3):
+            continue
+        v = float(np.mean(es))
+        if lag == 0:
+            zero = v
+        if best is None or v < best - 1e-4:
+            best, best_lag = v, lag
+    lag_s = best_lag * step / FPS
+    if zero is not None and best is not None and zero - best < 0.004:
+        lag_s = 0.0
+    print(json.dumps({'lag_seconds': round(lag_s, 4), 'error_at_zero': zero, 'best_error': best}))
+
+
 def cmd_posecheck(a):
     m = model()
     A = read_frames(a.src, 640, 360); B = read_frames(a.out, 640, 360)
@@ -245,6 +284,7 @@ def main():
     c = s.add_parser('crops'); c.add_argument('--image', required=True); c.add_argument('--boxes', required=True); c.add_argument('--frame-index', type=int, default=0); c.add_argument('--out-dir', required=True); c.set_defaults(f=cmd_crops)
     k = s.add_parser('composite'); k.add_argument('--src', required=True); k.add_argument('--boxes', required=True); k.add_argument('--out', required=True); k.add_argument('--pair', action='append', required=True); k.set_defaults(f=cmd_composite)
     f = s.add_parser('blurfaces'); f.add_argument('--src', required=True); f.add_argument('--out', required=True); f.set_defaults(f=cmd_blurfaces)
+    g = s.add_parser('align'); g.add_argument('--ref', required=True); g.add_argument('--out', required=True); g.add_argument('--max-lag', type=float, default=0.75); g.set_defaults(f=cmd_align)
     q = s.add_parser('posecheck'); q.add_argument('--src', required=True); q.add_argument('--out', required=True); q.set_defaults(f=cmd_posecheck)
     a = p.parse_args(); a.f(a)
 

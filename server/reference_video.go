@@ -60,6 +60,7 @@ type referenceVideoSegment struct {
 	Status      string  `json:"status,omitempty"`
 	ProviderUSD float64 `json:"provider_usd"`
 	Attempts    int     `json:"attempts,omitempty"`
+	LagSeconds  float64 `json:"lag_seconds,omitempty"`
 	FacesHidden bool    `json:"faces_hidden,omitempty"`
 	localPath   string
 }
@@ -733,7 +734,24 @@ func assembleReferenceVideo(ctx context.Context, state referenceVideoState, work
 			keep = seg.Length
 		}
 		total += keep
-		fmt.Fprintf(&filter, "[%d:v]fps=24,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,tpad=stop_mode=clone:stop_duration=1,trim=duration=%s,setpts=PTS-STARTPTS[v%d];", i, trimSeconds(keep), i)
+		// Seedance can start a segment a few frames early or late; realign it
+		// to its reference clip by pose before joining.
+		shift := ""
+		if state.Long && seg.localPath != "" {
+			if res, err := runExactHelper(ctx, "align", "--ref", seg.localPath, "--out", path); err == nil {
+				if lag, ok := res["lag_seconds"].(float64); ok && math.Abs(lag) >= 1.0/24 {
+					state.Segments[i].LagSeconds = lag
+					if lag > 0 {
+						shift = fmt.Sprintf("trim=start=%s,setpts=PTS-STARTPTS,", trimSeconds(lag))
+					} else {
+						shift = fmt.Sprintf("tpad=start_mode=clone:start_duration=%s,", trimSeconds(-lag))
+					}
+				}
+			} else {
+				log.Printf("[reference-video] align segment %d skipped: %v", seg.Index+1, err)
+			}
+		}
+		fmt.Fprintf(&filter, "[%d:v]fps=24,%sscale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,tpad=stop_mode=clone:stop_duration=1,trim=duration=%s,setpts=PTS-STARTPTS[v%d];", i, shift, trimSeconds(keep), i)
 	}
 	for i := range state.Segments {
 		fmt.Fprintf(&filter, "[v%d]", i)
