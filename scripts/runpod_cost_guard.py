@@ -35,7 +35,7 @@ REST_BASE = "https://rest.runpod.io/v1"
 QUEUE_BASE = "https://api.runpod.ai/v2"
 DEFAULT_PREFIXES = ("cog-manifold-h3", "omniserve-minimax-music3", "omniserve-yue2-")
 ALERT_ONLY_PREFIXES = ("omniserve-ra2-", "cog-qwen-image-", "pixal3d")
-IDLE_ALERT_ONLY_PREFIXES = ("omniserve-yue2-", "omniserve-ra2-")
+IDLE_ALERT_ONLY_PREFIXES = ("omniserve-ra2-",)
 SCRATCH_PREFIXES = ("h3upscale-probe-",)
 DAILY_CAP_RULES = (
     ("omniserve-minimax-music3", "RUNPOD_COST_GUARD_MUSIC3_DAILY_USD", 40.0),
@@ -105,8 +105,23 @@ def live_workers(health: dict[str, Any]) -> int:
     # RunPod's `ready` signal overlaps lifecycle signals such as `idle` and
     # `running`; summing them double-counts one worker. The largest signal is a
     # conservative estimate and, most importantly for the guard, preserves the
-    # zero/non-zero distinction.
-    return max((int(value or 0) for value in (health.get("workers") or {}).values()), default=0)
+    # zero/non-zero distinction. `throttled` is demand RunPod could not admit,
+    # not capacity we hold, and must never read as a live worker.
+    return max(
+        (
+            int(value or 0)
+            for key, value in (health.get("workers") or {}).items()
+            if key != "throttled"
+        ),
+        default=0,
+    )
+
+
+def standby_workers(endpoint: dict[str, Any]) -> int:
+    # FlashBoot keeps stopped workers as paused snapshots. They hold no GPU and
+    # are not billed, but they still appear in the queue health worker signals.
+    return int(endpoint.get("workersStandby") or 0)
+
 
 
 def consecutive(previous: int, condition: bool) -> int:
@@ -399,11 +414,13 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
         except (TypeError, ValueError) as error:
             report["errors"].append({"endpoint": name, "error": str(error)})
             continue
+        standby = standby_workers(endpoint)
+        active_workers = max(0, workers - standby)
         workers_min = int(endpoint.get("workersMin") or 0)
         pinned_count = consecutive(int(previous.get("pinned_min") or 0), workers_min > 0 and jobs == 0)
         idle_count = consecutive(
             int(previous.get("idle_live") or 0),
-            workers_min == 0 and jobs == 0 and workers > 0,
+            workers_min == 0 and jobs == 0 and active_workers > 0,
         )
         counts = {"pinned_min": pinned_count, "idle_live": idle_count}
         report["counts"][endpoint_id] = counts
@@ -412,6 +429,8 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
             "name": name,
             "jobs": jobs,
             "live_workers": workers,
+            "standby_workers": standby,
+            "active_workers": active_workers,
             "workers_min": workers_min,
             "workers_max": int(endpoint.get("workersMax") or 0),
             "unhealthy_workers": int((health.get("workers") or {}).get("unhealthy") or 0),
@@ -430,7 +449,7 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
                 },
             }
         elif idle_count >= threshold and managed_endpoint(name, idle_alert_prefixes):
-            report["idle_alerts"].append(f"{name} ({endpoint_id}) live worker idle for {idle_count} checks with workersMin=0; alert-only, its callers do not restore workersMax")
+            report["idle_alerts"].append(f"{name} ({endpoint_id}) live worker idle for {idle_count} checks with workersMin=0; alert-only per RUNPOD_COST_GUARD_IDLE_ALERT_ONLY_PREFIXES")
         elif idle_count >= threshold:
             action = {
                 "endpoint": name,
@@ -553,15 +572,18 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
         spend_messages += archive_guard(report, endpoints, api_key, apply)
     except Exception as error:
         report["errors"].append({"scope": "archive", "error": str(error)})
+    alert_status = "spend_cap" if spend_messages else "idle_worker"
     spend_messages += report["idle_alerts"]
     if spend_messages:
         report["alerts"] = spend_messages
         if report["status"] == "ok":
             report["status"] = "warning"
-    if any(action.get("applied") for action in report["actions"]):
+    if report["errors"]:
+        report["status"] = "error"
+    elif any(action.get("applied") for action in report["actions"]):
         report["status"] = "remediated"
     if spend_messages and apply:
-        report["alert_delivery"] = send_alert("spend_cap", "\n".join(spend_messages))
+        report["alert_delivery"] = send_alert(alert_status, "\n".join(spend_messages))
     write_state(state_path, report)
     return report
 

@@ -18,7 +18,7 @@ class RunPodCostGuardTest(unittest.TestCase):
     def test_health_counts_jobs_and_all_worker_states(self) -> None:
         health = {
             "jobs": {"inProgress": 1, "inQueue": 2},
-            "workers": {"idle": 1, "ready": 2, "initializing": 1, "unhealthy": 0},
+            "workers": {"idle": 1, "ready": 2, "initializing": 1, "unhealthy": 0, "throttled": 4},
         }
         self.assertEqual(guard.active_jobs(health), 3)
         self.assertEqual(guard.live_workers(health), 2)
@@ -26,6 +26,10 @@ class RunPodCostGuardTest(unittest.TestCase):
     def test_consecutive_findings_reset_when_condition_clears(self) -> None:
         self.assertEqual(guard.consecutive(5, True), 6)
         self.assertEqual(guard.consecutive(5, False), 0)
+
+    def test_throttled_demand_is_not_live_capacity(self) -> None:
+        self.assertEqual(guard.live_workers({"workers": {"throttled": 2}}), 0)
+        self.assertEqual(guard.live_workers({"workers": {"throttled": 2, "running": 1}}), 1)
 
     def test_normalize_runpod_list_shapes(self) -> None:
         self.assertEqual(guard.normalize_list([{"id": "a"}]), [{"id": "a"}])
@@ -182,7 +186,7 @@ class SpendCapTest(unittest.TestCase):
         self.assertFalse(report["actions"][0]["applied"])
         alert.assert_not_called()
 
-    def test_yue_idle_worker_is_alert_only(self):
+    def test_omniserve_yue_idle_worker_is_remediated(self):
         endpoints = [
             {"id": "yue", "name": "omniserve-yue2-quality", "workersMax": 1, "workersMin": 0},
             {"id": "h3", "name": "cog-manifold-h3-normal", "workersMax": 1, "workersMin": 0},
@@ -191,7 +195,7 @@ class SpendCapTest(unittest.TestCase):
 
         def request(url, key, method="GET", payload=None, **kwargs):
             if method == "PATCH":
-                patches.append(url.rsplit("/", 1)[-1])
+                patches.append((url.rsplit("/", 1)[-1], payload))
                 return {}
             if url.endswith("/endpoints"):
                 return endpoints
@@ -201,15 +205,61 @@ class SpendCapTest(unittest.TestCase):
                 return {"jobs": {"inProgress": 0, "inQueue": 0}, "workers": {"idle": 1}}
             return []
 
-        alerts = []
-        with tempfile.TemporaryDirectory() as work, patch.object(guard, "request_json", side_effect=request), \
-                patch.object(guard, "send_alert", side_effect=lambda status, detail: alerts.append(detail) or {}):
+        with tempfile.TemporaryDirectory() as work, patch.object(guard, "request_json", side_effect=request):
             state_path = pathlib.Path(work) / "state.json"
             for _ in range(2):
                 report = guard.run("key", state_path, 2, True)
-        self.assertEqual(patches, ["h3"])
-        self.assertTrue(any("omniserve-yue2-quality" in item and "alert-only" in item for item in report["alerts"]))
-        self.assertTrue(alerts)
+        # Raising capacity is a per-request step in the music lane, so zeroing the
+        # idle endpoint is safe and must not stay alert-only.
+        self.assertEqual(patches, [("yue", {"workersMax": 0}), ("h3", {"workersMax": 0})])
+        self.assertEqual(report["idle_alerts"], [])
+
+    def test_flashboot_standby_workers_are_not_idle_capacity(self):
+        endpoints = [
+            {
+                "id": "yue",
+                "name": "omniserve-yue2-quality",
+                "workersMax": 1,
+                "workersMin": 0,
+                "workersStandby": 1,
+            }
+        ]
+        health = {"jobs": {"inProgress": 0, "inQueue": 0}, "workers": {"idle": 1, "ready": 1}}
+
+        def request(url, key, method="GET", payload=None, **kwargs):
+            if url.endswith("/endpoints"):
+                return endpoints
+            if "/billing/endpoints" in url:
+                return []
+            if url.endswith("/health"):
+                return health
+            return []
+
+        with tempfile.TemporaryDirectory() as work, patch.object(guard, "request_json", side_effect=request):
+            state_path = pathlib.Path(work) / "state.json"
+            for _ in range(3):
+                report = guard.run("key", state_path, 2, True)
+        self.assertEqual(report["actions"], [])
+        self.assertEqual(report["idle_alerts"], [])
+        self.assertEqual(report["counts"]["yue"]["idle_live"], 0)
+        self.assertEqual(report["endpoints"][0]["standby_workers"], 1)
+        self.assertEqual(report["endpoints"][0]["active_workers"], 0)
+
+    def test_errors_survive_successful_remediation_and_archive_failure(self):
+        for archive_error in (False, True):
+            with self.subTest(archive_error=archive_error):
+                def spend(report, *args):
+                    report["actions"].append({"applied": True})
+                    if not archive_error:
+                        report["errors"].append({"scope": "spend", "error": "unavailable"})
+                    return []
+
+                with tempfile.TemporaryDirectory() as work, \
+                        patch.object(guard, "request_json", return_value=[]), \
+                        patch.object(guard, "spend_guard", side_effect=spend), \
+                        patch.object(guard, "archive_guard", side_effect=RuntimeError("archive unavailable") if archive_error else None, return_value=[]):
+                    report = guard.run("key", pathlib.Path(work) / "state.json", 2, False)
+                self.assertEqual(report["status"], "error")
 
     def test_archived_endpoint_with_capacity_is_zeroed_and_alerted(self):
         endpoints = [
