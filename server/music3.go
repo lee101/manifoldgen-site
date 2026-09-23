@@ -324,6 +324,9 @@ func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics
 		jsonError(ctx, http.StatusBadRequest, tierErr.Error())
 		return
 	}
+	if rejectArchivedLane(ctx, music3EndpointIDForTier(tier)) {
+		return
+	}
 	if err := music3PromptGuard(prompt, lyrics); err != nil {
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return

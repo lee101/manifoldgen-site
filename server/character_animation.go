@@ -312,6 +312,9 @@ func handleCharacterAnimationService(ctx *fasthttp.RequestCtx, req ServiceUsageR
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
+	if rejectArchivedLane(ctx, characterAnimationEndpointID(req.ServiceTier)) {
+		return
+	}
 	estimatedUSD, estimatedCredits := characterAnimationEstimate(req)
 	if estimatedCredits <= 0 {
 		jsonError(ctx, http.StatusServiceUnavailable, "credit pricing is temporarily unavailable")

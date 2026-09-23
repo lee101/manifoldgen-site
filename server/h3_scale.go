@@ -71,6 +71,11 @@ func h3ControlRequest(method, requestURL string, payload interface{}, output int
 	if err := runpodSpendCapBlocks(method, requestURL, payload); err != nil {
 		return err
 	}
+	if runpodScaleUpPayload(payload) {
+		if err := runpodArchiveBlocks(method, runpodEndpointIDFromControlURL(requestURL)); err != nil {
+			return err
+		}
+	}
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)

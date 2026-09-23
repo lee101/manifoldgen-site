@@ -39,12 +39,27 @@ export default function CharacterAnimatorPage() {
   const [duration, setDuration] = useState(5);
   const [format, setFormat] = useState<'portrait' | 'landscape' | 'square'>('portrait');
   const [serviceTier, setServiceTier] = useState<ServiceTier>('standard');
+  const [archivedTiers, setArchivedTiers] = useState<Partial<Record<ServiceTier, boolean>>>({});
   const [phase, setPhase] = useState<Phase>('idle');
   const [status, setStatus] = useState('Showing a real Wan Animate output');
   const [outputURL, setOutputURL] = useState(REAL_OUTPUT);
   const [cost, setCost] = useState<number | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const videoInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let current = true;
+    fetch('/api/lane-status', { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((data: { archived?: { character_animation?: Partial<Record<ServiceTier, boolean>> } }) => {
+        const lanes = data.archived?.character_animation || {};
+        if (!current) return;
+        setArchivedTiers(lanes);
+        setServiceTier((tier) => lanes[tier] ? (['fast', 'xfast', 'standard'] as ServiceTier[]).find((option) => !lanes[option]) || tier : tier);
+      })
+      .catch(() => undefined);
+    return () => { current = false; };
+  }, []);
 
   useEffect(() => {
     const stored = loadStoredUser();
@@ -174,8 +189,8 @@ export default function CharacterAnimatorPage() {
             ['standard', 'Standard', '1×', 'Cost smart'],
             ['fast', 'Fast', '2×', '96 GB/B200 priority'],
             ['xfast', 'XFast', '4×', 'B200 priority'],
-          ] as const).map(([value, label, multiplier, detail]) => <button key={value} type="button" aria-pressed={serviceTier === value} className={serviceTier === value ? styles.tierActive : ''} onClick={() => setServiceTier(value)}>
-            <span><b>{label}</b><em>{multiplier}</em></span><small>{detail}</small>
+          ] as const).map(([value, label, multiplier, detail]) => <button key={value} type="button" disabled={archivedTiers[value]} aria-pressed={serviceTier === value} className={serviceTier === value ? styles.tierActive : ''} onClick={() => setServiceTier(value)}>
+            <span><b>{label}</b><em>{multiplier}</em></span><small>{archivedTiers[value] ? 'Unavailable: archived' : detail}</small>
           </button>)}
         </fieldset>
         <button data-testid="character-animate-run" className={styles.run} type="button" disabled={busy || !character || !driving || !prompt.trim()} onClick={() => void animate()}>

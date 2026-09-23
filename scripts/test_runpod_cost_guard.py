@@ -211,6 +211,32 @@ class SpendCapTest(unittest.TestCase):
         self.assertTrue(any("omniserve-yue2-quality" in item and "alert-only" in item for item in report["alerts"]))
         self.assertTrue(alerts)
 
+    def test_archived_endpoint_with_capacity_is_zeroed_and_alerted(self):
+        endpoints = [
+            {"id": "ctl", "name": "manifold-h3-control-union-is", "workersMax": 1, "workersMin": 0},
+            {"id": "yue", "name": "omniserve-yue2-quality", "workersMax": 1, "workersMin": 0},
+        ]
+        patches = []
+
+        def request(url, key, method="GET", payload=None, **kwargs):
+            if method == "PATCH":
+                patches.append((url.rsplit("/", 1)[-1], payload))
+                return {}
+            if url.endswith("/endpoints"):
+                return endpoints
+            if url.endswith("/health"):
+                return {"jobs": {"inProgress": 0, "inQueue": 0}, "workers": {}}
+            return []
+
+        alerts = []
+        with tempfile.TemporaryDirectory() as work, patch.object(guard, "request_json", side_effect=request), \
+                patch.object(guard, "send_alert", side_effect=lambda status, detail: alerts.append(detail) or {}), \
+                patch.dict(guard.os.environ, {"RUNPOD_ARCHIVED_ENDPOINT_IDS": "ctl,lm0"}):
+            report = guard.run("key", pathlib.Path(work) / "state.json", 6, True)
+        self.assertEqual(patches, [("ctl", {"workersMin": 0, "workersMax": 0})])
+        self.assertEqual(report["status"], "remediated")
+        self.assertTrue(any("archived" in item and "ctl" in item for item in alerts))
+
     def test_restore_command(self):
         with tempfile.TemporaryDirectory() as work, patch.object(guard, "patch_endpoint") as patched:
             state_path = pathlib.Path(work) / "state.json"

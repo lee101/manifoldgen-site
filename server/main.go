@@ -359,6 +359,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleReferrals(ctx)
 
 	// AI Service usage
+	case path == "/api/lane-status" && method == "GET":
+		handleRunpodLaneStatus(ctx)
 	case path == "/api/h3-control-eligibility" && method == "GET":
 		handleH3ControlEligibility(ctx)
 	case path == "/api/reference-video/estimate" && method == "POST":

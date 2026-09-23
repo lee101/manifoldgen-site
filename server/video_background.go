@@ -339,6 +339,9 @@ func submitPrivateVideoBackground(req ServiceUsageRequest, user *User) (string, 
 	if endpointID == "" {
 		return "", fmt.Errorf("private endpoint is not configured")
 	}
+	if runpodEndpointArchived(endpointID) {
+		return "", runpodArchivedError{endpointID}
+	}
 	if !videoBackgroundCircuit.allow(endpointID) {
 		return "", fmt.Errorf("private endpoint circuit is open")
 	}

@@ -641,6 +641,9 @@ func callH3Runpod(endpointID, suffix string, method string, input interface{}, o
 	if key == "" {
 		return 0, fmt.Errorf("H3_RUNPOD_API_KEY is not configured")
 	}
+	if err := runpodArchiveBlocks(method, endpointID); err != nil {
+		return http.StatusServiceUnavailable, err
+	}
 	var body io.Reader
 	if input != nil {
 		encoded, err := json.Marshal(input)

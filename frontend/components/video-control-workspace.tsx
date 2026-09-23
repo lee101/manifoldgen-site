@@ -6,7 +6,7 @@ import { ArrowRight, Check, Film, Loader2, Play, Upload, WandSparkles } from 'lu
 import { loadStoredUser, refreshUser, saveUser } from '@/lib/auth';
 import type { VideoControlTool } from '@/lib/video-controls';
 
-type Payload = { error?: string; result?: unknown; allowed?: boolean; country?: string; job?: { status?: string; result?: unknown; error?: string } };
+type Payload = { error?: string; result?: unknown; allowed?: boolean; archived?: boolean; country?: string; job?: { status?: string; result?: unknown; error?: string } };
 
 function deepString(value: unknown, key: string): string {
   if (!value || typeof value !== 'object') return '';
@@ -58,17 +58,19 @@ export function VideoControlWorkspace({ tool }: { tool: VideoControlTool }) {
   const [error, setError] = useState('');
   const [output, setOutput] = useState('');
   const [territoryAllowed, setTerritoryAllowed] = useState<boolean | null>(null);
+  const [archived, setArchived] = useState(false);
   useEffect(() => {
     let current = true;
     fetch('/api/h3-control-eligibility', { cache: 'no-store' })
       .then((response) => response.json())
-      .then((data: Payload) => { if (current) setTerritoryAllowed(data.allowed === true); })
+      .then((data: Payload) => { if (current) { setArchived(data.archived === true); setTerritoryAllowed(data.allowed === true); } })
       .catch(() => { if (current) setTerritoryAllowed(false); });
     return () => { current = false; };
   }, []);
   const estimate = useMemo(() => Math.ceil((.60 + duration * .12) * ({ '480p': 1, '576p': 1.35, '720p': 2 }[resolution] || 1) * 1.2 * 100) / 100, [duration, resolution]);
 
   async function generate() {
+    if (archived) { setError('H3 Control is archived: its model weights are in cold storage and must be restored before it can run.'); return; }
     if (territoryAllowed !== true) { setError('MiniMax H3 is unavailable in this territory.'); return; }
     const user = loadStoredUser();
     if (!user?.api_key) { setError('Sign in to generate a controlled video.'); return; }
@@ -103,7 +105,7 @@ export function VideoControlWorkspace({ tool }: { tool: VideoControlTool }) {
       {tool.type !== 'inpaint' && <label className="order-4 mt-4 flex items-start gap-3 text-sm leading-5 text-white/60"><input type="checkbox" checked={preprocess} onChange={(event) => setPreprocess(event.target.checked)} className="mt-1" style={{ accentColor: tool.accent }} /><span>Extract {tool.type.toUpperCase()} from my normal video<small className="mt-1 block text-white/35">Turn this off only when the upload is already a prepared control pass.</small></span></label>}
       <label className="order-5 mt-4 flex items-start gap-3 rounded-xl border border-amber-200/15 bg-amber-200/[.04] p-3 text-xs leading-5 text-white/55"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} className="mt-1" /><span>I accept the <a className="underline" target="_blank" rel="noreferrer" href="https://huggingface.co/alibaba-pai/MiniMax-H3-Fun-Controlnet-Union/blob/main/LICENSE">MiniMax H3 Community License</a> and its use restrictions. This model is unavailable in the US, EU, UK, and South Korea.</span></label>
       <div className="order-7 mt-4 flex items-center justify-between rounded-xl border border-white/10 bg-white/[.025] px-4 py-2.5"><span><b className="block text-sm">Estimated price</b><small className="text-white/40">Final price is 1.2× measured compute</small></span><strong className="text-right text-lg">~{Math.ceil(estimate * 100)} credits<small className="block text-xs font-normal text-white/35">${estimate.toFixed(2)}</small></strong></div>
-      <button onClick={() => void generate()} disabled={busy || territoryAllowed !== true} className="order-6 mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-sm font-bold text-black disabled:opacity-55" style={{ background: tool.accent }}>{busy ? <Loader2 className="animate-spin" size={17} /> : <WandSparkles size={17} />}{busy ? status || 'Generating…' : territoryAllowed === false ? 'Unavailable in this territory' : territoryAllowed === null ? 'Checking availability…' : `Generate with ${tool.type.toUpperCase()} control`}</button>
+      <button onClick={() => void generate()} disabled={busy || territoryAllowed !== true} className="order-6 mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-sm font-bold text-black disabled:opacity-55" style={{ background: tool.accent }}>{busy ? <Loader2 className="animate-spin" size={17} /> : <WandSparkles size={17} />}{busy ? status || 'Generating…' : archived ? 'Unavailable: model archived' : territoryAllowed === false ? 'Unavailable in this territory' : territoryAllowed === null ? 'Checking availability…' : `Generate with ${tool.type.toUpperCase()} control`}</button>
       {error && <div role="alert" className="order-9 mt-4 rounded-xl border border-red-300/15 bg-red-400/[.06] p-3 text-sm text-red-100/75">{error} {error.startsWith('Sign in') && <Link href="/account" className="underline">Open account</Link>}</div>}
     </section>
     <section className="min-w-0 p-5 sm:p-7"><div className="mb-5 flex items-center justify-between"><span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.18em] text-white/55"><Play size={14} /> Output</span>{status && <small className="text-white/60">{status}</small>}</div><div className="flex aspect-video items-center justify-center overflow-hidden rounded-2xl border border-white/15 bg-[#0d1018]">{output ? <video src={output} controls autoPlay loop playsInline className="h-full w-full object-contain" /> : <div className="max-w-sm p-8 text-center"><Film className="mx-auto text-white/25" size={38} /><p className="mt-4 text-sm leading-6 text-white/55">Your new world follows the source clip’s {tool.type === 'pose' ? 'body performance' : tool.type === 'depth' ? 'depth and camera motion' : tool.type === 'inpaint' ? 'unmasked pixels and timing' : 'controlled geometry and timing'}.</p></div>}</div>{output && <div className="mt-4 flex gap-3"><Link href={`/studio?video_url=${encodeURIComponent(output)}&name=${encodeURIComponent(tool.name)}`} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-bold text-black">Open in Studio <ArrowRight size={15} /></Link><a href={output} download className="rounded-xl border border-white/15 px-4 py-3 text-sm font-semibold text-white/70">Download</a></div>}

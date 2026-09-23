@@ -308,6 +308,9 @@ func handleVideoRestyleService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.Model == "h3-control" && rejectArchivedLane(ctx, h3ControlEndpointID()) {
+		return
+	}
 	if req.Model == "h3-control" && !h3ControlRequestAllowed(ctx) {
 		jsonError(ctx, http.StatusForbidden, "MiniMax H3 Control is not licensed for use in your territory")
 		return
@@ -365,8 +368,10 @@ func h3ControlTerritoryExcluded(country string) bool {
 func handleH3ControlEligibility(ctx *fasthttp.RequestCtx) {
 	country := strings.ToUpper(strings.TrimSpace(string(ctx.Request.Header.Peek("CF-IPCountry"))))
 	jsonResponse(ctx, http.StatusOK, map[string]interface{}{
-		"allowed": h3ControlRequestAllowed(ctx),
-		"country": country,
+		"allowed":  h3ControlRequestAllowed(ctx) && !runpodEndpointArchived(h3ControlEndpointID()),
+		"archived": runpodEndpointArchived(h3ControlEndpointID()),
+		"message":  runpodArchivedMessage,
+		"country":  country,
 	})
 }
 

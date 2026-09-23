@@ -231,6 +231,30 @@ def send_alert(status: str, detail: str) -> dict[str, Any]:
         return {"emailed": False, "error": str(error)}
 
 
+def archived_endpoint_ids() -> set[str]:
+    return {value.strip() for value in os.environ.get("RUNPOD_ARCHIVED_ENDPOINT_IDS", "").split(",") if value.strip()}
+
+
+def archive_guard(report: dict[str, Any], endpoints: list[dict[str, Any]], api_key: str, apply: bool) -> list[str]:
+    """Archived endpoints have no model volume; any capacity just burns GPU."""
+    archived = archived_endpoint_ids()
+    messages: list[str] = []
+    for endpoint in endpoints:
+        endpoint_id = str(endpoint.get("id") or "")
+        workers_max = int(endpoint.get("workersMax") or 0)
+        workers_min = int(endpoint.get("workersMin") or 0)
+        if endpoint_id not in archived or (workers_max == 0 and workers_min == 0):
+            continue
+        name = str(endpoint.get("name") or endpoint_id)
+        action = {"endpoint": name, "reason": "archived endpoint (no model volume) had capacity", "patch": {"workersMin": 0, "workersMax": 0}, "prior_workers_max": workers_max, "applied": False}
+        if apply:
+            patch_endpoint(endpoint_id, api_key, action["patch"])
+            action["applied"] = True
+        report["actions"].append(action)
+        messages.append(f"{name} ({endpoint_id}) is archived but had workersMin={workers_min} workersMax={workers_max}; set to 0 ({'applied' if apply else 'dry-run'})")
+    return messages
+
+
 def write_cap_file(path: pathlib.Path, capped: dict[str, Any], now: dt.datetime) -> None:
     write_state(path, {"updated_at": now.isoformat(), "capped": capped})
     path.chmod(0o644)
@@ -293,7 +317,7 @@ def spend_guard(
                 patch_endpoint(endpoint_id, api_key, {"workersMax": 0})
                 action["applied"] = True
             report["actions"].append(action)
-        elif endpoint_id in capped and counts["under"] >= SPEND_CAP_CHECKS and os.environ.get("RUNPOD_COST_GUARD_AUTO_RESTORE", "1") != "0":
+        elif endpoint_id in capped and endpoint_id not in archived_endpoint_ids() and counts["under"] >= SPEND_CAP_CHECKS and os.environ.get("RUNPOD_COST_GUARD_AUTO_RESTORE", "1") != "0":
             prior = int(capped[endpoint_id].get("prior_workers_max") or 0)
             action = {"endpoint": name, "reason": "spend back under cap; restoring prior capacity", "patch": {"workersMax": prior}, "applied": False}
             if apply:
@@ -525,6 +549,10 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
         for item in report["endpoints"]
     ):
         report["status"] = "warning"
+    try:
+        spend_messages += archive_guard(report, endpoints, api_key, apply)
+    except Exception as error:
+        report["errors"].append({"scope": "archive", "error": str(error)})
     spend_messages += report["idle_alerts"]
     if spend_messages:
         report["alerts"] = spend_messages
