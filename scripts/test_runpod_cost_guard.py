@@ -182,6 +182,35 @@ class SpendCapTest(unittest.TestCase):
         self.assertFalse(report["actions"][0]["applied"])
         alert.assert_not_called()
 
+    def test_yue_idle_worker_is_alert_only(self):
+        endpoints = [
+            {"id": "yue", "name": "omniserve-yue2-quality", "workersMax": 1, "workersMin": 0},
+            {"id": "h3", "name": "cog-manifold-h3-normal", "workersMax": 1, "workersMin": 0},
+        ]
+        patches = []
+
+        def request(url, key, method="GET", payload=None, **kwargs):
+            if method == "PATCH":
+                patches.append(url.rsplit("/", 1)[-1])
+                return {}
+            if url.endswith("/endpoints"):
+                return endpoints
+            if "/billing/endpoints" in url:
+                return []
+            if url.endswith("/health"):
+                return {"jobs": {"inProgress": 0, "inQueue": 0}, "workers": {"idle": 1}}
+            return []
+
+        alerts = []
+        with tempfile.TemporaryDirectory() as work, patch.object(guard, "request_json", side_effect=request), \
+                patch.object(guard, "send_alert", side_effect=lambda status, detail: alerts.append(detail) or {}):
+            state_path = pathlib.Path(work) / "state.json"
+            for _ in range(2):
+                report = guard.run("key", state_path, 2, True)
+        self.assertEqual(patches, ["h3"])
+        self.assertTrue(any("omniserve-yue2-quality" in item and "alert-only" in item for item in report["alerts"]))
+        self.assertTrue(alerts)
+
     def test_restore_command(self):
         with tempfile.TemporaryDirectory() as work, patch.object(guard, "patch_endpoint") as patched:
             state_path = pathlib.Path(work) / "state.json"

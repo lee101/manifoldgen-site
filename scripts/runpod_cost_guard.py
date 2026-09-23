@@ -35,6 +35,7 @@ REST_BASE = "https://rest.runpod.io/v1"
 QUEUE_BASE = "https://api.runpod.ai/v2"
 DEFAULT_PREFIXES = ("cog-manifold-h3", "omniserve-minimax-music3", "omniserve-yue2-")
 ALERT_ONLY_PREFIXES = ("omniserve-ra2-", "cog-qwen-image-", "pixal3d")
+IDLE_ALERT_ONLY_PREFIXES = ("omniserve-yue2-", "omniserve-ra2-")
 SCRATCH_PREFIXES = ("h3upscale-probe-",)
 DAILY_CAP_RULES = (
     ("omniserve-minimax-music3", "RUNPOD_COST_GUARD_MUSIC3_DAILY_USD", 40.0),
@@ -326,6 +327,7 @@ def restore_endpoint(api_key: str, state_path: pathlib.Path, cap_path: pathlib.P
 def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap_path: pathlib.Path | None = None) -> dict[str, Any]:
     prefixes = env_prefixes("RUNPOD_COST_GUARD_PREFIXES", DEFAULT_PREFIXES)
     alert_prefixes = env_prefixes("RUNPOD_COST_GUARD_ALERT_ONLY_PREFIXES", ALERT_ONLY_PREFIXES)
+    idle_alert_prefixes = env_prefixes("RUNPOD_COST_GUARD_IDLE_ALERT_ONLY_PREFIXES", IDLE_ALERT_ONLY_PREFIXES)
     cap_path = cap_path or state_path.parent / "spend-caps.json"
     old = read_state(state_path)
     old_counts = old.get("counts") if isinstance(old.get("counts"), dict) else {}
@@ -341,6 +343,7 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
         "spend_counts": {},
         "capped": old.get("capped") if isinstance(old.get("capped"), dict) else {},
         "alerts": [],
+        "idle_alerts": [],
         "endpoints": [],
         "direct_pods": [],
         "network_volumes": [],
@@ -402,6 +405,8 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
                     "idleTimeout": max(5, min(int(endpoint.get("idleTimeout") or 30), 30)),
                 },
             }
+        elif idle_count >= threshold and managed_endpoint(name, idle_alert_prefixes):
+            report["idle_alerts"].append(f"{name} ({endpoint_id}) live worker idle for {idle_count} checks with workersMin=0; alert-only, its callers do not restore workersMax")
         elif idle_count >= threshold:
             action = {
                 "endpoint": name,
@@ -520,6 +525,7 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
         for item in report["endpoints"]
     ):
         report["status"] = "warning"
+    spend_messages += report["idle_alerts"]
     if spend_messages:
         report["alerts"] = spend_messages
         if report["status"] == "ok":
