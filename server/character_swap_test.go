@@ -75,13 +75,13 @@ func TestPlanCharacterSwapChunksWithCuts(t *testing.T) {
 
 func TestCharacterSwapProviderUSD(t *testing.T) {
 	chunks, _ := planCharacterSwapChunks(30)
-	if usd := characterSwapProviderUSD("768P", chunks); math.Abs(usd-2.40) > 1e-9 {
+	if usd := characterSwapProviderUSD("768P", chunks); math.Abs(usd-3.20) > 1e-9 {
 		t.Fatalf("768P 30s provider cost %.4f", usd)
 	}
-	if usd := characterSwapChargeUSD("768P", 30); math.Abs(usd-4.80) > 1e-9 {
+	if usd := characterSwapChargeUSD("768P", 30); math.Abs(usd-6.00) > 1e-9 {
 		t.Fatalf("768P 30s charge %.4f", usd)
 	}
-	if usd := characterSwapChargeUSD("2K", 30.16); math.Abs(usd-9.05) > 1e-9 {
+	if usd := characterSwapChargeUSD("2K", 30.16); math.Abs(usd-10.86) > 1e-9 {
 		t.Fatalf("2K 30.16s charge %.4f", usd)
 	}
 	shots, _ := planCharacterSwapChunks(30.16, 5, 10, 20)
@@ -92,7 +92,7 @@ func TestCharacterSwapProviderUSD(t *testing.T) {
 		t.Fatalf("shot fee should be waived when per-shot frames are off: %.4f", fee)
 	}
 	usd, _, _, err := characterSwapEstimate(ServiceUsageRequest{Resolution: "768P", ImageURL: "https://x/i.png", MaxQuality: boolPtr(true)}, 30.16, 5, 10, 20)
-	if err != nil || math.Abs(usd-(4.83+0.90)) > 1e-9 {
+	if err != nil || math.Abs(usd-(6.04+0.90)) > 1e-9 {
 		t.Fatalf("estimate with shots %.4f %v", usd, err)
 	}
 }

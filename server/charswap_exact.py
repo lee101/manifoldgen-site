@@ -215,6 +215,38 @@ def cmd_blurfaces(a):
     print(json.dumps({'frames': len(F), 'faces': hidden}))
 
 
+def cmd_personcrops(a):
+    m = model()
+    img = cv2.imread(a.image)
+    if img is None:
+        sys.exit('cannot read image')
+    H, W = img.shape[:2]
+    people = detect(m, img, conf=0.25)
+    people = sorted(people, key=lambda p: -(p['box'][2] - p['box'][0]) * (p['box'][3] - p['box'][1]))[:a.max_people]
+    people.sort(key=lambda p: (p['box'][0] + p['box'][2]) / 2)
+    out = []
+    for k, p in enumerate(people):
+        x0, y0, x1, y1 = p['box']; bw, bh = x1 - x0, y1 - y0
+        bx0, bx1 = int(max(0, x0 - 0.12 * bw)), int(min(W, x1 + 0.12 * bw)); by0, by1 = int(max(0, y0 - 0.06 * bh)), int(min(H, y1 + 0.04 * bh))
+        body = f'{a.out_dir}/person-{k}-body.png'; cv2.imwrite(body, img[by0:by1, bx0:bx1])
+        pts = []
+        if p['kp'] is not None and p['kc'] is not None:
+            pts = [(p['kp'][j][0] * W, p['kp'][j][1] * H) for j in range(5) if p['kc'][j] > 0.3]
+        if len(pts) >= 2:
+            pts = np.array(pts); cx, cy = pts[:, 0].mean(), pts[:, 1].mean()
+            span = max(np.ptp(pts[:, 0]), np.ptp(pts[:, 1]), 0.08 * bw) * 2.4
+        else:
+            cx, cy, span = (x0 + x1) / 2, y0 + 0.12 * bh, 0.22 * bh
+        fx0, fx1 = int(max(0, cx - span)), int(min(W, cx + span)); fy0, fy1 = int(max(0, cy - span * 1.15)), int(min(H, cy + span * 1.25))
+        face = f'{a.out_dir}/person-{k}-face.png'
+        if fx1 - fx0 > 16 and fy1 - fy0 > 16:
+            cv2.imwrite(face, img[fy0:fy1, fx0:fx1])
+        else:
+            face = None
+        out.append({'body': body, 'face': face})
+    print(json.dumps({'people': out}))
+
+
 def cmd_align(a):
     m = model()
     A = read_frames(a.ref, 640, 360); B = read_frames(a.out, 640, 360)
@@ -284,6 +316,7 @@ def main():
     c = s.add_parser('crops'); c.add_argument('--image', required=True); c.add_argument('--boxes', required=True); c.add_argument('--frame-index', type=int, default=0); c.add_argument('--out-dir', required=True); c.set_defaults(f=cmd_crops)
     k = s.add_parser('composite'); k.add_argument('--src', required=True); k.add_argument('--boxes', required=True); k.add_argument('--out', required=True); k.add_argument('--pair', action='append', required=True); k.set_defaults(f=cmd_composite)
     f = s.add_parser('blurfaces'); f.add_argument('--src', required=True); f.add_argument('--out', required=True); f.set_defaults(f=cmd_blurfaces)
+    pc = s.add_parser('personcrops'); pc.add_argument('--image', required=True); pc.add_argument('--out-dir', required=True); pc.add_argument('--max-people', type=int, default=3); pc.set_defaults(f=cmd_personcrops)
     g = s.add_parser('align'); g.add_argument('--ref', required=True); g.add_argument('--out', required=True); g.add_argument('--max-lag', type=float, default=0.75); g.set_defaults(f=cmd_align)
     q = s.add_parser('posecheck'); q.add_argument('--src', required=True); q.add_argument('--out', required=True); q.set_defaults(f=cmd_posecheck)
     a = p.parse_args(); a.f(a)

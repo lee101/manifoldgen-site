@@ -496,7 +496,7 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
           <input data-testid="swap-audio" type="checkbox" checked={audioReference} disabled={busy} onChange={(event) => setAudioReference(event.target.checked)} />
           Also give H3 the song as an audio reference (experimental lip-sync guidance)
         </label>}
-        <div className={styles.price}><span>{estimateLine}</span><span>{exact ? '$0.24 per second per performer at 720P, $0.18 at 580P' : `${resolution} · $0.16/s${resolution === '2K' ? ' → $0.30/s' : ''}`}</span></div>
+        <div className={styles.price}><span>{estimateLine}</span><span>{exact ? '$0.24 per second per performer at 720P, $0.18 at 580P' : `${resolution} · $0.20/s${resolution === '2K' ? ' → $0.36/s' : ''}`}</span></div>
         {signedIn
           ? <button data-testid="swap-run" className={styles.run} type="button" disabled={busy || !videoURL || !swappedImageURL || (!exact && videoPrompt.trim().length < 10)} onClick={() => void generateVideo()}>
             {busy ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={16} />}{busy ? status : 'Generate music video'}
