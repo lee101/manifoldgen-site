@@ -103,6 +103,7 @@ func main() {
 	} else {
 		initEmail()
 		initPromptSearch()
+		startRunpodBilledRateRefresher()
 	}
 
 	if err := fasthttp.Serve(listener, requestHandler); err != nil {

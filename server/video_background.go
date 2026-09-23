@@ -682,7 +682,7 @@ func videoBackgroundPrivateProviderUSD(executionMS, delayMS int64) float64 {
 		// Conservatively cover the most expensive 48 GB class allowed by the
 		// endpoint. A40/A6000 placements are cheaper, but under-reporting makes
 		// margin telemetry unsafe for scheduling decisions.
-		rate = 1.75
+		rate = runpodGPUHourlyUSD("NVIDIA L40S")
 	}
 	// RunPod bills from worker start through stop, while executionTime excludes
 	// cold initialization. delayTime can include non-billed queue wait, so this

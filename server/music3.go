@@ -17,7 +17,8 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-const music3DefaultGPUUSDPerHour = 4.59
+// MiniMax-Music3 endpoints prefer H200, which RunPod bills at $5.94/h.
+const music3DefaultGPUUSDPerHour = 5.94
 
 var music3EventMu sync.Mutex
 
@@ -165,9 +166,9 @@ func music3GPUUSDPerHour() float64 {
 	value, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("MUSIC3_RUNPOD_GPU_USD_PER_HOUR")), 64)
 	if err != nil || value <= 0 {
 		if musicBackendIsYue() {
-			return musicYueDefaultGPUUSD
+			return runpodEffectiveHourlyUSD(musicYueEndpointID(), musicYueDefaultGPUUSD)
 		}
-		return music3DefaultGPUUSDPerHour
+		return runpodEffectiveHourlyUSD(music3EndpointID(), music3DefaultGPUUSDPerHour)
 	}
 	return value
 }

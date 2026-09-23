@@ -416,9 +416,9 @@ func characterAnimationGPUHourlyUSD(tier string) float64 {
 	case "fast":
 		// The priority pool may place on a B200, so meter against the current
 		// Flex ceiling rather than optimistically assuming an H100 placement.
-		return restyleEnvFloat("WAN_ANIMATE_FAST_GPU_HOURLY_USD", 8.64)
+		return restyleEnvFloat("WAN_ANIMATE_FAST_GPU_HOURLY_USD", runpodGPUHourlyUSD("NVIDIA B200"))
 	case "xfast":
-		return restyleEnvFloat("WAN_ANIMATE_XFAST_GPU_HOURLY_USD", 8.64)
+		return restyleEnvFloat("WAN_ANIMATE_XFAST_GPU_HOURLY_USD", runpodGPUHourlyUSD("NVIDIA B200"))
 	default:
 		// This fallback pool includes L40/L40S/RTX 6000 Ada, so use the
 		// current $0.00053/s Flex ceiling rather than the cheaper A40 rate.

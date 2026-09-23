@@ -57,7 +57,7 @@ func TestVideoBackgroundPriceDoesNotCrossExactMicrodollarBoundary(t *testing.T) 
 func TestVideoBackgroundPrivateProviderCostIncludesColdDelay(t *testing.T) {
 	t.Setenv("VIDEO_BACKGROUND_RUNPOD_GPU_USD_PER_HOUR", "")
 	got := videoBackgroundPrivateProviderUSD(20_000, 180_000)
-	want := 200.0 * 1.75 / 3600.0
+	want := 200.0 * 1.908 / 3600.0
 	if math.Abs(got-want) > 0.000001 {
 		t.Fatalf("provider cost = %.9f, want %.9f", got, want)
 	}

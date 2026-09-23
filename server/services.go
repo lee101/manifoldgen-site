@@ -35,7 +35,7 @@ var servicePricesUSD = map[string]float64{
 	"lora_training":            5.00,
 	"ltx_video":                0.30,   // per ~6s 1080p video via fal.ai
 	"video_generate":           0.15,   // OpenPaths auto-video base price; model overrides below
-	"h3_video":                 4.55,   // current H100 PRO flex GPU-hour ceiling; exact execution is settled asynchronously
+	"h3_video":                 4.80,   // H100 flex GPU-hour as billed by RunPod; exact execution is settled asynchronously
 	"h3_image":                 0.30,   // conservative 12-step estimate; async settlement uses measured execution
 	"h3_image_edit":            0.35,   // conservative 12-step REF2VA estimate; measured execution is final
 	"video_restyle":            0.48,   // estimated five-second 720p ceiling; async settlement uses the selected backend

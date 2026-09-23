@@ -68,6 +68,9 @@ func h3ControlRequest(method, requestURL string, payload interface{}, output int
 	if key == "" {
 		return fmt.Errorf("H3_RUNPOD_API_KEY is not configured")
 	}
+	if err := runpodSpendCapBlocks(method, requestURL, payload); err != nil {
+		return err
+	}
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)

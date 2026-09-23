@@ -704,7 +704,7 @@ func processH3ControlRunpod(job *VideoJob, input ServiceUsageRequest) {
 				return
 			}
 			seconds := float64(state.ExecutionTime) / 1000
-			providerUSD := restyleEnvFloat("H3_CONTROL_GPU_HOURLY_USD", 4.59) * seconds / 3600
+			providerUSD := h3ControlGPUHourlyUSD() * seconds / 3600
 			if providerUSD <= 0 {
 				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "H3 control returned no metered execution time")
 				return
@@ -854,4 +854,9 @@ func restyleEnvFloat(key string, fallback float64) float64 {
 		return fallback
 	}
 	return value
+}
+
+// The control endpoint prefers H200 ($5.94/h billed) and falls back to H100.
+func h3ControlGPUHourlyUSD() float64 {
+	return restyleEnvFloat("H3_CONTROL_GPU_HOURLY_USD", runpodEffectiveHourlyUSD(strings.TrimSpace(os.Getenv("VIDEO_CONTROL_RUNPOD_ENDPOINT_ID")), runpodGPUHourlyUSD("NVIDIA H200")))
 }

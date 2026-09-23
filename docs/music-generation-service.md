@@ -68,8 +68,19 @@ the measured cost of the render itself: output seconds x realtime factor, plus a
 amortised share of a cold start, at the current GPU rate with a 1.5x margin. If
 GPU rates rise the public price rises with them rather than going underwater.
 
-At H200 rates a three-minute track costs roughly $0.11 of GPU time warm, or
-about $0.20 including a cold start, against a $0.70 charge.
+At the H200 rate RunPod actually bills ($5.94/h, measured from the billing API
+as `amount / timeBilledMs`; the list price is lower) a three-minute track costs
+roughly $0.14 of GPU time warm, or about $0.19 including a cold start, against a
+$0.70 charge.
+
+The GPU rate is resolved in this order: `MUSIC3_RUNPOD_GPU_USD_PER_HOUR`, then
+the higher of the built-in billed-rate table (`server/runpod_rates.go`: H200
+$5.94, H100 $4.80, RTX 4090 $1.12, ...) and the endpoint's observed 30-day
+billed rate, which the server refreshes from
+`GET https://rest.runpod.io/v1/billing/endpoints` every six hours. Observed
+billing can raise the rate but never lower it below the table. Do not pin the
+env override to a cheaper GPU's rate: when YuE is unset the same override would
+price H200 Music3 renders.
 
 Users can choose a latency/capacity tier without changing the model or audio
 quality:
@@ -84,6 +95,20 @@ Fast and XFast reduce queue and cold-capacity delay; they do not claim a faster
 sampling algorithm. Both endpoints keep `workersMin=0`, so an idle priority
 lane has no standing GPU charge.
 
+## Endpoints
+
+| Endpoint | ID | Serving | Wiring |
+| --- | --- | --- | --- |
+| `omniserve-minimax-music3-standard` | `lm0zg9x5ffivf6` | FP8 backbone (`MUSIC3_SERVE_EXTRA_ARGS=--quantization fp8`), fp16 acoustic | `MUSIC3_RUNPOD_ENDPOINT_ID` (`deploy/manifoldgen.service`, `.env`) |
+| `omniserve-minimax-music3-xfast` | `abtkpd80glwpme` | Same template as standard | `MUSIC3_XFAST_RUNPOD_ENDPOINT_ID` (`deploy/manifoldgen.service`) |
+| `omniserve-minimax-music3-bf16` | `o9454204o9ckwc` | bf16 backbone and acoustic, no result cache; ablation/reference lane | Not wired into the site |
+| `omniserve-yue2-quality` | `tmozxvnm9fuuud` | YuE on RTX 4090, `workersMax=1` | `YUE_RUNPOD_ENDPOINT_ID` (`.env`); when set it serves every tier |
+
+All Music3 endpoints accept H200, H100, RTX PRO 6000 and A100 80GB and in
+practice land on H200, billed at $5.94/h. While `YUE_RUNPOD_ENDPOINT_ID` is set
+the Music3 endpoints receive no site traffic. `scripts/runpod_cost_guard.py`
+caps each Music3 endpoint at $40/day of billed spend.
+
 ## Environment
 
 | Variable | Purpose |
@@ -91,7 +116,8 @@ lane has no standing GPU charge.
 | `MUSIC3_RUNPOD_ENDPOINT_ID` | Serverless endpoint that serves music jobs |
 | `MUSIC3_FAST_RUNPOD_ENDPOINT_ID` | Optional Fast endpoint; falls back to the standard endpoint |
 | `MUSIC3_XFAST_RUNPOD_ENDPOINT_ID` | Optional isolated XFast endpoint; falls back to standard |
-| `MUSIC3_RUNPOD_GPU_USD_PER_HOUR` | GPU rate used for cost accounting and the price floor |
+| `MUSIC3_RUNPOD_GPU_USD_PER_HOUR` | Optional override of the billed GPU rate used for cost accounting and the price floor |
+| `RUNPOD_BILLED_RATE_REFRESH` | Set to `false` to skip the six-hourly billed-rate refresh |
 | `MUSIC3_COLD_START_SECONDS` | Measured cold start, drives the warm threshold and price floor |
 | `MUSIC3_WARM_THRESHOLD_PER_HOUR` | Overrides the computed warm threshold |
 | `MUSIC3_WARM_LATENCY_PREFERENCE` | 0–1; lower goes warm sooner |

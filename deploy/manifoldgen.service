@@ -13,9 +13,9 @@ Environment=LD_LIBRARY_PATH=/opt/manifoldgen-site/gpu:/usr/local/cuda/lib64:/usr
 Environment=DIST_DIR=frontend/out
 Environment=FRONTEND_ERROR_LOG_PATH=/opt/manifoldgen-site/logs/frontend-errors.jsonl
 Environment=VIDEO_CONTROL_RUNPOD_ENDPOINT_ID=0464l4kizwvlzo
+Environment=MUSIC3_RUNPOD_ENDPOINT_ID=lm0zg9x5ffivf6
 Environment=MUSIC3_XFAST_RUNPOD_ENDPOINT_ID=abtkpd80glwpme
 Environment=H3_CONTROL_REQUIRE_CF_COUNTRY=true
-Environment=H3_CONTROL_GPU_HOURLY_USD=4.59
 Environment=H3_CONTROL_ESTIMATED_PROVIDER_BASE_USD=0.60
 Environment=H3_CONTROL_ESTIMATED_PROVIDER_USD_PER_SECOND=0.12
 ExecStart=/opt/manifoldgen-site/server/manifoldgen-server

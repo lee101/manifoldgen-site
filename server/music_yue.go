@@ -15,7 +15,7 @@ const (
 	musicYueTokensPerSecond = 25
 	musicYueMinTokens       = 200
 	musicYueMaxTokens       = 9000
-	musicYueDefaultGPUUSD   = 1.10
+	musicYueDefaultGPUUSD   = 1.12
 	musicYueFormat          = "mp3"
 	musicYueContentType     = "audio/mpeg"
 )

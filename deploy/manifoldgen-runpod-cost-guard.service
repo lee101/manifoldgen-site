@@ -10,9 +10,15 @@ Group=administrator
 WorkingDirectory=/opt/manifoldgen-site
 EnvironmentFile=/opt/manifoldgen-site/.env
 StateDirectory=manifoldgen-runpod-guard
+StateDirectoryMode=0755
+Environment=HOME=/home/administrator
+Environment=AWS_SES_ALERT_TO=lee.penkman@netwrck.com
+Environment=MONITOR_LOG_DIR=/var/lib/manifoldgen-runpod-guard/alerts
+Environment=MONITOR_STATE_DIR=/var/lib/manifoldgen-runpod-guard/alerts
+Environment=MONITOR_LOCK_DIR=/tmp/appnz-monitor
 ExecStart=/usr/bin/python3 /opt/manifoldgen-site/scripts/runpod_cost_guard.py --apply --threshold 6
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectHome=true
+ProtectHome=read-only
 ProtectSystem=strict
 ReadWritePaths=/var/lib/manifoldgen-runpod-guard
