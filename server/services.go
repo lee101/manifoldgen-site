@@ -1802,6 +1802,8 @@ func proxyOmniserveZImageAs(req ServiceUsageRequest, backendURL, secret, publicM
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	// Credit-charged /api/service render: paid tier (admission priority + RunPod overflow).
+	httpReq.Header.Set("X-Omniserve-Tier", "paid")
 	if secret != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+secret)
 		httpReq.Header.Set("X-API-Key", secret)

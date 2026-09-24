@@ -71,6 +71,7 @@ func imageEditorNative(path string, payload interface{}) (json.RawMessage, error
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Omniserve-Tier", "paid")
 	if secret := strings.TrimSpace(getEnv("OMNISERVE_NATIVE_SECRET", getEnv("OMNISERVE_SECRET", ""))); secret != "" {
 		req.Header.Set("Authorization", "Bearer "+secret)
 	}
