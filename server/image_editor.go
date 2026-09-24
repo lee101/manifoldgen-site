@@ -211,7 +211,7 @@ func handleImageEditorEdit(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: targeted regeneration costs 8 credits")
 		return
 	}
-	result, err := imageEditorNative("/v1/images/edits", input)
+	result, err := imageEditorReferenceEdit(user.ID, input)
 	if err != nil {
 		imageEditorRefund(user, imageEditorEditCredits, "targeted regeneration unavailable")
 		jsonError(ctx, http.StatusBadGateway, "targeted regeneration is temporarily unavailable")
