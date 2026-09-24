@@ -828,7 +828,7 @@ func studioAudioTitle(prompt string) string {
 func handleStudioRemoveBackground(ctx *fasthttp.RequestCtx) {
 	user, err := studioUser(ctx)
 	if err != nil {
-		jsonError(ctx, http.StatusUnauthorized, err.Error())
+		authRequiredError(ctx, err.Error())
 		return
 	}
 	var input struct {
@@ -840,7 +840,7 @@ func handleStudioRemoveBackground(ctx *fasthttp.RequestCtx) {
 	}
 	balance, err := dbConn.DeductUserCredits(user.ID, studioBackgroundCredits)
 	if err != nil {
-		jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: background removal costs 1 credit")
+		chargeError(ctx, err, "insufficient credits: background removal costs 1 credit")
 		return
 	}
 

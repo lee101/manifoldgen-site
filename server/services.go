@@ -553,17 +553,17 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
 		user, err = dbConn.GetUserByAPIKey(apiKey)
 		if err != nil {
-			jsonError(ctx, 401, "invalid API key")
+			servicePaywallError(ctx, http.StatusUnauthorized, paywallCodeAuthRequired, "invalid API key")
 			return
 		}
 	} else if req.WalletAddress != "" {
 		user, err = dbConn.GetUserByWallet(req.WalletAddress)
 		if err != nil {
-			jsonError(ctx, 401, "wallet not registered - deposit $MANIFOLD first")
+			servicePaywallError(ctx, http.StatusUnauthorized, paywallCodeAuthRequired, "wallet not registered - deposit $MANIFOLD first")
 			return
 		}
 	} else {
-		jsonError(ctx, 401, "authorization required: use Authorization header with API key or wallet_address in body")
+		servicePaywallError(ctx, http.StatusUnauthorized, paywallCodeAuthRequired, "authorization required: use Authorization header with API key or wallet_address in body")
 		return
 	}
 	if req.Service == "h3_video" {
@@ -677,7 +677,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		if err != nil {
 			if strings.Contains(err.Error(), "insufficient") {
 				needUSD := cuteCost * getCUTEPriceUSD()
-				jsonError(ctx, 402, fmt.Sprintf("insufficient credits: need %.2f credits ($%.4f), have %.2f", cuteCost, needUSD, user.Credits))
+				servicePaywallError(ctx, http.StatusPaymentRequired, paywallCodeSubscriptionRequired, fmt.Sprintf("insufficient credits: need %.2f credits ($%.4f), have %.2f", cuteCost, needUSD, user.Credits))
 				return
 			}
 			jsonError(ctx, 500, "failed to deduct credits")

@@ -280,6 +280,8 @@ export default function AccountPage() {
       setCreditsUsd(next.credits_usd ?? 0);
       setMessage(data.created ? 'Account created.' : 'Signed in.');
       setPassword('');
+      const nextPath = new URLSearchParams(window.location.search).get('next') || '';
+      if (nextPath.startsWith('/') && !nextPath.startsWith('//')) window.location.assign(nextPath);
     } catch (err) {
       setError(friendlyError(err, 'Auth failed'));
     } finally {
