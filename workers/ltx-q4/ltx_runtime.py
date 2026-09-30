@@ -8,6 +8,7 @@ import urllib.request
 from pathlib import Path
 
 import graphs
+import weights
 
 COMFY_DIR = Path(os.environ.get("LTX_COMFY_DIR", "/opt/ComfyUI"))
 OUT_DIR = Path(os.environ.get("LTX_OUT_DIR", "/tmp/ltx-out"))
@@ -55,6 +56,7 @@ class LtxRuntime:
         self.jobs = 0
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         IN_DIR.mkdir(parents=True, exist_ok=True)
+        self.weights = weights.ensure_weights(Path(UNET).name)
         self.start()
 
     def start(self):
