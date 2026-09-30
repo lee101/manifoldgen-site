@@ -4,9 +4,12 @@ import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'r
 import Link from 'next/link';
 import { ArrowLeft, Check, Download, Image as ImageIcon, Loader2, Sparkles, Upload, WandSparkles } from 'lucide-react';
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '@/lib/auth';
+import { ensurePaidAccess, errorFields, isPaywallError, paywallFromResponse } from '@/lib/paywall';
 import styles from './page.module.css';
 
-type APIResponse = { result?: unknown; error?: string; credits_remain?: number; usd_equivalent?: number };
+const FEATURE = 'Style Transfer';
+
+type APIResponse = { result?: unknown; error?: unknown; credits_remain?: number; usd_equivalent?: number };
 
 const EXAMPLE = 'https://manifoldgenstatic.manifoldgen.com/gallery/originals/h3_dev_glass_hummingbird_20260816.png';
 
@@ -39,7 +42,7 @@ function responseImage(value: unknown): string {
 
 async function jsonResponse(response: Response, fallback: string): Promise<APIResponse> {
   const data = await response.json().catch(() => ({})) as APIResponse;
-  if (!response.ok) throw new Error(data.error || fallback);
+  if (!response.ok) throw paywallFromResponse(response, data, FEATURE) || new Error(errorFields(data).message || fallback);
   return data;
 }
 
@@ -98,7 +101,7 @@ export default function StyleTransferTool() {
 
   async function edit() {
     const currentUser = user || loadStoredUser();
-    if (!currentUser?.api_key) { setError('Sign in to use Style Transfer.'); return; }
+    if (!currentUser?.api_key) { setError(''); ensurePaidAccess(FEATURE); return; }
     if (!file && !sourceURL) { setError('Choose an image first.'); return; }
     if (!prompt.trim()) { setError('Describe the style or change you want.'); return; }
     setError('');
@@ -128,6 +131,7 @@ export default function StyleTransferTool() {
       if (fresh) { setUser(fresh); saveUser(fresh); }
     } catch (reason) {
       setStatus('');
+      if (isPaywallError(reason)) { setError(''); return; }
       setError(reason instanceof Error ? reason.message : 'Style transfer failed');
     } finally {
       setBusy('');

@@ -4,9 +4,12 @@ import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'r
 import Link from 'next/link';
 import { ArrowLeft, Check, Download, Image as ImageIcon, Loader2, Maximize2, Sparkles, Upload, WandSparkles } from 'lucide-react';
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '@/lib/auth';
+import { ensurePaidAccess, errorFields, isPaywallError, paywallFromResponse } from '@/lib/paywall';
 import styles from './page.module.css';
 
-type APIResponse = { result?: unknown; error?: string; credits_remain?: number; usd_equivalent?: number };
+const FEATURE = 'Extend Image';
+
+type APIResponse = { result?: unknown; error?: unknown; credits_remain?: number; usd_equivalent?: number };
 
 const EXAMPLE = 'https://manifoldgenstatic.manifoldgen.com/gallery/originals/64171ef03cb954ad_378dad88.webp';
 
@@ -30,7 +33,7 @@ function responseImage(value: unknown): string {
 
 async function jsonResponse(response: Response, fallback: string): Promise<APIResponse> {
   const data = await response.json().catch(() => ({})) as APIResponse;
-  if (!response.ok) throw new Error(data.error || fallback);
+  if (!response.ok) throw paywallFromResponse(response, data, FEATURE) || new Error(errorFields(data).message || fallback);
   return data;
 }
 
@@ -92,7 +95,7 @@ export default function OutpaintTool() {
 
   async function extend() {
     const currentUser = user || loadStoredUser();
-    if (!currentUser?.api_key) { setError('Sign in to use Extend Image.'); return; }
+    if (!currentUser?.api_key) { setError(''); ensurePaidAccess(FEATURE); return; }
     if (!file && !sourceURL) { setError('Choose an image first.'); return; }
     const anyExpand = Object.values(expand).some((value) => value > 0);
     if (zoomMode ? zoomOut <= 0 : !anyExpand) { setError('Choose at least one side to expand or set zoom-out.'); return; }
@@ -132,6 +135,7 @@ export default function OutpaintTool() {
       if (fresh) { setUser(fresh); saveUser(fresh); }
     } catch (reason) {
       setStatus('');
+      if (isPaywallError(reason)) { setError(''); return; }
       setError(reason instanceof Error ? reason.message : 'Canvas extension failed');
     } finally {
       setBusy('');

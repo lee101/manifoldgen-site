@@ -1,4 +1,4 @@
-import { PAYMENT_REQUIRED_EVENT, type PaymentDialogDetail } from './payments';
+import { errorFields, paywallFromResponse } from './paywall';
 
 export class HTTPResponseError extends Error {
   status: number;
@@ -15,13 +15,7 @@ export class HTTPResponseError extends Error {
 }
 
 function messageFromData(data: unknown): string | null {
-  if (!data || typeof data !== 'object') return null;
-  const record = data as Record<string, unknown>;
-  const message = typeof record.error === 'string' && record.error.trim()
-    ? record.error.trim()
-    : typeof record.message === 'string'
-      ? record.message.trim()
-      : '';
+  const { message } = errorFields(data);
   if (message && !['not found', '404 not found'].includes(message.toLowerCase())) return message;
   return null;
 }
@@ -67,10 +61,8 @@ export async function parseJSONResponse<T>(res: Response, fallback: string): Pro
       messageFromData(data) ||
       textFallback(text) ||
       `${fallback} (${res.status}${res.statusText ? ` ${res.statusText}` : ''})`;
-    if (res.status === 402 && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent<PaymentDialogDetail>(PAYMENT_REQUIRED_EVENT, {
-        detail: { message },
-      }));
+    if (res.status === 402 || (res.status === 401 && errorFields(data).code === 'auth_required')) {
+      paywallFromResponse(res, data);
     }
     throw new HTTPResponseError(message, res, data);
   }

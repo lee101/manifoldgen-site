@@ -4,9 +4,12 @@ import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'r
 import Link from 'next/link';
 import { ArrowLeft, Check, Download, Image as ImageIcon, Loader2, Sparkles, Upload, WandSparkles } from 'lucide-react';
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '@/lib/auth';
+import { ensurePaidAccess, errorFields, isPaywallError, paywallFromResponse } from '@/lib/paywall';
 import styles from './page.module.css';
 
-type APIResponse = { result?: unknown; error?: string };
+const FEATURE = 'Nano Banana 2';
+
+type APIResponse = { result?: unknown; error?: unknown };
 
 type Mode = 'gen' | 'edit';
 
@@ -44,7 +47,7 @@ function extractVariants(payload: unknown): string[] {
 
 async function jsonResponse(response: Response, fallback: string): Promise<APIResponse> {
   const data = await response.json().catch(() => ({})) as APIResponse;
-  if (!response.ok) throw new Error(data.error || fallback);
+  if (!response.ok) throw paywallFromResponse(response, data, FEATURE) || new Error(errorFields(data).message || fallback);
   return data;
 }
 
@@ -109,7 +112,7 @@ export default function NanoBananaTool() {
 
   async function run() {
     const currentUser = user || loadStoredUser();
-    if (!currentUser?.api_key) { setError('Sign in to use Nano Banana 2.'); return; }
+    if (!currentUser?.api_key) { setError(''); ensurePaidAccess(FEATURE); return; }
     const text = prompt.trim();
     if (!text) { setError('Describe the image you want.'); return; }
     setError('');
@@ -154,6 +157,7 @@ export default function NanoBananaTool() {
       if (fresh) { setUser(fresh); saveUser(fresh); }
     } catch (reason) {
       setStatus('');
+      if (isPaywallError(reason)) { setError(''); return; }
       setError(reason instanceof Error ? reason.message : 'Image generation failed');
     } finally {
       setBusy('');

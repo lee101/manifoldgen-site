@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,6 +72,7 @@ func imageEditorNative(path string, payload interface{}) (json.RawMessage, error
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Omniserve-Tier", "paid")
 	if secret := strings.TrimSpace(getEnv("OMNISERVE_NATIVE_SECRET", getEnv("OMNISERVE_SECRET", ""))); secret != "" {
 		req.Header.Set("Authorization", "Bearer "+secret)
 	}
@@ -84,7 +86,7 @@ func imageEditorNative(path string, payload interface{}) (json.RawMessage, error
 		return nil, err
 	}
 	if resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("image editor worker returned %d", resp.StatusCode)
+		return nil, gatewayStatusError("image editor worker", resp.StatusCode, data)
 	}
 	if !json.Valid(data) {
 		return nil, fmt.Errorf("image editor worker returned an invalid response")
@@ -92,10 +94,23 @@ func imageEditorNative(path string, payload interface{}) (json.RawMessage, error
 	return json.RawMessage(data), nil
 }
 
+type imageEditorAuthError struct{ err error }
+
+func (e *imageEditorAuthError) Error() string { return e.err.Error() }
+
+func imageEditorInputError(ctx *fasthttp.RequestCtx, err error) {
+	var auth *imageEditorAuthError
+	if errors.As(err, &auth) {
+		authRequiredError(ctx, "Sign in and subscribe to use Image Editor.")
+		return
+	}
+	jsonError(ctx, http.StatusBadRequest, err.Error())
+}
+
 func imageEditorInput(ctx *fasthttp.RequestCtx, requireMask, requirePrompt bool) (*User, imageEditorRequest, error) {
 	user, err := studioUser(ctx)
 	if err != nil {
-		return nil, imageEditorRequest{}, err
+		return nil, imageEditorRequest{}, &imageEditorAuthError{err}
 	}
 	var input imageEditorRequest
 	if err := json.Unmarshal(ctx.PostBody(), &input); err != nil {
@@ -121,12 +136,12 @@ func imageEditorInput(ctx *fasthttp.RequestCtx, requireMask, requirePrompt bool)
 func handleImageEditorBackground(ctx *fasthttp.RequestCtx) {
 	user, input, err := imageEditorInput(ctx, false, false)
 	if err != nil {
-		jsonError(ctx, http.StatusBadRequest, err.Error())
+		imageEditorInputError(ctx, err)
 		return
 	}
 	balance, err := imageEditorCharge(user, imageEditorBackgroundCredits, "image_editor_background", "Image Editor background separation")
 	if err != nil {
-		jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: background separation costs 1 credit")
+		chargeError(ctx, err, "insufficient credits: background separation costs 1 credit")
 		return
 	}
 	result, err := imageEditorNative("/v1/images/background-removals", map[string]interface{}{
@@ -135,6 +150,9 @@ func handleImageEditorBackground(ctx *fasthttp.RequestCtx) {
 	})
 	if err != nil {
 		imageEditorRefund(user, imageEditorBackgroundCredits, "background separation unavailable")
+		if writeGatewayPaywall(ctx, err, "Image Editor") {
+			return
+		}
 		jsonError(ctx, http.StatusBadGateway, "background separation is temporarily unavailable")
 		return
 	}
@@ -145,7 +163,7 @@ func handleImageEditorBackground(ctx *fasthttp.RequestCtx) {
 func handleImageEditorSelect(ctx *fasthttp.RequestCtx) {
 	user, input, err := imageEditorInput(ctx, false, false)
 	if err != nil {
-		jsonError(ctx, http.StatusBadRequest, err.Error())
+		imageEditorInputError(ctx, err)
 		return
 	}
 	if len(input.Points) == 0 || len(input.Points) > 16 {
@@ -160,12 +178,15 @@ func handleImageEditorSelect(ctx *fasthttp.RequestCtx) {
 	}
 	balance, err := imageEditorCharge(user, imageEditorSelectionCredits, "image_editor_selection", "Image Editor precise object selection")
 	if err != nil {
-		jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: precise selection costs 1 credit")
+		chargeError(ctx, err, "insufficient credits: precise selection costs 1 credit")
 		return
 	}
 	result, err := imageEditorNative("/v1/images/segmentations", input)
 	if err != nil {
 		imageEditorRefund(user, imageEditorSelectionCredits, "precise selection unavailable")
+		if writeGatewayPaywall(ctx, err, "Image Editor") {
+			return
+		}
 		jsonError(ctx, http.StatusBadGateway, "precise selection is warming up. Please try again shortly")
 		return
 	}
@@ -176,7 +197,7 @@ func handleImageEditorSelect(ctx *fasthttp.RequestCtx) {
 func handleImageEditorText(ctx *fasthttp.RequestCtx) {
 	user, input, err := imageEditorInput(ctx, false, false)
 	if err != nil {
-		jsonError(ctx, http.StatusBadRequest, err.Error())
+		imageEditorInputError(ctx, err)
 		return
 	}
 	if input.Box == nil || input.Box.X < 0 || input.Box.Y < 0 || input.Box.Width < 0.01 || input.Box.Height < 0.01 ||
@@ -186,12 +207,15 @@ func handleImageEditorText(ctx *fasthttp.RequestCtx) {
 	}
 	balance, err := imageEditorCharge(user, imageEditorTextCredits, "image_editor_text_grab", "Image Editor Magic Grab Text")
 	if err != nil {
-		jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: Magic Grab Text costs 1 credit")
+		chargeError(ctx, err, "insufficient credits: Magic Grab Text costs 1 credit")
 		return
 	}
 	result, err := imageEditorNative("/v1/images/text-layers", input)
 	if err != nil {
 		imageEditorRefund(user, imageEditorTextCredits, "Magic Grab Text unavailable")
+		if writeGatewayPaywall(ctx, err, "Image Editor") {
+			return
+		}
 		jsonError(ctx, http.StatusBadGateway, "Magic Grab Text is warming up. Please try again shortly")
 		return
 	}
@@ -202,17 +226,20 @@ func handleImageEditorText(ctx *fasthttp.RequestCtx) {
 func handleImageEditorEdit(ctx *fasthttp.RequestCtx) {
 	user, input, err := imageEditorInput(ctx, true, true)
 	if err != nil {
-		jsonError(ctx, http.StatusBadRequest, err.Error())
+		imageEditorInputError(ctx, err)
 		return
 	}
 	balance, err := imageEditorCharge(user, imageEditorEditCredits, "image_editor_inpaint", "Image Editor targeted regeneration")
 	if err != nil {
-		jsonError(ctx, http.StatusPaymentRequired, "insufficient credits: targeted regeneration costs 8 credits")
+		chargeError(ctx, err, "insufficient credits: targeted regeneration costs 8 credits")
 		return
 	}
-	result, err := imageEditorNative("/v1/images/edits", input)
+	result, err := imageEditorReferenceEdit(user.ID, input)
 	if err != nil {
 		imageEditorRefund(user, imageEditorEditCredits, "targeted regeneration unavailable")
+		if writeGatewayPaywall(ctx, err, "Image Editor") {
+			return
+		}
 		jsonError(ctx, http.StatusBadGateway, "targeted regeneration is temporarily unavailable")
 		return
 	}

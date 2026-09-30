@@ -4,9 +4,12 @@ import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type Poi
 import Link from 'next/link';
 import { ArrowLeft, Brush, Check, Download, Eraser, Image as ImageIcon, Loader2, Sparkles, Upload, WandSparkles } from 'lucide-react';
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '@/lib/auth';
+import { ensurePaidAccess, errorFields, isPaywallError, paywallFromResponse } from '@/lib/paywall';
 import styles from './page.module.css';
 
-type APIResponse = { result?: unknown; error?: string; credits_remain?: number; usd_equivalent?: number };
+const FEATURE = 'Inpaint';
+
+type APIResponse = { result?: unknown; error?: unknown; credits_remain?: number; usd_equivalent?: number };
 
 const EXAMPLE = 'https://manifoldgenstatic.manifoldgen.com/gallery/originals/ea0d66c5b19b8439_64411e9f.webp';
 
@@ -36,7 +39,7 @@ function responseImage(value: unknown): string {
 
 async function jsonResponse(response: Response, fallback: string): Promise<APIResponse> {
   const data = await response.json().catch(() => ({})) as APIResponse;
-  if (!response.ok) throw new Error(data.error || fallback);
+  if (!response.ok) throw paywallFromResponse(response, data, FEATURE) || new Error(errorFields(data).message || fallback);
   return data;
 }
 
@@ -205,7 +208,7 @@ export default function InpaintTool() {
 
   async function run() {
     const currentUser = user || loadStoredUser();
-    if (!currentUser?.api_key) { setError('Sign in to use Inpaint.'); return; }
+    if (!currentUser?.api_key) { setError(''); ensurePaidAccess(FEATURE); return; }
     if (!sourceImage) { setError('Choose an image first.'); return; }
     if (!painted) { setError('Brush the area you want to change.'); return; }
     if (!prompt.trim()) { setError('Describe the change for the brushed area.'); return; }
@@ -237,6 +240,7 @@ export default function InpaintTool() {
       if (fresh) { setUser(fresh); saveUser(fresh); }
     } catch (reason) {
       setStatus('');
+      if (isPaywallError(reason)) { setError(''); return; }
       setError(reason instanceof Error ? reason.message : 'Inpainting failed');
     } finally {
       setBusy('');

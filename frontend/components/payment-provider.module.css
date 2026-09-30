@@ -19,6 +19,11 @@
 .creditOptions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .creditOptions button { height: 47px; border: 1px solid rgba(255,255,255,.1); border-radius: 13px; background: rgba(255,255,255,.045); color: #e7e8eb; font-weight: 750; cursor: pointer; }
 .creditOptions button:hover { border-color: #7568d4; background: rgba(117,104,212,.14); }
+.valueProps { display: grid; gap: 8px; margin-bottom: 16px; padding: 14px; border: 1px solid rgba(132,114,239,.25); border-radius: 16px; background: rgba(132,114,239,.07); }
+.valueProps span { display: flex; align-items: flex-start; gap: 9px; color: #d6d2f5; font-size: 12px; line-height: 1.45; }
+.valueProps svg { flex: 0 0 auto; margin-top: 2px; color: #a99cf5; }
+.signinCta { display: block; margin-top: 14px; padding: 13px; border-radius: 999px; background: #8b7af0; color: #100d1c; font-size: 13px; font-weight: 850; text-align: center; text-decoration: none; }
+.signinCta:hover { background: #9d8ef5; }
 .busy, .error, .signin { margin: 14px 0 0; padding: 11px 13px; border-radius: 12px; font-size: 11px; line-height: 1.45; }
 .busy { display: flex; align-items: center; justify-content: center; gap: 8px; color: #aaaebb; }
 .error { background: rgba(191,63,78,.14); color: #f0a4ad; }

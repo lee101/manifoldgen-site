@@ -1,12 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { Check, Loader2, X } from 'lucide-react';
+import { Check, Layers3, Loader2, Sparkles, WandSparkles, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadStoredUser, refreshUser } from '../lib/auth';
 import {
+  CREDIT_TOPUPS_USD,
   CREDITS_UPDATED_EVENT,
   OPEN_PAYMENT_EVENT,
+  SUBSCRIPTION_PLANS,
   PAYMENT_REQUIRED_EVENT,
   type PaymentDialogDetail,
 } from '../lib/payments';
@@ -15,12 +17,12 @@ import styles from './payment-provider.module.css';
 
 type CheckoutKind = 'credits' | 'creator_monthly' | 'creator_annual' | 'pro_monthly' | 'pro_annual';
 
-const planLabels: Record<Exclude<CheckoutKind, 'credits'>, string> = {
-  creator_monthly: 'Creator monthly · $14.99/month',
-  creator_annual: 'Creator annual · $149/year',
-  pro_monthly: 'Pro monthly · $49/month',
-  pro_annual: 'Pro annual · $490/year',
-};
+const planLabels = Object.fromEntries(SUBSCRIPTION_PLANS.map((plan) => [plan.kind, plan.label])) as Record<Exclude<CheckoutKind, 'credits'>, string>;
+
+function signInHref() {
+  if (typeof window === 'undefined') return '/account';
+  return `/account?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+}
 type DialogStep = 'choose' | 'checkout' | 'success';
 
 interface StripeEmbeddedCheckout {
@@ -65,6 +67,8 @@ function loadStripeJS() {
 export default function PaymentProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
+  const [feature, setFeature] = useState('');
+  const [signedIn, setSignedIn] = useState(false);
   const [step, setStep] = useState<DialogStep>('choose');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -87,6 +91,8 @@ export default function PaymentProvider({ children }: { children: React.ReactNod
     const show = (event: Event) => {
       const detail = (event as CustomEvent<PaymentDialogDetail>).detail;
       setReason(detail?.message || 'Add credits or choose a plan to continue.');
+      setFeature(detail?.feature || '');
+      setSignedIn(!!loadStoredUser()?.api_key && detail?.reason !== 'auth');
       setError('');
       setStep('choose');
       setOpen(true);
@@ -159,7 +165,7 @@ export default function PaymentProvider({ children }: { children: React.ReactNod
   async function startCheckout(kind: CheckoutKind, amountUSD = 25) {
     const stored = loadStoredUser();
     if (!stored?.api_key) {
-      setError('Sign in to add credits or start a subscription.');
+      window.location.assign(signInHref());
       return;
     }
     setBusy(true);
@@ -194,29 +200,26 @@ export default function PaymentProvider({ children }: { children: React.ReactNod
     {open && <div className={styles.backdrop} data-testid="payment-dialog" onMouseDown={(event) => event.target === event.currentTarget && close()}>
       <section className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="payment-dialog-title">
         <header className={styles.header}>
-          <div><span className={styles.eyebrow}>Keep creating</span><h2 id="payment-dialog-title">Add credits or subscribe</h2><p>{reason}</p></div>
+          <div><span className={styles.eyebrow}>{feature ? `Unlock ${feature}` : 'Keep creating'}</span><h2 id="payment-dialog-title">{signedIn ? 'Add credits or subscribe' : 'Subscribe to start creating'}</h2><p>{reason}</p></div>
           <button type="button" className={styles.close} onClick={close} aria-label="Close payment dialog"><X size={17} /></button>
         </header>
         <div className={styles.body}>
           {step === 'choose' && <>
+            {!signedIn && <div className={styles.valueProps} data-testid="subscribe-value-props">
+              <span><Layers3 size={14} /> {feature === 'Image Editor' ? 'Split foregrounds, select any object, regenerate only what you choose' : 'Every ManifoldGen image, video, audio and editing tool on one account'}</span>
+              <span><Sparkles size={14} /> Unlimited images on Creator and Pro, plus rollover credits for edits and video</span>
+              <span><WandSparkles size={14} /> Failed GPU jobs refund automatically</span>
+            </div>}
             <div className={styles.plans}>
-              <button type="button" className={`${styles.plan} ${styles.planRecommended}`} disabled={busy} onClick={() => void startCheckout('creator_monthly')}>
-                <span className={styles.tag}>Recommended</span><b>Creator monthly · $14.99/month</b><small>Unlimited images plus $25 of rollover generation credits each month.</small>
-              </button>
-              <button type="button" className={styles.plan} disabled={busy} onClick={() => void startCheckout('creator_annual')}>
-                <b>Creator · $149/year</b><small>Two months free, plus $300 of rollover generation credits for the year.</small>
-              </button>
-              <button type="button" className={styles.plan} disabled={busy} onClick={() => void startCheckout('pro_monthly')}>
-                <b>Pro · $49/month</b><small>Unlimited images and a higher-volume creator workspace.</small>
-              </button>
-              <button type="button" className={styles.plan} disabled={busy} onClick={() => void startCheckout('pro_annual')}>
-                <b>Pro · $490/year</b><small>Two months free on a full year of Pro.</small>
-              </button>
+              {SUBSCRIPTION_PLANS.map((plan) => <button type="button" key={plan.kind} className={`${styles.plan} ${plan.recommended ? styles.planRecommended : ''}`} disabled={busy} onClick={() => void startCheckout(plan.kind)}>
+                {plan.recommended && <span className={styles.tag}>Recommended</span>}<b>{plan.title}</b><small>{plan.detail}</small>
+              </button>)}
             </div>
             <div className={styles.divider}>Or make a one-time top-up</div>
-            <div className={styles.creditOptions}>{[10, 25, 50].map((amount) => <button type="button" key={amount} disabled={busy} onClick={() => void startCheckout('credits', amount)}>${amount}</button>)}</div>
+            <div className={styles.creditOptions}>{CREDIT_TOPUPS_USD.map((amount) => <button type="button" key={amount} disabled={busy} onClick={() => void startCheckout('credits', amount)}>${amount}</button>)}</div>
+            {!signedIn && <a className={styles.signinCta} href={signInHref()} data-testid="subscribe-signin-cta">Create a free account or sign in to subscribe</a>}
             {busy && <div className={styles.busy}><Loader2 className={styles.spin} size={15} /> Preparing secure checkout…</div>}
-            {error && <p className={styles.error} role="alert">{error} {!loadStoredUser() && <Link href="/account">Sign in</Link>}</p>}
+            {error && <p className={styles.error} role="alert">{error} {!loadStoredUser() && <Link href={signInHref()}>Sign in</Link>}</p>}
           </>}
           {step === 'checkout' && <>
             <div className={styles.checkoutHeader}><div><b>Secure checkout</b><div className={styles.checkoutLabel}>{checkoutLabel}</div></div><button type="button" onClick={() => { setClientSecret(''); setPublishableKey(''); setStep('choose'); }}>Change</button></div>
