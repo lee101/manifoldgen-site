@@ -1,0 +1,6 @@
+*.mp4
+*.webm
+wm/*.png
+sheets/*.png
+variants/*.png
+bench/pods*.json

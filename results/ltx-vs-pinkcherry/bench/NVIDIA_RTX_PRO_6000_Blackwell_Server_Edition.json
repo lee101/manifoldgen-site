@@ -1,0 +1,283 @@
+{
+ "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+ "vram_gb": 96,
+ "runs": [
+  {
+   "name": "q4_single_1280x736|default|run1",
+   "ok": true,
+   "exec_s": 81.736,
+   "wall_s": 82.1,
+   "peak_vram_mb": 23851,
+   "files": [
+    "bench_q4_single_1280x736_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_single_1280x736|default|run2",
+   "ok": true,
+   "exec_s": 53.166,
+   "wall_s": 53.5,
+   "peak_vram_mb": 24493,
+   "files": [
+    "bench_q4_single_1280x736_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_single_1280x736|default|run3",
+   "ok": true,
+   "exec_s": 53.0,
+   "wall_s": 53.4,
+   "peak_vram_mb": 24493,
+   "files": [
+    "bench_q4_single_1280x736_default_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run1",
+   "ok": true,
+   "exec_s": 55.289,
+   "wall_s": 56.1,
+   "peak_vram_mb": 26671,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run2",
+   "ok": true,
+   "exec_s": 51.321,
+   "wall_s": 52.1,
+   "peak_vram_mb": 26895,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run3",
+   "ok": true,
+   "exec_s": 48.912,
+   "wall_s": 49.3,
+   "peak_vram_mb": 26895,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_single_1280x736|default|run1",
+   "ok": true,
+   "exec_s": 45.662,
+   "wall_s": 46.2,
+   "peak_vram_mb": 50719,
+   "files": [
+    "bench_fp8_single_1280x736_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_single_1280x736|default|run2",
+   "ok": true,
+   "exec_s": 37.603,
+   "wall_s": 38.2,
+   "peak_vram_mb": 50943,
+   "files": [
+    "bench_fp8_single_1280x736_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_single_1280x736|default|run3",
+   "ok": true,
+   "exec_s": 36.185,
+   "wall_s": 36.6,
+   "peak_vram_mb": 50943,
+   "files": [
+    "bench_fp8_single_1280x736_default_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|default|run1",
+   "ok": true,
+   "exec_s": 32.93,
+   "wall_s": 33.3,
+   "peak_vram_mb": 51999,
+   "files": [
+    "bench_fp8_two_stage_1280x704_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|default|run2",
+   "ok": true,
+   "exec_s": 28.114,
+   "wall_s": 29.1,
+   "peak_vram_mb": 51999,
+   "files": [
+    "bench_fp8_two_stage_1280x704_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|default|run3",
+   "ok": true,
+   "exec_s": 32.308,
+   "wall_s": 33.2,
+   "peak_vram_mb": 51999,
+   "files": [
+    "bench_fp8_two_stage_1280x704_default_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run1",
+   "ok": true,
+   "exec_s": 73.788,
+   "wall_s": 74.4,
+   "peak_vram_mb": 25933,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run2",
+   "ok": true,
+   "exec_s": 51.711,
+   "wall_s": 52.1,
+   "peak_vram_mb": 26447,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run3",
+   "ok": true,
+   "exec_s": 47.454,
+   "wall_s": 48.1,
+   "peak_vram_mb": 26447,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|sage|run1",
+   "ok": true,
+   "exec_s": 45.06,
+   "wall_s": 45.4,
+   "peak_vram_mb": 51455,
+   "files": [
+    "bench_fp8_two_stage_1280x704_sage_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|sage|run2",
+   "ok": true,
+   "exec_s": 29.321,
+   "wall_s": 30.2,
+   "peak_vram_mb": 51999,
+   "files": [
+    "bench_fp8_two_stage_1280x704_sage_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|sage|run3",
+   "ok": true,
+   "exec_s": 29.348,
+   "wall_s": 30.1,
+   "peak_vram_mb": 51999,
+   "files": [
+    "bench_fp8_two_stage_1280x704_sage_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|q4_two_stage_1280x704|rooftop",
+   "ok": true,
+   "exec_s": 72.691,
+   "wall_s": 73.5,
+   "peak_vram_mb": 25871,
+   "files": [
+    "ab_q4_two_stage_1280x704_rooftop_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|q4_two_stage_1280x704|apartment",
+   "ok": true,
+   "exec_s": 53.499,
+   "wall_s": 54.2,
+   "peak_vram_mb": 26447,
+   "files": [
+    "ab_q4_two_stage_1280x704_apartment_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|q4_two_stage_1280x704|beach",
+   "ok": true,
+   "exec_s": 56.611,
+   "wall_s": 57.2,
+   "peak_vram_mb": 26383,
+   "files": [
+    "ab_q4_two_stage_1280x704_beach_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|fp8_two_stage_1280x704|rooftop",
+   "ok": true,
+   "exec_s": 41.821,
+   "wall_s": 42.2,
+   "peak_vram_mb": 51359,
+   "files": [
+    "ab_fp8_two_stage_1280x704_rooftop_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|fp8_two_stage_1280x704|apartment",
+   "ok": true,
+   "exec_s": 31.787,
+   "wall_s": 32.2,
+   "peak_vram_mb": 51999,
+   "files": [
+    "ab_fp8_two_stage_1280x704_apartment_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|fp8_two_stage_1280x704|beach",
+   "ok": true,
+   "exec_s": 32.424,
+   "wall_s": 33.2,
+   "peak_vram_mb": 52383,
+   "files": [
+    "ab_fp8_two_stage_1280x704_beach_00001_.mp4"
+   ],
+   "err": null
+  }
+ ],
+ "log": [],
+ "ram_gb": 1511,
+ "flags_available": [
+  "--use-sage-attention",
+  "--use-flash-attention",
+  "--use-ck-attention",
+  "--fast",
+  "--use-pytorch-cross-attention"
+ ],
+ "sage_install": "[notice] A new release of pip is available: 25.0.1 -> 26.2.1\n[notice] To update, run: pip install --upgrade pip",
+ "done": true,
+ "cost_per_hr": 2.09,
+ "pod": "awjmx7sa973pvf"
+}

@@ -233,12 +233,7 @@ func processAnimaNativeJob(job *VideoJob) {
 }
 
 func completeAnimaJob(job *VideoJob, input map[string]interface{}, artifact []byte, contentType string, executionSeconds, providerUSD float64, provider string) {
-	outputNSFW, outputScore, err := classifyH3Image(artifact)
-	if err != nil {
-		log.Printf("[anima] output moderation unavailable job=%s: %v", job.ID, err)
-		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image safety check is temporarily unavailable")
-		return
-	}
+	outputNSFW, outputScore := classifyH3ImageFlag(artifact, "job="+job.ID)
 	uploadContext, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	imageURL, relPath, err := uploadGeneratedImageArtifact(uploadContext, artifact, job.UserID, contentType, "anima")
 	cancel()
@@ -378,12 +373,7 @@ func processAnimaJob(job *VideoJob) {
 				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "Anima returned an invalid illustration")
 				return
 			}
-			outputNSFW, outputScore, err := classifyH3Image(artifact)
-			if err != nil {
-				log.Printf("[anima] output moderation unavailable job=%s: %v", job.ID, err)
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image safety check is temporarily unavailable")
-				return
-			}
+			outputNSFW, outputScore := classifyH3ImageFlag(artifact, "job="+job.ID)
 			uploadContext, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			imageURL, relPath, err := uploadGeneratedImageArtifact(uploadContext, artifact, job.UserID, state.Output.Outputs[0].ContentType, "anima")
 			cancel()

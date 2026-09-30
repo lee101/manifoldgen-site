@@ -36,12 +36,15 @@ func handleGalleryAsset(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, fasthttp.StatusInternalServerError, "could not request gallery asset")
 		return
 	}
+	if byteRange := string(ctx.Request.Header.Peek("Range")); byteRange != "" {
+		request.Header.Set("Range", byteRange)
+	}
 	response, err := galleryHTTPClient.Do(request)
 	if err != nil {
 		jsonError(ctx, fasthttp.StatusBadGateway, "could not load gallery asset")
 		return
 	}
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
 		response.Body.Close()
 		jsonError(ctx, fasthttp.StatusBadGateway, fmt.Sprintf("gallery asset returned %d", response.StatusCode))
 		return
@@ -64,7 +67,11 @@ func handleGalleryAsset(ctx *fasthttp.RequestCtx) {
 	// survives project reloads while IndexedDB keeps the authoritative local
 	// File used by playback.
 	ctx.Response.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
-	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.Response.Header.Set("Accept-Ranges", "bytes")
+	if response.StatusCode == http.StatusPartialContent {
+		ctx.Response.Header.Set("Content-Range", response.Header.Get("Content-Range"))
+	}
+	ctx.SetStatusCode(response.StatusCode)
 	// fasthttp closes response.Body after it has copied the stream to the
 	// browser. The known length is validated above, so this remains bounded
 	// without buffering a full source video in the backend process.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ type PromptSearchEngine struct {
 	ready     bool
 	indexing  bool
 	indexedAt time.Time
+	nsfw      bool
 }
 
 // VideoSearchEngine indexes completed video_jobs by prompt text.
@@ -67,6 +69,7 @@ type AudioSearchResult struct {
 }
 
 var promptSearch *PromptSearchEngine
+var promptSearchNSFW *PromptSearchEngine
 var videoSearch *VideoSearchEngine
 var audioSearch *AudioSearchEngine
 
@@ -103,6 +106,7 @@ func newLocalSearchEngine(model *gobed.EmbeddingModel) *gobed.SearchEngine {
 
 func initPromptSearch() {
 	promptSearch = &PromptSearchEngine{}
+	promptSearchNSFW = &PromptSearchEngine{nsfw: true}
 	videoSearch = &VideoSearchEngine{}
 	audioSearch = &AudioSearchEngine{}
 	go rebuildSearchIndexes()
@@ -113,6 +117,9 @@ func rebuildSearchIndexes() {
 	// so parallel builds increase cold-start time and can exhaust VRAM.
 	if promptSearch != nil {
 		promptSearch.loadAndIndex()
+	}
+	if promptSearchNSFW != nil {
+		promptSearchNSFW.loadAndIndex()
 	}
 	if videoSearch != nil {
 		videoSearch.loadAndIndex()
@@ -145,7 +152,7 @@ func (ps *PromptSearchEngine) loadAndIndex() {
 
 	var imageIDs, prompts []string
 	if dbConn != nil {
-		err = dbConn.StreamAllImagePrompts(false, func(id, prompt string) error {
+		err = dbConn.StreamAllImagePrompts(ps.nsfw, func(id, prompt string) error {
 			imageIDs = append(imageIDs, id)
 			prompts = append(prompts, prompt)
 			return nil
@@ -155,7 +162,7 @@ func (ps *PromptSearchEngine) loadAndIndex() {
 			return
 		}
 	}
-	log.Printf("[search] Loaded %d image prompts in %v", len(prompts), time.Since(t0))
+	log.Printf("[search] Loaded %d image prompts (nsfw=%v) in %v", len(prompts), ps.nsfw, time.Since(t0))
 
 	engine := newLocalSearchEngine(model)
 	if len(prompts) > 0 {
@@ -182,7 +189,49 @@ func (ps *PromptSearchEngine) loadAndIndex() {
 	if old != nil {
 		_ = old.Close()
 	}
-	log.Printf("[search] Image index ready: %d prompts", len(prompts))
+	log.Printf("[search] Image index ready (nsfw=%v): %d prompts", ps.nsfw, len(prompts))
+}
+
+func indexImagePrompt(img *GeneratedImage) {
+	if img == nil || img.Prompt == "" {
+		return
+	}
+	if img.IsNSFW != nil && *img.IsNSFW {
+		promptSearchNSFW.IndexIncremental(img.ID, img.Prompt)
+		return
+	}
+	promptSearch.IndexIncremental(img.ID, img.Prompt)
+}
+
+func searchImagePrompts(query string, topK, offset int, includeNSFW bool) ([]SearchResult, bool, error) {
+	if !includeNSFW || promptSearchNSFW == nil || !promptSearchNSFW.IsReady() {
+		return promptSearch.SearchPage(query, topK, offset)
+	}
+	want := offset + topK + 1
+	safe, err := promptSearch.searchTop(query, want)
+	if err != nil {
+		return nil, false, err
+	}
+	flagged, err := promptSearchNSFW.searchTop(query, want)
+	if err != nil {
+		return nil, false, err
+	}
+	merged := append(safe, flagged...)
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].Similarity > merged[j].Similarity })
+	if offset >= len(merged) {
+		return []SearchResult{}, false, nil
+	}
+	end := offset + topK
+	hasMore := len(merged) > end
+	if end > len(merged) {
+		end = len(merged)
+	}
+	return merged[offset:end], hasMore, nil
+}
+
+func (ps *PromptSearchEngine) searchTop(query string, n int) ([]SearchResult, error) {
+	out, _, err := ps.SearchPage(query, n, 0)
+	return out, err
 }
 
 func (ps *PromptSearchEngine) IndexIncremental(imageID, prompt string) {
@@ -212,7 +261,7 @@ func (ps *PromptSearchEngine) IsReady() bool {
 func (ps *PromptSearchEngine) Stats() map[string]any {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
-	out := map[string]any{"ready": ps.ready, "indexing": ps.indexing, "total_prompts": len(ps.prompts), "kind": "images"}
+	out := map[string]any{"ready": ps.ready, "indexing": ps.indexing, "total_prompts": len(ps.prompts), "kind": "images", "nsfw": ps.nsfw}
 	if !ps.indexedAt.IsZero() {
 		out["indexed_at"] = ps.indexedAt.Format(time.RFC3339)
 	}

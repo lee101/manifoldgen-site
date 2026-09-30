@@ -54,8 +54,11 @@ func h3EndpointScaleLock(endpointID string) *sync.Mutex {
 
 func h3DesiredWorkersMax(route h3WorkerRoute) int {
 	defaultMax, envName := 2, "H3_NORMAL_RUNPOD_MAX_WORKERS"
-	if route.Variant == h3PinkCherryVariant {
+	switch route.Variant {
+	case h3PinkCherryVariant:
 		defaultMax, envName = 1, "H3_PINKCHERRY_RUNPOD_MAX_WORKERS"
+	case h3LtxVariant:
+		defaultMax, envName = 2, "H3_LTX_RUNPOD_MAX_WORKERS"
 	}
 	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv(envName))); err == nil && configured > 0 {
 		return configured

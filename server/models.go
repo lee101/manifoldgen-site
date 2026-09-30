@@ -46,6 +46,7 @@ type User struct {
 	AutotopupLastAt       time.Time `json:"autotopup_last_at,omitempty"`
 	DripStep              int       `json:"drip_step"`       // Last sent drip email step (0 = none)
 	DripStartedAt         time.Time `json:"drip_started_at"` // When drip campaign started
+	AllowNSFW             bool      `json:"allow_nsfw"`
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }

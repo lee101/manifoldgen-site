@@ -61,23 +61,23 @@ cp .env.example .env
 # create postgres role/db manifoldgen
 make install
 make server      # :8116
-make frontend    # :3006, proxies /api → :8116
+make frontend    # plain-HTTP Next dev on http://localhost:3006, proxies /api → :8116
 
 # Build the exported frontend and run the Go server against it:
 cd frontend && NEXT_OUTPUT=export bun run build && cd ../server
 PORT=8116 DIST_DIR=../frontend/out go run .
 
-# HTTPS frontend for browser/auth testing
-make dev-https   # https://manifoldgen.local:3006, proxies API calls to production
+# Local dev (HTTPS, self-signed cert): https://manifoldgen.local:3006/
+make dev         # proxies API calls to production
 # To exercise the local API over HTTPS instead:
-MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev-https
+MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev
 
-# Restart HTTPS dev cleanly, killing anything currently listening on :3006:
-fuser -k 3006/tcp 2>/dev/null || true; make dev-https
+# Restart the HTTPS frontend cleanly, killing anything currently listening on :3006:
+fuser -k 3006/tcp 2>/dev/null || true; make dev
 # Restart HTTPS dev with the local Go API as well (Go API listens on :8116):
 fuser -k 3006/tcp 2>/dev/null || true; fuser -k 8116/tcp 2>/dev/null || true; \
   (cd server && go build -o manifoldgen-server . && PORT=8116 DIST_DIR=../frontend/out ./manifoldgen-server) & \
-  MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev-https
+  MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev
 ```
 
 The exported build serves the static site and API from the Go process at

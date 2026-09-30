@@ -69,7 +69,7 @@ import {
   canEncodeAudio,
   canEncodeVideo,
 } from 'mediabunny';
-import { clearUser, loadStoredUser, refreshUser, saveUser, type StoredUser } from '../../lib/auth';
+import { clearUser, loadStoredUser, nsfwAuthHeaders, refreshUser, saveUser, type StoredUser } from '../../lib/auth';
 import { HTTPResponseError, parseJSONResponse } from '../../lib/http';
 import { loadPromptHistory, promptHistoryUserKey, recordPrompt, usePromptHistoryCycler, type PromptHistoryEntry, type PromptKind } from '../../lib/prompt-history';
 import { ManifoldLoader } from '../../components/manifold-loader';
@@ -89,6 +89,7 @@ import {
   type PortableStudioDocument,
   type PortableStudioHistoryState,
 } from '../../lib/studio-projects';
+import { MEDIA_DRAG_TYPE, decodeMediaDrag, encodeMediaDrag, galleryProxyURL as galleryImportURL, isStreamingPlaceholder, mediaKindFromURL, streamingPlaceholder, type DraggedMedia } from '../../lib/studio-media-drag';
 import { h3Dimensions, loopAnchorURL, type H3Aspect, type H3Size } from '../../lib/h3-loop';
 import { VIDEO_GENERATORS } from '../../lib/video-generators';
 import styles from './page.module.css';
@@ -1393,18 +1394,6 @@ function galleryImageURL(value?: string) {
   return `${GALLERY_CDN}/${source.replace(/^\/?(?:images\/|gallery\/)?/, '')}`;
 }
 
-function galleryImportURL(value: string) {
-  try {
-    const parsed = new URL(value);
-    if (parsed.hostname === 'manifoldgenstatic.manifoldgen.com' && parsed.pathname.startsWith('/gallery/')) {
-      return `/api/gallery-assets/${parsed.pathname.slice('/gallery/'.length)}?v=1`;
-    }
-  } catch {
-    // The URL is validated by the caller; use the original value for its error.
-  }
-  return value;
-}
-
 function textFileName(content: string) {
   const stem = content.trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 42) || 'text';
   return `${stem}.png`;
@@ -1491,6 +1480,31 @@ async function readDimensions(file: File, kind: MediaKind) {
     return { width: video.videoWidth, height: video.videoHeight, duration: video.duration || 5 };
   } finally {
     URL.revokeObjectURL(url);
+  }
+}
+
+async function probeRemoteMedia(url: string, kind: 'image' | 'video', hintDuration?: number) {
+  if (kind === 'image') {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return { width: image.naturalWidth, height: image.naturalHeight, duration: 5 };
+  }
+  const video = document.createElement('video');
+  video.preload = 'metadata';
+  video.muted = true;
+  video.src = url;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(() => reject(new Error('Video metadata timed out')), 15_000);
+      video.onloadedmetadata = () => { window.clearTimeout(timer); resolve(); };
+      video.onerror = () => { window.clearTimeout(timer); reject(new Error('This video could not be read')); };
+    });
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : hintDuration || 5;
+    return { width: video.videoWidth || 1280, height: video.videoHeight || 720, duration };
+  } finally {
+    video.removeAttribute('src');
+    video.load();
   }
 }
 
@@ -2445,7 +2459,7 @@ export default function StudioPage() {
       ...editHistory.redo.flatMap((state) => state.assets),
     ];
     const pending = [...new Map(retainedAssets.map((asset) => [asset.file, asset])).values()]
-      .filter((asset) => !asset.cloudURL && !uploadInFlightRef.current.has(asset.file));
+      .filter((asset) => !asset.cloudURL && !isStreamingPlaceholder(asset.file) && !uploadInFlightRef.current.has(asset.file));
     if (!pending.length) return;
     let started = false;
     const start = () => {
@@ -2525,7 +2539,7 @@ export default function StudioPage() {
         ...editHistory.undo.flatMap((state) => state.assets),
         ...editHistory.redo.flatMap((state) => state.assets),
       ];
-      const files = new Map(retainedAssets.map((asset) => [asset.mediaID, asset.file]));
+      const files = new Map(retainedAssets.filter((asset) => !isStreamingPlaceholder(asset.file)).map((asset) => [asset.mediaID, asset.file]));
       const local: LocalStudioProject = { id: projectID, name: projectName, document, files, updatedAt: Date.now() };
       void saveLocalStudioProject(local).then(async () => {
         if (sequence !== projectSaveSequenceRef.current) return;
@@ -2598,6 +2612,7 @@ export default function StudioPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const [stageVideoLoading, setStageVideoLoading] = useState(false);
   const drawCurrent = useCallback(() => {
     const canvas = canvasRef.current;
     const renderer = rendererRef.current;
@@ -2851,11 +2866,7 @@ export default function StudioPage() {
       // their bytes directly works only when that host happens to include the
       // current Studio origin in its CORS response (www and the apex are
       // different origins). Keep imports on our origin just like URL handoffs.
-      const response = await fetchWithRetry(galleryImportURL(url));
-      if (!response.ok) throw new Error('Could not download this generated video');
-      const blob = await response.blob();
-      const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
-      await importFiles([new File([blob], `${generationFileName(job.prompt, job.job_id)}.${extension}`, { type: blob.type || 'video/mp4' })]);
+      await addRemoteMediaInstant({ kind: 'video', url, name: generationFileName(job.prompt, job.job_id), attribution: 'Generated video' });
       setNotice('Generated video added to this project');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not add generated video');
@@ -2875,13 +2886,57 @@ export default function StudioPage() {
     return addGeneratedFile(new File([blob], `${name.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 72) || kind}.${extension}`, { type: blob.type || `${kind}/${fallback}` }), kind, attribution);
   }
 
+  async function addRemoteMediaInstant(media: DraggedMedia, timelinePlacement?: number, visualTrackPlacement = 0) {
+    const { kind } = media;
+    const streamURL = galleryImportURL(media.url);
+    const safeName = media.name.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 72) || kind;
+    const fallbackType = kind === 'image' ? 'image/webp' : 'video/mp4';
+    const metadata = await probeRemoteMedia(streamURL, kind, media.duration);
+    const visualEnd = assets.filter((item) => item.kind !== 'audio').reduce((end, item) => Math.max(end, clipEnd(item)), 0);
+    const placeholder = streamingPlaceholder(safeName, fallbackType);
+    const id = uid();
+    const asset: StudioAsset = {
+      id, mediaID: id, name: safeName, kind, file: placeholder, url: streamURL, ...metadata,
+      trimStart: 0, trimEnd: metadata.duration, timelineStart: timelinePlacement ?? visualEnd, volume: 1, fadeIn: 0, fadeOut: 0,
+      visualTrack: visualTrackPlacement,
+      stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0,
+      attribution: media.attribution, adjustments: { ...DEFAULT_ADJUSTMENTS },
+    };
+    rememberEdit();
+    setAssets((current) => stackOverlappingVisuals([...current, asset]));
+    selectOnly(asset.id);
+    setPlayhead(asset.timelineStart);
+    void hydrateStreamingAsset(asset, streamURL, safeName, fallbackType);
+    return asset;
+  }
+
+  async function hydrateStreamingAsset(asset: StudioAsset, streamURL: string, name: string, fallbackType: string) {
+    try {
+      const response = await fetchWithRetry(streamURL, undefined, { attempts: 4, baseDelayMs: 500 });
+      if (!response.ok) throw new Error(`Could not download ${name} (${response.status})`);
+      const blob = await response.blob();
+      const type = blob.type || fallbackType;
+      const extension = type.split('/')[1]?.replace('jpeg', 'jpg').replace('quicktime', 'mov') || 'bin';
+      const file = new File([blob], `${name}.${extension}`, { type });
+      const swap = (item: StudioAsset) => item.mediaID === asset.mediaID && item.file === asset.file ? { ...item, file, name: file.name } : item;
+      setAssets((current) => current.map(swap));
+      replaceEditHistory((current) => ({
+        undo: current.undo.map((state) => ({ ...state, assets: state.assets.map(swap) })),
+        redo: current.redo.map((state) => ({ ...state, assets: state.assets.map(swap) })),
+      }));
+      if (projectID) void cacheLocalStudioFiles(projectID, new Map([[asset.mediaID, file]])).catch(() => undefined);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : `Could not download ${name}`);
+    }
+  }
+
   async function addDiscoveredMedia(url: string, prompt: string, kind: 'image' | 'video') {
     if (!url) return;
     setContextMenu(null);
     setBusy('import-discovery');
     setError('');
     try {
-      await addRemoteMedia(url, prompt || `Community ${kind}`, kind, `Community ${kind} · ${prompt}`);
+      await addRemoteMediaInstant({ kind, url, name: prompt || `Community ${kind}`, attribution: `Community ${kind} · ${prompt}` });
       setNotice(`Community ${kind} added to the timeline`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : `Could not add ${kind}`);
@@ -2901,8 +2956,10 @@ export default function StudioPage() {
         const data = await parseJSONResponse<{ results?: StudioVideoHit[] }>(response, 'Could not search videos');
         setVideoHits((data.results || []).filter((item) => item.video_url));
       } else if (mode === 'images') {
-        const endpoint = q ? `/api/images/semantic?q=${encodeURIComponent(q)}&top_k=24` : '/api/images?skip_total=true&varied=true&per_page=24&allow_nsfw=true';
-        const response = await fetch(endpoint);
+        const headers = nsfwAuthHeaders(user);
+        const nsfw = headers ? '&allow_nsfw=true' : '';
+        const endpoint = q ? `/api/images/semantic?q=${encodeURIComponent(q)}&top_k=24${nsfw}` : `/api/images?skip_total=true&varied=true&per_page=24${nsfw}`;
+        const response = await fetch(endpoint, { headers });
         const data = await parseJSONResponse<{ results?: StudioImageHit[]; images?: StudioImageHit[] }>(response, 'Could not search images');
         setImageHits(data.results || data.images || []);
       } else {
@@ -3277,7 +3334,7 @@ export default function StudioPage() {
     const pasted = copied.map((asset) => ({
       ...asset,
       id: uid(),
-      url: URL.createObjectURL(asset.file),
+      url: isStreamingPlaceholder(asset.file) ? asset.url : URL.createObjectURL(asset.file),
       timelineStart: playhead + asset.timelineStart - groupStart,
       adjustments: { ...asset.adjustments },
     }));
@@ -3285,6 +3342,43 @@ export default function StudioPage() {
     setAssets((current) => stackOverlappingVisuals([...current, ...pasted]));
     setSelectedIDs(pasted.map((asset) => asset.id));
     setSelectedID(pasted.at(-1)?.id || '');
+  }
+
+  function placeProjectAsset(assetID: string, timelineStart: number, visualTrack: number) {
+    const source = assets.find((item) => item.id === assetID);
+    if (!source) throw new Error('That clip is no longer in the project');
+    const copy: StudioAsset = {
+      ...source,
+      id: uid(),
+      url: isStreamingPlaceholder(source.file) ? source.url : URL.createObjectURL(source.file),
+      timelineStart,
+      visualTrack: source.kind === 'audio' ? 0 : visualTrack,
+      adjustments: { ...source.adjustments },
+    };
+    rememberEdit();
+    setAssets((current) => stackOverlappingVisuals([...current, copy]));
+    selectOnly(copy.id);
+    setPlayhead(timelineStart);
+    setNotice(`${source.name} added at ${formatTime(timelineStart)}`);
+  }
+
+  async function addDraggedMedia(dragged: DraggedMedia, timelineStart?: number, visualTrack = 0) {
+    setError('');
+    try {
+      if (dragged.assetID) placeProjectAsset(dragged.assetID, timelineStart ?? playhead, visualTrack);
+      else {
+        await addRemoteMediaInstant(dragged, timelineStart, visualTrack);
+        setNotice(`${dragged.name} added${timelineStart === undefined ? '' : ` at ${formatTime(timelineStart)}`}`);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not add dragged media');
+    }
+  }
+
+  function startMediaDrag(event: ReactDragEvent<HTMLElement>, media: DraggedMedia) {
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData(MEDIA_DRAG_TYPE, encodeMediaDrag(media));
+    event.dataTransfer.setData('text/plain', media.name);
   }
 
   function splitAtPlayhead() {
@@ -3351,6 +3445,11 @@ export default function StudioPage() {
       await importCatalogAudio(catalogAudio, dropTime);
       return;
     }
+    const dragged = decodeMediaDrag(event.dataTransfer.getData(MEDIA_DRAG_TYPE));
+    if (dragged) {
+      await addDraggedMedia(dragged, dropTime, dropTrack);
+      return;
+    }
     const uri = event.dataTransfer.getData('text/uri-list').split(/\r?\n/).find((line) => line && !line.startsWith('#')) || '';
     if (!uri) {
       setError('Drop an image, video, or audio file on the timeline');
@@ -3359,6 +3458,11 @@ export default function StudioPage() {
     try {
       const parsed = new URL(uri);
       if (!['http:', 'https:', 'data:'].includes(parsed.protocol)) throw new Error('Unsupported media URL');
+      const uriKind = parsed.protocol === 'data:' ? null : mediaKindFromURL(uri);
+      if (uriKind === 'image' || uriKind === 'video') {
+        await addRemoteMediaInstant({ kind: uriKind, url: uri, name: decodeURIComponent(parsed.pathname.split('/').pop() || '').replace(/\.[^.]+$/, '') || 'dropped-media' }, dropTime, dropTrack);
+        return;
+      }
       setNotice('Loading dropped media…');
       const response = await fetchWithRetry(uri);
       if (!response.ok) throw new Error(`Media download failed (${response.status})`);
@@ -3830,6 +3934,7 @@ export default function StudioPage() {
 
   async function uploadPublic(file: File) {
     if (!user) throw new Error('Sign in to use AI tools');
+    if (isStreamingPlaceholder(file)) throw new Error('This clip is still downloading. Try again in a moment.');
     const query = new URLSearchParams({ filename: file.name, content_type: file.type || 'application/octet-stream', dataset: 'studio' });
     const presign = await fetchWithRetry(`/api/uploads/presign?${query}`, { headers: authHeaders(user.api_key, false) });
     const data = await parseJSONResponse<{ upload_url: string; public_url: string }>(presign, 'Could not prepare upload');
@@ -4678,6 +4783,7 @@ export default function StudioPage() {
   }
 
   async function renderTimelineVideo(settings: ExportSettings, singleAsset?: StudioAsset) {
+    if (assets.some((asset) => isStreamingPlaceholder(asset.file))) throw new Error('Media is still downloading. Try again in a moment.');
     const visualAssets = singleAsset ? [{ ...singleAsset, timelineStart: 0 }] : timelineVisuals;
     const exportBase = singleAsset || compositionBase;
     const exportDuration = singleAsset ? clipDuration(singleAsset) : timelineDuration;
@@ -5004,7 +5110,9 @@ export default function StudioPage() {
         event.preventDefault();
         clearMediaDragUI();
         const catalogAudio = catalogAudioFromTransfer(event.dataTransfer);
+        const dragged = decodeMediaDrag(event.dataTransfer.getData(MEDIA_DRAG_TYPE));
         if (catalogAudio) void importCatalogAudio(catalogAudio, playhead);
+        else if (dragged) void addDraggedMedia(dragged);
         else void importFiles(event.dataTransfer.files);
       }}
       onContextMenu={(event) => {
@@ -5094,7 +5202,7 @@ export default function StudioPage() {
                 <button data-testid="studio-generate-media" className={styles.generateMediaButton} onClick={() => { setMediaBrowserMode('videos'); setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><Sparkles size={16} /> Generate video</button>
               </div>
               <div className={styles.assetGrid}>
-                {assets.map((asset) => <article role="button" tabIndex={0} key={asset.id} onContextMenu={(event) => openStudioContextMenu(event, asset)} onClick={(event) => { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); }} onKeyDown={(event) => { if (event.key === 'Enter') { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); } }} className={`${styles.assetCard} ${selectedIDs.includes(asset.id) ? styles.assetSelected : ''}`}>
+                {assets.map((asset) => <article role="button" tabIndex={0} key={asset.id} draggable={asset.kind !== 'audio'} onDragStart={(event) => startMediaDrag(event, { kind: asset.kind === 'video' ? 'video' : 'image', url: asset.url, name: asset.name, duration: asset.duration, assetID: asset.id })} onContextMenu={(event) => openStudioContextMenu(event, asset)} onClick={(event) => { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); }} onKeyDown={(event) => { if (event.key === 'Enter') { selectClip(asset.id, event.metaKey || event.ctrlKey || event.shiftKey); setPlayhead(asset.timelineStart); } }} className={`${styles.assetCard} ${selectedIDs.includes(asset.id) ? styles.assetSelected : ''}`}>
                   {asset.kind === 'image' ? <img src={asset.url} alt="" /> : asset.kind === 'video' ? <HoverVideoPreview src={((asset.previewStatus === 'queued' || asset.previewStatus === 'processing') ? asset.url : asset.previewURL) || asset.url} fallbackSrc={asset.url} duration={asset.duration} label={asset.name} testID={`studio-asset-${asset.id}`} /> : <ProjectAudioThumb asset={asset} />}
                   <span className={styles.assetType}>{asset.text ? <Type size={11} /> : asset.kind === 'video' ? <Film size={11} /> : asset.kind === 'audio' ? <Volume2 size={11} /> : <ImageIcon size={11} />}</span>
                   <span className={styles.assetName}>{asset.text?.content || asset.name}</span>
@@ -5109,7 +5217,7 @@ export default function StudioPage() {
                 const ready = READY_GENERATION_STATUSES.has(status) && Boolean(readyURL);
                 const pending = isActiveGeneration(generation);
                 const failed = ['failed', 'error', 'payment_required', 'cancelled', 'canceled'].includes(status);
-                return <article key={generation.job_id} data-testid={`studio-generation-${generation.job_id}`} className={styles.generationCard} onContextMenu={(event) => {
+                return <article key={generation.job_id} data-testid={`studio-generation-${generation.job_id}`} className={styles.generationCard} draggable={Boolean(resultURL(generation.result)) && READY_GENERATION_STATUSES.has(generationStatus(generation))} onDragStart={(event) => { const dragURL = resultURL(generation.result); if (dragURL) startMediaDrag(event, { kind: 'video', url: dragURL, name: generationFileName(generation.prompt, generation.job_id), attribution: 'Generated video' }); }} onContextMenu={(event) => {
                   if (!generation.prompt?.trim()) return;
                   event.preventDefault();
                   setGenerationContextMenu({ jobID: generation.job_id, x: event.clientX, y: event.clientY });
@@ -5129,7 +5237,7 @@ export default function StudioPage() {
               <button data-testid="studio-video-create" className={styles.mediaCreateCard} onClick={() => { setVideoGenerateQueueStatus(''); setVideoGenerateOpen(true); }}><span className={styles.mediaCreateIcon}><Sparkles size={18} /></span><span><b>Generate videos</b><small>H3 · batch · audio · loop</small></span></button>
               <div className={styles.discoveryLabel}><span>VIDEOS FROM THE COMMUNITY</span><small>Semantic search</small></div>
               <div className={styles.searchRow}><Search size={14} /><input data-testid="studio-media-search" value={mediaSearch} onChange={(event) => setMediaSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void searchStudioMedia('videos')} placeholder="Search motion, subjects, styles…" /><button title="Search (Enter)" disabled={mediaSearchBusy} onClick={() => void searchStudioMedia('videos')}>{mediaSearchBusy ? <Loader2 className={styles.spin} size={14} /> : 'Find'}</button></div>
-              <div className={styles.discoveryGrid}>{videoHits.map((hit) => <button data-testid={`studio-video-hit-${hit.job_id}`} className={styles.discoveryCard} key={hit.job_id} disabled={!hit.video_url || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'video', hit.prompt, { url: hit.video_url || '', name: hit.prompt || 'community-video', prompt: hit.prompt, kind: 'video' })} onClick={() => void addDiscoveredMedia(hit.video_url || '', hit.prompt, 'video')}>
+              <div className={styles.discoveryGrid}>{videoHits.map((hit) => <button data-testid={`studio-video-hit-${hit.job_id}`} className={styles.discoveryCard} key={hit.job_id} draggable={!!hit.video_url} onDragStart={(event) => startMediaDrag(event, { kind: 'video', url: hit.video_url || '', name: hit.prompt || 'community-video', attribution: `Community video · ${hit.prompt}` })} disabled={!hit.video_url || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'video', hit.prompt, { url: hit.video_url || '', name: hit.prompt || 'community-video', prompt: hit.prompt, kind: 'video' })} onClick={() => void addDiscoveredMedia(hit.video_url || '', hit.prompt, 'video')}>
                 <span className={styles.discoveryPreview}>{hit.video_url && <HoverVideoPreview src={hit.video_url} label={hit.prompt || 'Community video'} testID={`studio-video-hit-${hit.job_id}`} />}<span className={styles.discoveryAdd}><Plus size={13} /> Add</span></span>
                 <b>{hit.prompt || 'Community video'}</b>{typeof hit.similarity === 'number' && <small>{Math.round(hit.similarity * 100)}% match</small>}
               </button>)}</div>
@@ -5156,7 +5264,7 @@ export default function StudioPage() {
               <div className={styles.discoveryGrid}>{imageHits.map((hit) => {
                 const imageURL = galleryImageURL(hit.image_url || hit.file_path);
                 const thumbURL = galleryImageURL(hit.thumb_url || hit.thumb_path || hit.image_url || hit.file_path);
-                return <button data-testid={`studio-image-hit-${hit.id}`} className={styles.discoveryCard} key={hit.id} disabled={!imageURL || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'image', hit.prompt, { url: imageURL || '', thumbURL, name: hit.prompt || `community-image-${hit.id}`, prompt: hit.prompt, kind: 'image' })} onClick={() => void addDiscoveredMedia(imageURL, hit.prompt, 'image')}>
+                return <button data-testid={`studio-image-hit-${hit.id}`} className={styles.discoveryCard} key={hit.id} draggable={!!imageURL} onDragStart={(event) => startMediaDrag(event, { kind: 'image', url: imageURL || '', name: hit.prompt || `community-image-${hit.id}`, attribution: `Community image · ${hit.prompt}` })} disabled={!imageURL || busy === 'import-discovery'} onContextMenu={(event) => openPromptContextMenu(event, 'image', hit.prompt, { url: imageURL || '', thumbURL, name: hit.prompt || `community-image-${hit.id}`, prompt: hit.prompt, kind: 'image' })} onClick={() => void addDiscoveredMedia(imageURL, hit.prompt, 'image')}>
                   <span className={styles.discoveryPreview}>{thumbURL && <img src={thumbURL} alt="" />}<span><Plus size={13} /> Add</span></span>
                   <b>{hit.prompt || 'Community image'}</b><small>{hit.model || 'Generated'}{typeof hit.similarity === 'number' ? ` · ${Math.round(hit.similarity * 100)}% match` : ''}</small>
                 </button>;
@@ -5371,7 +5479,8 @@ export default function StudioPage() {
                 onDoubleClick={() => updateAsset(asset.id, { stageX: 0, stageY: 0 })}
               >
                 {isSelected ? <>
-                  {asset.kind === 'video' && <video ref={videoRef} className={styles.sourceVideo} src={asset.url} muted={!!asset.sourceAudioMuted} playsInline preload="auto" onLoadedData={() => { if (videoRef.current) { videoRef.current.currentTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart)); videoRef.current.volume = Math.max(0, Math.min(1, asset.volume)); } drawCurrent(); }} onSeeked={drawCurrent} />}
+                  {asset.kind === 'video' && <video ref={videoRef} className={styles.sourceVideo} src={asset.url} muted={!!asset.sourceAudioMuted} playsInline preload="auto" onLoadStart={() => setStageVideoLoading(true)} onWaiting={() => setStageVideoLoading(true)} onPlaying={() => setStageVideoLoading(false)} onError={() => setStageVideoLoading(false)} onLoadedData={() => { setStageVideoLoading(false); if (videoRef.current) { videoRef.current.currentTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart)); videoRef.current.volume = Math.max(0, Math.min(1, asset.volume)); } drawCurrent(); }} onSeeked={drawCurrent} />}
+                  {asset.kind === 'video' && stageVideoLoading && <span data-testid="studio-stage-loading" className={styles.stageLoading}><ManifoldLoader compact label="Loading video" /></span>}
                   {asset.text ? <textarea
                     data-testid="studio-stage-text-editor"
                     className={`${styles.stageTextEditor} ${editingTextID === asset.id ? styles.stageTextEditorEditing : styles.stageTextEditorMove}`}

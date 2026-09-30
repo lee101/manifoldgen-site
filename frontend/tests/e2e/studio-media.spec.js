@@ -15,7 +15,11 @@ test.beforeAll(() => {
   try {
     execFileSync('ffmpeg', [...common, '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', PERF_VIDEO], { timeout: 60_000, stdio: 'pipe' });
   } catch {
-    execFileSync('ffmpeg', [...common, '-c:v', 'h264_nvenc', '-preset', 'p1', '-tune', 'ull', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', PERF_VIDEO], { timeout: 60_000, stdio: 'pipe' });
+    try {
+      execFileSync('ffmpeg', [...common, '-c:v', 'h264_nvenc', '-preset', 'p1', '-tune', 'ull', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', PERF_VIDEO], { timeout: 60_000, stdio: 'pipe' });
+    } catch {
+      // Only the 2K performance tests need this fixture; the rest of the suite must still run.
+    }
   }
 });
 
@@ -2093,4 +2097,86 @@ test('glitch lab presets and controls persist GPU shader settings', async ({ pag
     glitchSpeed: 0.7,
     glitchHue: 0,
   });
+});
+
+async function mockRangedVideo(page, proxyPath, { fullDelayMs }) {
+  const body = fs.readFileSync(VIDEO);
+  const counts = { ranged: 0, full: 0 };
+  await page.route(`**/api/gallery-assets/${proxyPath}?v=1`, async (route) => {
+    const range = route.request().headers().range;
+    if (range) {
+      counts.ranged += 1;
+      const match = /bytes=(\d+)-(\d*)/.exec(range);
+      const start = Number(match[1]);
+      const end = Math.min(body.length - 1, match[2] ? Number(match[2]) : body.length - 1);
+      await route.fulfill({
+        status: 206, contentType: 'video/webm',
+        headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${body.length}` },
+        body: body.subarray(start, end + 1),
+      });
+      return;
+    }
+    counts.full += 1;
+    await new Promise((resolve) => setTimeout(resolve, fullDelayMs));
+    await route.fulfill({ status: 200, contentType: 'video/webm', headers: { 'Accept-Ranges': 'bytes' }, body });
+  });
+  return counts;
+}
+
+test('a dragged community video lands on the timeline while its full download is still in flight', async ({ page }) => {
+  const videoPath = 'videos/instant.webm';
+  const counts = await mockRangedVideo(page, videoPath, { fullDelayMs: 4000 });
+  await installMocks(page);
+  await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [{
+    job_id: 'instant-1', prompt: 'Instant glass torus', video_url: `https://manifoldgenstatic.manifoldgen.com/gallery/${videoPath}`, service: 'h3_video',
+  }] } }));
+  await page.route('**/api/search?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route(`https://manifoldgenstatic.manifoldgen.com/gallery/${videoPath}`, (route) => route.abort());
+  await page.goto('/studio');
+  await page.getByTestId('studio-media-videos').click();
+  const card = page.getByTestId('studio-video-hit-instant-1');
+  await expect(card).toBeVisible();
+  const startedAt = Date.now();
+  await card.dragTo(page.getByTestId('studio-timeline-dropzone'), { targetPosition: { x: 120, y: 30 } });
+  await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(1, { timeout: 3000 });
+  expect(Date.now() - startedAt).toBeLessThan(3500);
+  expect(counts.full).toBeLessThanOrEqual(1);
+  await expect(page.getByTestId('studio-stage-element').locator('video')).toHaveCount(1);
+  await page.waitForFunction(() => {
+    const video = document.querySelector('[data-testid="studio-stage-element"] video');
+    return video instanceof HTMLVideoElement && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+  }, null, { timeout: 3000 });
+  await expect(page.getByTestId('studio-stage-loading')).toHaveCount(0);
+  await expect.poll(() => counts.full, { timeout: 10_000 }).toBe(1);
+});
+
+test('AI tools refuse a clip whose bytes are still downloading, then work once it lands', async ({ page }) => {
+  const videoPath = 'videos/hydrate.webm';
+  const counts = await mockRangedVideo(page, videoPath, { fullDelayMs: 2500 });
+  await installMocks(page);
+  await page.route('**/api/videos/featured?**', (route) => route.fulfill({ status: 200, json: { results: [{
+    job_id: 'hydrate-1', prompt: 'Hydrating clip', video_url: `https://manifoldgenstatic.manifoldgen.com/gallery/${videoPath}`, service: 'h3_video',
+  }] } }));
+  await page.route('**/api/search?**', (route) => route.fulfill({ status: 200, json: { results: [] } }));
+  await page.route(`https://manifoldgenstatic.manifoldgen.com/gallery/${videoPath}`, (route) => route.abort());
+  await page.goto('/studio');
+  await page.getByTestId('studio-media-videos').click();
+  await page.getByTestId('studio-video-hit-hydrate-1').dragTo(page.getByTestId('studio-timeline-dropzone'), { targetPosition: { x: 80, y: 30 } });
+  await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(1);
+  await page.getByTestId('studio-export').click();
+  await page.getByRole('dialog', { name: 'Export' }).getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByTestId('studio-gaps-keep-export').click();
+  await expect(page.getByText(/still downloading/i)).toBeVisible();
+  await expect.poll(() => counts.full, { timeout: 10_000 }).toBe(1);
+});
+
+test('a project media card drags onto the timeline as a second clip without re-downloading', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles(VIDEO);
+  await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(1);
+  const card = page.getByTestId('studio-panel').locator('article[draggable="true"]').first();
+  await expect(card).toBeVisible();
+  await card.dragTo(page.getByTestId('studio-timeline-dropzone'), { targetPosition: { x: 480, y: 30 } });
+  await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(2);
 });

@@ -37,7 +37,7 @@ const userSelectColumns = `id, wallet_address, email, COALESCE(password_hash, ''
 	COALESCE(subscription_current_period_end, '1970-01-01'::timestamptz),
 	autotopup_enabled, autotopup_threshold_usd, autotopup_amount_usd,
 	COALESCE(autotopup_last_at, '1970-01-01'::timestamptz),
-	drip_step, drip_started_at, created_at, updated_at`
+	drip_step, drip_started_at, allow_nsfw, created_at, updated_at`
 
 func scanUser(row interface {
 	Scan(dest ...interface{}) error
@@ -49,7 +49,7 @@ func scanUser(row interface {
 		&user.SubscriptionStatus, &user.SubscriptionPlan, &user.SubscriptionPeriodEnd,
 		&user.AutotopupEnabled,
 		&user.AutotopupThresholdUSD, &user.AutotopupAmountUSD, &user.AutotopupLastAt,
-		&user.DripStep, &user.DripStartedAt, &user.CreatedAt, &user.UpdatedAt,
+		&user.DripStep, &user.DripStartedAt, &user.AllowNSFW, &user.CreatedAt, &user.UpdatedAt,
 	)
 }
 
@@ -255,6 +255,7 @@ func (db *DB) migrate() error {
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS unlimited_api BOOLEAN DEFAULT FALSE;
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT DEFAULT '';
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS unsubscribed BOOLEAN NOT NULL DEFAULT FALSE;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS allow_nsfw BOOLEAN NOT NULL DEFAULT FALSE;
 
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT DEFAULT '';
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_payment_method_id TEXT DEFAULT '';
@@ -1779,9 +1780,9 @@ func (db *DB) InsertGeneratedImage(img *GeneratedImage) error {
 		img.ID, img.Prompt, img.Width, img.Height, img.FilePath, img.ThumbPath, img.MedPath,
 		img.FileSize, img.Model, img.Seed, img.Steps, img.IsNSFW, img.CreatedByUserID, img.CreatedAt,
 	)
-	if err == nil && promptSearch != nil && img.Prompt != "" {
+	if err == nil && img.Prompt != "" {
 		// Best-effort incremental update to the semantic index
-		promptSearch.IndexIncremental(img.ID, img.Prompt)
+		indexImagePrompt(img)
 	}
 	return err
 }
@@ -2100,13 +2101,14 @@ func (db *DB) BrowseImagesVaried(seed float64, after *float64, wrapped bool, per
 	return images, &last, wrapped, nil
 }
 
-// StreamAllImagePrompts scans every row in generated_images and feeds (id, prompt)
-// into the callback. Used by the semantic indexer at startup. Keeps memory low
+// StreamAllImagePrompts scans generated_images rows of one NSFW class (nsfw=true
+// selects flagged rows, false selects unflagged; unclassified rows are in neither)
+// and feeds (id, prompt) into the callback. Used by the semantic indexer at startup. Keeps memory low
 // by using a streaming cursor — no LIMIT, no ORDER BY, no cache.
-func (db *DB) StreamAllImagePrompts(allowNSFW bool, cb func(id, prompt string) error) error {
-	nsfwFilter := ""
-	if !allowNSFW {
-		nsfwFilter = " AND is_nsfw = FALSE"
+func (db *DB) StreamAllImagePrompts(nsfw bool, cb func(id, prompt string) error) error {
+	nsfwFilter := " AND is_nsfw = FALSE"
+	if nsfw {
+		nsfwFilter = " AND is_nsfw = TRUE"
 	}
 	rows, err := db.conn.Query(
 		`SELECT id, prompt FROM generated_images WHERE prompt <> ''` + nsfwFilter,
@@ -2125,6 +2127,17 @@ func (db *DB) StreamAllImagePrompts(allowNSFW bool, cb func(id, prompt string) e
 		}
 	}
 	return rows.Err()
+}
+
+func (db *DB) SetUserAllowNSFW(userID string, allow bool) error {
+	res, err := db.conn.Exec("UPDATE users SET allow_nsfw = $1, updated_at = NOW() WHERE id = $2", allow, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // GetImagesByIDs fetches generated_images rows for a set of IDs, preserving

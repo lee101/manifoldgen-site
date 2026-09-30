@@ -9,6 +9,7 @@ import (
 const (
 	h3NormalVariant     = "normal-h3"
 	h3PinkCherryVariant = "pinkcherry-alpha-0.5"
+	h3LtxVariant        = "ltx23-q4"
 )
 
 type h3WorkerRoute struct {
@@ -81,39 +82,51 @@ func h3SemanticAdultRoute(prompt string) (adult bool, available bool) {
 	return adultScore >= generalScore+0.035, true
 }
 
+func h3AdultLane() (h3WorkerRoute, bool) {
+	if url, ep := h3LaneEnv("H3_LTX"); url != "" || ep != "" {
+		return h3WorkerRoute{Variant: h3LtxVariant, CogURL: url, RunpodEndpointID: ep}, true
+	}
+	if url, ep := h3LaneEnv("H3_PINKCHERRY"); url != "" || ep != "" {
+		return h3WorkerRoute{Variant: h3PinkCherryVariant, CogURL: url, RunpodEndpointID: ep}, true
+	}
+	return h3WorkerRoute{}, false
+}
+
+func h3LaneEnv(prefix string) (string, string) {
+	url := strings.TrimRight(strings.TrimSpace(os.Getenv(prefix+"_COG_URL")), "/")
+	endpoint := strings.TrimSpace(os.Getenv(prefix + "_RUNPOD_ENDPOINT"))
+	return url, endpoint
+}
+
 func h3RouteForPrompt(prompt string) h3WorkerRoute {
 	normalURL := strings.TrimRight(strings.TrimSpace(os.Getenv("H3_NORMAL_COG_URL")), "/")
 	if normalURL == "" {
 		normalURL = h3LocalCogURL()
 	}
 	normalEndpoint := strings.TrimSpace(os.Getenv("H3_NORMAL_RUNPOD_ENDPOINT"))
-	pinkURL := strings.TrimRight(strings.TrimSpace(os.Getenv("H3_PINKCHERRY_COG_URL")), "/")
-	pinkEndpoint := strings.TrimSpace(os.Getenv("H3_PINKCHERRY_RUNPOD_ENDPOINT"))
-	if pinkURL == "" && pinkEndpoint == "" {
-		return h3WorkerRoute{Variant: h3NormalVariant, CogURL: normalURL, RunpodEndpointID: normalEndpoint}
+	normal := h3WorkerRoute{Variant: h3NormalVariant, CogURL: normalURL, RunpodEndpointID: normalEndpoint}
+	adult, ok := h3AdultLane()
+	if !ok {
+		return normal
 	}
 	if h3ExplicitRouteHint(prompt) {
-		return h3WorkerRoute{Variant: h3PinkCherryVariant, CogURL: pinkURL, RunpodEndpointID: pinkEndpoint}
+		return adult
 	}
-	if adult, available := h3SemanticAdultRoute(prompt); available && adult {
-		return h3WorkerRoute{Variant: h3PinkCherryVariant, CogURL: pinkURL, RunpodEndpointID: pinkEndpoint}
+	if isAdult, available := h3SemanticAdultRoute(prompt); available && isAdult {
+		return adult
 	}
-	return h3WorkerRoute{Variant: h3NormalVariant, CogURL: normalURL, RunpodEndpointID: normalEndpoint}
+	return normal
 }
 
 // h3RouteForContent lets the image classifier choose the compatible weight
 // lane without turning model routing into policy enforcement.
 func h3RouteForContent(prompt string, inputNSFW bool) h3WorkerRoute {
-	if !inputNSFW {
-		return h3RouteForPrompt(prompt)
-	}
 	route := h3RouteForPrompt(prompt)
-	pinkURL := strings.TrimRight(strings.TrimSpace(os.Getenv("H3_PINKCHERRY_COG_URL")), "/")
-	pinkEndpoint := strings.TrimSpace(os.Getenv("H3_PINKCHERRY_RUNPOD_ENDPOINT"))
-	if pinkURL != "" || pinkEndpoint != "" {
-		route.Variant = h3PinkCherryVariant
-		route.CogURL = pinkURL
-		route.RunpodEndpointID = pinkEndpoint
+	if !inputNSFW {
+		return route
+	}
+	if adult, ok := h3AdultLane(); ok {
+		return adult
 	}
 	return route
 }

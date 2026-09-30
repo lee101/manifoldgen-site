@@ -38,6 +38,7 @@ import {
 import {
   clearUser,
   loadStoredUser,
+  nsfwAuthHeaders,
   refreshUser,
   saveUser,
   userFromAuthResponse,
@@ -336,10 +337,12 @@ export default function HomePage() {
   }, [applyUser]);
 
   const loadGallery = useCallback(async (q = '', attempt = 0): Promise<void> => {
+    const headers = nsfwAuthHeaders(loadStoredUser());
+    const nsfw = headers ? '&allow_nsfw=true' : '';
     const url = q.trim()
-      ? `${API}/images/semantic?q=${encodeURIComponent(q.trim())}&top_k=48`
-      : `${API}/images?skip_total=true&varied=true&per_page=24&allow_nsfw=true&seed=${gallerySeedRef.current}`;
-    const res = await fetch(url);
+      ? `${API}/images/semantic?q=${encodeURIComponent(q.trim())}&top_k=48${nsfw}`
+      : `${API}/images?skip_total=true&varied=true&per_page=24&seed=${gallerySeedRef.current}${nsfw}`;
+    const res = await fetch(url, { headers });
     if (!res.ok) {
       // The public API can briefly be unavailable while the image/search
       // indexes finish loading after a deploy. Retry so the gallery does not
@@ -511,11 +514,13 @@ export default function HomePage() {
       const requests: Promise<void>[] = [];
       if (galleryHasMore && galleryCursor !== null) {
         const params = new URLSearchParams({
-          skip_total: 'true', varied: 'true', per_page: '24', allow_nsfw: 'true',
+          skip_total: 'true', varied: 'true', per_page: '24',
           seed: String(gallerySeedRef.current), after: String(galleryCursor),
           wrapped: String(galleryWrapped),
         });
-        requests.push(fetch(`${API}/images?${params}`).then(async (res) => {
+        const headers = nsfwAuthHeaders(loadStoredUser());
+        if (headers) params.set('allow_nsfw', 'true');
+        requests.push(fetch(`${API}/images?${params}`, { headers }).then(async (res) => {
           if (!res.ok) return;
           const data = await res.json();
           const rows = normalizeImages(data.images || data.results || []);

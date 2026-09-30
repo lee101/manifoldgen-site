@@ -40,13 +40,13 @@ for easy tasks: ok use op harness subagent as in ~/code/dotfiles/subagents/op-de
 Local HTTPS development:
 
     # Restart the HTTPS frontend, killing anything currently listening on :3006.
-    fuser -k 3006/tcp 2>/dev/null || true; make dev-https
+    fuser -k 3006/tcp 2>/dev/null || true; make dev
 
 The HTTPS service on `https://manifoldgen.local:3006` is the Next.js frontend;
 the Go API listens on `http://localhost:8116`. To restart both and use the local
 Go API from the HTTPS frontend:
 
-    fuser -k 3006/tcp 2>/dev/null || true; fuser -k 8116/tcp 2>/dev/null || true; (cd server && go build -o manifoldgen-server . && PORT=8116 DIST_DIR=../frontend/out ./manifoldgen-server) & MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev-https
+    fuser -k 3006/tcp 2>/dev/null || true; fuser -k 8116/tcp 2>/dev/null || true; (cd server && go build -o manifoldgen-server . && PORT=8116 DIST_DIR=../frontend/out ./manifoldgen-server) & MANIFOLDGEN_API_ORIGIN=http://localhost:8116 make dev
 
 With `DEV=true` (set in `.env`, which the server loads itself) the local API
 runs in light dev mode: the drip email scheduler and the gobed semantic search

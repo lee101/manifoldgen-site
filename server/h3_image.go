@@ -245,6 +245,15 @@ func h3ModerationEndpoint() (string, string, error) {
 	return parsed.String(), secret, nil
 }
 
+func classifyH3ImageFlag(image []byte, label string) (*bool, float64) {
+	adult, score, err := classifyH3Image(image)
+	if err != nil {
+		log.Printf("[nsfw] classifier unavailable %s: %v", label, err)
+		return nil, 0
+	}
+	return &adult, score
+}
+
 func classifyH3ImageURL(rawURL string) (bool, float64, error) {
 	image, err := downloadH3ModerationImage(rawURL)
 	if err != nil {
@@ -266,9 +275,8 @@ func handleH3ImageService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		}
 		adult, score, err := classifyH3ImageURL(imageURL)
 		if err != nil {
-			log.Printf("[h3-image] input moderation unavailable: %v", err)
-			jsonError(ctx, http.StatusServiceUnavailable, "image safety check is temporarily unavailable")
-			return
+			log.Printf("[nsfw] input classifier unavailable: %v", err)
+			continue
 		}
 		inputNSFW = inputNSFW || adult
 		inputScore = math.Max(inputScore, score)
@@ -398,12 +406,7 @@ func processRunpodH3ImageJob(job *VideoJob) {
 				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image generation returned an invalid artifact")
 				return
 			}
-			outputNSFW, outputScore, err := classifyH3Image(artifact)
-			if err != nil {
-				log.Printf("[h3-image] output moderation unavailable job=%s: %v", job.ID, err)
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image safety check is temporarily unavailable")
-				return
-			}
+			outputNSFW, outputScore := classifyH3ImageFlag(artifact, "job="+job.ID)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			imageURL, relPath, err := uploadH3ImageArtifact(ctx, artifact, job.UserID, state.Output.Outputs[0].ContentType)
 			cancel()
@@ -486,16 +489,15 @@ func persistH3ImageJobResult(job *VideoJob) error {
 		Steps           int    `json:"steps"`
 		Seed            int64  `json:"seed"`
 		Bytes           int64  `json:"bytes"`
-		IsNSFW          bool   `json:"is_nsfw"`
+		IsNSFW          *bool  `json:"is_nsfw"`
 	}
 	if err := json.Unmarshal(job.Result, &result); err != nil || result.ImageID == "" || result.GalleryFilePath == "" {
 		return err
 	}
-	verdict := result.IsNSFW
 	return dbConn.InsertGeneratedImage(&GeneratedImage{
 		ID: result.ImageID, Prompt: job.Prompt, Width: result.Width, Height: result.Height,
 		FilePath: result.GalleryFilePath, ThumbPath: result.GalleryFilePath, MedPath: result.GalleryFilePath,
 		FileSize: result.Bytes, Model: job.Service, Seed: result.Seed, Steps: result.Steps,
-		IsNSFW: &verdict, CreatedByUserID: job.UserID, CreatedAt: time.Now(),
+		IsNSFW: result.IsNSFW, CreatedByUserID: job.UserID, CreatedAt: time.Now(),
 	})
 }

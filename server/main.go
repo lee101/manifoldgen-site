@@ -467,6 +467,9 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	case (path == "/api/auth/session" || path == "/api/session") && method == "GET":
 		handleSession(ctx)
 
+	case path == "/api/account/settings" && method == "POST":
+		handleAccountSettings(ctx)
+
 	case path == "/api/auth/forgot-password" && method == "POST":
 		handleForgotPassword(ctx)
 
@@ -1072,14 +1075,42 @@ func handleSession(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, 401, "invalid API key")
 		return
 	}
+	jsonResponse(ctx, 200, sessionPayload(user))
+}
+
+func sessionPayload(user *User) map[string]interface{} {
 	cutePrice := getCUTEPriceUSD()
-	jsonResponse(ctx, 200, map[string]interface{}{
+	return map[string]interface{}{
 		"user":           user,
 		"api_key":        user.APIKey,
 		"has_password":   user.PasswordHash != "",
 		"cute_price_usd": cutePrice,
 		"credits_usd":    user.Credits * cutePrice,
-	})
+	}
+}
+
+func handleAccountSettings(ctx *fasthttp.RequestCtx) {
+	user, err := studioUser(ctx)
+	if err != nil {
+		jsonError(ctx, fasthttp.StatusUnauthorized, err.Error())
+		return
+	}
+	var body struct {
+		AllowNSFW *bool `json:"allow_nsfw"`
+	}
+	if err := json.Unmarshal(ctx.PostBody(), &body); err != nil {
+		jsonError(ctx, fasthttp.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.AllowNSFW != nil {
+		if err := setUserAllowNSFW(user.ID, *body.AllowNSFW); err != nil {
+			jsonError(ctx, 500, "failed to update settings")
+			return
+		}
+		user.AllowNSFW = *body.AllowNSFW
+	}
+	ctx.Response.Header.Set("Cache-Control", "no-store")
+	jsonResponse(ctx, 200, sessionPayload(user))
 }
 
 // handleRotateAPIKey issues a fresh API key, invalidating the old one.
@@ -1310,13 +1341,31 @@ func setPublicGalleryCache(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Set("Vary", "Accept-Encoding")
 }
 
+func setGalleryCache(ctx *fasthttp.RequestCtx, nsfwRequested bool) {
+	if !nsfwRequested {
+		setPublicGalleryCache(ctx)
+		return
+	}
+	ctx.Response.Header.Set("Cache-Control", "private, max-age=60")
+	ctx.Response.Header.Set("Vary", "Authorization, Accept-Encoding")
+}
+
+func resolveAllowNSFW(ctx *fasthttp.RequestCtx) (honored bool, requested bool) {
+	requested = string(ctx.QueryArgs().Peek("allow_nsfw")) == "true"
+	if !requested {
+		return false, false
+	}
+	user, err := studioUser(ctx)
+	return err == nil && user.AllowNSFW, true
+}
+
 // handleImageSearch handles GET /api/images?q=query&page=1&per_page=48&allow_nsfw=false
 func handleImageSearch(ctx *fasthttp.RequestCtx) {
 	query := string(ctx.QueryArgs().Peek("q"))
 	wallet := strings.TrimSpace(string(ctx.QueryArgs().Peek("wallet")))
 	page, _ := strconv.Atoi(string(ctx.QueryArgs().Peek("page")))
 	perPage, _ := strconv.Atoi(string(ctx.QueryArgs().Peek("per_page")))
-	allowNSFW := string(ctx.QueryArgs().Peek("allow_nsfw")) == "true"
+	allowNSFW, nsfwRequested := resolveAllowNSFW(ctx)
 	skipTotal := string(ctx.QueryArgs().Peek("skip_total")) == "true"
 
 	if page < 1 {
@@ -1342,7 +1391,7 @@ func handleImageSearch(ctx *fasthttp.RequestCtx) {
 	}
 
 	if query == "" && skipTotal {
-		setPublicGalleryCache(ctx)
+		setGalleryCache(ctx, nsfwRequested)
 		// Varied browse: well-mixed, per-visit keyset pagination over random_sort.
 		// Avoids the prompt clustering that created_at ordering produces.
 		if string(ctx.QueryArgs().Peek("varied")) != "false" {
@@ -1392,7 +1441,7 @@ func handleImageSearch(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, 500, "search failed")
 		return
 	}
-	setPublicGalleryCache(ctx)
+	setGalleryCache(ctx, nsfwRequested)
 	jsonResponse(ctx, 200, result)
 }
 
@@ -1545,7 +1594,8 @@ func handleSemanticImageSearch(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, 503, "image search engine not ready")
 		return
 	}
-	results, hasMore, err := promptSearch.SearchPage(query, topK, offset)
+	allowNSFW, nsfwRequested := resolveAllowNSFW(ctx)
+	results, hasMore, err := searchImagePrompts(query, topK, offset, allowNSFW)
 	if err != nil {
 		jsonError(ctx, 500, "search failed")
 		return
@@ -1556,7 +1606,7 @@ func handleSemanticImageSearch(ctx *fasthttp.RequestCtx) {
 		ids = append(ids, r.ImageID)
 		sim[r.ImageID] = r.Similarity
 	}
-	images, err := dbConn.GetImagesByIDs(ids, false)
+	images, err := dbConn.GetImagesByIDs(ids, allowNSFW)
 	if err != nil {
 		jsonError(ctx, 500, "hydrate failed")
 		return
@@ -1574,7 +1624,7 @@ func handleSemanticImageSearch(ctx *fasthttp.RequestCtx) {
 			"model":      img.Model,
 		})
 	}
-	setPublicGalleryCache(ctx)
+	setGalleryCache(ctx, nsfwRequested)
 	jsonResponse(ctx, 200, map[string]interface{}{
 		"query":    query,
 		"offset":   offset,
