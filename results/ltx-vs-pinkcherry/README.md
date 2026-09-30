@@ -60,3 +60,13 @@ Keeping a worker warm (what fast/xfast need) is dominated by idle:
 - Standard (best effort, scale to zero, flex): 5090, fp8, 1280x704, base 8 / refine 3, cfg 3.5, expanded negative prompt. ~24 s warm, ~$0.007 compute.
 - Fast (paid): same model and quality, dedicated warm worker plus queue priority, base 6 / refine 3 (~23 s). Main value is removing the 30-60 s cold start, so price it to cover idle time (see utilisation table; at 25% utilisation it is ~3x standard).
 - xFast (paid, best effort): 1024x576, base 6 / refine 3, ~14 s warm on the same card. GPU class does not change latency (H100 27 s vs 5090 28.6 s), so do not pay for H100 for speed; use H100 only as capacity fallback.
+
+## Production rollout (2026-10-01)
+- Weights mirrored to R2: https://manifoldgenstatic.manifoldgen.com/models/ltx23-uncensored-v1.4/ (manifest.json with size + sha256; fp8mixed, Q4_K_M, Gemma Q4, projections, VAEs, x2 upscaler; 56 GB). Public bucket, same as the H3 weight mirror.
+- Image ghcr.io/lee101/ltx-cog:cu130-20261001-r4 (overlay on the H3 image, code only, no weights). RunPod template 737rq4h3l7, endpoint cog-manifold-ltx 0r09mfyja4xf7y, config/runpod-ltx.json. Paused (workersMax 0) between bursts by the app scaler.
+- Prod env H3_LTX_RUNPOD_ENDPOINT=0r09mfyja4xf7y, H3_LTX_RUNPOD_MAX_WORKERS=2. h3AdultLane() now prefers it over PinkCherry (PinkCherry endpoint and env left in place; unset H3_LTX_RUNPOD_ENDPOINT to fall back).
+- Request contract is H3-compatible. H3 `steps` is ignored (LTX uses tier steps); `size: preview` -> 768 wide, everything else -> 1280x704; `tier` standard|fast|xfast selects steps and size explicitly; `ltx_steps`, `refine_steps` override. last_frame, keyframes, loop, quant are ignored.
+- Canary through the real endpoint (seed 7/8/9, 5 s, webm-av1 delivered to R2, audio present): generation 50-63 s on a fresh worker (includes model load; ~28 s once warm), encode 2 s, upload 2-3 s.
+- Cold start is the weak point: container start 25-140 s plus a 41.6 GB weight download onto container disk: 204 s (244 MB/s) on a test pod, 300-700 s on the serverless hosts that ran the canaries (3 samples). PinkCherry's own cold jobs took 10-28 min in the A/B, so this is still better, but a network volume in the datacenter with the best 5090/PRO 6000 stock (worker already uses /runpod-volume/ltx-models when a volume is mounted) or a warm worker for paid tiers would cut it to about a minute.
+- RunPod capacity: 5090 and PRO 6000 returned "no instances" repeatedly during the day and the endpoint reported throttled; H100 was the one that was reliably available.
+- Not verified live: an adult-routed job through the app itself (route selection is unit-tested; the worker is verified by direct canary).

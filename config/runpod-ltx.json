@@ -1,5 +1,5 @@
 {
-  "image": "ghcr.io/lee101/ltx-cog:cu130-20261001-r2",
+  "image": "ghcr.io/lee101/ltx-cog:cu130-20261001-r4",
   "dockerStartCmd": ["python", "-u", "/src/ltx_handler.py"],
   "env": {
     "LTX_UNET": "ltxv23_uncensored_v1.4_fp8mixed.safetensors",

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -8,10 +9,15 @@ from pathlib import Path
 BASE = os.environ.get("LTX_MODELS_BASE", "https://manifoldgenstatic.manifoldgen.com/models/ltx23-uncensored-v1.4").rstrip("/")
 ROOT = Path(os.environ.get("LTX_MODELS_DIR") or ("/runpod-volume/ltx-models" if Path("/runpod-volume").is_dir() else "/opt/ComfyUI/models"))
 COMFY_MODELS = Path(os.environ.get("LTX_COMFY_MODELS", "/opt/ComfyUI/models"))
-PARTS = int(os.environ.get("LTX_WEIGHT_PARTS", "8"))
-WORKERS = int(os.environ.get("LTX_WEIGHT_WORKERS", "3"))
+PART_BYTES = int(os.environ.get("LTX_WEIGHT_PART_MB", "256")) << 20
+CONNECTIONS = int(os.environ.get("LTX_WEIGHT_CONNECTIONS", "48"))
+RETRIES = 6
 UA = {"User-Agent": "manifoldgen-ltx-worker/1.0"}
-SKIP_Q4 = "Q4_K_M.gguf"
+T0 = time.monotonic()
+
+
+def log(message):
+    print(f"[ltx-weights {time.monotonic() - T0:7.1f}s] {message}", flush=True)
 
 
 def fetch_json(url):
@@ -21,51 +27,78 @@ def fetch_json(url):
 def sha256(path):
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(16 << 20), b""):
+        for chunk in iter(lambda: handle.read(32 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
 
-def download_part(url, target, start, end):
-    request = urllib.request.Request(url, headers={**UA, "Range": f"bytes={start}-{end}"})
-    with urllib.request.urlopen(request, timeout=120) as response, open(target, "r+b") as handle:
-        handle.seek(start)
-        while chunk := response.read(8 << 20):
-            handle.write(chunk)
-
-
-def download(entry):
-    rel = entry["path"]
-    target = ROOT / rel
-    if target.exists() and target.stat().st_size == entry["size"]:
-        return rel, False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_suffix(target.suffix + ".part")
-    with open(partial, "wb") as handle:
-        handle.truncate(entry["size"])
-    url = f"{BASE}/{rel}"
-    size = entry["size"]
-    step = -(-size // PARTS)
-    ranges = [(i, min(i + step, size) - 1) for i in range(0, size, step)]
-    with ThreadPoolExecutor(PARTS) as pool:
-        for future in [pool.submit(download_part, url, partial, a, b) for a, b in ranges]:
-            future.result()
-    if sha256(partial) != entry["sha256"]:
-        partial.unlink(missing_ok=True)
-        raise RuntimeError(f"sha256 mismatch for {rel}")
-    partial.rename(target)
-    return rel, True
+def download_part(url, fd, start, end):
+    expected = end - start + 1
+    last = None
+    for attempt in range(RETRIES):
+        try:
+            request = urllib.request.Request(url, headers={**UA, "Range": f"bytes={start}-{end}"})
+            with urllib.request.urlopen(request, timeout=60) as response:
+                if response.status != 206:
+                    raise RuntimeError(f"range request returned {response.status}")
+                offset = start
+                while chunk := response.read(4 << 20):
+                    os.pwrite(fd, chunk, offset)
+                    offset += len(chunk)
+            if offset - start != expected:
+                raise RuntimeError(f"short read {offset - start} of {expected}")
+            return expected
+        except Exception as error:
+            last = error
+            time.sleep(min(2 ** attempt, 15))
+    raise RuntimeError(f"part {start}-{end} of {url} failed: {last}")
 
 
 def ensure_weights(unet):
     manifest = fetch_json(f"{BASE}/manifest.json")
     wanted = [e for e in manifest["files"] if e["path"].startswith(("text_encoders/", "vae/", "latent_upscale_models/")) or Path(e["path"]).name == unet]
-    with ThreadPoolExecutor(WORKERS) as pool:
-        results = list(pool.map(download, wanted))
+    pending = []
+    for entry in wanted:
+        target = ROOT / entry["path"]
+        if not (target.exists() and target.stat().st_size == entry["size"]):
+            pending.append(entry)
+    total = sum(e["size"] for e in pending)
+    log(f"{len(pending)} of {len(wanted)} files to fetch, {total / 1e9:.1f} GB")
+    if pending:
+        started = time.monotonic()
+        handles = {}
+        tasks = []
+        for entry in pending:
+            target = ROOT / entry["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            partial = target.with_suffix(target.suffix + ".part")
+            fd = os.open(partial, os.O_RDWR | os.O_CREAT | os.O_TRUNC)
+            os.ftruncate(fd, entry["size"])
+            handles[entry["path"]] = (fd, partial, target)
+            url = f"{BASE}/{entry['path']}"
+            for start in range(0, entry["size"], PART_BYTES):
+                tasks.append((url, fd, start, min(start + PART_BYTES, entry["size"]) - 1))
+        with ThreadPoolExecutor(CONNECTIONS) as pool:
+            for future in [pool.submit(download_part, *task) for task in tasks]:
+                future.result()
+        elapsed = time.monotonic() - started
+        log(f"downloaded {total / 1e9:.1f} GB in {elapsed:.0f}s ({total / elapsed / 1e6:.0f} MB/s)")
+        for fd, _, _ in handles.values():
+            os.close(fd)
+        started = time.monotonic()
+        with ThreadPoolExecutor(len(pending)) as pool:
+            digests = list(pool.map(lambda e: sha256(handles[e["path"]][1]), pending))
+        for entry, digest in zip(pending, digests):
+            fd, partial, target = handles[entry["path"]]
+            if digest != entry["sha256"]:
+                partial.unlink(missing_ok=True)
+                raise RuntimeError(f"sha256 mismatch for {entry['path']}")
+            partial.rename(target)
+        log(f"verified in {time.monotonic() - started:.0f}s")
     if ROOT != COMFY_MODELS:
         for entry in wanted:
             link = COMFY_MODELS / entry["path"]
             link.parent.mkdir(parents=True, exist_ok=True)
             if not link.exists():
                 link.symlink_to(ROOT / entry["path"])
-    return {rel: fetched for rel, fetched in results}
+    return [e["path"] for e in wanted]
