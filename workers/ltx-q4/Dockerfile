@@ -10,5 +10,5 @@ RUN python -m pip install --break-system-packages --no-cache-dir "gguf>=0.13.0" 
     && git clone https://github.com/ChrisColeTech/ComfyUI-GGUF-Loader /opt/ComfyUI/custom_nodes/ComfyUI-GGUF-Loader \
     && git -C /opt/ComfyUI/custom_nodes/ComfyUI-GGUF-Loader checkout ${LTX_NODE_REV}
 
-COPY graphs.py weights.py ltx_runtime.py ltx_handler.py /src/
+COPY graphs.py ltx_weights.py ltx_runtime.py ltx_handler.py /src/
 CMD ["python", "-u", "/src/ltx_handler.py"]

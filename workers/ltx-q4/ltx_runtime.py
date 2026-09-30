@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 
 import graphs
-import weights
+import ltx_weights as weights
 
 COMFY_DIR = Path(os.environ.get("LTX_COMFY_DIR", "/opt/ComfyUI"))
 OUT_DIR = Path(os.environ.get("LTX_OUT_DIR", "/tmp/ltx-out"))
