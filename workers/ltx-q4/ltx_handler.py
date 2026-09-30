@@ -31,8 +31,12 @@ def moderation():
     return _moderation
 
 
+TIERS = {"standard": (8, 3, "quality"), "fast": (6, 3, "quality"), "xfast": (6, 3, "balanced")}
+
+
 def handler(event):
     values = event.get("input") or {}
+    tier_steps, tier_refine, tier_size = TIERS.get(values.get("tier"), TIERS["standard"])
     prompt = values.get("prompt", "")
     gate = moderation().prompt_gate(prompt)
     if gate is not None:
@@ -45,12 +49,13 @@ def handler(event):
         raw, metrics = runtime().generate(
             prompt,
             aspect_ratio=values.get("aspect_ratio", "16:9"),
-            size=values.get("size", "balanced"),
+            size=values.get("size", tier_size),
             duration=float(values.get("duration", 5)),
             seed=values.get("seed"),
             image=first,
             audio=audio,
-            steps=int(values.get("steps", 8)),
+            steps=int(values.get("steps", tier_steps)),
+            refine_steps=int(values.get("refine_steps", tier_refine)),
             cfg=float(values.get("cfg", 3.5)),
             negative=values.get("negative_prompt"),
             two_stage=bool(values.get("two_stage", True)),

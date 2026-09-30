@@ -13,7 +13,7 @@ COMFY_DIR = Path(os.environ.get("LTX_COMFY_DIR", "/opt/ComfyUI"))
 OUT_DIR = Path(os.environ.get("LTX_OUT_DIR", "/tmp/ltx-out"))
 IN_DIR = Path(os.environ.get("LTX_IN_DIR", "/tmp/ltx-in"))
 PORT = int(os.environ.get("LTX_COMFY_PORT", "8188"))
-UNET = os.environ.get("LTX_UNET", graphs.Q4)
+UNET = os.environ.get("LTX_UNET", graphs.FP8)
 FPS = 24
 LONG_SIDE = {"preview": 768, "balanced": 1024, "quality": 1280}
 MAX_SECONDS = float(os.environ.get("LTX_MAX_SECONDS", "15"))
@@ -83,7 +83,7 @@ class LtxRuntime:
                 self.proc.kill()
 
     def generate(self, prompt, *, aspect_ratio="16:9", size="balanced", duration=5, seed=None,
-                 image=None, audio=None, steps=8, cfg=3.5, negative=None, two_stage=True):
+                 image=None, audio=None, steps=8, cfg=3.5, negative=None, two_stage=True, refine_steps=3):
         width, height = dimensions(aspect_ratio, size)
         frames = frame_count(duration)
         seed = int(seed) if seed is not None else int.from_bytes(os.urandom(4), "big")
@@ -96,7 +96,7 @@ class LtxRuntime:
         prefix = f"job-{seed}-{int(time.time())}"
         graph = graphs.build(
             prompt, width=width, height=height, frames=frames, seed=seed, unet=UNET, two_stage=two_stage,
-            steps=steps, cfg=cfg, negative=negative or graphs.NEGATIVE, image=names.get("image"),
+            steps=steps, refine_steps=refine_steps, cfg=cfg, negative=negative or graphs.NEGATIVE, image=names.get("image"),
             audio=names.get("audio"), prefix=prefix,
         )
         started = time.monotonic()
@@ -123,5 +123,5 @@ class LtxRuntime:
         return path, {
             "generation_seconds": round(time.monotonic() - started, 2), "width": width, "height": height,
             "frames": frames, "fps": FPS, "seed": seed, "two_stage": two_stage, "unet": UNET,
-            "model_lane": "ltx23-q4",
+            "refine_steps": refine_steps, "model_lane": "ltx23-q4" if UNET == graphs.Q4 else "ltx23-fp8",
         }
