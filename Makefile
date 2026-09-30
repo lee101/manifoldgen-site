@@ -1,4 +1,4 @@
-.PHONY: install server frontend dev dev-https build visualbench hooks check-fast test-go test-studio test-studio-full verify
+.PHONY: install server frontend dev build visualbench hooks check-fast test-go test-studio test-studio-full verify
 
 install:
 	cd frontend && bun install
@@ -11,9 +11,6 @@ frontend:
 	cd frontend && bun run dev
 
 dev:
-	cd frontend && bun run dev
-
-dev-https:
 	cd frontend && bun run dev:https
 
 build-frontend:
