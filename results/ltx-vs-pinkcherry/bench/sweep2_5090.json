@@ -1,0 +1,116 @@
+{
+ "gpu": "NVIDIA GeForce RTX 5090",
+ "runs": [
+  {
+   "name": "wm_q4_single_seed2",
+   "ok": true,
+   "exec_s": 80.214,
+   "wall_s": 80.7,
+   "peak_vram_mb": 22322,
+   "files": [
+    "s2_wm_q4_single_seed2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "wm_fp8_2s_seed1",
+   "ok": true,
+   "exec_s": 39.193,
+   "wall_s": 40.1,
+   "peak_vram_mb": 31970,
+   "files": [
+    "s2_wm_fp8_2s_seed1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "wm_fp8_2s_seed2",
+   "ok": true,
+   "exec_s": 28.484,
+   "wall_s": 29.1,
+   "peak_vram_mb": 31108,
+   "files": [
+    "s2_wm_fp8_2s_seed2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "wm_fp8_2s_seed3",
+   "ok": true,
+   "exec_s": 28.485,
+   "wall_s": 29.0,
+   "peak_vram_mb": 31108,
+   "files": [
+    "s2_wm_fp8_2s_seed3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "wm_fp8_2s_seed4",
+   "ok": true,
+   "exec_s": 28.655,
+   "wall_s": 29.0,
+   "peak_vram_mb": 31108,
+   "files": [
+    "s2_wm_fp8_2s_seed4_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "xf_1024_b8r4",
+   "ok": true,
+   "exec_s": 21.462,
+   "wall_s": 22.0,
+   "peak_vram_mb": 31492,
+   "files": [
+    "s2_xf_1024_b8r4_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "xf_1024_b6r3",
+   "ok": true,
+   "exec_s": 14.087,
+   "wall_s": 15.0,
+   "peak_vram_mb": 30436,
+   "files": [
+    "s2_xf_1024_b6r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "std_b8r4_rooftop",
+   "ok": true,
+   "exec_s": 31.463,
+   "wall_s": 32.1,
+   "peak_vram_mb": 31428,
+   "files": [
+    "s2_std_b8r4_rooftop_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "std_b8r3_rooftop",
+   "ok": true,
+   "exec_s": 24.431,
+   "wall_s": 25.1,
+   "peak_vram_mb": 31716,
+   "files": [
+    "s2_std_b8r3_rooftop_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "std_b6r3_rooftop",
+   "ok": true,
+   "exec_s": 22.712,
+   "wall_s": 23.1,
+   "peak_vram_mb": 31076,
+   "files": [
+    "s2_std_b6r3_rooftop_00001_.mp4"
+   ],
+   "err": null
+  }
+ ],
+ "done": true
+}

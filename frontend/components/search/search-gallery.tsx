@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, ArrowRight, Clapperboard, Copy, Download, ExternalLink, RotateCw } from 'lucide-react';
+import { loadStoredUser, nsfwAuthHeaders } from '../../lib/auth';
 import { ContextMenuItem, MediaContextMenu, copyImageToClipboard, copyText, createLongPressRegistry, downloadMedia } from '../media-action-sheet';
 
 export interface SearchImage {
@@ -78,8 +79,10 @@ export default function SearchGallery({ query, initial }: { query: string; initi
     inFlight.current = true;
     setFetching(true);
     try {
+      const headers = nsfwAuthHeaders(loadStoredUser());
       const res = await fetch(
-        `/api/images/semantic?q=${encodeURIComponent(query)}&top_k=${PAGE_SIZE}&offset=${offsetRef.current}`,
+        `/api/images/semantic?q=${encodeURIComponent(query)}&top_k=${PAGE_SIZE}&offset=${offsetRef.current}${headers ? '&allow_nsfw=true' : ''}`,
+        { headers },
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -117,15 +120,22 @@ export default function SearchGallery({ query, initial }: { query: string; initi
   }, [loadMore]);
 
   useEffect(() => {
-    if (initial) return;
+    const headers = nsfwAuthHeaders(loadStoredUser());
+    if (initial && !headers) return;
+    if (initial) {
+      seen.current = new Set();
+      offsetRef.current = 0;
+      exhausted.current = false;
+      setImages([]);
+      setState('loading');
+    }
     let alive = true;
-    fetch(`/api/images/semantic?q=${encodeURIComponent(query)}&top_k=${FIRST_PAGE}`)
+    fetch(`/api/images/semantic?q=${encodeURIComponent(query)}&top_k=${FIRST_PAGE}${headers ? '&allow_nsfw=true' : ''}`, { headers })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
       .then((data) => {
         if (!alive) return;
         const rows = normalizeSearchImages(data.results || data.images || []).slice(0, FIRST_PAGE);
-        for (const img of rows) seen.current.add(img.id);
-        setImages(rows);
+        mergeImages(rows);
         setState('ready');
       })
       .catch(() => {
@@ -134,7 +144,7 @@ export default function SearchGallery({ query, initial }: { query: string; initi
     return () => {
       alive = false;
     };
-  }, [initial, query]);
+  }, [initial, mergeImages, query]);
 
   useEffect(() => {
     void loadMore();

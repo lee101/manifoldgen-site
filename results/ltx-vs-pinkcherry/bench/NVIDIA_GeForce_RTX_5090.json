@@ -1,0 +1,151 @@
+{
+ "gpu": "NVIDIA GeForce RTX 5090",
+ "vram_gb": 32,
+ "runs": [
+  {
+   "name": "q4_single_1280x736|default|run1",
+   "ok": true,
+   "exec_s": 87.235,
+   "wall_s": 87.5,
+   "peak_vram_mb": 22322,
+   "files": [
+    "bench_q4_single_1280x736_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_single_1280x736|default|run2",
+   "ok": true,
+   "exec_s": 63.499,
+   "wall_s": 64.1,
+   "peak_vram_mb": 20372,
+   "files": [
+    "bench_q4_single_1280x736_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_single_1280x736|default|run3",
+   "ok": true,
+   "exec_s": 62.975,
+   "wall_s": 63.3,
+   "peak_vram_mb": 20372,
+   "files": [
+    "bench_q4_single_1280x736_default_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run1",
+   "ok": true,
+   "exec_s": 53.755,
+   "wall_s": 54.1,
+   "peak_vram_mb": 22548,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run2",
+   "ok": true,
+   "exec_s": 50.068,
+   "wall_s": 51.1,
+   "peak_vram_mb": 21974,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run3",
+   "ok": true,
+   "exec_s": 50.031,
+   "wall_s": 50.3,
+   "peak_vram_mb": 22004,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run1",
+   "ok": true,
+   "exec_s": 63.295,
+   "wall_s": 63.6,
+   "peak_vram_mb": 22002,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run2",
+   "ok": true,
+   "exec_s": 50.757,
+   "wall_s": 51.1,
+   "peak_vram_mb": 22068,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run3",
+   "ok": true,
+   "exec_s": 51.084,
+   "wall_s": 52.1,
+   "peak_vram_mb": 22068,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|q4_two_stage_1280x704|rooftop",
+   "ok": true,
+   "exec_s": 63.044,
+   "wall_s": 63.6,
+   "peak_vram_mb": 21970,
+   "files": [
+    "ab_q4_two_stage_1280x704_rooftop_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|q4_two_stage_1280x704|apartment",
+   "ok": true,
+   "exec_s": 53.007,
+   "wall_s": 53.3,
+   "peak_vram_mb": 23252,
+   "files": [
+    "ab_q4_two_stage_1280x704_apartment_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|q4_two_stage_1280x704|beach",
+   "ok": true,
+   "exec_s": 52.605,
+   "wall_s": 53.1,
+   "peak_vram_mb": 23284,
+   "files": [
+    "ab_q4_two_stage_1280x704_beach_00001_.mp4"
+   ],
+   "err": null
+  }
+ ],
+ "log": [],
+ "ram_gb": 123,
+ "flags_available": [
+  "--use-sage-attention",
+  "--use-flash-attention",
+  "--use-ck-attention",
+  "--fast",
+  "--use-pytorch-cross-attention"
+ ],
+ "sage_install": "[notice] A new release of pip is available: 25.0.1 -> 26.2.1\n[notice] To update, run: pip install --upgrade pip",
+ "done": true,
+ "cost_per_hr": 0.99,
+ "pod": "fmt9q7io8kxyho"
+}

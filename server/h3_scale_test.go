@@ -72,3 +72,23 @@ func TestH3ReaperGenerationPreventsStaleFinish(t *testing.T) {
 		t.Fatal("finished reaper state should remain reusable for a race-free restart")
 	}
 }
+
+func TestH3AdultLanePrefersLtxOverPinkCherry(t *testing.T) {
+	t.Setenv("H3_PINKCHERRY_RUNPOD_ENDPOINT", "pink")
+	t.Setenv("H3_LTX_RUNPOD_ENDPOINT", "")
+	t.Setenv("H3_LTX_COG_URL", "")
+	if route, ok := h3AdultLane(); !ok || route.Variant != h3PinkCherryVariant || route.RunpodEndpointID != "pink" {
+		t.Fatalf("pinkcherry lane = %+v %v", route, ok)
+	}
+	t.Setenv("H3_LTX_RUNPOD_ENDPOINT", "ltx")
+	if route, ok := h3AdultLane(); !ok || route.Variant != h3LtxVariant || route.RunpodEndpointID != "ltx" {
+		t.Fatalf("ltx lane = %+v %v", route, ok)
+	}
+	if route := h3RouteForContent("a quiet harbor", true); route.Variant != h3LtxVariant {
+		t.Fatalf("flagged input route = %+v", route)
+	}
+	t.Setenv("H3_LTX_RUNPOD_MAX_WORKERS", "3")
+	if got := h3DesiredWorkersMax(h3WorkerRoute{Variant: h3LtxVariant}); got != 3 {
+		t.Fatalf("ltx workers max = %d", got)
+	}
+}

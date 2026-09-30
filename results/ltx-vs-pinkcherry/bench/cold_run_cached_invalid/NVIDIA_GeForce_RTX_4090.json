@@ -1,0 +1,85 @@
+{
+ "gpu": "NVIDIA GeForce RTX 4090",
+ "vram_gb": 24,
+ "runs": [
+  {
+   "name": "q4_single_1280x736|default|run1",
+   "ok": true,
+   "exec_s": 146.728,
+   "wall_s": 147.7,
+   "peak_vram_mb": 20340,
+   "files": [
+    "bench_q4_single_1280x736_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_single_1280x736|default|run2",
+   "ok": true,
+   "exec_s": 6.812,
+   "wall_s": 7.0,
+   "peak_vram_mb": 8670,
+   "files": [
+    "bench_q4_single_1280x736_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run1",
+   "ok": true,
+   "exec_s": 89.259,
+   "wall_s": 90.2,
+   "peak_vram_mb": 19674,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run2",
+   "ok": true,
+   "exec_s": 6.595,
+   "wall_s": 7.0,
+   "peak_vram_mb": 7168,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run1",
+   "ok": true,
+   "exec_s": 145.863,
+   "wall_s": 146.1,
+   "peak_vram_mb": 18744,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run2",
+   "ok": true,
+   "exec_s": 6.83,
+   "wall_s": 7.0,
+   "peak_vram_mb": 7166,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r2_00001_.mp4"
+   ],
+   "err": null
+  }
+ ],
+ "log": [],
+ "ram_gb": 251,
+ "flags_available": [
+  "--use-sage-attention",
+  "--use-flash-attention",
+  "--use-ck-attention",
+  "--fast",
+  "--use-pytorch-cross-attention"
+ ],
+ "sage_install": "[notice] A new release of pip is available: 25.0.1 -> 26.2.1\n[notice] To update, run: pip install --upgrade pip",
+ "done": true,
+ "cost_per_hr": 0.74,
+ "pod": "usa1pmf8ifqyw0"
+}

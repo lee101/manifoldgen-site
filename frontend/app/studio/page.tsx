@@ -69,7 +69,7 @@ import {
   canEncodeAudio,
   canEncodeVideo,
 } from 'mediabunny';
-import { clearUser, loadStoredUser, refreshUser, saveUser, type StoredUser } from '../../lib/auth';
+import { clearUser, loadStoredUser, nsfwAuthHeaders, refreshUser, saveUser, type StoredUser } from '../../lib/auth';
 import { HTTPResponseError, parseJSONResponse } from '../../lib/http';
 import { loadPromptHistory, promptHistoryUserKey, recordPrompt, usePromptHistoryCycler, type PromptHistoryEntry, type PromptKind } from '../../lib/prompt-history';
 import { ManifoldLoader } from '../../components/manifold-loader';
@@ -2901,8 +2901,10 @@ export default function StudioPage() {
         const data = await parseJSONResponse<{ results?: StudioVideoHit[] }>(response, 'Could not search videos');
         setVideoHits((data.results || []).filter((item) => item.video_url));
       } else if (mode === 'images') {
-        const endpoint = q ? `/api/images/semantic?q=${encodeURIComponent(q)}&top_k=24` : '/api/images?skip_total=true&varied=true&per_page=24&allow_nsfw=true';
-        const response = await fetch(endpoint);
+        const headers = nsfwAuthHeaders(user);
+        const nsfw = headers ? '&allow_nsfw=true' : '';
+        const endpoint = q ? `/api/images/semantic?q=${encodeURIComponent(q)}&top_k=24${nsfw}` : `/api/images?skip_total=true&varied=true&per_page=24${nsfw}`;
+        const response = await fetch(endpoint, { headers });
         const data = await parseJSONResponse<{ results?: StudioImageHit[]; images?: StudioImageHit[] }>(response, 'Could not search images');
         setImageHits(data.results || data.images || []);
       } else {

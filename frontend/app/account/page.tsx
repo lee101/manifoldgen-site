@@ -98,6 +98,8 @@ export default function AccountPage() {
   const [checkoutMeta, setCheckoutMeta] = useState('');
   const [remakeJobs, setRemakeJobs] = useState<RemakeAccountJob[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
+  const [allowNSFW, setAllowNSFW] = useState(false);
+  const [nsfwBusy, setNsfwBusy] = useState(false);
   const checkoutMountRef = useRef<HTMLDivElement | null>(null);
   const embeddedCheckoutRef = useRef<StripeEmbeddedCheckout | null>(null);
 
@@ -115,6 +117,7 @@ export default function AccountPage() {
     setEmail(next.email || '');
     const price = next.credit_price_usd || 0.01;
     setCreditsUsd(next.credits_usd ?? next.credits * price);
+    setAllowNSFW(next.allow_nsfw === true);
     return next;
   }, []);
 
@@ -135,6 +138,7 @@ export default function AccountPage() {
     setEmail(stored.email || '');
     const price = stored.credit_price_usd || 0.01;
     setCreditsUsd(stored.credits_usd ?? stored.credits * price);
+    setAllowNSFW(stored.allow_nsfw === true);
     void refreshSession(stored.api_key);
   }, [refreshSession]);
 
@@ -278,6 +282,7 @@ export default function AccountPage() {
       setApiKey(next.api_key);
       setEmail(next.email || email);
       setCreditsUsd(next.credits_usd ?? 0);
+      setAllowNSFW(next.allow_nsfw === true);
       setMessage(data.created ? 'Account created.' : 'Signed in.');
       setPassword('');
     } catch (err) {
@@ -292,6 +297,7 @@ export default function AccountPage() {
     setApiKey('');
     setEmail('');
     setCreditsUsd(0);
+    setAllowNSFW(false);
     setClientSecret('');
     setPublishableKey('');
     setCheckoutMeta('');
@@ -362,6 +368,25 @@ export default function AccountPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to open billing portal');
       setBusy(false);
+    }
+  }
+
+  async function toggleAllowNSFW(next: boolean) {
+    setNsfwBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/account/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ allow_nsfw: next }),
+      });
+      await parseJSONResponse<AuthResponse>(res, 'Could not update settings');
+      setAllowNSFW(next);
+      await refreshSession(apiKey);
+    } catch (err) {
+      setError(friendlyError(err, 'Could not update settings'));
+    } finally {
+      setNsfwBusy(false);
     }
   }
 
@@ -751,6 +776,23 @@ export default function AccountPage() {
                 </div>
               </div>
             ) : null}
+
+            <h2 className="mt-6 text-lg font-semibold">Content</h2>
+            <label className="mt-2 flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/40 p-3 text-sm">
+              <span>
+                <span className="block font-medium">Show NSFW content</span>
+                <span className="block text-xs text-[var(--color-mute)]">Include adult-flagged images in gallery and search results.</span>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                data-testid="account-allow-nsfw"
+                checked={allowNSFW}
+                disabled={nsfwBusy}
+                onChange={(event) => void toggleAllowNSFW(event.target.checked)}
+                className="h-5 w-5 accent-[var(--color-accent)]"
+              />
+            </label>
 
             <h2 className="mt-6 text-lg font-semibold">API</h2>
             <pre

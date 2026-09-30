@@ -1,0 +1,283 @@
+{
+ "gpu": "NVIDIA H100 PCIe",
+ "vram_gb": 80,
+ "runs": [
+  {
+   "name": "q4_single_1280x736|default|run1",
+   "ok": true,
+   "exec_s": 123.234,
+   "wall_s": 123.7,
+   "peak_vram_mb": 24087,
+   "files": [
+    "bench_q4_single_1280x736_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_single_1280x736|default|run2",
+   "ok": true,
+   "exec_s": 71.646,
+   "wall_s": 72.2,
+   "peak_vram_mb": 24663,
+   "files": [
+    "bench_q4_single_1280x736_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_single_1280x736|default|run3",
+   "ok": true,
+   "exec_s": 67.862,
+   "wall_s": 68.3,
+   "peak_vram_mb": 24503,
+   "files": [
+    "bench_q4_single_1280x736_default_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run1",
+   "ok": true,
+   "exec_s": 82.846,
+   "wall_s": 83.4,
+   "peak_vram_mb": 26425,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run2",
+   "ok": true,
+   "exec_s": 77.795,
+   "wall_s": 78.7,
+   "peak_vram_mb": 26329,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|default|run3",
+   "ok": true,
+   "exec_s": 87.781,
+   "wall_s": 88.5,
+   "peak_vram_mb": 26489,
+   "files": [
+    "bench_q4_two_stage_1280x704_default_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_single_1280x736|default|run1",
+   "ok": true,
+   "exec_s": 67.489,
+   "wall_s": 68.3,
+   "peak_vram_mb": 50601,
+   "files": [
+    "bench_fp8_single_1280x736_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_single_1280x736|default|run2",
+   "ok": true,
+   "exec_s": 48.922,
+   "wall_s": 49.4,
+   "peak_vram_mb": 51177,
+   "files": [
+    "bench_fp8_single_1280x736_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_single_1280x736|default|run3",
+   "ok": true,
+   "exec_s": 49.481,
+   "wall_s": 50.2,
+   "peak_vram_mb": 51177,
+   "files": [
+    "bench_fp8_single_1280x736_default_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|default|run1",
+   "ok": true,
+   "exec_s": 50.528,
+   "wall_s": 51.3,
+   "peak_vram_mb": 51913,
+   "files": [
+    "bench_fp8_two_stage_1280x704_default_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|default|run2",
+   "ok": true,
+   "exec_s": 39.48,
+   "wall_s": 40.1,
+   "peak_vram_mb": 51945,
+   "files": [
+    "bench_fp8_two_stage_1280x704_default_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|default|run3",
+   "ok": true,
+   "exec_s": 39.138,
+   "wall_s": 39.6,
+   "peak_vram_mb": 52009,
+   "files": [
+    "bench_fp8_two_stage_1280x704_default_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run1",
+   "ok": true,
+   "exec_s": 123.205,
+   "wall_s": 123.6,
+   "peak_vram_mb": 25721,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run2",
+   "ok": true,
+   "exec_s": 79.476,
+   "wall_s": 80.2,
+   "peak_vram_mb": 26425,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "q4_two_stage_1280x704|sage|run3",
+   "ok": true,
+   "exec_s": 78.587,
+   "wall_s": 79.2,
+   "peak_vram_mb": 26425,
+   "files": [
+    "bench_q4_two_stage_1280x704_sage_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|sage|run1",
+   "ok": true,
+   "exec_s": 65.827,
+   "wall_s": 66.3,
+   "peak_vram_mb": 51273,
+   "files": [
+    "bench_fp8_two_stage_1280x704_sage_r1_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|sage|run2",
+   "ok": true,
+   "exec_s": 42.217,
+   "wall_s": 43.2,
+   "peak_vram_mb": 51945,
+   "files": [
+    "bench_fp8_two_stage_1280x704_sage_r2_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "fp8_two_stage_1280x704|sage|run3",
+   "ok": true,
+   "exec_s": 43.552,
+   "wall_s": 44.2,
+   "peak_vram_mb": 51977,
+   "files": [
+    "bench_fp8_two_stage_1280x704_sage_r3_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|q4_two_stage_1280x704|rooftop",
+   "ok": true,
+   "exec_s": 127.025,
+   "wall_s": 127.5,
+   "peak_vram_mb": 25625,
+   "files": [
+    "ab_q4_two_stage_1280x704_rooftop_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|q4_two_stage_1280x704|apartment",
+   "ok": true,
+   "exec_s": 84.081,
+   "wall_s": 84.5,
+   "peak_vram_mb": 26329,
+   "files": [
+    "ab_q4_two_stage_1280x704_apartment_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|q4_two_stage_1280x704|beach",
+   "ok": true,
+   "exec_s": 81.642,
+   "wall_s": 82.3,
+   "peak_vram_mb": 26393,
+   "files": [
+    "ab_q4_two_stage_1280x704_beach_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|fp8_two_stage_1280x704|rooftop",
+   "ok": true,
+   "exec_s": 64.628,
+   "wall_s": 65.3,
+   "peak_vram_mb": 51593,
+   "files": [
+    "ab_fp8_two_stage_1280x704_rooftop_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|fp8_two_stage_1280x704|apartment",
+   "ok": true,
+   "exec_s": 47.771,
+   "wall_s": 48.3,
+   "peak_vram_mb": 51945,
+   "files": [
+    "ab_fp8_two_stage_1280x704_apartment_00001_.mp4"
+   ],
+   "err": null
+  },
+  {
+   "name": "ab|fp8_two_stage_1280x704|beach",
+   "ok": true,
+   "exec_s": 48.967,
+   "wall_s": 49.4,
+   "peak_vram_mb": 51849,
+   "files": [
+    "ab_fp8_two_stage_1280x704_beach_00001_.mp4"
+   ],
+   "err": null
+  }
+ ],
+ "log": [],
+ "ram_gb": 2015,
+ "flags_available": [
+  "--use-sage-attention",
+  "--use-flash-attention",
+  "--use-ck-attention",
+  "--fast",
+  "--use-pytorch-cross-attention"
+ ],
+ "sage_install": "[notice] A new release of pip is available: 25.0.1 -> 26.2.1\n[notice] To update, run: pip install --upgrade pip",
+ "done": true,
+ "cost_per_hr": 2.89,
+ "pod": "u2xnevtn6geq5r"
+}

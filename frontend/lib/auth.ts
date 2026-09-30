@@ -14,6 +14,7 @@ export interface StoredUser {
   credits: number;
   credits_usd?: number;
   credit_price_usd?: number;
+  allow_nsfw?: boolean;
 }
 
 function canUseStorage() {
@@ -43,6 +44,7 @@ function loadLegacyUser(): Partial<StoredUser> | null {
       credits: Number(profile.credits ?? parsed.credits) || 0,
       credits_usd: profile.credits_usd ?? parsed.credits_usd,
       credit_price_usd: profile.credit_price_usd ?? parsed.credit_price_usd,
+      allow_nsfw: profile.allow_nsfw ?? parsed.allow_nsfw,
     };
   } catch {
     return null;
@@ -65,6 +67,7 @@ export function loadStoredUser(): StoredUser | null {
           credits: Number(parsed.credits) || 0,
           credits_usd: parsed.credits_usd,
           credit_price_usd: parsed.credit_price_usd,
+          allow_nsfw: parsed.allow_nsfw === true,
         };
       }
     }
@@ -91,6 +94,7 @@ export function saveUser(user: StoredUser) {
       credits: user.credits ?? 0,
       credits_usd: user.credits_usd,
       credit_price_usd: user.credit_price_usd,
+      allow_nsfw: user.allow_nsfw === true,
     }),
   );
 }
@@ -110,7 +114,7 @@ export function userFromAuthResponse(data: {
   credits_usd?: number;
   cute_price_usd?: number;
   credit_price_usd?: number;
-  user?: { email?: string; credits?: number };
+  user?: { email?: string; credits?: number; allow_nsfw?: boolean };
 }): StoredUser | null {
   const apiKey = String(data.api_key || '').trim();
   if (!apiKey) return null;
@@ -121,7 +125,12 @@ export function userFromAuthResponse(data: {
     credits: data.user?.credits ?? 0,
     credits_usd: data.credits_usd,
     credit_price_usd: price,
+    allow_nsfw: data.user?.allow_nsfw === true,
   };
+}
+
+export function nsfwAuthHeaders(user?: Pick<StoredUser, 'api_key' | 'allow_nsfw'> | null): Record<string, string> | undefined {
+  return user?.allow_nsfw && user.api_key ? { Authorization: `Bearer ${user.api_key}` } : undefined;
 }
 
 /** Soft refresh. Never clears storage; network/404/500 must not sign people out. */
