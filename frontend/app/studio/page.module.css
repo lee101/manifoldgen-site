@@ -423,6 +423,7 @@
 .canvasWrap:focus-visible { outline: 2px solid #d3cbff; outline-offset: 5px; }
 .canvasWrapDragging { cursor: grabbing; transition: none; }
 .stageLayerMedia { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.stageLoading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 3; }
 .sourceVideo { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .playbackPrebuffer { position: fixed; z-index: -1; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
 .previewCanvas { display: block; width: 100%; height: 100%; object-fit: contain; background: black; pointer-events: none; }
