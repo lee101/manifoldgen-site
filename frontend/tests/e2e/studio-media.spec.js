@@ -2180,3 +2180,61 @@ test('a project media card drags onto the timeline as a second clip without re-d
   await card.dragTo(page.getByTestId('studio-timeline-dropzone'), { targetPosition: { x: 480, y: 30 } });
   await expect(page.locator('[data-testid^="timeline-clip-"]')).toHaveCount(2);
 });
+
+test('video clips show a filmstrip of real frames on the timeline', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles(VIDEO);
+  const strip = page.locator('[data-testid^="timeline-filmstrip-"]');
+  await expect(strip).toHaveCount(1);
+  await expect.poll(async () => strip.locator('i').evaluateAll((tiles) => tiles.filter((tile) => tile.style.backgroundImage.startsWith('url("data:image/jpeg')).length), { timeout: 20_000 }).toBeGreaterThan(0);
+});
+
+test('ripple delete closes the gap, undo restores it, and fit zoom spans the timeline', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([VIDEO, VIDEO]);
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  await expect(clips).toHaveCount(2);
+  const lefts = async () => clips.evaluateAll((nodes) => nodes.map((node) => Math.round(Number.parseFloat(node.style.left) || 0)).sort((a, b) => a - b));
+  const [, secondLeft] = await lefts();
+  expect(secondLeft).toBeGreaterThan(0);
+  await clips.first().click();
+  await page.keyboard.press('Shift+Delete');
+  await expect(clips).toHaveCount(1);
+  expect((await lefts())[0]).toBe(0);
+  await page.keyboard.press('Control+z');
+  await expect(clips).toHaveCount(2);
+  expect(await lefts()).toEqual([0, secondLeft].sort((a, b) => a - b));
+
+  const zoom = page.getByLabel('Timeline zoom');
+  await page.getByTestId('studio-timeline-fit').click();
+  const fitted = Number(await zoom.inputValue());
+  expect(fitted).toBeGreaterThanOrEqual(0.05);
+  expect(fitted).toBeLessThanOrEqual(2.5);
+  const viewport = await page.getByTestId('studio-timeline-dropzone').evaluate((node) => node.clientWidth);
+  const rightEdges = await clips.evaluateAll((nodes) => nodes.map((node) => Number.parseFloat(node.style.left) + Number.parseFloat(node.style.width)));
+  expect(Math.max(...rightEdges)).toBeLessThanOrEqual(viewport);
+  expect(Math.max(...rightEdges)).toBeGreaterThan(viewport * 0.5);
+});
+
+test('comma and period jump between cuts and S splits the clip under the playhead without a selection', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles([VIDEO, VIDEO]);
+  const clips = page.locator('[data-testid^="timeline-clip-"]');
+  await expect(clips).toHaveCount(2);
+  const label = page.locator('[class*="playhead"] span').first();
+  await page.keyboard.press('Home');
+  await expect(label).toHaveText(/^00:00\.00$/);
+  await page.keyboard.press('.');
+  await expect(label).not.toHaveText(/^00:00\.00$/);
+  const boundary = await label.innerText();
+  await page.keyboard.press(',');
+  await expect(label).toHaveText(/^00:00\.00$/);
+  await page.getByTestId('studio-timeline-dropzone').click({ position: { x: 1000, y: 150 } });
+  await page.getByTestId('studio-timeline-ruler').click({ position: { x: 32, y: 8 } });
+  await page.keyboard.press('s');
+  await expect(clips).toHaveCount(3);
+  expect(boundary).toMatch(/^\d\d:\d\d\.\d\d$/);
+});

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -90,6 +90,8 @@ import {
   type PortableStudioHistoryState,
 } from '../../lib/studio-projects';
 import { MEDIA_DRAG_TYPE, decodeMediaDrag, encodeMediaDrag, galleryProxyURL as galleryImportURL, isStreamingPlaceholder, mediaKindFromURL, streamingPlaceholder, type DraggedMedia } from '../../lib/studio-media-drag';
+import { FILMSTRIP_FRAME_HEIGHT, FILMSTRIP_FRAME_WIDTH, dropFilmstrip, ensureFilmstrip, filmstripFrame, filmstripFrameIndex, filmstripGrid, filmstripTiles, subscribeFilmstrip } from '../../lib/studio-filmstrip';
+import { MAX_TIMELINE_ZOOM, MIN_TIMELINE_ZOOM, adjacentEdge, fitZoom, rippleRemove } from '../../lib/studio-timeline-ops';
 import { h3Dimensions, loopAnchorURL, type H3Aspect, type H3Size } from '../../lib/h3-loop';
 import { VIDEO_GENERATORS } from '../../lib/video-generators';
 import styles from './page.module.css';
@@ -727,6 +729,8 @@ type BackgroundActivity = {
 
 type StudioPerfDiagnostics = {
   renderer?: ReturnType<StudioRenderer['diagnostics']>;
+  renders?: number;
+  playheadCommits?: number;
   previewFrames: number;
   previewStartedAt: number;
   previewLastAt: number;
@@ -1184,6 +1188,28 @@ function moveVisualLayersWithSwap(items: StudioAsset[], selectedIDs: Set<string>
   return stackOverlappingVisuals(swapped, selectedIDs);
 }
 
+const ClipFilmstrip = memo(function ClipFilmstrip({ asset, pixelsPerSecond }: { asset: StudioAsset; pixelsPerSecond: number }) {
+  const key = `${asset.mediaID}:${asset.duration.toFixed(3)}`;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    let scheduled = 0;
+    const unsubscribe = subscribeFilmstrip(key, () => {
+      if (!scheduled) scheduled = requestAnimationFrame(() => { scheduled = 0; setTick((value) => value + 1); });
+    });
+    ensureFilmstrip(key, asset.url, asset.duration);
+    return () => { unsubscribe(); cancelAnimationFrame(scheduled); };
+  }, [key, asset.url, asset.duration]);
+  const grid = filmstripGrid(asset.duration);
+  const tileWidth = Math.round(FILMSTRIP_FRAME_WIDTH * 0.6);
+  const tiles = filmstripTiles(asset.trimStart, clipDuration(asset), pixelsPerSecond, tileWidth);
+  return <span className={styles.clipFilmstrip} data-testid={`timeline-filmstrip-${asset.id}`} aria-hidden="true">
+    {tiles.map((time, index) => {
+      const frame = filmstripFrame(key, filmstripFrameIndex(grid, time));
+      return <i key={index} style={{ width: tileWidth, backgroundImage: frame ? `url(${frame})` : undefined }} />;
+    })}
+  </span>;
+});
+
 function PassiveStageMedia({ asset, playhead, playing }: { asset: StudioAsset; playhead: number; playing: boolean }) {
   const video = useRef<HTMLVideoElement>(null);
 
@@ -1596,6 +1622,7 @@ async function extractAudioClip(asset: StudioAsset) {
 }
 
 export default function StudioPage() {
+  if (typeof window !== 'undefined') { const diagnostics = perfDiagnostics(); diagnostics.renders = (diagnostics.renders ?? 0) + 1; }
   const [isMacOS, setIsMacOS] = useState(false);
   const [assets, setAssets] = useState<StudioAsset[]>([]);
   const [projectID, setProjectID] = useState('');
@@ -1781,7 +1808,15 @@ export default function StudioPage() {
   const timelineAudioRefs = useRef(new Map<string, HTMLAudioElement>());
   const playbackClockRef = useRef<{ wallStart: number; timelineStart: number } | null>(null);
   const playheadRef = useRef(playhead);
-  playheadRef.current = playhead;
+  // While playing, the rAF clock owns this ref; React state only trails it at
+  // ~10 Hz (plus exactly at clip boundaries) so the 5k-line tree is not
+  // re-rendered every frame.
+  if (!playing) playheadRef.current = playhead;
+  const assetsRef = useRef(assets);
+  assetsRef.current = assets;
+  const playheadLineRef = useRef<HTMLDivElement>(null);
+  const playheadLabelRef = useRef<HTMLSpanElement>(null);
+  const transportTimeRef = useRef<HTMLSpanElement>(null);
 
   const setTimelineAudioRef = useCallback((assetID: string, element: HTMLAudioElement | null) => {
     if (element) timelineAudioRefs.current.set(assetID, element);
@@ -1877,6 +1912,9 @@ export default function StudioPage() {
   const visualTrackCount = useMemo(() => Math.max(2, 1 + Math.max(0, ...assets.filter((asset) => asset.kind !== 'audio').map((asset) => asset.visualTrack))), [assets]);
   const visibleVisualTrackCount = Math.min(3, visualTrackCount);
   const pixelsPerSecond = 64 * timelineZoom;
+  const pixelsPerSecondRef = useRef(pixelsPerSecond);
+  pixelsPerSecondRef.current = pixelsPerSecond;
+  const shownPlayhead = playing ? playheadRef.current : playhead;
   const rulerStep = pixelsPerSecond < 42 ? 5 : pixelsPerSecond < 82 ? 2 : 1;
   const rulerDuration = Math.max(rulerStep, Math.ceil(Math.max(timelineDuration, timelineViewportWidth / pixelsPerSecond) / rulerStep) * rulerStep);
   const timelineWidth = Math.max(timelineViewportWidth, rulerDuration * pixelsPerSecond);
@@ -2074,6 +2112,7 @@ export default function StudioPage() {
   const seekTimeline = useCallback((time: number, preferredID?: string) => {
     const nextTime = Math.max(0, Math.min(timelineDuration, time));
     setPlayhead(nextTime);
+    playheadRef.current = nextTime;
     if (playing) playbackClockRef.current = { wallStart: performance.now(), timelineStart: nextTime };
     const active = preferredID
       ? assets.find((asset) => asset.id === preferredID)
@@ -2718,21 +2757,34 @@ export default function StudioPage() {
     playbackClockRef.current = clock;
     let animationFrame = 0;
     let lastUIUpdate = -Infinity;
+    let nextBoundary = adjacentEdge(assetsRef.current, playheadRef.current, 1) ?? Infinity;
     const tick = (now: number) => {
       const next = clock.timelineStart + (now - clock.wallStart) / 1000;
       if (next >= timelineDuration) {
+        playheadRef.current = timelineDuration;
         setPlayhead(timelineDuration);
         setPlaying(false);
         return;
       }
-      if (now - lastUIUpdate >= 33) {
+      playheadRef.current = next;
+      const pixels = next * pixelsPerSecondRef.current;
+      if (playheadLineRef.current) playheadLineRef.current.style.left = `${pixels}px`;
+      const label = formatTime(next);
+      if (playheadLabelRef.current) playheadLabelRef.current.textContent = label;
+      if (transportTimeRef.current) transportTimeRef.current.textContent = label;
+      if (next >= nextBoundary || now - lastUIUpdate >= 100) {
         setPlayhead(next);
+        perfDiagnostics().playheadCommits = (perfDiagnostics().playheadCommits ?? 0) + 1;
         lastUIUpdate = now;
+        nextBoundary = adjacentEdge(assetsRef.current, next, 1) ?? Infinity;
       }
       animationFrame = requestAnimationFrame(tick);
     };
     animationFrame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animationFrame);
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      setPlayhead((current) => Math.abs(current - playheadRef.current) > 0.001 ? playheadRef.current : current);
+    };
   // The clock is intentionally anchored once per play action; changing the
   // playhead during playback is handled by seekTimeline resetting the ref.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3272,6 +3324,29 @@ export default function StudioPage() {
     selectOnly(remaining[0]?.id || '');
   }
 
+  function rippleRemoveSelected() {
+    if (!selectedIDs.length) return;
+    const remaining = rippleRemove(assets, selectedIDs);
+    rememberEdit();
+    setAssets(remaining);
+    selectOnly(remaining[0]?.id || '');
+    setNotice('Removed and closed the gap');
+  }
+
+  function jumpToEdge(direction: -1 | 1) {
+    const target = adjacentEdge(assets, playhead, direction);
+    if (target === null) {
+      setNotice(direction === 1 ? 'No later cut' : 'No earlier cut');
+      return;
+    }
+    seekTimeline(target);
+  }
+
+  function fitTimelineToWindow() {
+    setTimelineZoom(fitZoom(Math.max(timelineDuration, 1), timelineViewportWidth));
+    timelineContentRef.current?.scrollTo({ left: 0 });
+  }
+
   function duplicateSelected() {
     if (!selectedAssets.length) return;
     const copies = selectedAssets.map((asset) => ({
@@ -3382,9 +3457,9 @@ export default function StudioPage() {
   }
 
   function splitAtPlayhead() {
-    const splittable = selectedAssets.filter((asset) => playhead > asset.timelineStart + MIN_CLIP_DURATION && playhead < clipEnd(asset) - MIN_CLIP_DURATION);
+    const splittable = (selectedAssets.length ? selectedAssets : assets).filter((asset) => playhead > asset.timelineStart + MIN_CLIP_DURATION && playhead < clipEnd(asset) - MIN_CLIP_DURATION);
     if (!splittable.length) {
-      setNotice('Move the playhead inside a selected clip to split it');
+      setNotice(selectedAssets.length ? 'Move the playhead inside a selected clip to split it' : 'Move the playhead inside a clip to split it');
       return;
     }
     const replacements = new Map(splittable.map((asset) => {
@@ -3898,7 +3973,13 @@ export default function StudioPage() {
         splitAtPlayhead();
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault();
-        removeSelected();
+        if (event.shiftKey) rippleRemoveSelected(); else removeSelected();
+      } else if (event.key.toLowerCase() === 'z' && event.shiftKey && !commandKey) {
+        event.preventDefault();
+        fitTimelineToWindow();
+      } else if ((event.key === ',' || event.key === '.') && !commandKey) {
+        event.preventDefault();
+        jumpToEdge(event.key === '.' ? 1 : -1);
       } else if (event.key === 'Escape') {
         setSelectedIDs(selectedID ? [selectedID] : []);
       } else if (commandKey && event.key.toLowerCase() === 'd') {
@@ -3906,7 +3987,7 @@ export default function StudioPage() {
         duplicateSelected();
       } else if (commandKey && ['=', '+', '-', '0'].includes(event.key)) {
         event.preventDefault();
-        setTimelineZoom(event.key === '0' ? 1 : Math.max(0.5, Math.min(2.5, Number((timelineZoom + (event.key === '-' ? -0.1 : 0.1)).toFixed(2)))));
+        setTimelineZoom(event.key === '0' ? 1 : Math.max(MIN_TIMELINE_ZOOM, Math.min(MAX_TIMELINE_ZOOM, Number((timelineZoom * (event.key === '-' ? 1 / 1.25 : 1.25)).toFixed(3)))));
       } else if (commandKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
         event.preventDefault();
         nudgeSelectionInTime((event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 1 : 0.1));
@@ -5570,9 +5651,9 @@ export default function StudioPage() {
       <section className={styles.timeline}>
         <button data-testid="studio-timeline-resize" className={styles.timelineResize} aria-label="Resize timeline" title="Drag up to show more timeline" onPointerDown={beginTimelineResize} onPointerMove={moveTimelineResize} onPointerUp={endTimelineResize} onPointerCancel={endTimelineResize}><span /></button>
         <div className={styles.timelineToolbar}>
-          <div className={styles.timelineTools}><button title="Add media" onClick={() => fileInputRef.current?.click()}><Plus size={14} /> Add</button><button onClick={splitAtPlayhead} disabled={!selectedAssets.length} title="Split at playhead (S)"><Scissors size={14} /> Split</button><button data-testid="studio-layer-up" onClick={() => moveSelectionBetweenLayers(1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move up a layer (Ctrl/Cmd + ])"><ChevronUp size={14} /> Layer</button><button data-testid="studio-layer-down" onClick={() => moveSelectionBetweenLayers(-1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move down a layer (Ctrl/Cmd + [)"><ChevronDown size={14} /> Layer</button><button onClick={duplicateSelected} disabled={!selectedAssets.length} title="Duplicate selected clips"><Copy size={14} /></button><button onClick={removeSelected} disabled={!selectedAssets.length} title="Delete selected clips"><Trash2 size={14} /></button>{selectedAssets.length > 1 && <span className={styles.selectionCount}>{selectedAssets.length} selected</span>}</div>
-          <div className={styles.transport}><button aria-label={playing ? 'Pause' : 'Play'} title="Play/pause (Space)" className={styles.playButton} onClick={togglePlayback} disabled={!playableTimelineAssets.length}>{playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}</button><span>{formatTime(playhead)} <i>/</i> {formatTime(timelineDuration)}</span></div>
-          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Drag empty space to select</span><span className={styles.mobileGestureHint}>Long-press + drag to move · drag edges to trim</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min="0.5" max="2.5" step="0.1" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /></div>
+          <div className={styles.timelineTools}><button title="Add media" onClick={() => fileInputRef.current?.click()}><Plus size={14} /> Add</button><button onClick={splitAtPlayhead} disabled={!assets.length} title="Split at playhead (S) · splits every clip under the playhead when none is selected"><Scissors size={14} /> Split</button><button data-testid="studio-layer-up" onClick={() => moveSelectionBetweenLayers(1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move up a layer (Ctrl/Cmd + ])"><ChevronUp size={14} /> Layer</button><button data-testid="studio-layer-down" onClick={() => moveSelectionBetweenLayers(-1)} disabled={!selectedAssets.some((asset) => asset.kind !== 'audio')} title="Move down a layer (Ctrl/Cmd + [)"><ChevronDown size={14} /> Layer</button><button onClick={duplicateSelected} disabled={!selectedAssets.length} title="Duplicate selected clips"><Copy size={14} /></button><button onClick={removeSelected} disabled={!selectedAssets.length} title="Delete selected clips"><Trash2 size={14} /></button>{selectedAssets.length > 1 && <span className={styles.selectionCount}>{selectedAssets.length} selected</span>}</div>
+          <div className={styles.transport}><button aria-label={playing ? 'Pause' : 'Play'} title="Play/pause (Space)" className={styles.playButton} onClick={togglePlayback} disabled={!playableTimelineAssets.length}>{playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}</button><span><span ref={transportTimeRef}>{formatTime(shownPlayhead)}</span> <i>/</i> {formatTime(timelineDuration)}</span></div>
+          <div className={styles.timelineZoom}><span className={styles.timelineHint}>Drag empty space to select</span><span className={styles.mobileGestureHint}>Long-press + drag to move · drag edges to trim</span><ZoomIn size={14} /><input aria-label="Timeline zoom" type="range" min={MIN_TIMELINE_ZOOM} max={MAX_TIMELINE_ZOOM} step="0.05" value={timelineZoom} onChange={(event) => setTimelineZoom(Number(event.target.value))} /><button type="button" data-testid="studio-timeline-fit" className={styles.timelineFit} title="Fit timeline to window (Shift+Z)" onClick={fitTimelineToWindow}>Fit</button></div>
         </div>
         <div className={styles.timelineBody}>
           <div ref={timelineLabelsRef} className={styles.trackLabels} onWheel={(event) => { if (timelineContentRef.current) timelineContentRef.current.scrollTop += event.deltaY; }}><span>VIDEO</span>{Array.from({ length: visualTrackCount }, (_, index) => visualTrackCount - index - 1).map((track) => <div data-testid={`timeline-track-label-v${track + 1}`} key={track}>V{track + 1}</div>)}<div className={styles.audioLabel}><b>A1</b><label title="A1 track volume"><Volume2 size={11} /><input data-testid="studio-a1-volume" aria-label="A1 track volume" type="range" min="0" max="2" step="0.01" value={audioTrackVolume} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => setAudioTrackVolume(Number(event.target.value))} /></label></div></div>
@@ -5582,6 +5663,7 @@ export default function StudioPage() {
               <div className={styles.videoTracks} onPointerDown={(event) => beginScrub(event, true)}>
             {assets.filter((asset) => asset.kind !== 'audio').map((asset) => <div data-testid={`timeline-clip-${asset.id}`} data-timeline-asset={asset.id} data-visual-track={asset.visualTrack} role="button" tabIndex={0} aria-selected={selectedIDs.includes(asset.id)} key={asset.id} onContextMenu={(event) => openStudioContextMenu(event, asset)} onPointerDown={(event) => beginClipDrag(event, asset, 'move')} className={`${styles.timelineClip} ${selectedIDs.includes(asset.id) ? styles.timelineClipSelected : ''} ${activeTimelineClip === asset.id ? styles.timelineClipActive : ''}`} style={{ '--track-from-top': visualTrackCount - asset.visualTrack - 1, left: asset.timelineStart * pixelsPerSecond, width: Math.max(24, clipDuration(asset) * pixelsPerSecond) } as CSSProperties} title={`${asset.name} · V${asset.visualTrack + 1} · ${formatTime(clipDuration(asset))}`}>
                   <span className={`${styles.trimHandle} ${styles.trimHandleLeft}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-left')} title="Trim start" />
+                  {asset.kind === 'video' && <ClipFilmstrip asset={asset} pixelsPerSecond={pixelsPerSecond} />}
                   <span className={styles.clipThumb} style={{ backgroundImage: `url(${asset.kind === 'image' ? asset.url : ''})` }}>{asset.kind === 'video' && <Film size={15} />}</span>
                   <span className={styles.clipMeta}><b>{asset.name}</b><small>{formatTime(clipDuration(asset))}</small></span>
                   <span className={`${styles.trimHandle} ${styles.trimHandleRight}`} onPointerDown={(event) => beginClipDrag(event, asset, 'trim-right')} title="Trim end" />
@@ -5597,7 +5679,7 @@ export default function StudioPage() {
               {timelineDropTime !== null && <div data-testid="studio-timeline-drop-marker" className={styles.timelineDropMarker} style={{ left: timelineDropTime * pixelsPerSecond }}><span>Drop at {formatTime(timelineDropTime)}</span></div>}
               {timelineMarquee && <div data-testid="studio-timeline-marquee" className={styles.timelineMarquee} style={timelineMarquee} />}
               {timelineHoverTime !== null && Math.abs(timelineHoverTime - playhead) > .01 && <div className={styles.ghostPlayhead} style={{ left: timelineHoverTime * pixelsPerSecond }}><span>{formatTime(timelineHoverTime)}</span></div>}
-              <div className={styles.playhead} style={{ left: playhead * pixelsPerSecond }}><span>{formatTime(playhead)}</span></div>
+              <div ref={playheadLineRef} className={styles.playhead} style={{ left: shownPlayhead * pixelsPerSecond }}><span ref={playheadLabelRef}>{formatTime(shownPlayhead)}</span></div>
             </div>
           </div>
         </div>
@@ -5676,8 +5758,11 @@ export default function StudioPage() {
             <div><span>Select every clip</span><span className={styles.shortcutKeys}><kbd>{commandKeyLabel}</kbd><kbd>A</kbd></span></div>
             <div><span>Copy clips · single image or video copies to the system clipboard</span><span className={styles.shortcutKeys}><kbd>{commandKeyLabel}</kbd><kbd>C</kbd><em>/</em><kbd>V</kbd></span></div>
             <div><span>Cut selected clips</span><span className={styles.shortcutKeys}><kbd>{commandKeyLabel}</kbd><kbd>X</kbd></span></div>
-            <div><span>Split selected clips at the playhead</span><kbd>S</kbd></div>
+            <div><span>Split selected clips (or every clip under the playhead) at the playhead</span><kbd>S</kbd></div>
             <div><span>Add body text</span><kbd>T</kbd></div>
+            <div><span>Delete and close the gap</span><span className={styles.shortcutKeys}><kbd>Shift</kbd><kbd>Delete</kbd></span></div>
+            <div><span>Jump to the previous or next cut</span><span className={styles.shortcutKeys}><kbd>,</kbd><em>/</em><kbd>.</kbd></span></div>
+            <div><span>Fit the whole timeline in the window</span><span className={styles.shortcutKeys}><kbd>Shift</kbd><kbd>Z</kbd></span></div>
             <div><span>Delete selected clips</span><span className={styles.shortcutKeys}><kbd>Delete</kbd><em>or</em><kbd>Backspace</kbd></span></div>
             <div><span>Move selected visual clips between layers · hold Shift to jump to the top or V1</span><span className={styles.shortcutKeys}><kbd>{commandKeyLabel}</kbd><kbd>[</kbd><kbd>]</kbd></span></div>
             <div><span>Move selected clips along the timeline</span><span className={styles.shortcutKeys}><kbd>{commandKeyLabel}</kbd><kbd>←</kbd><kbd>→</kbd></span></div>

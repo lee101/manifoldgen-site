@@ -728,3 +728,11 @@
   .voiceSelect { grid-template-columns: 29px 1fr; padding: 8px; }
   .voiceBadge { width: 28px; height: 28px; }
 }
+
+.clipFilmstrip { position: absolute; inset: 0; z-index: 0; display: flex; overflow: hidden; border-radius: inherit; pointer-events: none; }
+.clipFilmstrip i { flex: none; height: 100%; background-color: #151820; background-size: cover; background-position: center; opacity: .9; }
+.clipFilmstrip + .clipThumb { display: none; }
+.clipFilmstrip ~ .clipMeta { position: relative; z-index: 1; padding: 2px 6px; border-radius: 4px; background: rgba(10, 11, 15, .62); backdrop-filter: blur(2px); }
+.clipFilmstrip ~ .trimHandle { z-index: 5; }
+.timelineFit { height: 22px; padding: 0 8px; border: 1px solid #353946; border-radius: 5px; background: #22252d; color: #c9ced8; font-size: 10px; cursor: pointer; }
+.timelineFit:hover { border-color: #8e7cff; color: #fff; }
