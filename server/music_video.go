@@ -254,7 +254,8 @@ func musicVideoPersistedInput(input map[string]interface{}, state musicVideoStat
 func submitMusicVideoH3(job *VideoJob, user *User, state musicVideoState) error {
 	req := state.Request
 	input := appNZH3Input(req)
-	route := h3RouteForPrompt(req.Prompt)
+	route := h3RouteForRequest(req)
+	markAdultVideoJob(job.ID, route.Variant)
 	if route.RunpodEndpointID != "" {
 		logH3Route(req.Prompt, route)
 		if err := prepareH3RunpodOutputTarget(input, user.ID); err != nil {

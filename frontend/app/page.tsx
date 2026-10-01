@@ -363,7 +363,8 @@ export default function HomePage() {
   }, []);
 
   const loadFeaturedVideos = useCallback(async () => {
-    const res = await fetch(`${API}/videos/featured?limit=48&offset=0`);
+    const headers = nsfwAuthHeaders(loadStoredUser());
+    const res = await fetch(`${API}/videos/featured?limit=48&offset=0${headers ? '&allow_nsfw=true' : ''}`, { headers });
     if (!res.ok) return;
     const data = await res.json();
     const rows: VideoHit[] = (data.results || []).filter((r: VideoHit) => r.video_url);
@@ -458,8 +459,9 @@ export default function HomePage() {
     setSearchBusy(true);
     try {
       const limit = 24;
+      const vh = nsfwAuthHeaders(loadStoredUser());
       const [vids, images] = await Promise.all([
-        fetch(`${API}/search?q=${encodeURIComponent(q)}&top_k=${limit}`).then(async (r) =>
+        fetch(`${API}/search?q=${encodeURIComponent(q)}&top_k=${limit}${vh ? '&allow_nsfw=true' : ''}`, { headers: vh }).then(async (r) =>
           r.ok ? r.json() : { results: [] },
         ),
         fetch(`${API}/images/semantic?q=${encodeURIComponent(q)}&top_k=${limit}`).then(async (r) =>
@@ -482,8 +484,9 @@ export default function HomePage() {
     setSearchBusy(true);
     try {
       const q = encodeURIComponent(activeSearchQ);
+      const vh = nsfwAuthHeaders(loadStoredUser());
       const [vids, images] = await Promise.all([
-        fetch(`${API}/search?q=${q}&top_k=${nextLimit}`).then((r) => r.ok ? r.json() : { results: videoHits }),
+        fetch(`${API}/search?q=${q}&top_k=${nextLimit}${vh ? '&allow_nsfw=true' : ''}`, { headers: vh }).then((r) => r.ok ? r.json() : { results: videoHits }),
         fetch(`${API}/images/semantic?q=${q}&top_k=${nextLimit}`).then((r) => r.ok ? r.json() : { results: gallery }),
       ]);
       const nextVideos = vids.results || [];
@@ -534,7 +537,8 @@ export default function HomePage() {
         }));
       }
       if (featuredHasMore) {
-        requests.push(fetch(`${API}/videos/featured?limit=48&offset=${featuredVideos.length}`).then(async (res) => {
+        const featuredHeaders = nsfwAuthHeaders(loadStoredUser());
+        requests.push(fetch(`${API}/videos/featured?limit=48&offset=${featuredVideos.length}${featuredHeaders ? '&allow_nsfw=true' : ''}`, { headers: featuredHeaders }).then(async (res) => {
           if (!res.ok) return;
           const data = await res.json();
           const rows: VideoHit[] = (data.results || []).filter((item: VideoHit) => item.video_url);

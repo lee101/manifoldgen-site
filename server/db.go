@@ -157,6 +157,8 @@ func (db *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_video_jobs_user ON video_jobs(user_id, created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_video_jobs_status ON video_jobs(status) WHERE status IN ('queued', 'processing');
 	CREATE INDEX IF NOT EXISTS idx_video_jobs_prompt ON video_jobs(prompt) WHERE prompt <> '';
+	ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS is_nsfw BOOLEAN NOT NULL DEFAULT FALSE;
+	CREATE INDEX IF NOT EXISTS idx_video_jobs_nsfw ON video_jobs(created_at DESC) WHERE is_nsfw = TRUE;
 
 	CREATE TABLE IF NOT EXISTS studio_projects (
 		id TEXT PRIMARY KEY,
@@ -626,7 +628,7 @@ func (db *DB) RotateAPIKey(userID, oldKey string) (*User, error) {
 func scanVideoJob(row interface{ Scan(...interface{}) error }, job *VideoJob) error {
 	var result []byte
 	if err := row.Scan(&job.ID, &job.UserID, &job.ProviderJobID, &job.Service, &job.Status, &result,
-		&job.Error, &job.ProviderCost, &job.ChargedUSD, &job.CreditsUsed, &job.Settled, &job.CreatedAt, &job.UpdatedAt, &job.Prompt); err != nil {
+		&job.Error, &job.ProviderCost, &job.ChargedUSD, &job.CreditsUsed, &job.Settled, &job.CreatedAt, &job.UpdatedAt, &job.Prompt, &job.IsNSFW); err != nil {
 		return err
 	}
 	if len(result) > 0 && string(result) != "null" {
@@ -635,7 +637,14 @@ func scanVideoJob(row interface{ Scan(...interface{}) error }, job *VideoJob) er
 	return nil
 }
 
-const videoJobSelectColumns = `id, user_id, provider_job_id, COALESCE(service, 'video_generate'), status, result_json, COALESCE(error, ''), COALESCE(provider_cost_usd, 0), COALESCE(charged_usd, 0), COALESCE(credits_used, 0), COALESCE(settled, FALSE), created_at, updated_at, COALESCE(prompt, '')`
+const videoJobSelectColumns = `id, user_id, provider_job_id, COALESCE(service, 'video_generate'), status, result_json, COALESCE(error, ''), COALESCE(provider_cost_usd, 0), COALESCE(charged_usd, 0), COALESCE(credits_used, 0), COALESCE(settled, FALSE), created_at, updated_at, COALESCE(prompt, ''), COALESCE(is_nsfw, FALSE)`
+
+func (db *DB) SetVideoJobNSFW(jobID string, nsfw bool) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.conn.Exec(`UPDATE video_jobs SET is_nsfw = $2 WHERE id = $1`, jobID, nsfw)
+	return err
+}
 
 // CreateVideoJob persists the provider handle before it is returned to a paid caller.
 func (db *DB) CreateVideoJob(userID, providerJobID, prompt string) (*VideoJob, error) {
@@ -925,15 +934,16 @@ func (db *DB) RequeueVideoJobProvider(jobID, providerJobID string, result []byte
 }
 
 // StreamCompletedVideoPrompts feeds completed video jobs that have a prompt into gobed.
-func (db *DB) StreamCompletedVideoPrompts(cb func(jobID, prompt, videoURL, service string) error) error {
+func (db *DB) StreamCompletedVideoPrompts(nsfw bool, cb func(jobID, prompt, videoURL, service string) error) error {
 	rows, err := db.conn.Query(`
 		SELECT id, COALESCE(prompt, ''), COALESCE(service, ''), COALESCE(result_json::text, '')
 		FROM video_jobs
 		WHERE status = 'completed'
+		  AND COALESCE(is_nsfw, FALSE) = $1
 		  AND COALESCE(prompt, '') <> ''
 		  AND COALESCE(service, '') NOT IN ('sfx_generation', 'music_generation')
 		  AND COALESCE(result_json->>'kind', '') <> 'sfx'
-	`)
+	`, nsfw)
 	if err != nil {
 		return err
 	}
@@ -991,11 +1001,12 @@ type FeaturedVideo struct {
 	Service       string `json:"service"`
 	MusicVideo    bool   `json:"music_video,omitempty"`
 	MusicAudioURL string `json:"music_audio_url,omitempty"`
+	IsNSFW        bool   `json:"is_nsfw"`
 }
 
 // ListFeaturedVideos returns recent, full-quality completed clips with a playable URL.
 // Experimental w4a8 output stays out of the homepage showcase until explicitly curated.
-func (db *DB) ListFeaturedVideos(limit, offset int) ([]FeaturedVideo, error) {
+func (db *DB) ListFeaturedVideos(limit, offset int, allowNSFW bool) ([]FeaturedVideo, error) {
 	if limit <= 0 || limit > 49 {
 		limit = 12
 	}
@@ -1005,9 +1016,10 @@ func (db *DB) ListFeaturedVideos(limit, offset int) ([]FeaturedVideo, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	rows, err := db.conn.Query(`
-		SELECT id, COALESCE(prompt, ''), COALESCE(service, ''), COALESCE(result_json::text, '')
+		SELECT id, COALESCE(prompt, ''), COALESCE(service, ''), COALESCE(result_json::text, ''), COALESCE(is_nsfw, FALSE)
 		FROM video_jobs
 		WHERE status = 'completed'
+			AND ($2::boolean OR NOT COALESCE(is_nsfw, FALSE))
 			AND COALESCE(prompt, '') <> ''
 			AND (
 				COALESCE(result_json->>'quant', '') <> 'w4a8'
@@ -1018,7 +1030,7 @@ func (db *DB) ListFeaturedVideos(limit, offset int) ([]FeaturedVideo, error) {
 		ORDER BY
 			CASE WHEN service = 'music_video' THEN 0 WHEN service = 'h3_video' THEN 1 ELSE 2 END,
 			created_at DESC
-		LIMIT $1`, (offset+limit)*3)
+		LIMIT $1`, (offset+limit)*3, allowNSFW)
 	if err != nil {
 		return nil, err
 	}
@@ -1026,7 +1038,8 @@ func (db *DB) ListFeaturedVideos(limit, offset int) ([]FeaturedVideo, error) {
 	out := make([]FeaturedVideo, 0, limit)
 	for rows.Next() {
 		var id, prompt, service, resultText string
-		if err := rows.Scan(&id, &prompt, &service, &resultText); err != nil {
+		var isNSFW bool
+		if err := rows.Scan(&id, &prompt, &service, &resultText, &isNSFW); err != nil {
 			return nil, err
 		}
 		videoURL := extractVideoURLFromResultJSON(resultText)
@@ -1046,6 +1059,7 @@ func (db *DB) ListFeaturedVideos(limit, offset int) ([]FeaturedVideo, error) {
 			JobID: id, Prompt: prompt, VideoURL: videoURL, Service: service,
 			MusicVideo:    metadata.MusicVideo || service == musicVideoService,
 			MusicAudioURL: metadata.MusicAudioURL,
+			IsNSFW:        isNSFW,
 		})
 		if len(out) >= limit {
 			break

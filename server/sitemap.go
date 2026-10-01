@@ -190,7 +190,7 @@ func handleSitemapVideos(ctx *fasthttp.RequestCtx) {
 		rows, err := dbConn.conn.Query(`
 			SELECT COALESCE(prompt, ''), COALESCE(result_json::text, ''), created_at
 			FROM video_jobs
-			WHERE status = 'completed' AND COALESCE(prompt, '') <> ''
+			WHERE status = 'completed' AND COALESCE(prompt, '') <> '' AND is_nsfw = FALSE
 			ORDER BY created_at DESC
 			LIMIT 50000`)
 		if err == nil {

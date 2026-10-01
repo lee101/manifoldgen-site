@@ -1474,11 +1474,13 @@ func handleSemanticSearch(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	results, err := videoSearch.Search(query, topK)
+	allowNSFW, nsfwRequested := resolveAllowNSFW(ctx)
+	results, err := searchVideoPrompts(query, topK, allowNSFW)
 	if err != nil {
 		jsonError(ctx, 500, "search failed")
 		return
 	}
+	setGalleryCache(ctx, nsfwRequested)
 
 	jsonResponse(ctx, 200, map[string]interface{}{
 		"query":   query,
@@ -1486,6 +1488,15 @@ func handleSemanticSearch(ctx *fasthttp.RequestCtx) {
 		"count":   len(results),
 		"kind":    "videos",
 	})
+}
+
+var errDatabaseUnavailable = errors.New("database unavailable")
+
+var listFeaturedVideos = func(limit, offset int, allowNSFW bool) ([]FeaturedVideo, error) {
+	if dbConn == nil {
+		return nil, errDatabaseUnavailable
+	}
+	return dbConn.ListFeaturedVideos(limit, offset, allowNSFW)
 }
 
 // handleFeaturedVideos serves GET /api/videos/featured — recent completed clips for the landing strip.
@@ -1498,18 +1509,17 @@ func handleFeaturedVideos(ctx *fasthttp.RequestCtx) {
 	if offset < 0 || offset > 10000 {
 		offset = 0
 	}
-	if dbConn == nil {
+	allowNSFW, nsfwRequested := resolveAllowNSFW(ctx)
+	rows, err := listFeaturedVideos(limit+1, offset, allowNSFW)
+	if errors.Is(err, errDatabaseUnavailable) {
 		jsonError(ctx, 503, "database unavailable")
 		return
 	}
-	// Fetch one extra playable row so clients can stop infinite scrolling at
-	// the real end of the catalog without making an empty follow-up request.
-	rows, err := dbConn.ListFeaturedVideos(limit+1, offset)
 	if err != nil {
 		jsonError(ctx, 500, "featured videos failed")
 		return
 	}
-	setPublicGalleryCache(ctx)
+	setGalleryCache(ctx, nsfwRequested)
 	hasMore := len(rows) > limit
 	if hasMore {
 		rows = rows[:limit]

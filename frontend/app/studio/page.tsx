@@ -3003,8 +3003,10 @@ export default function StudioPage() {
     try {
       const q = query.trim();
       if (mode === 'videos') {
-        const endpoint = q ? `/api/search?q=${encodeURIComponent(q)}&top_k=24` : '/api/videos/featured?limit=24';
-        const response = await fetch(endpoint);
+        const headers = nsfwAuthHeaders(user);
+        const nsfw = headers ? '&allow_nsfw=true' : '';
+        const endpoint = q ? `/api/search?q=${encodeURIComponent(q)}&top_k=24${nsfw}` : `/api/videos/featured?limit=24${nsfw}`;
+        const response = await fetch(endpoint, { headers });
         const data = await parseJSONResponse<{ results?: StudioVideoHit[] }>(response, 'Could not search videos');
         setVideoHits((data.results || []).filter((item) => item.video_url));
       } else if (mode === 'images') {

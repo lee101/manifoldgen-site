@@ -552,7 +552,7 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
-	route := h3RouteForPrompt(req.Prompt)
+	route := h3RouteForRequest(req)
 	if route.Variant == h3NormalVariant && h3FalCanHandle(req) {
 		log.Printf("[h3] selected fal H3 Max mode=%s prompt_bytes=%d", h3FalMode(req), len(req.Prompt))
 		handleFalH3MaxService(ctx, req, user)
@@ -715,6 +715,7 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 		jsonError(ctx, http.StatusInternalServerError, "failed to create video job")
 		return
 	}
+	markAdultVideoJob(job.ID, route.Variant)
 	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
@@ -744,6 +745,7 @@ func handleLocalH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest
 		jsonError(ctx, http.StatusInternalServerError, "failed to create video job")
 		return
 	}
+	markAdultVideoJob(job.ID, route.Variant)
 	estimatedUSD, estimatedCredits, estimatedSeconds := h3Estimate(req)
 	launchVideoJob(job.ID)
 	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
@@ -793,11 +795,27 @@ func launchVideoJob(jobID string) {
 	}()
 }
 
+var setVideoJobNSFW = func(jobID string, nsfw bool) error {
+	if dbConn == nil {
+		return errDatabaseUnavailable
+	}
+	return dbConn.SetVideoJobNSFW(jobID, nsfw)
+}
+
+func markAdultVideoJob(jobID, variant string) {
+	if jobID == "" || !h3IsAdultVariant(variant) {
+		return
+	}
+	if err := setVideoJobNSFW(jobID, true); err != nil {
+		log.Printf("[video] mark nsfw failed job=%s: %v", jobID, err)
+	}
+}
+
 func indexCompletedVideo(job *VideoJob, result []byte) {
 	if videoSearch == nil || job == nil || strings.TrimSpace(job.Prompt) == "" {
 		return
 	}
-	videoSearch.IndexIncremental(job.ID, job.Prompt, extractVideoURLFromResultJSON(string(result)), job.Service)
+	indexVideoPrompt(job, extractVideoURLFromResultJSON(string(result)))
 }
 
 func processVideoJob(jobID string) {
@@ -1478,7 +1496,7 @@ func fallbackRunpodH3ToLocal(job *VideoJob, endpointID, providerJobID, variant s
 	if !h3QueueFallbackAllowed(job) {
 		return false
 	}
-	route := h3RouteForPrompt(job.Prompt)
+	route := h3RouteForStoredJob(job)
 	if !localH3WorkerReady(route.CogURL) {
 		return false
 	}
@@ -1505,6 +1523,7 @@ func fallbackRunpodH3ToLocal(job *VideoJob, endpointID, providerJobID, variant s
 	}
 	input["_h3_cog_url"] = route.CogURL
 	input["_h3_variant"] = variant
+	markAdultVideoJob(job.ID, variant)
 	payload, _ := json.Marshal(input)
 	if err := dbConn.UpdateVideoJobProvider(job.ID, "local:sync", "queued", payload); err != nil {
 		log.Printf("[h3] queue fallback persistence failed job=%s: %v", job.ID, err)
@@ -1778,7 +1797,8 @@ func retryH3VideoJob(job *VideoJob) error {
 		return fmt.Errorf("the original generation request is unavailable")
 	}
 
-	route := h3RouteForPrompt(job.Prompt)
+	route := h3RouteForStoredJob(job)
+	markAdultVideoJob(job.ID, route.Variant)
 	if route.Variant == h3NormalVariant {
 		req := h3FalStoredRequest(job)
 		if req.Prompt == "" {

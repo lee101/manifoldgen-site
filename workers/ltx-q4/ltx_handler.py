@@ -34,10 +34,26 @@ def moderation():
 TIERS = {"standard": (8, 3, "quality"), "fast": (6, 3, "quality"), "xfast": (6, 3, "balanced")}
 
 
+def remap_h3_steps(h3_steps):
+    value = max(8, min(30, int(h3_steps)))
+    if value <= 20:
+        base = 6 + (value - 8) * 2 / 12
+    else:
+        base = 8 + (value - 20) * 2 / 10
+    return int(round(base)), (4 if value >= 26 else 3)
+
+
 def handler(event):
     values = event.get("input") or {}
     tier_steps, tier_refine, tier_size = TIERS.get(values.get("tier"), TIERS["standard"])
     size = tier_size if values.get("tier") else ("preview" if values.get("size") == "preview" else tier_size)
+    steps, refine_steps = tier_steps, tier_refine
+    if values.get("ltx_steps"):
+        steps = int(values["ltx_steps"])
+    elif not values.get("tier") and values.get("steps"):
+        steps, refine_steps = remap_h3_steps(values["steps"])
+    if values.get("refine_steps"):
+        refine_steps = int(values["refine_steps"])
     prompt = values.get("prompt", "")
     gate = moderation().prompt_gate(prompt)
     if gate is not None:
@@ -55,8 +71,8 @@ def handler(event):
             seed=values.get("seed"),
             image=first,
             audio=audio,
-            steps=int(values.get("ltx_steps", tier_steps)),
-            refine_steps=int(values.get("refine_steps", tier_refine)),
+            steps=steps,
+            refine_steps=refine_steps,
             cfg=float(values.get("cfg", 3.5)),
             negative=values.get("negative_prompt"),
             two_stage=bool(values.get("two_stage", True)),

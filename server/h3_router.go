@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"os"
 	"strings"
@@ -83,13 +84,67 @@ func h3SemanticAdultRoute(prompt string) (adult bool, available bool) {
 }
 
 func h3AdultLane() (h3WorkerRoute, bool) {
-	if url, ep := h3LaneEnv("H3_LTX"); url != "" || ep != "" {
-		return h3WorkerRoute{Variant: h3LtxVariant, CogURL: url, RunpodEndpointID: ep}, true
+	if route, ok := h3LtxLane(); ok {
+		return route, true
 	}
+	return h3PinkCherryLane()
+}
+
+func h3PinkCherryLane() (h3WorkerRoute, bool) {
 	if url, ep := h3LaneEnv("H3_PINKCHERRY"); url != "" || ep != "" {
 		return h3WorkerRoute{Variant: h3PinkCherryVariant, CogURL: url, RunpodEndpointID: ep}, true
 	}
 	return h3WorkerRoute{}, false
+}
+
+func h3LtxLane() (h3WorkerRoute, bool) {
+	if url, ep := h3LaneEnv("H3_LTX"); url != "" || ep != "" {
+		return h3WorkerRoute{Variant: h3LtxVariant, CogURL: url, RunpodEndpointID: ep}, true
+	}
+	return h3WorkerRoute{}, false
+}
+
+func h3IsAdultVariant(variant string) bool {
+	return variant == h3LtxVariant || variant == h3PinkCherryVariant
+}
+
+func h3LtxLacksFeatures(req ServiceUsageRequest) bool {
+	return strings.TrimSpace(req.LastFrame) != "" || len(req.Keyframes) > 2 || req.Loop
+}
+
+func h3RouteForRequest(req ServiceUsageRequest) h3WorkerRoute {
+	route := h3RouteForPrompt(req.Prompt)
+	if route.Variant == h3LtxVariant && h3LtxLacksFeatures(req) {
+		if pink, ok := h3PinkCherryLane(); ok {
+			return pink
+		}
+	}
+	return route
+}
+
+func h3RouteForStoredJob(job *VideoJob) h3WorkerRoute {
+	if job != nil && len(job.Result) > 0 {
+		var stored struct {
+			Variant string `json:"_h3_variant"`
+		}
+		if json.Unmarshal(job.Result, &stored) == nil {
+			switch stored.Variant {
+			case h3LtxVariant:
+				if route, ok := h3LtxLane(); ok {
+					return route
+				}
+			case h3PinkCherryVariant:
+				if route, ok := h3PinkCherryLane(); ok {
+					return route
+				}
+			}
+		}
+	}
+	prompt := ""
+	if job != nil {
+		prompt = job.Prompt
+	}
+	return h3RouteForPrompt(prompt)
 }
 
 func h3LaneEnv(prefix string) (string, string) {

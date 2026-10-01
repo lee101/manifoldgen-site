@@ -34,6 +34,7 @@ type VideoSearchEngine struct {
 	ready     bool
 	indexing  bool
 	indexedAt time.Time
+	nsfw      bool
 }
 
 // AudioSearchEngine indexes generated audio prompts while retaining enough
@@ -54,6 +55,7 @@ type SearchResult struct {
 	Prompt     string  `json:"prompt"`
 	VideoURL   string  `json:"video_url,omitempty"`
 	Service    string  `json:"service,omitempty"`
+	IsNSFW     bool    `json:"is_nsfw,omitempty"`
 	Similarity float32 `json:"similarity"`
 }
 
@@ -71,6 +73,7 @@ type AudioSearchResult struct {
 var promptSearch *PromptSearchEngine
 var promptSearchNSFW *PromptSearchEngine
 var videoSearch *VideoSearchEngine
+var videoSearchNSFW *VideoSearchEngine
 var audioSearch *AudioSearchEngine
 
 // All three catalogs use the same embedding model. Loading one copy keeps
@@ -108,6 +111,7 @@ func initPromptSearch() {
 	promptSearch = &PromptSearchEngine{}
 	promptSearchNSFW = &PromptSearchEngine{nsfw: true}
 	videoSearch = &VideoSearchEngine{}
+	videoSearchNSFW = &VideoSearchEngine{nsfw: true}
 	audioSearch = &AudioSearchEngine{}
 	go rebuildSearchIndexes()
 }
@@ -123,6 +127,9 @@ func rebuildSearchIndexes() {
 	}
 	if videoSearch != nil {
 		videoSearch.loadAndIndex()
+	}
+	if videoSearchNSFW != nil {
+		videoSearchNSFW.loadAndIndex()
 	}
 	if audioSearch != nil {
 		audioSearch.loadAndIndex()
@@ -329,7 +336,7 @@ func (vs *VideoSearchEngine) loadAndIndex() {
 
 	var jobIDs, prompts, urls, services []string
 	if dbConn != nil {
-		err = dbConn.StreamCompletedVideoPrompts(func(jobID, prompt, videoURL, service string) error {
+		err = dbConn.StreamCompletedVideoPrompts(vs.nsfw, func(jobID, prompt, videoURL, service string) error {
 			jobIDs = append(jobIDs, jobID)
 			prompts = append(prompts, prompt)
 			urls = append(urls, videoURL)
@@ -341,7 +348,7 @@ func (vs *VideoSearchEngine) loadAndIndex() {
 			return
 		}
 	}
-	log.Printf("[video-search] Loaded %d video prompts in %v", len(prompts), time.Since(t0))
+	log.Printf("[video-search] Loaded %d video prompts (nsfw=%v) in %v", len(prompts), vs.nsfw, time.Since(t0))
 
 	engine := newLocalSearchEngine(model)
 	if len(prompts) > 0 {
@@ -370,7 +377,7 @@ func (vs *VideoSearchEngine) loadAndIndex() {
 	if old != nil {
 		_ = old.Close()
 	}
-	log.Printf("[video-search] Ready: %d videos", len(prompts))
+	log.Printf("[video-search] Ready (nsfw=%v): %d videos", vs.nsfw, len(prompts))
 }
 
 func (vs *VideoSearchEngine) IndexIncremental(jobID, prompt, videoURL, service string) {
@@ -402,11 +409,46 @@ func (vs *VideoSearchEngine) IsReady() bool {
 func (vs *VideoSearchEngine) Stats() map[string]any {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
-	out := map[string]any{"ready": vs.ready, "indexing": vs.indexing, "total_prompts": len(vs.prompts), "kind": "videos"}
+	out := map[string]any{"ready": vs.ready, "indexing": vs.indexing, "total_prompts": len(vs.prompts), "kind": "videos", "nsfw": vs.nsfw}
 	if !vs.indexedAt.IsZero() {
 		out["indexed_at"] = vs.indexedAt.Format(time.RFC3339)
 	}
 	return out
+}
+
+func indexVideoPrompt(job *VideoJob, videoURL string) {
+	if job == nil {
+		return
+	}
+	engine := videoSearch
+	if job.IsNSFW {
+		engine = videoSearchNSFW
+	}
+	engine.IndexIncremental(job.ID, job.Prompt, videoURL, job.Service)
+}
+
+var searchVideoPrompts = func(query string, topK int, includeNSFW bool) ([]SearchResult, error) {
+	if !includeNSFW || videoSearchNSFW == nil || !videoSearchNSFW.IsReady() {
+		return videoSearch.Search(query, topK)
+	}
+	safe, err := videoSearch.Search(query, topK)
+	if err != nil {
+		return nil, err
+	}
+	flagged, err := videoSearchNSFW.Search(query, topK)
+	if err != nil {
+		return nil, err
+	}
+	return mergeVideoResults(safe, flagged, topK), nil
+}
+
+func mergeVideoResults(safe, flagged []SearchResult, topK int) []SearchResult {
+	merged := append(append([]SearchResult{}, safe...), flagged...)
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].Similarity > merged[j].Similarity })
+	if len(merged) > topK {
+		merged = merged[:topK]
+	}
+	return merged
 }
 
 func (vs *VideoSearchEngine) Search(query string, topK int) ([]SearchResult, error) {
@@ -429,6 +471,7 @@ func (vs *VideoSearchEngine) Search(query string, topK int) ([]SearchResult, err
 			Prompt:     vs.prompts[r.ID],
 			VideoURL:   vs.videoURLs[r.ID],
 			Service:    "video",
+			IsNSFW:     vs.nsfw,
 			Similarity: r.Similarity,
 		})
 	}

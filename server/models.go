@@ -78,6 +78,7 @@ type VideoJob struct {
 	ChargedUSD    float64         `json:"charged_usd,omitempty"`
 	CreditsUsed   float64         `json:"credits_used,omitempty"`
 	Settled       bool            `json:"settled"`
+	IsNSFW        bool            `json:"is_nsfw"`
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`
 }
