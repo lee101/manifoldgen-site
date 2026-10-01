@@ -59,12 +59,11 @@
 		"H3_FL2VA_MODEL": "PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors",
 		"H3_FL2VA_REVISION": "f71e0eee7c0414904b66c4efa617c34548dd2bb0"
 	  },
+      "networkVolumeId": "65aknc5k8g",
       "gpuTypeIds": [
-        "NVIDIA H100 PCIe",
-        "NVIDIA H100 80GB HBM3",
-        "NVIDIA H100 NVL"
+        "NVIDIA H100 80GB HBM3"
       ]
     }
   ],
-  "notes": "Both variants use the native handler and scale to zero after five idle seconds. H100 remains the validated default; REF2VA is an allowed lazy capability so text/video cold starts do not pay its load cost, while image edits load it on demand. Studio 1939 was removed after every representative A/B preferred base H3 on coherence and prompt adherence. The H3 face-refine pass is disabled and omitted from H3_MODEL_SET: repeated single- and multi-face audits found skips, no visible gain, or substantial detail loss. Re-enable only for a different restorer that wins a representative temporal A/B. PinkCherry beta-0.6 remains pinned to an immutable revision. A40 remains excluded after second-pass crashes."
+  "notes": "Both variants use the native handler and scale to zero after five idle seconds. H100 remains the validated default; REF2VA is an allowed lazy capability so text/video cold starts do not pay its load cost, while image edits load it on demand. Studio 1939 was removed after every representative A/B preferred base H3 on coherence and prompt adherence. The H3 face-refine pass is disabled and omitted from H3_MODEL_SET: repeated single- and multi-face audits found skips, no visible gain, or substantial detail loss. Re-enable only for a different restorer that wins a representative temporal A/B. PinkCherry beta-0.6 remains pinned to an immutable revision. The PinkCherry endpoint mounts network volume manifold-models (65aknc5k8g, EU-NL-1) which also holds the shared H3 text encoder, VAEs, ref2va and the PinkCherry fl2va, so it is pinned to H100 80GB HBM3 in that datacenter. A40 remains excluded after second-pass crashes."
 }

@@ -25,13 +25,14 @@ exec >> /tmp/pub/populate.log 2>&1
 cd /src
 df -h /runpod-volume | tail -1
 python -u -c "import ltx_weights,os;print(ltx_weights.ensure_weights(os.environ['LTX_UNET']))"
-python -u -c "import weights;print({k:str(v) for k,v in weights.ensure_weights(include_ref2va=True, include_face_refine=False).items()})"
+for i in 1 2 3 4; do python -u -c "import weights;print({k:str(v) for k,v in weights.ensure_weights(include_ref2va=True, include_face_refine=False).items()})" && break; echo "h3 retry $i"; sleep 10; done
 du -sh /runpod-volume/* 2>/dev/null
+find /runpod-volume -type f -size +100M -printf "%s %p\n"; find /runpod-volume -type l -printf "%p -> %l\n" | head -20
 df -h /runpod-volume | tail -1
 echo POPULATE_DONE
 sleep infinity
 '''
-env = {**ltx["env"], **pink, "HF_TOKEN": os.environ["HF_TOKEN"], "H3_INCLUDE_REF2VA": "1"}
+env = {**ltx["env"], **pink, "HF_TOKEN": os.environ["HF_TOKEN"], "H3_INCLUDE_REF2VA": "1", "HF_HOME": "/runpod-volume/huggingface-cache", "HF_HUB_DISABLE_XET": "1"}
 gpus = [g for g in sys.argv[3:]] or ["NVIDIA L40S", "NVIDIA RTX PRO 6000 Blackwell Server Edition", "NVIDIA H100 80GB HBM3"]
 sys.path.insert(0, str(ROOT / "scripts"))
 import music3_bench as bench

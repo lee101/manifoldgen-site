@@ -1,6 +1,10 @@
 {
-  "image": "ghcr.io/lee101/ltx-cog:cu130-20261001-r4",
-  "dockerStartCmd": ["python", "-u", "/src/ltx_handler.py"],
+  "image": "ghcr.io/lee101/ltx-cog:cu130-20261001-r5",
+  "dockerStartCmd": [
+    "python",
+    "-u",
+    "/src/ltx_handler.py"
+  ],
   "env": {
     "LTX_UNET": "ltxv23_uncensored_v1.4_fp8mixed.safetensors",
     "H3_MODERATION_DEVICE": "cpu"
@@ -12,7 +16,9 @@
   "flashboot": true,
   "scalerType": "REQUEST_COUNT",
   "scalerValue": 1,
-  "allowedCudaVersions": ["13.0"],
+  "allowedCudaVersions": [
+    "13.0"
+  ],
   "endpoints": [
     {
       "id": "0r09mfyja4xf7y",
@@ -20,14 +26,13 @@
       "name": "cog-manifold-ltx",
       "workersMax": 2,
       "gpuTypeIds": [
-        "NVIDIA GeForce RTX 5090",
         "NVIDIA RTX PRO 6000 Blackwell Server Edition",
-        "NVIDIA H100 80GB HBM3",
-        "NVIDIA H100 PCIe",
-        "NVIDIA H100 NVL"
+        "NVIDIA H100 80GB HBM3"
       ]
     }
   ],
   "weights": "https://manifoldgenstatic.manifoldgen.com/models/ltx23-uncensored-v1.4/manifest.json",
-  "notes": "LTX-2.3 uncensored v1.4 fp8mixed adult lane (H3-compatible request contract). Weights download from the R2 manifest at cold start. 5090 first (same ~28 s clip as H100 at a third of the price), RTX PRO 6000 Blackwell as capacity fallback, H100 last. The app keeps workersMax at 0 between bursts (H3_LTX_RUNPOD_ENDPOINT, H3_LTX_RUNPOD_MAX_WORKERS). See results/ltx-vs-pinkcherry/README.md."
+  "notes": "LTX-2.3 uncensored v1.4 fp8mixed adult lane (H3-compatible request contract). Weights live on network volume manifold-models (65aknc5k8g, 150 GB, EU-NL-1) under /runpod-volume/ltx-models and are fetched from the R2 manifest only if missing. The volume pins the endpoint to EU-NL-1, where RTX PRO 6000 Blackwell (same ~28 s clip as H100, about half the price) is first choice and H100 80GB HBM3 the fallback; the 5090 is not offered in that datacenter. H3 steps 8..30 remap to LTX base steps 6..10 (20 -> 8); last_frame, keyframes>2 and loop are routed to PinkCherry by the server. The app keeps workersMax at 0 between bursts (H3_LTX_RUNPOD_ENDPOINT, H3_LTX_RUNPOD_MAX_WORKERS). See results/ltx-vs-pinkcherry/README.md.",
+  "networkVolumeId": "65aknc5k8g",
+  "volumeMountPath": "/runpod-volume"
 }
