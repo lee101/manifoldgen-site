@@ -244,3 +244,42 @@ func TestProxyOmniserveMultiImage(t *testing.T) {
 		t.Fatalf("images len=%d", len(imgs))
 	}
 }
+
+func TestRA2HQTierDoublesImagePrice(t *testing.T) {
+	base := getRequestServicePriceUSD(ServiceUsageRequest{Service: "zimage"})
+	hq := getRequestServicePriceUSD(ServiceUsageRequest{Service: "zimage", Quality: "hq"})
+	if hq != base*2 {
+		t.Fatalf("hq usd = %v, want %v", hq, base*2)
+	}
+	batch := getRequestServicePriceUSD(ServiceUsageRequest{Service: "zimage", Quality: "hq", N: 3})
+	if batch != base*2*3 {
+		t.Fatalf("hq batch usd = %v, want %v", batch, base*6)
+	}
+}
+
+func TestRA2HQTierOnlyUsesOmniserveBackends(t *testing.T) {
+	got := zimageBackendOrder(ServiceUsageRequest{Quality: "hq"}, "")
+	for _, b := range got {
+		if b.name != "ra2" && b.name != "omniserve" {
+			t.Fatalf("hq tier may fall back to %q", b.name)
+		}
+	}
+	if len(got) == 0 || got[0].name != "ra2" {
+		t.Fatalf("hq order = %+v", got)
+	}
+}
+
+func TestProxyOmniserveSendsHQAndStepOverrides(t *testing.T) {
+	var got map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{{"b64_json": "AAAA"}}})
+	}))
+	defer srv.Close()
+	if _, err := proxyOmniserveZImageAs(ServiceUsageRequest{Prompt: "fox", Quality: "hq", NumSteps: 24, Guidance: 1.5}, srv.URL, "", "ra2"); err != nil {
+		t.Fatal(err)
+	}
+	if got["turbo"] != false || got["steps"] != float64(24) || got["guidance_scale"] != 1.5 {
+		t.Fatalf("payload = %v", got)
+	}
+}

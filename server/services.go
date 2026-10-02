@@ -242,6 +242,9 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 	if req.Service == "zimage" && getZImageSteps(req) >= 20 {
 		usdPrice = zimageHighStepPriceUSD
 	}
+	if req.Service == "zimage" && isHQImage(req) && usdPrice < zimagePriceHQ(usdPrice) {
+		usdPrice = zimagePriceHQ(usdPrice)
+	}
 	if req.Service == "video_generate" {
 		model := normalizeVideoModel(req.Model)
 		if price, exists := videoModelPricesUSD[model]; exists {
@@ -271,6 +274,15 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 	}
 	return usdPrice
 }
+
+// isHQImage reports the RA2 long-quality tier (base model, 30 steps) rather than turbo.
+func isHQImage(req ServiceUsageRequest) bool {
+	q := strings.ToLower(strings.TrimSpace(req.Quality))
+	return q == "hq" || q == "high" || q == "max"
+}
+
+// zimagePriceHQ is the long-quality price: twice the base per-image price.
+func zimagePriceHQ(base float64) float64 { return base * 2 }
 
 func getImageCount(req ServiceUsageRequest) int {
 	n := req.N
@@ -1717,6 +1729,10 @@ func zimageBackendOrder(req ServiceUsageRequest, primaryURL string) []namedBacke
 		ordered = append(ordered, namedBackend{name: "legacy", url: legacy})
 	}
 
+	if isHQImage(req) {
+		// Only the omniserve lanes can run the base-model tier; do not charge 2x for a fallback render.
+		return filterNonEmptyBackends(ordered[:2])
+	}
 	if prefer == "" || prefer == "auto" {
 		return filterNonEmptyBackends(ordered)
 	}
@@ -1794,6 +1810,15 @@ func proxyOmniserveZImageAs(req ServiceUsageRequest, backendURL, secret, publicM
 	}
 	if req.Seed > 0 {
 		payload["seed"] = req.Seed
+	}
+	if req.NumSteps > 0 {
+		payload["steps"] = req.NumSteps
+	}
+	if req.Guidance > 0 {
+		payload["guidance_scale"] = req.Guidance
+	}
+	if isHQImage(req) {
+		payload["turbo"] = false
 	}
 	jsonBody, _ := json.Marshal(payload)
 	endpoint := strings.TrimRight(backendURL, "/") + "/v1/images/generations"

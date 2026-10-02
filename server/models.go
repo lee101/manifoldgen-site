@@ -253,6 +253,8 @@ type ServiceUsageRequest struct {
 	NumImages int `json:"num_images,omitempty"`
 	// Preferred image backend: omniserve | images3 | r1 | auto
 	ImageBackend string `json:"image_backend,omitempty"`
+	// Quality "hq" asks the RA2 lane for the 30-step base-model tier instead of the 6-step turbo default; priced at 2x.
+	Quality string `json:"quality,omitempty"`
 	// chronos2 fields
 	Values           []float64 `json:"values,omitempty"`
 	PredictionLength int       `json:"prediction_length,omitempty"`

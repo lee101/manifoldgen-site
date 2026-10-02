@@ -7,6 +7,9 @@ import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '@/lib/au
 import styles from './page.module.css';
 
 type Engine = 'omniserve' | 'images3' | 'r1';
+type Quality = 'turbo' | 'hq';
+
+const HQ_MULTIPLIER = 2;
 
 interface Variant {
   url: string;
@@ -70,6 +73,7 @@ async function generateBatch(
   engine: Engine,
   aspect: (typeof ASPECTS)[number],
   count: number,
+  quality: Quality,
 ): Promise<Variant[]> {
   const response = await fetch('/api/service', {
     method: 'POST',
@@ -82,6 +86,7 @@ async function generateBatch(
       n: count,
       num_images: count,
       image_backend: engine,
+      ...(quality === 'hq' && engine === 'omniserve' ? { quality: 'hq' } : {}),
     }),
   });
   const data = await response.json().catch(() => ({})) as Record<string, unknown>;
@@ -102,6 +107,7 @@ export default function BulkImageTool() {
   const [engine, setEngine] = useState<Engine>('omniserve');
   const [aspect, setAspect] = useState<'square' | 'landscape' | 'portrait'>('square');
   const [count, setCount] = useState(4);
+  const [quality, setQuality] = useState<Quality>('turbo');
   const [batches, setBatches] = useState<PromptBatch[]>([]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
@@ -123,6 +129,8 @@ export default function BulkImageTool() {
   const prompts = linesFor(prompt);
   const total = prompts.length * count;
   const aspectValue = ASPECTS.find((a) => a.id === aspect)!;
+  const hq = quality === 'hq' && engine === 'omniserve';
+  const unitPrice = 0.04 * (hq ? HQ_MULTIPLIER : 1);
 
   async function generate() {
     const currentUser = user || loadStoredUser();
@@ -134,7 +142,7 @@ export default function BulkImageTool() {
       let done = 0;
       for (const line of prompts) {
         setProgress(`Generating ${line.slice(0, 40)}…`);
-        const variants = await generateBatch(currentUser.api_key, line, engine, aspectValue, count);
+        const variants = await generateBatch(currentUser.api_key, line, engine, aspectValue, count, quality);
         setBatches((prev) => [...prev, { prompt: line, variants }]);
         done += 1;
         setProgress(done === prompts.length ? '' : `${done}/${prompts.length}`);
@@ -156,7 +164,7 @@ export default function BulkImageTool() {
     setBusy(true);
     try {
       setProgress(`More variants for ${batch.prompt.slice(0, 40)}…`);
-      const variants = await generateBatch(currentUser.api_key, batch.prompt, engine, aspectValue, count);
+      const variants = await generateBatch(currentUser.api_key, batch.prompt, engine, aspectValue, count, quality);
       setBatches((prev) => prev.map((item) => item === batch ? { ...item, variants: [...item.variants, ...variants] } : item));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Image generation failed');
@@ -206,6 +214,10 @@ export default function BulkImageTool() {
           </div>
           <div className={styles.stacked}>
             <div className={styles.stackGroup}><label>Aspect</label><select value={aspect} onChange={(event) => setAspect(event.target.value as typeof aspect)}>{ASPECTS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></div>
+            <div className={styles.stackGroup}><label>Quality</label><select value={quality} disabled={engine !== 'omniserve'} onChange={(event) => setQuality(event.target.value as Quality)}>
+              <option value="turbo">Fast · 6-step turbo</option>
+              <option value="hq">Max quality · 30-step base (2x)</option>
+            </select></div>
             <div className={styles.stackGroup}><label>Variants per prompt</label><input type="number" min={1} max={12} value={count} onChange={(event) => setCount(Math.min(12, Math.max(1, Number(event.target.value) || 1)))} /></div>
           </div>
         </div>
@@ -216,7 +228,7 @@ export default function BulkImageTool() {
         </button>
         <div className={styles.estimate}>
           <span>RA2 lane · {renderEngineName(engine)}</span>
-          <b>~{Math.ceil(total * 0.04 / creditPrice).toLocaleString()} credits · ${(total * 0.04).toFixed(2)}</b>
+          <b>~{Math.ceil(total * unitPrice / creditPrice).toLocaleString()} credits · ${(total * unitPrice).toFixed(2)}</b>
         </div>
         {error && <div className={styles.error} role="alert">{error}</div>}
       </section>
