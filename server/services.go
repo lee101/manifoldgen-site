@@ -1731,7 +1731,13 @@ func zimageBackendOrder(req ServiceUsageRequest, primaryURL string) []namedBacke
 
 	if isHQImage(req) {
 		// Only the omniserve lanes can run the base-model tier; do not charge 2x for a fallback render.
-		return filterNonEmptyBackends(ordered[:2])
+		omniserveOnly := make([]namedBackend, 0, len(ordered))
+		for _, b := range ordered {
+			if b.name == "ra2" || b.name == "omniserve" {
+				omniserveOnly = append(omniserveOnly, b)
+			}
+		}
+		return filterNonEmptyBackends(omniserveOnly)
 	}
 	if prefer == "" || prefer == "auto" {
 		return filterNonEmptyBackends(ordered)
