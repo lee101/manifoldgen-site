@@ -35,6 +35,12 @@ hard-404s unknown localized URLs; sitemap-pages.xml carries the hreflang
 clusters (server/sitemap.go). Adding a language = one line in
 frontend/scripts/i18n-config.ts LANGS + fill + build.
 
+Character Swap LoRA lane (/tools/character-swap-lora, `kind=lora` on service character_swap_video): MiniMax H3
+Ref2VA plus the Akatz swap LoRA on the RunPod endpoint named by H3_SWAP_RUNPOD_ENDPOINT_ID (server .env on prod); it scales to zero when idle.
+Worker, image build and measured speeds live in workers/h3-swap (README) and config/runpod-h3-swap.json.
+
+Character Recast (/tools/character-recast, `kind=recast`): fal minimax/h3-max/recast, one photo per person (max 4), 5-30 s, shots <=15 s. Priced 768P $0.62/s, 1080P $0.70/s (fal+20% floor, and above lora 768p standard because a fal failure falls back to the lora lane internally; character_swap_recast_test.go enforces both). Fallback and >15 s shots need H3_SWAP_RUNPOD_ENDPOINT_ID and a non-EU/UK/KR/US requester.
+
 for easy tasks: ok use op harness subagent as in ~/code/dotfiles/subagents/op-deepseek.sh 'prompt' and test /check its work
 
 Local HTTPS development:

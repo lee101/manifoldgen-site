@@ -8,7 +8,9 @@ import { parseJSONResponse } from '../../../lib/http';
 import styles from '../audio-spaces.module.css';
 
 type Phase = 'idle' | 'queued' | 'processing' | 'done' | 'error';
-type Resolution = '768P' | '2K' | '720p' | '580p';
+type Resolution = '768P' | '2K' | '720p' | '580p' | '480p' | '768p';
+type Lane = 'reference' | 'exact' | 'lora';
+type Tier = 'standard' | 'fast';
 type SwapEstimate = {
   estimated_cost_usd?: number;
   estimated_credits?: number;
@@ -49,11 +51,16 @@ const SAMPLE_FRAME = 'https://manifoldgenstatic.manifoldgen.com/static/tools/cha
 const SAMPLE_SWAPPED = 'https://manifoldgenstatic.manifoldgen.com/static/tools/character-swap/rapvid-swapped.png';
 const SAMPLE_OUTPUT = 'https://manifoldgenstatic.manifoldgen.com/static/tools/character-swap/rapvid-elon-optimus.mp4';
 const SAMPLE_OUTPUT_EXACT = 'https://manifoldgenstatic.manifoldgen.com/static/tools/character-swap/rapvid-elon-optimus-exact.mp4';
+const SAMPLE_OUTPUT_LORA = 'https://manifoldgenstatic.manifoldgen.com/static/tools/character-swap/rapvid-elon-optimus-lora.mp4';
 const DEFAULT_CHARACTER_PROMPT = 'Recreate this exact frame with the characters swapped: the person on the left becomes Elon Musk singing into the same microphone, standing in the exact same pose and position, and the figure on the right becomes a Tesla Optimus humanoid robot standing in the exact same place and pose as the original character. Keep the vivid orange background, the microphone, the framing, camera angle, lighting and composition identical. Photorealistic, music video still.';
 const DEFAULT_VIDEO_PROMPT = 'Image 1 is the exact target look: Elon Musk in a black blazer on the left singing into the hanging silver studio microphone, and a white-and-black Tesla Optimus humanoid robot with a glossy dark faceplate on the right, in front of a vivid bright orange studio wall. Video 1 is only the motion and camera reference. From the very first frame, show only Elon Musk and the Optimus robot, never the original two men. Elon Musk performs every move, gesture, lip movement and timing of the man on the left in Video 1; the Optimus robot performs every move of the man on the right. Same camera angles, same framing, same cuts, same microphone, and the bright orange background of Image 1 throughout. Photorealistic music video.';
+const DEFAULT_LORA_PROMPT = "Replace every person in <Video 1> with the corresponding character in <Picture 1>, matching left to right: the man on the left becomes Elon Musk in a black blazer, the man on the right becomes a white-and-black Tesla Optimus humanoid robot. Keep each replacement character's identity, outfit, and look from <Picture 1>. Preserve the source video's camera, background, lighting, and objects. Match each person's position, scale, pose, and movement. Do not show the reference image or its background.";
 const FRAME_PRICE_USD = 0.24;
+const LORA_FRAME_PRICE_USD = 0.04;
+const LORA_RATES: Record<Tier, number> = { standard: 0.14, fast: 0.09 };
+const LORA_RES_MULTIPLIER: Record<string, number> = { '480p': 1, '768p': 4 };
 
-function sleep(ms: number): Promise<void> {
+export function sleep(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   window.setTimeout(resolve, ms);
   return promise;
@@ -86,7 +93,7 @@ function responseImage(value: unknown): string {
   return '';
 }
 
-async function uploadToR2(blob: Blob, filename: string, contentType: string, apiKey: string): Promise<string> {
+export async function uploadToR2(blob: Blob, filename: string, contentType: string, apiKey: string): Promise<string> {
   const params = new URLSearchParams({ filename, content_type: contentType, dataset: 'character-swap' });
   const prepared = await parseJSONResponse<{ upload_url?: string; public_url?: string }>(
     await fetch(`/api/uploads/presign?${params}`, { headers: { Authorization: `Bearer ${apiKey}` } }),
@@ -129,7 +136,20 @@ async function extractFirstFrame(file: File): Promise<{ blob: Blob; duration: nu
   }
 }
 
-function stageLabel(result?: JobResult, exact?: boolean): string {
+function stageLabel(result?: JobResult, exact?: boolean, lora?: boolean): string {
+  if (lora) {
+    switch (result?.stage) {
+      case 'frame': return 'Extracting the reference frame';
+      case 'image': return 'Drawing the new characters';
+      case 'mux': return 'Joining the clips and laying the soundtrack back on';
+      case 'video': {
+        const total = result?.chunks_total ?? 0;
+        const done = result?.chunks_completed ?? 0;
+        return total > 0 ? `Swapping clip ${done}/${total} with H3 + swap LoRA` : 'Swapping clips with H3 + swap LoRA';
+      }
+      default: return 'Working…';
+    }
+  }
   if (exact) {
     switch (result?.stage) {
       case 'frame': return 'Extracting the reference frame';
@@ -158,8 +178,9 @@ function stageLabel(result?: JobResult, exact?: boolean): string {
   }
 }
 
-export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact' }) {
+export default function CharacterSwapTool({ lane }: { lane: Lane }) {
   const exact = lane === 'exact';
+  const lora = lane === 'lora';
   const inputRef = useRef<HTMLInputElement>(null);
   const estimateSequence = useRef(0);
   const [user, setUser] = useState<StoredUser | null>(null);
@@ -177,8 +198,9 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
   const [frameGenerated, setFrameGenerated] = useState(false);
   const [frameBusy, setFrameBusy] = useState(false);
   const [frameError, setFrameError] = useState('');
-  const [videoPrompt, setVideoPrompt] = useState(DEFAULT_VIDEO_PROMPT);
-  const [resolution, setResolution] = useState<Resolution>(exact ? '720p' : '768P');
+  const [videoPrompt, setVideoPrompt] = useState(lora ? DEFAULT_LORA_PROMPT : DEFAULT_VIDEO_PROMPT);
+  const [resolution, setResolution] = useState<Resolution>(exact ? '720p' : lora ? '480p' : '768P');
+  const [tier, setTier] = useState<Tier>('standard');
   const [characters, setCharacters] = useState(2);
   const [audioReference, setAudioReference] = useState(false);
   const [perShotFrames, setPerShotFrames] = useState(false);
@@ -213,7 +235,9 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
           await fetch('/api/character-swap/estimate', {
             method: 'POST',
             headers: { Authorization: `Bearer ${currentUser.api_key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(exact
+            body: JSON.stringify(lora
+              ? { video_url: videoURL, image_url: swappedImageURL, kind: 'lora', resolution, service_tier: tier }
+              : exact
               ? { video_url: videoURL, image_url: swappedImageURL, kind: 'exact', resolution, characters }
               : { video_url: videoURL, image_url: swappedImageURL, resolution, prompt: videoPrompt.trim(), include_audio: audioReference, max_quality: perShotFrames }),
           }),
@@ -227,7 +251,7 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
       }
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [videoURL, swappedImageURL, resolution, videoPrompt, audioReference, perShotFrames, characters, exact, user]);
+  }, [videoURL, swappedImageURL, resolution, videoPrompt, audioReference, perShotFrames, characters, exact, lora, tier, user]);
 
   function resetSample() {
     estimateSequence.current += 1;
@@ -315,7 +339,18 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
         await fetch('/api/service', {
           method: 'POST',
           headers: { Authorization: `Bearer ${currentUser.api_key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(exact
+          body: JSON.stringify(lora
+            ? {
+              service: 'character_swap_video',
+              video_url: videoURL,
+              image_url: swappedImageURL,
+              kind: 'lora',
+              resolution,
+              service_tier: tier,
+              prompt: videoPrompt.trim(),
+              character_prompt: characterPrompt.trim(),
+            }
+            : exact
             ? {
               service: 'character_swap_video',
               video_url: videoURL,
@@ -365,7 +400,7 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
           throw new Error(payload.job?.error || (next === 'payment_required' ? 'Top up to render this video' : 'Character swap generation failed'));
         }
         setPhase(next === 'processing' ? 'processing' : 'queued');
-        setStatus(next === 'processing' ? stageLabel(result, exact) : 'Job added');
+        setStatus(next === 'processing' ? stageLabel(result, exact, lora) : 'Job added');
         await sleep(3000);
       }
       throw new Error('The job remains available in your account');
@@ -377,26 +412,36 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
 
   const signedIn = Boolean(user?.api_key);
   const busy = phase === 'queued' || phase === 'processing';
-  const frameCredits = Math.ceil(FRAME_PRICE_USD / (creditPrice || 0.01));
-  const resolutionOptions = exact ? ['720p', '580p'] as const : ['768P', '2K'] as const;
+  const framePrice = lora ? LORA_FRAME_PRICE_USD : FRAME_PRICE_USD;
+  const frameCredits = Math.ceil(framePrice / (creditPrice || 0.01));
+  const resolutionOptions = lora ? ['480p', '768p'] as const : exact ? ['720p', '580p'] as const : ['768P', '2K'] as const;
+  const loraRate = LORA_RATES[tier] * (LORA_RES_MULTIPLIER[resolution] ?? 1);
   const estimateLine = estimating
     ? 'Pricing the swap…'
     : estimate && typeof estimate.estimated_credits === 'number' && typeof estimate.estimated_cost_usd === 'number'
-      ? exact
+      ? lora
+        ? `≈ ${estimate.estimated_credits} credits ($${estimate.estimated_cost_usd.toFixed(2)}) · ${estimate.chunks ?? '?'} clips · ${Math.round(estimate.source_seconds ?? 0)} s · about ${Math.max(1, Math.round((estimate.estimated_generation_seconds ?? 0) / 60))} min`
+        : exact
         ? `≈ ${estimate.estimated_credits} credits ($${estimate.estimated_cost_usd.toFixed(2)}) · ${estimate.people ?? characters} performers · ${Math.round(estimate.source_seconds ?? 0)} s · about ${Math.max(1, Math.round((estimate.estimated_generation_seconds ?? 0) / 60))} min`
         : `≈ ${estimate.estimated_credits} credits ($${estimate.estimated_cost_usd.toFixed(2)}) · ${estimate.shots ?? 1} shots · ${estimate.chunks ?? '?'} clips · ${Math.round(estimate.source_seconds ?? 0)} s · about ${Math.max(1, Math.round((estimate.estimated_generation_seconds ?? 0) / 60))} min`
       : 'Estimate appears when signed in';
 
   return <>
     <section className={styles.hero}>
-      <div className={styles.eyebrow}><Music4 size={13} /> {exact ? 'GPT IMAGE 2 FRAME · WAN 2.2 ANIMATE · EXACT MOTION · ORIGINAL AUDIO' : 'GPT IMAGE 2 FRAME · MINIMAX H3 RE-PERFORMANCE · ORIGINAL AUDIO'}</div>
-      <h1>{exact ? 'Swap the performers. Keep every frame.' : 'Swap the performers, keep the performance.'}</h1>
-      <p>{exact
+      <div className={styles.eyebrow}><Music4 size={13} /> {lora ? 'RA2 CHARACTER FRAME · MINIMAX H3 + SWAP LORA · ORIGINAL AUDIO' : exact ? 'GPT IMAGE 2 FRAME · WAN 2.2 ANIMATE · EXACT MOTION · ORIGINAL AUDIO' : 'GPT IMAGE 2 FRAME · MINIMAX H3 RE-PERFORMANCE · ORIGINAL AUDIO'}</div>
+      <h1>{lora ? 'Swap the characters. Keep the scene.' : exact ? 'Swap the performers. Keep every frame.' : 'Swap the performers, keep the performance.'}</h1>
+      <p>{lora
+        ? 'A character-swap LoRA on MiniMax H3 replaces the people in your footage with the characters from one reference image while the source video drives the camera, background, lighting and motion. Clips follow the original cuts, are joined with the untouched soundtrack, and the whole job is priced per source second before you start.'
+        : exact
         ? 'Each performer is replaced in the original footage with pose-exact motion transfer, one performer at a time, then composited back: identical choreography, cuts, camera moves and background, with the untouched soundtrack.'
         : 'Redraw the first frame with your new characters, then H3 re-performs the footage clip by clip: every clip gets the exact source motion, continues from the previous frame, is checked by a vision model, and the untouched original soundtrack goes back on top.'}</p>
-      {exact
+      {lora
+        ? <Link href="/tools/character-swap" className="mt-4 inline-block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Full re-performance instead: Character Swap (H3)</Link>
+        : exact
         ? <Link href="/tools/character-swap" className="mt-4 inline-block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Cheaper stylised re-performance: Character Swap (H3)</Link>
         : <Link href="/tools/character-swap-exact" className="mt-4 inline-block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Need frame-exact motion? Try the Exact Motion lane</Link>}
+      {!lora && <Link href="/tools/character-swap-lora" className="mt-2 block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Keep the original scene and motion more closely: Character Swap LoRA</Link>}
+      <Link href="/tools/character-recast" className="mt-2 block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Recommended: recast people from reference photos with H3 Max, Character Recast</Link>
       <Link href="/tools/reference-video" className="mt-2 block text-sm font-medium text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white">Want the most faithful performance with face-free characters? Try Reference Video Studio</Link>
     </section>
     <div className="mx-auto grid max-w-[1320px] gap-3.5 px-6 pb-16">
@@ -404,8 +449,8 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
         <div className={styles.panelHead}><div><span>EXAMPLE OUTPUT</span><h2>Source rappers → Elon Musk + Optimus</h2></div><Clapperboard size={17} /></div>
         <div className={styles.output}>
           <div className={styles.outputHead}><span>SAMPLE SWAP</span><span className={styles.ready}>READY</span></div>
-          <video data-testid="swap-example" src={exact ? SAMPLE_OUTPUT_EXACT : SAMPLE_OUTPUT} muted autoPlay loop playsInline controls />
-          <div className={styles.price} style={{ padding: '0 12px 12px' }}><span>{exact ? 'Frame-exact: same dance, same cuts, same room' : 'Same moves, same track'}</span><span>1280×720 · 24 fps</span></div>
+          <video data-testid="swap-example" src={lora ? SAMPLE_OUTPUT_LORA : exact ? SAMPLE_OUTPUT_EXACT : SAMPLE_OUTPUT} muted autoPlay loop playsInline controls />
+          <div className={styles.price} style={{ padding: '0 12px 12px' }}><span>{lora ? 'Same room, same camera, same moves: only the characters change' : exact ? 'Frame-exact: same dance, same cuts, same room' : 'Same moves, same track'}</span><span>{lora ? '832×480 · 24 fps' : '1280×720 · 24 fps'}</span></div>
         </div>
       </div>
       <div className={styles.panel}>
@@ -444,7 +489,7 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
         {sourceError && <div data-testid="swap-source-error" className={styles.error}>{sourceError}</div>}
       </div>
       <div className={styles.panel}>
-        <div className={styles.panelHead}><div><span>02 / FRAME</span><h2>Redraw the first frame with GPT Image 2</h2></div><ImageIcon size={17} /></div>
+        <div className={styles.panelHead}><div><span>02 / FRAME</span><h2>{lora ? 'Draw the new characters into the first frame' : 'Redraw the first frame with GPT Image 2'}</h2></div><ImageIcon size={17} /></div>
         <label className={styles.field}>Character swap prompt
           <textarea data-testid="swap-character-prompt" rows={6} maxLength={2000} disabled={frameBusy}
             value={characterPrompt} onChange={(event) => setCharacterPrompt(event.target.value)} placeholder={DEFAULT_CHARACTER_PROMPT} />
@@ -452,7 +497,7 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
         {!frameURL && <div className={styles.error}>Upload a file to extract the frame automatically, or paste a frame image URL.</div>}
         {signedIn
           ? <button data-testid="swap-frame-run" className={styles.run} type="button" disabled={frameBusy || !frameURL || characterPrompt.trim().length < 10} onClick={() => void generateFrame()}>
-            {frameBusy ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={16} />}{frameBusy ? 'Redrawing the frame…' : `${frameGenerated ? 'Regenerate' : 'Generate'} character frame · ${frameCredits} credits ($${FRAME_PRICE_USD.toFixed(2)})`}
+            {frameBusy ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={16} />}{frameBusy ? 'Redrawing the frame…' : `${frameGenerated ? 'Regenerate' : 'Generate'} character frame · ${frameCredits} credits ($${framePrice.toFixed(2)})`}
           </button>
           : <Link data-testid="swap-frame-run" href="/account" className={styles.run}>Sign in to generate</Link>}
         <label className={styles.field}>Or paste an image URL
@@ -475,11 +520,15 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
         </div>
       </div>
       <div className={styles.panel}>
-        <div className={styles.panelHead}><div><span>03 / VIDEO</span><h2>{exact ? 'Replace the performers with Wan 2.2 Animate' : 'Re-perform the video with MiniMax H3'}</h2></div><Sparkles size={17} /></div>
-        {!exact && <label className={styles.field}>Re-performance prompt
+        <div className={styles.panelHead}><div><span>03 / VIDEO</span><h2>{lora ? 'Swap the characters with MiniMax H3 + swap LoRA' : exact ? 'Replace the performers with Wan 2.2 Animate' : 'Re-perform the video with MiniMax H3'}</h2></div><Sparkles size={17} /></div>
+        {(!exact) && <label className={styles.field}>{lora ? 'Swap prompt (who replaces whom)' : 'Re-performance prompt'}
           <textarea data-testid="swap-video-prompt" rows={6} maxLength={2000} disabled={busy}
             value={videoPrompt} onChange={(event) => setVideoPrompt(event.target.value)} placeholder={DEFAULT_VIDEO_PROMPT} />
         </label>}
+        {lora && <div className={styles.segment} data-testid="swap-tier">
+          {(['standard', 'fast'] as const).map((value) => <button key={value} type="button" disabled={busy}
+            className={tier === value ? styles.active : ''} onClick={() => setTier(value)}>{value === 'standard' ? 'Standard · 20 steps' : 'Fast · 4-step Turbo'}</button>)}
+        </div>}
         <div className={styles.segment}>
           {resolutionOptions.map((value) => <button key={value} type="button" disabled={busy}
             className={resolution === value ? styles.active : ''} onClick={() => setResolution(value)}>{exact ? value.toUpperCase() : value}</button>)}
@@ -488,18 +537,18 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
           <input data-testid="swap-characters" type="number" min={1} max={3} step={1} value={characters} disabled={busy} style={{ maxWidth: 120 }}
             onChange={(event) => setCharacters(Math.min(3, Math.max(1, Math.floor(Number(event.target.value) || 1))))} />
         </label>}
-        {!exact && <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        {!exact && !lora && <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <input data-testid="swap-per-shot" type="checkbox" checked={perShotFrames} disabled={busy} onChange={(event) => setPerShotFrames(event.target.checked)} />
           Experimental: redraw one frame per detected shot so close-ups and angles follow each cut (+$0.30 per extra shot; the set can drift between shots)
         </label>}
-        {!exact && <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        {!exact && !lora && <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <input data-testid="swap-audio" type="checkbox" checked={audioReference} disabled={busy} onChange={(event) => setAudioReference(event.target.checked)} />
           Also give H3 the song as an audio reference (experimental lip-sync guidance)
         </label>}
-        <div className={styles.price}><span>{estimateLine}</span><span>{exact ? '$0.24 per second per performer at 720P, $0.18 at 580P' : `${resolution} · $0.20/s${resolution === '2K' ? ' → $0.36/s' : ''}`}</span></div>
+        <div className={styles.price}><span>{estimateLine}</span><span>{lora ? `$${loraRate.toFixed(2)} per source second at ${resolution} · ${tier}` : exact ? '$0.24 per second per performer at 720P, $0.18 at 580P' : `${resolution} · $0.20/s${resolution === '2K' ? ' → $0.36/s' : ''}`}</span></div>
         {signedIn
           ? <button data-testid="swap-run" className={styles.run} type="button" disabled={busy || !videoURL || !swappedImageURL || (!exact && videoPrompt.trim().length < 10)} onClick={() => void generateVideo()}>
-            {busy ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={16} />}{busy ? status : 'Generate music video'}
+            {busy ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={16} />}{busy ? status : lora ? 'Swap the characters' : 'Generate music video'}
           </button>
           : <Link data-testid="swap-run" href="/account" className={styles.run}>Sign in to generate</Link>}
         {videoError && <div data-testid="swap-error" className={styles.error}>{videoError}</div>}
@@ -514,7 +563,7 @@ export default function CharacterSwapTool({ lane }: { lane: 'reference' | 'exact
         </div>
         {exact && poseError !== null && <div className={styles.price}><span>Motion match: {((1 - Math.min(poseError, 1)) * 100 | 0)}% (joint error {poseError.toFixed(3)})</span></div>}
         {outputURL && <div className={styles.price}>
-          <span>1280×720 · 24 fps · H.264 + AAC · original audio · ready for X/Twitter</span>
+          <span>{lora ? `${resolution === '768p' ? '1344×768' : '832×480'} · 24 fps · H.264 + AAC · original audio` : '1280×720 · 24 fps · H.264 + AAC · original audio · ready for X/Twitter'}</span>
           <span>{creditsUsed === null ? '' : `${Math.ceil(creditsUsed)} credits used`}{chargedUSD === null ? '' : ` · $${chargedUSD.toFixed(2)}`}</span>
         </div>}
         {outputFrame && <div className={styles.output}>

@@ -95,6 +95,8 @@ type characterSwapState struct {
 	IdentityURLs     []string             `json:"identity_urls,omitempty"`
 	EstimatedUSD     float64              `json:"estimated_usd"`
 	EstimatedCredits float64              `json:"estimated_credits"`
+	ChargeUSD        float64              `json:"charge_usd,omitempty"`
+	Recast           *recastState         `json:"recast,omitempty"`
 }
 
 type characterSwapEnvelope struct {
@@ -118,6 +120,9 @@ func normalizeCharacterSwapRequest(req *ServiceUsageRequest) error {
 	if err := characterSwapMediaKind(req.VideoURL, "video"); err != nil {
 		return fmt.Errorf("video_url: %w", err)
 	}
+	if characterSwapIsRecast(*req) {
+		return normalizeCharacterSwapRecast(req)
+	}
 	if req.ImageURL != "" {
 		if err := validateRestyleURL(req.ImageURL); err != nil {
 			return fmt.Errorf("image_url: %w", err)
@@ -130,6 +135,9 @@ func normalizeCharacterSwapRequest(req *ServiceUsageRequest) error {
 	}
 	if characterSwapIsExact(*req) {
 		return normalizeCharacterSwapExact(req)
+	}
+	if characterSwapIsLora(*req) {
+		return normalizeCharacterSwapLora(req)
 	}
 	if req.Prompt == "" {
 		req.Prompt = characterSwapDefaultVideoPrompt
@@ -307,6 +315,9 @@ func characterSwapChargeUSD(resolution string, seconds float64) float64 {
 }
 
 func characterSwapEstimate(req ServiceUsageRequest, seconds float64, cuts ...float64) (float64, float64, []characterSwapChunk, error) {
+	if characterSwapIsLora(req) {
+		return loraEstimate(req, seconds, cuts)
+	}
 	chunks, err := planCharacterSwapChunks(seconds, cuts...)
 	if err != nil {
 		return 0, 0, nil, err
@@ -339,6 +350,10 @@ func handleCharacterSwapEstimate(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
+	if characterSwapIsRecast(req) {
+		handleRecastEstimate(ctx, req)
+		return
+	}
 	seconds, cuts, err := probeRemoteVideo(req.VideoURL)
 	if err != nil {
 		jsonError(ctx, http.StatusBadRequest, "could not read the source video duration")
@@ -347,6 +362,10 @@ func handleCharacterSwapEstimate(ctx *fasthttp.RequestCtx) {
 	usd, credits, chunks, err := characterSwapEstimate(req, seconds, cuts...)
 	if err != nil {
 		jsonError(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+	if characterSwapIsLora(req) {
+		jsonResponse(ctx, http.StatusOK, loraEstimateResponse(req, usd, credits, seconds, chunks))
 		return
 	}
 	shots := characterSwapShotCount(chunks)
@@ -381,7 +400,20 @@ func handleCharacterSwapService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
-	if falAPIKey == "" {
+	if characterSwapIsRecast(req) {
+		handleCharacterRecastService(ctx, req, user)
+		return
+	}
+	lora := characterSwapIsLora(req)
+	if lora {
+		if characterSwapLoraEndpointID() == "" {
+			jsonError(ctx, http.StatusServiceUnavailable, "character swap LoRA is not configured")
+			return
+		}
+		if rejectArchivedLane(ctx, characterSwapLoraEndpointID()) {
+			return
+		}
+	} else if falAPIKey == "" {
 		jsonError(ctx, http.StatusServiceUnavailable, "character swap video is not configured")
 		return
 	}
@@ -408,6 +440,9 @@ func handleCharacterSwapService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 		state.SwappedImageURL = req.ImageURL
 	} else {
 		imageUSD := servicePricesUSD["gpt_image"]
+		if lora {
+			imageUSD = loraImageUSD()
+		}
 		imageCredits := 0.0
 		if price := getCUTEPriceUSD(); price > 0 {
 			imageCredits = math.Ceil(imageUSD / price)
@@ -501,6 +536,11 @@ func processCharacterSwapJob(job *VideoJob) {
 		return
 	}
 
+	if characterSwapIsRecast(state.Request) {
+		processCharacterRecast(ctx, job, user, &state, sourcePath, workDir)
+		return
+	}
+
 	if state.SwappedImageURL == "" {
 		if state.FrameURL == "" {
 			framePath := filepath.Join(workDir, "frame.png")
@@ -525,7 +565,18 @@ func processCharacterSwapJob(job *VideoJob) {
 			refundCharacterSwapImage(job.UserID, state)
 			return
 		}
-		swapped, err := generateCharacterSwapImage(user, state)
+		var swapped string
+		var err error
+		if characterSwapIsLora(state.Request) {
+			frameW, frameH := loraFrameSize(filepath.Join(workDir, "frame.png"))
+			var engine string
+			swapped, engine, err = generateLoraCharacterImage(user, state, frameW, frameH)
+			if err == nil {
+				loraImageFallbackTopUp(user, &state, engine)
+			}
+		} else {
+			swapped, err = generateCharacterSwapImage(user, state)
+		}
 		if err != nil {
 			failCharacterSwap(job, state, true, "GPT Image 2 could not produce the character frame: "+truncateString(err.Error(), 160))
 			return
@@ -536,6 +587,18 @@ func processCharacterSwapJob(job *VideoJob) {
 	}
 
 	if videoJobCancellationRequested(job.ID) {
+		return
+	}
+	if characterSwapIsLora(state.Request) {
+		outputURL, outputPath, err := processCharacterSwapLora(ctx, job, &state, sourcePath, workDir)
+		if err != nil {
+			if err.Error() == "cancelled" {
+				return
+			}
+			failCharacterSwap(job, state, false, err.Error())
+			return
+		}
+		settleCharacterSwap(job, state, outputURL, outputPath)
 		return
 	}
 	if len(state.Chunks) == 0 {
@@ -1060,11 +1123,17 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 		providerUSD += chunk.ProviderUSD
 		retries += chunk.Retries
 	}
+	if characterSwapIsLora(state.Request) {
+		chargedUSD = loraChargeUSD(state.Request, state.SourceSeconds)
+	}
 	if state.Exact != nil {
 		chargedUSD = exactChargeUSD(state.Request.Resolution, state.SourceSeconds, state.Exact.People)
 		for _, pass := range state.Exact.Passes {
 			providerUSD += pass.ProviderUSD
 		}
+	}
+	if state.ChargeUSD > 0 {
+		chargedUSD = state.ChargeUSD
 	}
 	cutePrice := getCUTEPriceUSD()
 	if cutePrice <= 0 || math.IsNaN(cutePrice) || math.IsInf(cutePrice, 0) {

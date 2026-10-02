@@ -1,0 +1,28 @@
+{
+  "artifact": {
+    "bytes": 756331,
+    "content_type": "video/webm",
+    "sha256": "433918c51b9b083767be7625dae1332e17dd7c2569c3573483fc9c533b8e5aba",
+    "url": "https://manifoldgenstatic.manifoldgen.com/gallery/tests/h3-direct-canary/90b1326c-c6f2-4c4d-88e1-2f9c57ba5095.webm"
+  },
+  "contains_inline_data": false,
+  "delay_ms": 49137,
+  "error": null,
+  "execution_ms": 144567,
+  "id": "1d13eefc-8bad-46aa-88c0-7c787a1f7978-u1",
+  "metrics": {
+    "attention_backend": null,
+    "encode_seconds": 2.68,
+    "face_refine": null,
+    "face_refine_seconds": null,
+    "frames": 121,
+    "generation_seconds": 118.44,
+    "height": 704,
+    "output_bytes": null,
+    "output_transport": "r2-direct",
+    "output_upload_seconds": 3.68,
+    "total_seconds": 144.34,
+    "width": 1280
+  },
+  "status": "COMPLETED"
+}
