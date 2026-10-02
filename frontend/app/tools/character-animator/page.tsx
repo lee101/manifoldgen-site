@@ -5,6 +5,7 @@ import { ArrowLeft, Check, Download, Image as ImageIcon, LoaderCircle, Play, Spa
 import Link from 'next/link';
 import { loadStoredUser, refreshUser, saveUser, StoredUser } from '../../../lib/auth';
 import styles from './page.module.css';
+import VideoDownload from '../../../components/video-download';
 
 const DANCE_SAMPLE = 'https://manifoldgenstatic.manifoldgen.com/gallery/videos/temple-chiffon-spin.webm';
 const REAL_OUTPUT = 'https://manifoldgenstatic.manifoldgen.com/gallery/videos/wan_animate_cartographer_standard_5s_20260816.mp4';
@@ -204,7 +205,7 @@ export default function CharacterAnimatorPage() {
         <div className={styles.preview}>
           {outputURL ? <video src={outputURL} controls autoPlay loop playsInline /> : busy ? <div className={styles.emptyOutput}><LoaderCircle className={styles.spin} size={35} /><b>{status}</b><span>Your durable job keeps its selected service class while the GPU lane starts.</span></div> : <div className={styles.emptyOutput}><Sparkles size={38} /><b>Your animated character appears here</b><span>The original clip supplies motion; the character image supplies identity.</span></div>}
         </div>
-        <div className={styles.resultFooter}><div><b>{phase === 'done' ? 'Motion transferred' : outputURL === REAL_OUTPUT ? 'Completed example' : 'Direct video conditioning'}</b><span>{cost === null ? outputURL === REAL_OUTPUT ? 'Real 5s Standard output · seed 18467291' : 'Apache-2.0 model · durable job' : `$${cost.toFixed(4)} charged`}</span></div>{outputURL && <a href={outputURL} download><Download size={16} /> Download MP4</a>}</div>
+        <div className={styles.resultFooter}><div><b>{phase === 'done' ? 'Motion transferred' : outputURL === REAL_OUTPUT ? 'Completed example' : 'Direct video conditioning'}</b><span>{cost === null ? outputURL === REAL_OUTPUT ? 'Real 5s Standard output · seed 18467291' : 'Apache-2.0 model · durable job' : `$${cost.toFixed(4)} charged`}</span></div>{outputURL && <VideoDownload url={outputURL} name="manifoldgen-character-animation" testId="animator-download" />}</div>
       </div>
     </section>
     <section className={styles.notes}><div><b>01</b><span><strong>No pose preprocessing</strong>The model consumes the driving frames directly.</span></div><div><b>02</b><span><strong>Cached FP8 model</strong>Pre-serialized weights cut model setup without lowering the distilled step count.</span></div><div><b>03</b><span><strong>Global GPU drain</strong>Warm priority capacity can serve cheaper jobs, then scales fully to zero after the burst.</span></div></section>

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpRight, Check, Clapperboard, Code2, Copy, Loader2, Play, SlidersHorizontal, WandSparkles } from 'lucide-react';
 import { loadStoredUser } from '@/lib/auth';
 import { generatorRequest, type VideoGenerator } from '@/lib/video-generators';
+import VideoDownload from '../components/video-download';
 
 type JobPayload = {
   status?: string;
@@ -161,7 +162,7 @@ export function VideoGeneratorWorkspace({ generator, apiOnly = false }: { genera
             <div className="flex aspect-video items-center justify-center overflow-hidden rounded-2xl border border-white/15 bg-[#0d1018]">
               {outputURL ? <video data-testid="video-generator-output" src={outputURL} controls playsInline className="h-full w-full object-contain" /> : <div className="max-w-xs p-8 text-center"><Clapperboard className="mx-auto text-white/20" size={36} /><p className="mt-4 text-sm leading-6 text-white/35">Your generated shot will appear here, ready to download or place on the Studio timeline.</p></div>}
             </div>
-            {outputURL && <div className="mt-4 flex flex-wrap gap-3"><Link href={`/studio?video_url=${encodeURIComponent(outputURL)}&name=${encodeURIComponent(`${generator.shortName} generation`)}`} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-accent)] px-4 py-2.5 text-sm font-semibold"><Clapperboard size={16} /> Edit in Studio</Link><a href={outputURL} download className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/65 hover:text-white">Open video <ArrowUpRight size={15} /></a></div>}
+            {outputURL && <div className="mt-4 flex flex-wrap gap-3"><Link href={`/studio?video_url=${encodeURIComponent(outputURL)}&name=${encodeURIComponent(`${generator.shortName} generation`)}`} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-accent)] px-4 py-2.5 text-sm font-semibold"><Clapperboard size={16} /> Edit in Studio</Link><VideoDownload url={outputURL} name={`${generator.shortName}-generation`} testId="generator-download" /></div>}
           </>
         )}
         <div className={apiOnly ? '' : 'mt-8 border-t border-white/10 pt-7'}>

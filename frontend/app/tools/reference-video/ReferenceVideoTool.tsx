@@ -6,6 +6,7 @@ import { Clapperboard, Download, Image as ImageIcon, LoaderCircle, Music4, Spark
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '../../../lib/auth';
 import { parseJSONResponse } from '../../../lib/http';
 import styles from '../audio-spaces.module.css';
+import VideoDownload from '../../../components/video-download';
 
 export type ReferenceVideoModel = 'mini' | 'pro';
 export type ReferenceVideoResolution = '480p' | '720p' | '1080p';
@@ -583,7 +584,7 @@ export default function ReferenceVideoTool() {
           {outputURL
             ? <>
               <video data-testid="rv-output" src={outputURL} controls playsInline />
-              <a className={styles.download} href={outputURL} download><Download size={14} /> Download MP4</a>
+              <VideoDownload url={outputURL} name="manifoldgen-reference-video" className={styles.download} testId="reference-download" />
             </>
             : <div className={`${styles.empty} p-8`}>{busy ? <><LoaderCircle className={styles.spin} size={22} /><p>{status}</p></> : <p>No video yet. Add references, direct the scene, then render.</p>}</div>}
         </div>

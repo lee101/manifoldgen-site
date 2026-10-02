@@ -650,7 +650,9 @@ func processCharacterSwapJob(job *VideoJob) {
 		failCharacterSwap(job, state, false, "could not assemble the final video: "+truncateString(err.Error(), 200))
 		return
 	}
-	outputURL, err := uploadCharacterSwapFile(ctx, outputPath, job.UserID, "video/mp4")
+	outputURL, err := publishFinalVideo(ctx, outputPath, job.UserID, func() (string, error) {
+		return uploadCharacterSwapFile(ctx, outputPath, job.UserID, "video/mp4")
+	})
 	if err != nil {
 		failCharacterSwap(job, state, false, "could not publish the final video")
 		return
@@ -1158,7 +1160,7 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 		"audio_reference":   characterSwapUsesAudio(state.Request),
 		"resolution":        state.Request.Resolution,
 		"fps":               24,
-		"format":            "mp4/h264+aac",
+		"format":            finalVideoFormat(outputURL),
 		"provider_cost_usd": providerUSD,
 		"charged_usd":       chargedUSD,
 		"image_charged_usd": state.ImageUSD,

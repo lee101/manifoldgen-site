@@ -2481,14 +2481,8 @@ func transcodeAndUploadAV1(ctx context.Context, sourceURL, userID string) (strin
 		return "", 0, 0, err
 	}
 
-	encodeArgs := []string{"-y", "-i", inputPath, "-map", "0:v:0", "-map", "0:a?", "-c:v", "av1_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "38", "-b:v", "0", "-pix_fmt", "yuv420p", "-c:a", "libopus", "-b:a", "96k", outputPath}
-	if output, encodeErr := exec.CommandContext(ctx, "ffmpeg", encodeArgs...).CombinedOutput(); encodeErr != nil {
-		// A many-core SVT default can exceed 8 GiB at 2K. The measured lp=8,
-		// preset-10 fallback stayed below 2 GiB while remaining faster than realtime.
-		fallback := []string{"-y", "-i", inputPath, "-map", "0:v:0", "-map", "0:a?", "-c:v", "libsvtav1", "-crf", "38", "-preset", "10", "-svtav1-params", "lp=8", "-pix_fmt", "yuv420p", "-c:a", "libopus", "-b:a", "96k", outputPath}
-		if fallbackOut, fallbackErr := exec.CommandContext(ctx, "ffmpeg", fallback...).CombinedOutput(); fallbackErr != nil {
-			return "", 0, sourceBytes, fmt.Errorf("AV1 encode failed: %s; fallback: %s", tailOutput(output), tailOutput(fallbackOut))
-		}
+	if err := encodeAV1WebM(ctx, inputPath, outputPath); err != nil {
+		return "", 0, sourceBytes, err
 	}
 	info, err := os.Stat(outputPath)
 	if err != nil || info.Size() == 0 {

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Check, Film, Image as ImageIcon, Loader2, Play, Upload, WandSparkles } from 'lucide-react';
 import { loadStoredUser, refreshUser, saveUser } from '@/lib/auth';
+import VideoDownload from '../components/video-download';
 
 type JobResponse = {
   error?: string;
@@ -158,7 +159,7 @@ export function AnimationTransferWorkspace() {
       <section className="min-w-0 p-5 sm:p-7">
         <div className="mb-5 flex items-center justify-between"><span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.18em] text-white/55"><Play size={14} /> Output</span>{status && <small className="text-white/60">{status}</small>}</div>
         <div className="flex aspect-video items-center justify-center overflow-hidden rounded-2xl border border-white/15 bg-[#0d1018]">{outputURL ? <video data-testid="animate-output" src={outputURL} controls playsInline className="h-full w-full object-contain" /> : <div className="max-w-sm p-8 text-center"><Film className="mx-auto text-white/25" size={38} /><p className="mt-4 text-sm leading-6 text-white/55">{mode === 'replace' ? 'The reference character will enter the driving clip while its original scene stays intact.' : 'The complete reference image will move with the driving performance.'}</p></div>}</div>
-        {outputURL && <div className="mt-4 flex flex-wrap gap-3"><Link href={`/studio?video_url=${encodeURIComponent(outputURL)}&name=${encodeURIComponent('Animation Transfer')}`} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-bold text-black">Open in Studio <ArrowRight size={15} /></Link><a href={outputURL} download className="rounded-xl border border-white/15 px-4 py-3 text-sm font-semibold text-white/70">Download MP4</a></div>}
+        {outputURL && <div className="mt-4 flex flex-wrap gap-3"><Link href={`/studio?video_url=${encodeURIComponent(outputURL)}&name=${encodeURIComponent('Animation Transfer')}`} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-bold text-black">Open in Studio <ArrowRight size={15} /></Link><VideoDownload url={outputURL} name="manifoldgen-animation-transfer" testId="transfer-download" /></div>}
         <div className="mt-8 grid gap-3 sm:grid-cols-3">{['Move or Replace explicitly', 'Reference identity control', '20-step quality default'].map((label) => <div key={label} className="flex gap-2 rounded-xl border border-white/10 p-3 text-xs leading-5 text-white/45"><Check size={14} className="mt-0.5 shrink-0 text-[#8c7cff]" />{label}</div>)}</div>
       </section>
     </div>

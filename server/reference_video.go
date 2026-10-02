@@ -411,7 +411,9 @@ func processReferenceVideoJob(job *VideoJob) {
 		failReferenceVideo(job, "could not assemble the final video: "+truncateString(err.Error(), 200))
 		return
 	}
-	outputURL, err := uploadCharacterSwapFile(ctx, outputPath, job.UserID, "video/mp4")
+	outputURL, err := publishFinalVideo(ctx, outputPath, job.UserID, func() (string, error) {
+		return uploadCharacterSwapFile(ctx, outputPath, job.UserID, "video/mp4")
+	})
 	if err != nil {
 		failReferenceVideo(job, "could not publish the final video")
 		return
@@ -793,7 +795,7 @@ func settleReferenceVideo(job *VideoJob, state referenceVideoState, outputURL, o
 	result := map[string]interface{}{
 		"_reference_video": state, "video_url": outputURL, "stage": "completed",
 		"duration_seconds": math.Round(duration*100) / 100, "segments": len(state.Segments),
-		"model": state.Request.Model, "resolution": state.Request.Resolution, "format": "mp4/h264+aac",
+		"model": state.Request.Model, "resolution": state.Request.Resolution, "format": finalVideoFormat(outputURL),
 		"provider_cost_usd": providerUSD, "charged_usd": chargedUSD, "cute_price_usd": cutePrice,
 		"credits_used": chargedUSD / cutePrice,
 	}

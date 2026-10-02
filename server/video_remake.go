@@ -481,7 +481,9 @@ func runVideoRemakeAgent(ctx context.Context, job *VideoJob, user *User, state *
 	state.finish(job.ID, started, fmt.Sprintf("%.3fs; source soundtrack remuxed", finalProbe.Duration))
 
 	started = state.begin(job.ID, "publish", "Publishing the remake and editable shot timeline")
-	state.VideoURL, err = uploadDramatizeArtifact(ctx, finalPath, user.ID, "video/mp4")
+	state.VideoURL, err = publishFinalVideo(ctx, finalPath, user.ID, func() (string, error) {
+		return uploadDramatizeArtifact(ctx, finalPath, user.ID, "video/mp4")
+	})
 	if err != nil {
 		state.fail(job.ID, started, err.Error())
 		return err

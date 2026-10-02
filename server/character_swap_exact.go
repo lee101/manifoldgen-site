@@ -358,7 +358,9 @@ func processCharacterSwapExact(ctx context.Context, job *VideoJob, user *User, s
 	} else {
 		log.Printf("[character-swap] job=%s pose check skipped: %v", job.ID, err)
 	}
-	outputURL, err := uploadCharacterSwapFile(ctx, finalPath, job.UserID, "video/mp4")
+	outputURL, err := publishFinalVideo(ctx, finalPath, job.UserID, func() (string, error) {
+		return uploadCharacterSwapFile(ctx, finalPath, job.UserID, "video/mp4")
+	})
 	if err != nil {
 		return "", "", fmt.Errorf("could not publish the final video")
 	}

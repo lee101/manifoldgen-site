@@ -7,6 +7,7 @@ import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '../../..
 import { parseJSONResponse } from '../../../lib/http';
 import styles from '../audio-spaces.module.css';
 import { sleep, uploadToR2 } from '../character-swap/CharacterSwapTool';
+import VideoDownload from '../../../components/video-download';
 
 type Phase = 'idle' | 'queued' | 'processing' | 'done' | 'error';
 type Resolution = '768P' | '1080P';
@@ -275,12 +276,12 @@ export default function CharacterRecastTool() {
           {outputURL
             ? <>
               <video data-testid="recast-output" src={outputURL} controls playsInline />
-              <a className={styles.download} href={outputURL} download><Download size={14} /> Download MP4</a>
+              <VideoDownload url={outputURL} name="manifoldgen-recast" className={styles.download} testId="recast-download" />
             </>
             : <div className={`${styles.empty} p-8`}>{busy ? <><LoaderCircle className={styles.spin} size={22} /><p>{status}</p></> : <p>No video yet. Add the people, then recast.</p>}</div>}
         </div>
         {outputURL && <div className={styles.price}>
-          <span>H.264 + AAC · original audio</span>
+          <span>AV1 WebM + Opus · original audio · MP4 converts on your device</span>
           <span>{creditsUsed === null ? '' : `${Math.ceil(creditsUsed)} credits used`}{chargedUSD === null ? '' : ` · $${chargedUSD.toFixed(2)}`}</span>
         </div>}
         {phase === 'done' && <div className={styles.price}><span><Check size={11} /> Recast complete</span><span>{resolution}</span></div>}

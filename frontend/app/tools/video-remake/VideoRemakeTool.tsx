@@ -6,6 +6,7 @@ import { ArrowLeft, Check, Download, Film, Loader2, ScanSearch, Scissors, Sparkl
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '@/lib/auth';
 import { parseJSONResponse } from '@/lib/http';
 import styles from '../video-dramatizer/page.module.css';
+import VideoDownload from '../../../components/video-download';
 
 const DEFAULT_GOAL = 'Remake every shot in one coherent next-generation AAA fantasy game cinematic language: Unreal Engine 5-quality stylized realism, physically based materials, expressive but game-faithful faces, detailed hair and cloth simulation, cinematic volumetric lighting, and clean modern rendering. Preserve every story beat, action, composition, camera movement, emotional progression, and cut. Never drift into generic live-action casting, anime, old low-poly game graphics, or another franchise aesthetic.';
 const DEFAULT_SETTING = 'A unified medieval high-fantasy world with monumental ivory stone castles, oxidized brass airships, ancient forests, cobblestone or packed-earth roads, linen banners, worn leather, restrained luminous magic, atmospheric depth, and physically based surfaces. Warm ivory, brass, forest green, burgundy and jewel-tone accents remain stable across shots. No asphalt, cars, utility poles, modern signs, contemporary objects, neon, plastic theme-park surfaces, or science-fiction architecture.';
@@ -266,7 +267,7 @@ export default function VideoRemakeTool() {
 
         {shots.length > 0 && <div className={styles.shots}><div className={styles.shotsHead}><span><ScanSearch size={13} /> DETECTED SHOTS</span><small>{result?.planner}</small></div>{shots.map((shot) => <div key={shot.id} className={styles.shot} data-kind="restyled_source"><b>{shot.id}</b><span>{shot.visual_description || shot.image_prompt}{shot.characters?.length ? ` · ${shot.characters.join(', ')}` : ''}</span><em>{shot.seconds.toFixed(2)}s</em></div>)}</div>}
 
-        <div className={styles.footer}><span>{result?.duration ? `${result.duration.toFixed(3)}s${result.charged_usd ? ` · $${result.charged_usd.toFixed(2)}` : ''}` : 'Source dimensions, runtime, cut order, and soundtrack are preserved.'}</span><div className={styles.actions}>{result?.video_url && <a href={result.video_url} download><Download size={15} /> Download</a>}{result?.project_url && <Link href={result.project_url} className={styles.primary}><Sparkles size={15} /> Guide in editor</Link>}</div></div>
+        <div className={styles.footer}><span>{result?.duration ? `${result.duration.toFixed(3)}s${result.charged_usd ? ` · $${result.charged_usd.toFixed(2)}` : ''}` : 'Source dimensions, runtime, cut order, and soundtrack are preserved.'}</span><div className={styles.actions}>{result?.video_url && <VideoDownload url={result.video_url} name="manifoldgen-remake" testId="remake-download" />}{result?.project_url && <Link href={result.project_url} className={styles.primary}><Sparkles size={15} /> Guide in editor</Link>}</div></div>
       </div>
     </section>
 

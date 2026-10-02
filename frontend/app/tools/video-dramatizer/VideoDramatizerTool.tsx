@@ -10,6 +10,7 @@ import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '@/lib/au
 import { parseJSONResponse } from '@/lib/http';
 import { analyzeAudioFile, beatGrid, type AudioAnalysis } from '@/lib/audio-understanding';
 import styles from './page.module.css';
+import VideoDownload from '../../../components/video-download';
 
 const SAMPLE_VIDEO = '/examples/robotrun.mp4';
 const SAMPLE_NAME = 'robotrun.mp4';
@@ -430,7 +431,7 @@ export default function VideoDramatizerTool() {
               : 'Every cut arrives as a separate clip you can keep editing.'}
           </span>
           <div className={styles.actions}>
-            {result?.video_url && <a href={result.video_url} download><Download size={15} /> Download</a>}
+            {result?.video_url && <VideoDownload url={result.video_url} name="manifoldgen-dramatized" testId="dramatizer-download" />}
             {result?.project_url && (
               <Link href={result.project_url} className={styles.primary} data-testid="dramatizer-open-editor">
                 <Sparkles size={15} /> Open in editor

@@ -605,7 +605,9 @@ func runDramatizeAgent(ctx context.Context, job *VideoJob, user *User, state *dr
 
 	// --- 6. Publish -------------------------------------------------------
 	started = state.begin(job.ID, "publish", "Publishing the edit and Studio project")
-	videoURL, err := uploadDramatizeArtifact(ctx, finalPath, user.ID, "video/mp4")
+	videoURL, err := publishFinalVideo(ctx, finalPath, user.ID, func() (string, error) {
+		return uploadDramatizeArtifact(ctx, finalPath, user.ID, "video/mp4")
+	})
 	if err != nil {
 		state.fail(job.ID, started, err.Error())
 		return err

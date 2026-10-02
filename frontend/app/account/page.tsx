@@ -11,6 +11,7 @@ import {
   userFromAuthResponse,
 } from '../../lib/auth';
 import { friendlyError, parseJSONResponse } from '../../lib/http';
+import VideoDownload from '../../components/video-download';
 
 const API = '/api';
 
@@ -624,7 +625,7 @@ export default function AccountPage() {
                       <span>{new Date(job.created_at).toLocaleString()}</span>
                     </div>
                     {(job.result?.video_url || job.result?.project_url) ? <div className="mt-3 flex flex-wrap gap-2">
-                      {job.result.video_url ? <a href={job.result.video_url} className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1.5 text-xs"><Download size={13} /> Download remake</a> : null}
+                      {job.result.video_url ? <VideoDownload url={job.result.video_url} name="manifoldgen-remake" className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1.5 text-xs" testId={`account-download-${job.job_id}`} /> : null}
                       {job.result.project_url ? <Link href={job.result.project_url} className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-accent)] px-3 py-1.5 text-xs font-semibold"><Sparkles size={13} /> Open timeline</Link> : null}
                     </div> : null}
                   </article>;

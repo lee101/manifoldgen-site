@@ -54,6 +54,7 @@ import {
   type H3Size,
 } from '../lib/h3-loop';
 import { CURATED_SEARCH_PAGES } from '@/lib/search-pages';
+import { downloadVideo, videoExtension } from '../lib/video-export';
 
 const API = '/api';
 const GALLERY_CDN = 'https://manifoldgenstatic.manifoldgen.com/gallery';
@@ -947,6 +948,7 @@ export default function HomePage() {
           onClick: () => window.location.assign(`/studio?video_url=${encodeURIComponent(new URL(video.video_url!, window.location.origin).toString())}&name=${encodeURIComponent(video.prompt || 'Gallery video')}&restyle=1`),
         });
         actions.push({ label: 'Download video', detail: 'Save the original file', icon: <Download size={15} />, onClick: () => downloadMedia(video.video_url!) });
+        if (videoExtension(video.video_url) !== 'mp4') actions.push({ label: 'Download MP4', detail: 'Converted on your device', icon: <Download size={15} />, onClick: () => void downloadVideo(video.video_url!, video.prompt || 'manifoldgen-video', 'mp4').catch(() => undefined) });
       }
       actions.push({ label: 'Copy prompt', detail: 'Paste it into any generator', icon: <Copy size={15} />, onClick: () => void copyText(item.prompt) });
       return actions;

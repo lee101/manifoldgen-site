@@ -394,7 +394,9 @@ func renderLofiLoop(job *VideoJob, user *User, state lofiLoopState) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	videoURL, err := uploadLofiLoopFile(ctx, rendered.Video, user.ID, "video/mp4")
+	videoURL, err := publishFinalVideo(ctx, rendered.Video, user.ID, func() (string, error) {
+		return uploadLofiLoopFile(ctx, rendered.Video, user.ID, "video/mp4")
+	})
 	if err != nil {
 		return nil, err
 	}

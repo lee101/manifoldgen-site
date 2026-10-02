@@ -474,7 +474,9 @@ func processCharacterSwapLora(ctx context.Context, job *VideoJob, state *charact
 	if err != nil {
 		return "", "", fmt.Errorf("could not assemble the final video: %s", truncateString(err.Error(), 200))
 	}
-	outputURL, err := uploadCharacterSwapFile(ctx, outputPath, job.UserID, "video/mp4")
+	outputURL, err := publishFinalVideo(ctx, outputPath, job.UserID, func() (string, error) {
+		return uploadCharacterSwapFile(ctx, outputPath, job.UserID, "video/mp4")
+	})
 	if err != nil {
 		return "", "", fmt.Errorf("could not publish the final video")
 	}

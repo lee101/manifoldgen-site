@@ -6,6 +6,7 @@ import { Check, Clapperboard, Download, Image as ImageIcon, LoaderCircle, Music4
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '../../../lib/auth';
 import { parseJSONResponse } from '../../../lib/http';
 import styles from '../audio-spaces.module.css';
+import VideoDownload from '../../../components/video-download';
 
 type Phase = 'idle' | 'queued' | 'processing' | 'done' | 'error';
 type Resolution = '768P' | '2K' | '720p' | '580p' | '480p' | '768p';
@@ -557,13 +558,13 @@ export default function CharacterSwapTool({ lane }: { lane: Lane }) {
           {outputURL
             ? <>
               <video data-testid="swap-output" src={outputURL} controls playsInline />
-              <a className={styles.download} href={outputURL} download><Download size={14} /> Download MP4</a>
+              <VideoDownload url={outputURL} name="manifoldgen-character-swap" className={styles.download} testId="swap-download" />
             </>
             : <div className={`${styles.empty} p-8`}>{busy ? <><LoaderCircle className={styles.spin} size={22} /><p>{status}</p></> : <p>No video yet. Finish steps 1–2, then render.</p>}</div>}
         </div>
         {exact && poseError !== null && <div className={styles.price}><span>Motion match: {((1 - Math.min(poseError, 1)) * 100 | 0)}% (joint error {poseError.toFixed(3)})</span></div>}
         {outputURL && <div className={styles.price}>
-          <span>{lora ? `${resolution === '768p' ? '1344×768' : '832×480'} · 24 fps · H.264 + AAC · original audio` : '1280×720 · 24 fps · H.264 + AAC · original audio · ready for X/Twitter'}</span>
+          <span>{lora ? `${resolution === '768p' ? '1344×768' : '832×480'} · 24 fps · AV1 WebM + Opus · original audio` : '1280×720 · 24 fps · AV1 WebM + Opus · original audio · MP4 converts on your device for X/Twitter'}</span>
           <span>{creditsUsed === null ? '' : `${Math.ceil(creditsUsed)} credits used`}{chargedUSD === null ? '' : ` · $${chargedUSD.toFixed(2)}`}</span>
         </div>}
         {outputFrame && <div className={styles.output}>

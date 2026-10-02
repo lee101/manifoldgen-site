@@ -297,7 +297,9 @@ func processCharacterRecast(ctx context.Context, job *VideoJob, user *User, stat
 				failCharacterSwap(job, *state, false, "could not download the recast video")
 				return
 			}
-			hosted, err := uploadCharacterSwapFile(ctx, localPath, job.UserID, "video/mp4")
+			hosted, err := publishFinalVideo(ctx, localPath, job.UserID, func() (string, error) {
+				return uploadCharacterSwapFile(ctx, localPath, job.UserID, "video/mp4")
+			})
 			if err != nil {
 				failCharacterSwap(job, *state, false, "could not publish the final video")
 				return

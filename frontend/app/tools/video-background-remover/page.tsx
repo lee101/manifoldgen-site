@@ -5,6 +5,7 @@ import { ArrowLeft, Check, Download, Film, LoaderCircle, Scissors, Upload, Volum
 import Link from 'next/link';
 import { loadStoredUser, refreshUser, saveUser, StoredUser } from '../../../lib/auth';
 import styles from './page.module.css';
+import VideoDownload from '../../../components/video-download';
 
 const SAMPLE = 'https://manifoldgenstatic.manifoldgen.com/gallery/videos/astronaut-flower-field.webm';
 const REAL_OUTPUT = 'https://manifoldgenstatic.manifoldgen.com/gallery/service_netw/video-background/6f378c9b-1c0d-4aad-9f1a-e41f9436fca5.webm';
@@ -282,7 +283,7 @@ export default function VideoBackgroundRemoverPage() {
           </div>
           <div className={styles.resultFooter}>
             <div><strong>{phase === 'done' ? 'Foreground isolated' : outputURL === REAL_OUTPUT ? 'Completed example' : 'Original resolution'}</strong><span>{cost !== null ? `$${cost.toFixed(4)} charged` : outputURL === REAL_OUTPUT ? 'RVM · transparent VP9 WebM' : 'Source RGB detail retained'}</span></div>
-            {outputURL && <a href={outputURL} download><Download size={17} /> Download WebM</a>}
+            {outputURL && <VideoDownload url={outputURL} name="manifoldgen-no-background" testId="matting-download" />}
           </div>
         </div>
       </section>

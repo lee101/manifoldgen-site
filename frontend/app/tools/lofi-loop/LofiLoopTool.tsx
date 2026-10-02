@@ -5,6 +5,7 @@ import { Check, Download, LoaderCircle, Music4, Sparkles, Waves } from 'lucide-r
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '../../../lib/auth';
 import { parseJSONResponse } from '../../../lib/http';
 import styles from '../audio-spaces.module.css';
+import VideoDownload from '../../../components/video-download';
 
 type Phase = 'idle' | 'queued' | 'processing' | 'done' | 'error';
 type Option = { id: string; label: string };
@@ -287,7 +288,7 @@ export default function LofiLoopTool() {
             ? <>
               <video data-testid="lofi-video" src={videoURL} poster={coverURL || undefined} autoPlay muted loop playsInline controls />
               {coverURL && <a data-testid="lofi-cover" href={coverURL} target="_blank" rel="noreferrer"><img src={coverURL} alt="Generated cover still" /></a>}
-              <a className={styles.download} href={videoURL} download><Download size={14} /> Download loop</a>
+              <VideoDownload url={videoURL} name="manifoldgen-lofi-loop" className={styles.download} testId="lofi-download" />
             </>
             : <div className={`${styles.empty} p-8`}>{busy ? <><LoaderCircle className={styles.spin} size={22} /><p>{status}</p></> : <p>No loop yet. Describe a track, then render.</p>}</div>}
         </div>

@@ -522,7 +522,9 @@ func runTrailerAgent(ctx context.Context, job *VideoJob, user *User, state *dram
 	state.finish(job.ID, started, fmt.Sprintf("%.1fs master", probe.Duration))
 
 	started = state.begin(job.ID, "publish", "Publishing the trailer and Studio timeline")
-	state.VideoURL, err = uploadDramatizeArtifact(ctx, finalPath, user.ID, "video/mp4")
+	state.VideoURL, err = publishFinalVideo(ctx, finalPath, user.ID, func() (string, error) {
+		return uploadDramatizeArtifact(ctx, finalPath, user.ID, "video/mp4")
+	})
 	if err != nil {
 		state.fail(job.ID, started, err.Error())
 		return err
