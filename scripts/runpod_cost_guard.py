@@ -8,6 +8,13 @@ storage charges and failed non-scratch workloads remain visible. It never delete
 scratch probes can be cleaned up after exceeding a separate age budget for two
 checks. Dry-run is the default.
 
+Any other direct pod (not app.nz / codex-infinity customer-owned, looked up in
+their DBs) alerts once its accrued cost passes RUNPOD_COST_GUARD_POD_ALERT_USD
+($10) and is stopped, not deleted, after two checks over
+RUNPOD_COST_GUARD_POD_STOP_USD ($25). Name a pod keep-* to make it alert-only.
+The account balance is checked each run; under RUNPOD_COST_GUARD_MIN_BALANCE_USD
+($20) it alerts, since serverless then returns 402 and volumes are at risk.
+
 Daily spend caps come from the RunPod billing API (bucketSize=day, UTC). A
 ManifoldGen-owned endpoint over its cap, or any spending owned endpoint while
 the account is over the global cap, for two consecutive checks gets
@@ -38,6 +45,7 @@ DEFAULT_PREFIXES = ("cog-manifold-h3", "omniserve-minimax-music3", "omniserve-yu
 ALERT_ONLY_PREFIXES = ("omniserve-ra2-", "omniserve-qwen-", "cog-qwen-image-", "pixal3d")
 IDLE_ALERT_ONLY_PREFIXES = ("omniserve-ra2-",)
 SCRATCH_PREFIXES = ("h3upscale-probe-", "ltx-bench-", "bench-", "probe-", "scratch-")
+KEEP_POD_PREFIX = "keep-"
 GRAPHQL_URL = "https://api.runpod.io/graphql"
 CUSTOMER_POD_QUERIES = (
     ("appnz", "select provider_id from cloud_instances where provider = 'runpod' and provider_id <> '' and terminated_at is null"),
@@ -541,7 +549,7 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
             2.0, float(os.environ.get("RUNPOD_COST_GUARD_SCRATCH_MAX_HOURS", "3"))
         )
         pod_alert_usd = env_usd("RUNPOD_COST_GUARD_POD_ALERT_USD", 10.0)
-        pod_stop_usd = env_usd("RUNPOD_COST_GUARD_POD_STOP_USD", 40.0)
+        pod_stop_usd = env_usd("RUNPOD_COST_GUARD_POD_STOP_USD", 25.0)
         old_cost_counts = old.get("pod_cost_counts") if isinstance(old.get("pod_cost_counts"), dict) else {}
         customers: set[str] | None = None
         customers_loaded = False
@@ -571,7 +579,9 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
             over_count = consecutive(int(old_cost_counts.get(pod_id) or 0), running and not scratch and accrued >= pod_stop_usd)
             if pod_id:
                 report["pod_cost_counts"][pod_id] = over_count
-            if over_count >= 2 and not (customers is not None and pod_id in customers):
+            if over_count >= 2 and name.startswith(KEEP_POD_PREFIX):
+                pass
+            elif over_count >= 2 and not (customers is not None and pod_id in customers):
                 action = {"pod": name, "reason": f"direct pod accrued ~${accrued:.2f} >= ${pod_stop_usd:.2f} stop ceiling for two checks", "stop": pod_id, "applied": False}
                 if customers is None:
                     action["skipped"] = "customer pod lookup failed; alert-only"

@@ -127,6 +127,13 @@ class RunPodCostInventoryTest(unittest.TestCase):
         self.assertEqual(report["pod_alerts"], [])
         self.assertEqual(report["customer_pods"][0]["id"], "cust")
 
+    def test_keep_prefixed_pods_alert_but_never_stop(self):
+        created = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=30)).isoformat()
+        pod = {"id": "k", "name": "keep-training", "desiredStatus": "RUNNING", "costPerHr": 3.49, "createdAt": created}
+        report, calls, _ = self.pod_runs([pod], checks=3)
+        self.assertFalse(any(url.endswith("/stop") for _, url in calls))
+        self.assertEqual(report["pod_alerts"][0]["id"], "k")
+
     def test_unknown_customers_make_stop_alert_only(self):
         created = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=30)).isoformat()
         pod = {"id": "x", "name": "x", "desiredStatus": "RUNNING", "costPerHr": 3.49, "createdAt": created}
