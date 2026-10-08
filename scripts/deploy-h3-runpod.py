@@ -46,6 +46,7 @@ def request_json(
     headers = {
         "Authorization": f"Bearer {api_key}" if bearer else api_key,
         "Accept": "application/json",
+        "User-Agent": "curl/8.10 manifoldgen-deploy-h3",
     }
     if data is not None:
         headers["Content-Type"] = "application/json"
@@ -88,7 +89,7 @@ def template_payload(
     current: dict[str, Any], config: dict[str, Any], endpoint: dict[str, Any]
 ) -> dict[str, Any]:
     payload = {key: current.get(key) for key in TEMPLATE_FIELDS}
-    payload["imageName"] = config["image"]
+    payload["imageName"] = endpoint.get("image") or config["image"]
     payload["dockerStartCmd"] = config["dockerStartCmd"]
     env = dict(current.get("env") or {})
     env.update(config.get("env") or {})
@@ -108,7 +109,7 @@ def endpoint_payload(config: dict[str, Any], endpoint: dict[str, Any]) -> dict[s
     return {
         "workersMin": config["workersMin"],
         "workersMax": endpoint["workersMax"],
-        "idleTimeout": config["idleTimeout"],
+        "idleTimeout": endpoint.get("idleTimeout", config["idleTimeout"]),
         "executionTimeoutMs": config["executionTimeoutMs"],
         "flashboot": config["flashboot"],
         "scalerType": config["scalerType"],
@@ -181,7 +182,7 @@ def apply(config: dict[str, Any], api_key: str, drain_timeout: int) -> None:
                 api_key,
                 template_payload(current, config, endpoint),
             )
-            print(f"updated template {template_id} to {config['image']}")
+            print(f"updated template {template_id} to {endpoint.get('image') or config['image']}")
 
         for endpoint in endpoints:
             staged = endpoint_payload(config, endpoint)
@@ -224,15 +225,22 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=root / "config/runpod-h3.json")
     parser.add_argument("--apply", action="store_true", help="perform the deployment")
     parser.add_argument("--drain-timeout", type=int, default=300)
+    parser.add_argument("--only", action="append", default=[], help="endpoint name or id to update (repeatable)")
     args = parser.parse_args()
 
     config = json.loads(args.config.read_text())
     validate_config(config)
+    if args.only:
+        config["endpoints"] = [e for e in config["endpoints"] if e["name"] in args.only or e["id"] in args.only]
+        if not config["endpoints"]:
+            parser.error("--only matched no endpoints")
     if not args.apply:
         print(f"dry-run: image={config['image']}")
         for endpoint in config["endpoints"]:
             print(
                 f"  {endpoint['name']}: drain, template={endpoint['templateId']}, "
+                f"image={endpoint.get('image') or config['image']}, "
+                f"idle={endpoint.get('idleTimeout', config['idleTimeout'])}, "
                 f"max={endpoint['workersMax']}, gpus={','.join(endpoint['gpuTypeIds'])}"
             )
         print("pass --apply to update RunPod")

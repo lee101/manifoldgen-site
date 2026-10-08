@@ -1,0 +1,146 @@
+{
+  "artifact": {
+    "bytes": 465096,
+    "content_type": "video/webm",
+    "sha256": "ed3bce376dd057cc64069c36b40597cc36aa48e0cf78db6fd86438ceb81479ab",
+    "url": "https://manifoldgenstatic.manifoldgen.com/gallery/tests/h3-direct-canary/dd91e173-f93f-45da-8302-18a32f02d1db.webm"
+  },
+  "contains_inline_data": false,
+  "delay_ms": 7110,
+  "error": null,
+  "execution_ms": 310566,
+  "id": "89eecea0-a168-4720-9e1b-bd625c527dc3-u2",
+  "metrics": {
+    "attention_backend": "ck",
+    "encode_seconds": 2.81,
+    "face_refine": {
+      "applied": false,
+      "detector_device": "none",
+      "enabled": false,
+      "error": "",
+      "face_frames": 0,
+      "face_presence_fraction": 0,
+      "first_faces": 0,
+      "first_max_face_fraction": 0,
+      "last_faces": 0,
+      "last_max_face_fraction": 0,
+      "representative_face_fraction": 0,
+      "representative_frame": -1,
+      "sampled_frames": 0,
+      "skip_reason": ""
+    },
+    "face_refine_seconds": 0,
+    "frames": 124,
+    "generation_seconds": 99.24,
+    "height": 672,
+    "output_bytes": 465096,
+    "output_transport": "r2-direct",
+    "output_upload_seconds": 2.584,
+    "steps": 14,
+    "total_seconds": 102.779,
+    "width": 1184,
+    "worker_boot_init_seconds": 199.817,
+    "worker_boot_prewarm": true,
+    "worker_cold_start": true,
+    "worker_job_seconds": 310.434,
+    "worker_ready_wait_seconds": 199.189
+  },
+  "status": "COMPLETED",
+  "worker_id": "xgcdcmdumvfdvp"
+}
+HTTP 404: <!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="https://www.cloudflare.com/favicon.ico" />
+    <title>Not Found</title>
+    <style>
+      body {
+        font-family: system-ui;
+        font-weight: 300;
+        font-size: 1.25rem;
+        color: #36393a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      main {
+        max-width: 1200px;
+        margin-top: 120px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+      }
+      #text {
+        max-width: 60%;
+        margin-left: 1rem;
+        margin-right: 1rem;
+      }
+      main > section > div {
+        margin-bottom: 3.25rem;
+      }
+      svg {
+        margin-left: 2rem;
+      }
+      @keyframes eye-1 {
+        0% {
+          transform: translateX(0);
+        }
+        10%,
+        50% {
+          transform: translateX(-5px);
+        }
+        60% {
+          transform: translateX(0);
+        }
+        100% {
+          transform: translateX(0px);
+        }
+      }
+      @keyframes eye-2 {
+        0% {
+          transform: translateX(0);
+        }
+        10%,
+        50% {
+          transform: translateX(5px);
+        }
+        60% {
+          transform: translateX(0);
+        }
+        100% {
+          transform: translateX(0px);
+        }
+      }
+      svg > .eye-1 {
+        animation: eye-1 3s infinite;
+      }
+      svg > .eye-2 {
+        animation: eye-2 3s 0.6s infinite;
+      }
+      h1 {
+        font-size: 3.75rem;
+        font-weight: 400;
+        margin-bottom: 0.5rem;
+      }
+      h3 {
+        font-size: 2rem;
+        font-weight: 400;
+        color: #92979b;
+        margin: 0;
+      }
+      a {
+        color: #0055dc;
+      }
+      p {
+        margin: 0;
+      }
+      #error-title {
+        font-size: 2rem;
+        margin-bottom: 1rem;
+      }
+      #footer-title {
+        font-weight: 700;
+        margin-bottom: 0

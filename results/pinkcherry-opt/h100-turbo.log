@@ -1,0 +1,17 @@
+pod iuqu166d5a2upa 3.49
+$0.15 warmup:rooftop runs=0 err=0
+$0.18 warmup:rooftop runs=0 err=0
+$0.21 warmup:rooftop runs=0 err=0
+$0.24 turbo8:rooftop runs=1 err=0
+$0.26 turbo8:rooftop runs=1 err=0
+$0.29 turbo8:apartment runs=2 err=0
+$0.32 turbo8:apartment runs=2 err=0
+$0.35 turbo8:beach runs=3 err=0
+$0.38 turbo8:beach runs=3 err=0
+$0.41 turbo6:rooftop runs=4 err=0
+$0.44 turbo6:rooftop runs=4 err=0
+$0.47 turbo6:apartment runs=5 err=0
+$0.50 turbo6:beach runs=6 err=0
+$0.53 turbo6:beach runs=6 err=0
+$0.56 done runs=7 err=0
+deleted iuqu166d5a2upa

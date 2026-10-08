@@ -2,15 +2,17 @@
 
 usage: launch.py [--gpu "NVIDIA H100 80GB HBM3"] [--budget 3.5] [--arms base,cap14,turbo8,turbo6]
 """
-import argparse, base64, json, os, pathlib, secrets, sys, time, urllib.request
+import argparse, base64, json, os, pathlib, secrets, sys, time, urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import h3_upscale_gpu_probe as p
 
+_opener = urllib.request.build_opener(); _opener.addheaders = [("User-Agent", "curl/8.10")]; urllib.request.install_opener(_opener)
+
 H3_COG = pathlib.Path(os.environ.get("H3_COG_DIR", "/nvme0n1-disk/code/h3-cog-pinkcherry-opt"))
 HERE = pathlib.Path(__file__).resolve().parent
-OVERLAY = ["h3_prefetch.py", "h3_runtime.py", "rp_handler.py", "weights.py"]
+OVERLAY = [n for n in os.environ.get("BENCH_OVERLAY", "").split(",") if n]
 VOLUME, DC = "65aknc5k8g", "EU-NL-1"
 
 
@@ -25,10 +27,10 @@ def boot_script(token):
     b64 = lambda path: base64.b64encode(path.read_bytes()).decode()
     writes = "\n".join(f"echo {b64(H3_COG / n)} | base64 -d > /src/{n}" for n in OVERLAY)
     return f"""
+( sleep $FAILSAFE_S; curl -s -X DELETE -H "Authorization: Bearer $RUNPOD_API_KEY" https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID ) &
 set -x
 mkdir -p /tmp/pub/{token}; cd /tmp/pub
-(python3 -m http.server 8000 --directory /tmp/pub >/dev/null 2>&1 &)
-( sleep $FAILSAFE_S; curl -s -X DELETE -H "Authorization: Bearer $RUNPOD_API_KEY" https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID ) &
+mkdir -p /tmp/www; ln -sfn /tmp/pub/{token} /tmp/www/{token}; (python3 -c "import http.server as h,functools as f;c=type('C',(h.SimpleHTTPRequestHandler,),{{'list_directory':lambda s,p:s.send_error(404)}});h.ThreadingHTTPServer(('',8000),f.partial(c,directory='/tmp/www')).serve_forever()" >/dev/null 2>&1 &)
 exec >> /tmp/pub/{token}/boot.log 2>&1
 {writes}
 echo {b64(HERE / 'pod_bench.py')} | base64 -d > /tmp/pod_bench.py
@@ -53,6 +55,7 @@ def main():
     ap.add_argument("--gpu", default="NVIDIA H100 80GB HBM3")
     ap.add_argument("--budget", type=float, default=3.5)
     ap.add_argument("--arms", default="base,cap14,turbo8,turbo6")
+    ap.add_argument("--image", default="ghcr.io/lee101/h3-cog:cu130-20261008-pinkcherry-opt-r2")
     a = ap.parse_args()
     load_env()
     cfg = p.H3_CONFIG
@@ -65,12 +68,17 @@ def main():
     out.mkdir(exist_ok=True)
     pod_id = None
     try:
-        pod = p.call("/pods", "POST", {
-            "name": "bench-pinkcherry-" + a.gpu.split()[-1].lower(), "imageName": cfg["image"],
+        body = {
+            "name": "bench-pinkcherry-" + a.gpu.split()[-1].lower(), "imageName": a.image,
             "containerRegistryAuthId": p.registry_auth_id(cfg), "gpuTypeIds": [a.gpu], "gpuCount": 1,
-            "cloudType": "SECURE", "dataCenterIds": [DC], "networkVolumeId": VOLUME, "volumeMountPath": "/runpod-volume",
+            "cloudType": "SECURE", "allowedCudaVersions": ["13.0"], "dataCenterIds": [DC], "networkVolumeId": VOLUME, "volumeMountPath": "/runpod-volume",
             "containerDiskInGb": 60, "dockerEntrypoint": ["bash", "-lc", boot_script(token)], "dockerStartCmd": [],
-            "ports": ["8000/http"], "env": env})
+            "ports": ["8000/http"], "env": env}
+        try:
+            pod = p.call("/pods", "POST", body)
+        except urllib.error.HTTPError as err:
+            print("create failed", err.code, err.read()[:600], flush=True)
+            raise
         pod_id, rate = pod["id"], float(pod.get("costPerHr") or 3.5)
         print("pod", pod_id, rate, flush=True)
         base = f"https://{pod_id}-8000.proxy.runpod.net/{token}"

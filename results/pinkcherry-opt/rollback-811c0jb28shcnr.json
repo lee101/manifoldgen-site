@@ -1,0 +1,62 @@
+{
+ "captured": "2026-10-08",
+ "endpoint": {
+  "executionTimeoutMs": 14400000,
+  "flashboot": true,
+  "gpuTypeIds": [
+   "NVIDIA H100 80GB HBM3"
+  ],
+  "id": "811c0jb28shcnr",
+  "idleTimeout": 5,
+  "name": "cog-manifold-h3-pinkcherry",
+  "networkVolumeId": "65aknc5k8g",
+  "scalerType": "REQUEST_COUNT",
+  "scalerValue": 1,
+  "templateId": "tod8ekrmft",
+  "workersMax": 0,
+  "workersMin": 0
+ },
+ "template": {
+  "env": {
+   "H3_ACCEL_PROFILE": "balanced",
+   "H3_ATTENTION_BACKEND": "ck",
+   "H3_FACE_JUDGE_API_KEY": "<redacted: OPENPATHS_API_KEY>",
+   "H3_FACE_JUDGE_MIN_CONFIDENCE": "0.75",
+   "H3_FACE_JUDGE_MODEL": "deepseek-v4-flash-vision-exp",
+   "H3_FACE_JUDGE_URL": "https://openpaths.io/v1/chat/completions",
+   "H3_FACE_REFINE_CANVAS": "512",
+   "H3_FACE_REFINE_CONDITIONING": "image",
+   "H3_FACE_REFINE_CROP_FACTOR": "2.2",
+   "H3_FACE_REFINE_DETECTOR": "face_yolov8m.pt",
+   "H3_FACE_REFINE_ENABLED": "0",
+   "H3_FACE_REFINE_FALLBACK_DETECTOR": "none",
+   "H3_FACE_REFINE_GATE_SAMPLES": "7",
+   "H3_FACE_REFINE_MIN_DETAIL_GAIN_RATIO": "1.02",
+   "H3_FACE_REFINE_MIN_FACE_FRACTION": "0.07",
+   "H3_FACE_REFINE_PREVIEW_FRAMES": "5",
+   "H3_FACE_REFINE_REQUIRED": "0",
+   "H3_FACE_REFINE_SMALL_STRENGTH": "1.0",
+   "H3_FACE_REFINE_TARGET_FACE_FRACTION": "0.12",
+   "H3_FACE_REFINE_VISION_JUDGE": "1",
+   "H3_FL2VA_HF_FILENAME": "beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors",
+   "H3_FL2VA_MODEL": "PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors",
+   "H3_FL2VA_REPO": "SexGod1979/PinkCherry_MiniMax-H3",
+   "H3_FL2VA_REVISION": "f71e0eee7c0414904b66c4efa617c34548dd2bb0",
+   "H3_LATENT_UPSCALER_MODEL": "h3_clean_latent_upscaler_film_epoch200.safetensors",
+   "H3_LATENT_UPSCALE_ENABLED": "0",
+   "H3_LAZY_REF2VA": "1",
+   "H3_MODEL_SET": "fl2va,ref2va",
+   "H3_MODEL_VARIANT": "pinkcherry-alpha-0.5",
+   "H3_QUANT": "int8_convrot",
+   "HF_HOME": "/weights/huggingface",
+   "MINIMAX_H3_LICENSE_ACCEPTED": "1",
+   "NVIDIA_DRIVER_CAPABILITIES": "all",
+   "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+   "TMPDIR": "/tmp",
+   "WEIGHTS_DIR": "/weights"
+  },
+  "id": "tod8ekrmft",
+  "imageName": "ghcr.io/lee101/h3-cog:cu130-20260826-face-judge-r7",
+  "image_digest": "sha256:58c7b04f1577c14f1807e7fa3f65b2674a0dd3f75906f3a7f13eded0cd2e7836"
+ }
+}

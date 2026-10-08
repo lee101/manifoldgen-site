@@ -55,7 +55,7 @@ def main():
         try:
             t = time.monotonic()
             result = runtime.generate(prompt=PROMPTS[scene], aspect_ratio="16:9", size="balanced", duration=5,
-                                      steps=20, seed=1, return_metrics=True, encode_quality=26)
+                                      steps=20, seed=7 if label == "warmup" else 1, return_metrics=True, encode_quality=26)
             wall = round(time.monotonic() - t, 2)
             target = OUT / f"{label}_{scene}.webm"
             shutil.move(str(result.path), target)

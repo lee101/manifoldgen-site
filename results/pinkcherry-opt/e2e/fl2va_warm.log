@@ -1,0 +1,50 @@
+{
+  "artifact": {
+    "bytes": 457044,
+    "content_type": "video/webm",
+    "sha256": "bfd0c4312af0b83a363b684078eb1e48c9a72fdd58374e633a704cd30f540cee",
+    "url": "https://twohelixesstatic.twohelixes.com/gallery/tests/h3-direct-canary/f7ceec04-c915-456f-8bdb-7540ac858571.webm"
+  },
+  "contains_inline_data": false,
+  "delay_ms": 5978,
+  "error": null,
+  "execution_ms": 251201,
+  "id": "94e3eed8-3a24-41f3-9196-7ee9aa5e9dac-u2",
+  "metrics": {
+    "attention_backend": "ck",
+    "encode_seconds": 2.876,
+    "face_refine": {
+      "applied": false,
+      "detector_device": "none",
+      "enabled": false,
+      "error": "",
+      "face_frames": 0,
+      "face_presence_fraction": 0,
+      "first_faces": 0,
+      "first_max_face_fraction": 0,
+      "last_faces": 0,
+      "last_max_face_fraction": 0,
+      "representative_face_fraction": 0,
+      "representative_frame": -1,
+      "sampled_frames": 0,
+      "skip_reason": ""
+    },
+    "face_refine_seconds": 0,
+    "frames": 124,
+    "generation_seconds": 124.339,
+    "height": 672,
+    "output_bytes": 457044,
+    "output_transport": "r2-direct",
+    "output_upload_seconds": 3.59,
+    "steps": 20,
+    "total_seconds": 128.152,
+    "width": 1184,
+    "worker_boot_init_seconds": 112.448,
+    "worker_boot_prewarm": true,
+    "worker_cold_start": true,
+    "worker_job_seconds": 251.071,
+    "worker_ready_wait_seconds": 0
+  },
+  "status": "COMPLETED",
+  "worker_id": "q0py9f4vqwa0jm"
+}

@@ -1,0 +1,146 @@
+{
+ "phase": "done",
+ "io": {
+  "ensure_weights_s": 3.0,
+  "seq_te_4gb_mb_s": 804,
+  "parallel_fl2va": {
+   "files": [
+    {
+     "file": "PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors",
+     "gb": 19.53,
+     "seconds": 7.7,
+     "mb_s": 2713
+    }
+   ],
+   "skipped": [],
+   "budget_gb": 1894.0,
+   "seconds": 7.7,
+   "gb": 19.53
+  },
+  "parallel_rest": {
+   "files": [
+    {
+     "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+     "gb": 14.61,
+     "seconds": 4.7,
+     "mb_s": 3353
+    },
+    {
+     "file": "minimax_h3_video_vae_fp16.safetensors",
+     "gb": 4.85,
+     "seconds": 2.3,
+     "mb_s": 2227
+    },
+    {
+     "file": "minimax_h3_audio_vae_fp32.safetensors",
+     "gb": 0.56,
+     "seconds": 0.8,
+     "mb_s": 758
+    }
+   ],
+   "skipped": [],
+   "budget_gb": 1893.6,
+   "seconds": 7.8,
+   "gb": 20.02
+  },
+  "runtime_init_s": 10.5
+ },
+ "runs": [
+  {
+   "label": "warmup",
+   "arm": "base",
+   "scene": "rooftop",
+   "wall_s": 106.71,
+   "generation_s": 103.59,
+   "steps": 20,
+   "file": "warmup_rooftop.webm"
+  },
+  {
+   "label": "base",
+   "arm": "base",
+   "scene": "rooftop",
+   "wall_s": 11.04,
+   "generation_s": 8.065,
+   "steps": 20,
+   "file": "base_rooftop.webm"
+  },
+  {
+   "label": "base",
+   "arm": "base",
+   "scene": "apartment",
+   "wall_s": 87.11,
+   "generation_s": 84.321,
+   "steps": 20,
+   "file": "base_apartment.webm"
+  },
+  {
+   "label": "base",
+   "arm": "base",
+   "scene": "beach",
+   "wall_s": 77.59,
+   "generation_s": 74.565,
+   "steps": 20,
+   "file": "base_beach.webm"
+  },
+  {
+   "label": "cap14",
+   "arm": "cap14",
+   "scene": "rooftop",
+   "wall_s": 63.44,
+   "generation_s": 60.378,
+   "steps": 14,
+   "file": "cap14_rooftop.webm"
+  },
+  {
+   "label": "cap14",
+   "arm": "cap14",
+   "scene": "apartment",
+   "wall_s": 68.09,
+   "generation_s": 65.175,
+   "steps": 14,
+   "file": "cap14_apartment.webm"
+  },
+  {
+   "label": "cap14",
+   "arm": "cap14",
+   "scene": "beach",
+   "wall_s": 64.6,
+   "generation_s": 61.332,
+   "steps": 14,
+   "file": "cap14_beach.webm"
+  }
+ ],
+ "errors": [
+  {
+   "label": "turbo8",
+   "scene": "rooftop",
+   "error": "<HTTPError 400: 'Bad Request'>"
+  },
+  {
+   "label": "turbo8",
+   "scene": "apartment",
+   "error": "<HTTPError 400: 'Bad Request'>"
+  },
+  {
+   "label": "turbo8",
+   "scene": "beach",
+   "error": "<HTTPError 400: 'Bad Request'>"
+  },
+  {
+   "label": "turbo6",
+   "scene": "rooftop",
+   "error": "<HTTPError 400: 'Bad Request'>"
+  },
+  {
+   "label": "turbo6",
+   "scene": "apartment",
+   "error": "<HTTPError 400: 'Bad Request'>"
+  },
+  {
+   "label": "turbo6",
+   "scene": "beach",
+   "error": "<HTTPError 400: 'Bad Request'>"
+  }
+ ],
+ "spent_usd": 0.626
+}

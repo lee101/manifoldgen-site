@@ -92,3 +92,22 @@ func TestH3AdultLanePrefersLtxOverPinkCherry(t *testing.T) {
 		t.Fatalf("ltx workers max = %d", got)
 	}
 }
+
+func TestH3EndpointIdleSecondsOnlyForPinkCherry(t *testing.T) {
+	t.Setenv("H3_PINKCHERRY_RUNPOD_ENDPOINT", "pink")
+	t.Setenv("H3_PINKCHERRY_RUNPOD_IDLE_SECONDS", "60")
+	if got := h3EndpointIdleSeconds("pink"); got != 60 {
+		t.Fatalf("pink idle = %d", got)
+	}
+	if got := h3EndpointIdleSeconds("normal"); got != 5 {
+		t.Fatalf("normal idle = %d", got)
+	}
+	t.Setenv("H3_PINKCHERRY_RUNPOD_IDLE_SECONDS", "9999")
+	if got := h3EndpointIdleSeconds("pink"); got != 5 {
+		t.Fatalf("out of range idle = %d", got)
+	}
+	t.Setenv("H3_PINKCHERRY_RUNPOD_IDLE_SECONDS", "")
+	if got := h3EndpointIdleSeconds("pink"); got != 5 {
+		t.Fatalf("default idle = %d", got)
+	}
+}
