@@ -828,6 +828,30 @@ func (db *DB) CancelVideoJob(jobID, userID string) (*VideoJob, error) {
 	return nil, ErrVideoJobNotCancelable
 }
 
+func (db *DB) ActiveRunpodJobIDs(endpointID string) ([]string, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	rows, err := db.conn.Query(
+		`SELECT provider_job_id FROM video_jobs
+		 WHERE status IN ('queued', 'processing') AND provider_job_id LIKE $1
+		   AND updated_at > NOW() - INTERVAL '6 hours'`,
+		"runpod:"+endpointID+":%",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (db *DB) GetVideoJobInternal(jobID string) (*VideoJob, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()

@@ -219,6 +219,34 @@ func finishH3Reaper(state *h3ScaleReaperState, generation uint64) bool {
 	return true
 }
 
+var h3TrackedJobBusy = func(endpointID string) bool {
+	if dbConn == nil {
+		return false
+	}
+	ids, err := dbConn.ActiveRunpodJobIDs(endpointID)
+	if err != nil {
+		log.Printf("[h3] endpoint=%s active job lookup failed: %v", endpointID, err)
+		return true
+	}
+	return h3RunpodJobsBusy(endpointID, ids)
+}
+
+func h3RunpodJobsBusy(endpointID string, providerJobIDs []string) bool {
+	prefix := "runpod:" + endpointID + ":"
+	for _, id := range providerJobIDs {
+		var status struct {
+			Status string `json:"status"`
+		}
+		if _, err := callH3Runpod(endpointID, "/status/"+url.PathEscape(strings.TrimPrefix(id, prefix)), http.MethodGet, nil, &status); err != nil {
+			return true
+		}
+		if status.Status == "IN_QUEUE" || status.Status == "IN_PROGRESS" {
+			return true
+		}
+	}
+	return false
+}
+
 func reapH3Endpoint(endpointID string, state *h3ScaleReaperState) {
 	generation := h3ReaperGeneration(state)
 	deadline := time.Now().Add(65 * time.Minute)
@@ -246,7 +274,7 @@ func reapH3Endpoint(endpointID string, state *h3ScaleReaperState) {
 		var health h3ScaleHealth
 		_, err := callH3Runpod(endpointID, "/health", http.MethodGet, nil, &health)
 		requestedZero := false
-		idle := err == nil && health.Jobs.InProgress == 0 && health.Jobs.InQueue == 0
+		idle := err == nil && health.Jobs.InProgress == 0 && health.Jobs.InQueue == 0 && !h3TrackedJobBusy(endpointID)
 		if !idle {
 			idleSince = time.Time{}
 		} else if idleSince.IsZero() {
