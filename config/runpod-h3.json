@@ -53,7 +53,13 @@
       "templateId": "tod8ekrmft",
       "name": "cog-manifold-h3-pinkcherry",
       "workersMax": 1,
+      "image": "ghcr.io/lee101/h3-cog:cu130-20261008-pinkcherry-opt-r3",
+      "idleTimeout": 60,
 	  "env": {
+		"H3_VERIFY_STAMP": "portable",
+		"H3_BOOT_PREWARM": "1",
+		"H3_PREFETCH_WEIGHTS": "1",
+		"H3_MAX_STEPS": "14",
 		"H3_FL2VA_REPO": "SexGod1979/PinkCherry_MiniMax-H3",
 		"H3_FL2VA_HF_FILENAME": "beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors",
 		"H3_FL2VA_MODEL": "PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors",

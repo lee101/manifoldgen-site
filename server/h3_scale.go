@@ -127,12 +127,23 @@ func h3EndpointConfig(endpointID string) (h3ScaleEndpoint, error) {
 	return config, err
 }
 
+func h3EndpointIdleSeconds(endpointID string) int {
+	_, pink := h3LaneEnv("H3_PINKCHERRY")
+	if endpointID == "" || endpointID != pink {
+		return 5
+	}
+	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("H3_PINKCHERRY_RUNPOD_IDLE_SECONDS"))); err == nil && configured >= 5 && configured <= 600 {
+		return configured
+	}
+	return 5
+}
+
 func h3SetWorkersMax(endpointID string, workersMax int) error {
 	return h3ControlRequest(
 		http.MethodPost,
 		h3ControlBase()+"/endpoints/"+url.PathEscape(endpointID)+"/update",
 		map[string]interface{}{
-			"workersMin": 0, "workersMax": workersMax, "idleTimeout": 5,
+			"workersMin": 0, "workersMax": workersMax, "idleTimeout": h3EndpointIdleSeconds(endpointID),
 			"executionTimeoutMs": 4 * 60 * 60 * 1000, "flashboot": true,
 			"scalerType": "REQUEST_COUNT", "scalerValue": 1,
 		},
@@ -211,11 +222,14 @@ func finishH3Reaper(state *h3ScaleReaperState, generation uint64) bool {
 func reapH3Endpoint(endpointID string, state *h3ScaleReaperState) {
 	generation := h3ReaperGeneration(state)
 	deadline := time.Now().Add(65 * time.Minute)
+	idleGrace := time.Duration(h3EndpointIdleSeconds(endpointID)-5) * time.Second
+	var idleSince time.Time
 	for {
 		currentGeneration := h3ReaperGeneration(state)
 		if currentGeneration != generation {
 			generation = currentGeneration
 			deadline = time.Now().Add(65 * time.Minute)
+			idleSince = time.Time{}
 		}
 		if time.Now().After(deadline) {
 			if finishH3Reaper(state, generation) {
@@ -232,7 +246,13 @@ func reapH3Endpoint(endpointID string, state *h3ScaleReaperState) {
 		var health h3ScaleHealth
 		_, err := callH3Runpod(endpointID, "/health", http.MethodGet, nil, &health)
 		requestedZero := false
-		if err == nil && health.Jobs.InProgress == 0 && health.Jobs.InQueue == 0 {
+		idle := err == nil && health.Jobs.InProgress == 0 && health.Jobs.InQueue == 0
+		if !idle {
+			idleSince = time.Time{}
+		} else if idleSince.IsZero() {
+			idleSince = time.Now()
+		}
+		if idle && time.Since(idleSince) >= idleGrace {
 			err = h3SetWorkersMax(endpointID, 0)
 			requestedZero = err == nil
 		}
