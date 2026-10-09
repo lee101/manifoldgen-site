@@ -14,7 +14,7 @@ _patches = []
 
 
 def setUpModule():
-    _patches.extend([patch.object(guard, "account_balance", return_value=HEALTHY), patch.object(guard, "customer_pod_ids", return_value=set())])
+    _patches.extend([patch.object(guard, "account_balance", return_value=HEALTHY), patch.object(guard, "customer_pod_ids", return_value=set()), patch.object(guard, "pod_gpu_utils", return_value={})])
     for item in _patches:
         item.start()
 
@@ -81,6 +81,35 @@ class RunPodCostInventoryTest(unittest.TestCase):
         self.assertEqual(report["pod_alerts"][0]["id"], "failed-cog")
         self.assertEqual(report["actions"], [])
         self.assertEqual(report["status"], "warning")
+
+    def test_idle_gpu_pod_alerts_then_stops(self):
+        created = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=3)).isoformat()
+        pod = {"id": "idle", "name": "sweep-run", "desiredStatus": "RUNNING", "costPerHr": 2.69, "createdAt": created}
+        with patch.object(guard, "pod_gpu_utils", return_value={"idle": 0.0}):
+            report, calls, alerts = self.pod_runs([pod], checks=3)
+            self.assertFalse(any(url.endswith("/stop") for _, url in calls))
+            self.assertTrue(any("GPU idle" in item["status"] for item in report["pod_alerts"]))
+            report, calls, _ = self.pod_runs([pod], checks=12)
+        self.assertIn(("POST", f"{guard.REST_BASE}/pods/idle/stop"), calls)
+        self.assertEqual(report["status"], "remediated")
+
+    def test_busy_or_keep_or_customer_pods_are_not_idle_stopped(self):
+        created = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=3)).isoformat()
+        busy = {"id": "busy", "name": "train", "desiredStatus": "RUNNING", "costPerHr": 2.69, "createdAt": created}
+        keep = {"id": "keep", "name": "keep-train", "desiredStatus": "RUNNING", "costPerHr": 2.69, "createdAt": created}
+        cust = {"id": "cust", "name": "c", "desiredStatus": "RUNNING", "costPerHr": 2.69, "createdAt": created}
+        with patch.object(guard, "pod_gpu_utils", return_value={"busy": 87.0, "keep": 0.0, "cust": 0.0}):
+            report, calls, _ = self.pod_runs([busy, keep, cust], checks=13, customers={"cust"})
+        self.assertFalse(any(url.endswith("/stop") for _, url in calls))
+        self.assertEqual({item["id"] for item in report["pod_alerts"] if "GPU idle" in item["status"]}, {"keep"})
+
+    def test_gpu_util_lookup_failure_never_stops(self):
+        created = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=3)).isoformat()
+        pod = {"id": "p", "name": "p", "desiredStatus": "RUNNING", "costPerHr": 2.69, "createdAt": created}
+        with patch.object(guard, "pod_gpu_utils", side_effect=RuntimeError("graphql down")):
+            report, calls, _ = self.pod_runs([pod], checks=13)
+        self.assertFalse(any(url.endswith("/stop") for _, url in calls))
+        self.assertTrue(any(err["scope"] == "pod_gpu_util" for err in report["errors"]))
 
     def pod_runs(self, pods, checks=2, customers=frozenset(), apply=True, balance=HEALTHY, health_error=None):
         calls = []
