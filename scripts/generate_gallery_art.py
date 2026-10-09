@@ -129,7 +129,7 @@ def read_prompts(path: Path) -> list[PromptSpec]:
         prompt = str(prompt).strip()
         if 12 <= len(prompt) <= 900 and prompt not in seen:
             seed = seed_value if isinstance(seed_value, int) and not isinstance(seed_value, bool) else None
-            if isinstance(value, dict) and ('size' in value or 'width' in value or 'height' in value) and dimensions is None:
+            if isinstance(value, dict) and any(value.get(key) is not None for key in ('size', 'width', 'height')) and dimensions is None:
                 raise ValueError(f'{path}:{line_number}: size/width/height must describe 64-aligned dimensions')
             prompts.append(PromptSpec(prompt, seed, *(dimensions or (None, None))))
             seen.add(prompt)

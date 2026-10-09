@@ -38,3 +38,24 @@ def test_image_worker_secret_uses_the_repository_environment_name(monkeypatch):
     monkeypatch.setenv("OMNISERVE_IMAGE_WORKER_SECRET", "repository-secret")
 
     assert generator.image_worker_secret() == "repository-secret"
+
+
+def test_read_prompts_treats_null_dimensions_as_unset(tmp_path):
+    shard = tmp_path / 'shard.jsonl'
+    shard.write_text(
+        '{"prompt": "a lighthouse on a cliff at dawn", "seed": null, "width": null, "height": null}\n'
+        '{"prompt": "a fox curled up in fresh snow", "width": 768, "height": 1344}\n'
+    )
+    prompts = load_generator().read_prompts(shard)
+    assert [(p.width, p.height) for p in prompts] == [(None, None), (768, 1344)]
+
+
+def test_read_prompts_still_rejects_unaligned_dimensions(tmp_path):
+    shard = tmp_path / 'shard.jsonl'
+    shard.write_text('{"prompt": "a lighthouse on a cliff at dawn", "width": 1000, "height": 1000}\n')
+    generator = load_generator()
+    try:
+        generator.read_prompts(shard)
+    except ValueError:
+        return
+    raise AssertionError('unaligned dimensions were accepted')
