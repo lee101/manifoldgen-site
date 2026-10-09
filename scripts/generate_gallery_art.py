@@ -31,6 +31,7 @@ from pathlib import Path
 import boto3
 import psycopg2
 from botocore.config import Config
+from concurrent.futures import Future, ThreadPoolExecutor
 from PIL import Image
 import requests
 
@@ -56,6 +57,23 @@ class PromptSpec:
     seed: int | None = None
     width: int | None = None
     height: int | None = None
+
+
+@dataclass
+class RenderedImage:
+    number: int
+    prompt: str
+    image_id: str
+    relpath: str
+    thumb_relpath: str
+    destination: Path
+    thumb_destination: Path | None
+    width: int
+    height: int
+    size: int
+    seed: int
+    is_nsfw: bool | None
+    timings: dict[str, float]
 
 
 @dataclass(frozen=True)
@@ -213,9 +231,11 @@ def image_worker_secret(preferred_env: str = "OMNISERVE_NATIVE_SECRET") -> str:
     )
 
 
-def moderate_image(endpoint: str, path: Path, threshold: float, secret_env: str) -> tuple[bool, float]:
+def moderate_image(endpoint: str, path: Path, threshold: float, secret_env: str, unload_after: bool = True) -> tuple[bool, float]:
     secret = image_worker_secret(secret_env)
     params = {"secret": secret} if secret else {}
+    if not unload_after:
+        params["unload_after"] = "false"
     with path.open("rb") as image:
         response = requests.post(
             endpoint.rstrip("/") + "/nsfw_detect_file",
@@ -227,6 +247,59 @@ def moderate_image(endpoint: str, path: Path, threshold: float, secret_env: str)
     payload = response.json()
     score = float(payload.get("nsfw_score", payload.get("score", 0)))
     return score >= threshold, score
+
+
+def save_thumbnail(image: Image.Image, destination: Path, max_side: int, quality: int) -> None:
+    thumb = image.copy()
+    thumb.thumbnail((max_side, max_side), Image.LANCZOS)
+    thumb.save(destination, 'WEBP', quality=quality, method=4)
+
+
+def upload_public(client: object, bucket: str, key: str, path: Path) -> None:
+    client.upload_file(str(path), bucket, key, ExtraArgs={"ContentType": "image/webp", "CacheControl": "public, max-age=31536000, immutable"})
+    # Do not put a broken URL in the catalog when an endpoint,
+    # credential, or bucket mapping is misconfigured.
+    client.head_object(Bucket=bucket, Key=key)
+
+
+def publish_image(item: RenderedImage, conn: object, client: object | None, bucket: str, prefix: str) -> None:
+    started = time.monotonic()
+    uploaded: list[str] = []
+    try:
+        if client and item.is_nsfw is not True:
+            for relpath, path in ((item.relpath, item.destination), (item.thumb_relpath, item.thumb_destination)):
+                if path is None:
+                    continue
+                key = f"{prefix}/{relpath}"
+                upload_public(client, bucket, key, path)
+                uploaded.append(key)
+        with conn.cursor() as cur:
+            cur.execute(
+                '''INSERT INTO generated_images
+                   (id, prompt, width, height, file_path, thumb_path, med_path, file_size, model, seed, steps, is_nsfw, created_by_user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, '')''',
+                (item.image_id, item.prompt, item.width, item.height, item.relpath, item.thumb_relpath, item.relpath,
+                 item.size, 'zimage-turbo-native', item.seed, 4, item.is_nsfw),
+            )
+        conn.commit()
+    except BaseException:
+        try:
+            conn.rollback()
+        except psycopg2.Error:
+            pass
+        for key in uploaded:
+            try:
+                client.delete_object(Bucket=bucket, Key=key)
+            except Exception:
+                pass
+        for path in (item.destination, item.thumb_destination):
+            if path is not None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        raise
+    item.timings['publish'] = time.monotonic() - started
 
 
 def claim_prompt(conn: object, prompt: str) -> bool:
@@ -283,6 +356,9 @@ def main() -> None:
     parser.add_argument('--height', type=int, default=1024)
     parser.add_argument('--mixed-aspect', action='store_true', help='use a deterministic square/portrait/landscape mix when a row has no dimensions')
     parser.add_argument('--webp-quality', type=int, default=85, help='WebP quality for indexed files (default: 85)')
+    parser.add_argument('--webp-method', type=int, default=4, help='WebP encoder effort 0-6; 6 is ~2x slower for the same size')
+    parser.add_argument('--thumb-size', type=int, default=512, help='max side of the gallery grid thumbnail; 0 serves originals in the grid')
+    parser.add_argument('--thumb-quality', type=int, default=78)
     parser.add_argument('--limit', type=int, default=0, help='0 means all pending prompts')
     parser.add_argument('--low-priority', action='store_true')
     parser.add_argument('--delay', type=float, default=2.0)
@@ -294,6 +370,8 @@ def main() -> None:
     parser.add_argument('--moderation-endpoint', default='', help='separate nsfw_detect_file endpoint when the image worker lacks moderation')
     parser.add_argument('--nsfw-threshold', type=float, default=0.5)
     parser.add_argument('--moderation-secret-env', default='OMNISERVE_NATIVE_SECRET')
+    parser.add_argument('--moderate-full', action='store_true', help='send the full-size image to moderation instead of the grid thumbnail')
+    parser.add_argument('--moderation-unload', action='store_true', help='ask the worker to unload the classifier after every image')
     parser.add_argument('--reindex-every', type=int, default=0, help='request a search rebuild after each N indexed rows; 0 means only at the end when --reindex-after is set')
     parser.add_argument('--moderate-after', action='store_true', help='moderate this bounded batch after generation')
     parser.add_argument('--reindex-after', action='store_true', help='request authenticated search reindexing after moderation')
@@ -321,12 +399,41 @@ def main() -> None:
 
     originals = args.images_dir / 'originals'
     originals.mkdir(parents=True, exist_ok=True)
+    if args.thumb_size:
+        (args.images_dir / 'thumbs').mkdir(parents=True, exist_ok=True)
     ensure_free_space(args.images_dir, args.min_free_gib)
     r2 = gallery_r2_config() if args.upload_r2 else None
     client = r2_client(r2) if r2 else None
     bucket = r2.bucket if r2 else ""
     prefix = r2.prefix if r2 else "gallery"
+    publish_conn = psycopg2.connect(args.database_url)
+    publish_conn.autocommit = False
+    publisher = ThreadPoolExecutor(max_workers=1, thread_name_prefix='gallery-publish')
+    in_flight: tuple[Future, RenderedImage] | None = None
     generated = 0
+
+    def finish_publish() -> None:
+        nonlocal in_flight, generated
+        if in_flight is None:
+            return
+        future, item = in_flight
+        in_flight = None
+        try:
+            future.result()
+            generated += 1
+            t = item.timings
+            stages = ' '.join(f'{name}={t[name]:.1f}s' for name in ('generate', 'encode', 'moderate', 'publish') if name in t)
+            verb = 'quarantined' if item.is_nsfw is True else 'indexed'
+            print(f'[{item.number}/{len(pending)}] {verb} {item.relpath} {stages}', flush=True)
+            if args.reindex_every and generated % args.reindex_every == 0:
+                reindex(args.database_url)
+        except (OSError, RuntimeError, urllib.error.URLError, requests.RequestException, ValueError, psycopg2.Error) as error:
+            print(f'[{item.number}/{len(pending)}] failed: {error}', flush=True)
+        except Exception as error:
+            print(f'[{item.number}/{len(pending)}] failed: {type(error).__name__}: {error}', flush=True)
+        finally:
+            release_prompt(conn, item.prompt)
+
     for number, spec in enumerate(pending, 1):
         prompt = spec.prompt
         prompt_seed = spec.seed
@@ -348,11 +455,14 @@ def main() -> None:
             print(f'[{number}/{len(pending)}] indexed by another worker; skipping', flush=True)
             release_prompt(conn, prompt)
             continue
-        object_key = ''
         destination: Path | None = None
-        indexed = False
+        thumb_destination: Path | None = None
+        handed_off = False
+        stop_run = False
         try:
             ensure_free_space(args.images_dir, args.min_free_gib)
+            timings: dict[str, float] = {}
+            started = time.monotonic()
             raw = b''
             for attempt in range(args.retries + 1):
                 try:
@@ -364,58 +474,53 @@ def main() -> None:
                     wait = min(args.retry_delay * (2 ** attempt), 300)
                     print(f'[{number}/{len(pending)}] worker HTTP {error.code}; retrying in {wait:.0f}s', flush=True)
                     time.sleep(wait)
+            timings['generate'] = time.monotonic() - started
+            started = time.monotonic()
             image = Image.open(io.BytesIO(raw)).convert('RGB')
             image_id = str(uuid.uuid4())
-            relpath = f'originals/{digest}_{image_id[:8]}.webp'
+            name = f'{digest}_{image_id[:8]}.webp'
+            relpath = f'originals/{name}'
             destination = args.images_dir / relpath
-            image.save(destination, 'WEBP', quality=args.webp_quality, method=6)
-            size = destination.stat().st_size
+            image.save(destination, 'WEBP', quality=args.webp_quality, method=args.webp_method)
+            thumb_relpath = relpath
+            if args.thumb_size and max(image.size) > args.thumb_size:
+                thumb_relpath = f'thumbs/{name}'
+                thumb_destination = args.images_dir / thumb_relpath
+                save_thumbnail(image, thumb_destination, args.thumb_size, args.thumb_quality)
+            timings['encode'] = time.monotonic() - started
             is_nsfw = None
-            score = None
             if args.moderate_before_index:
-                is_nsfw, score = moderate_image(args.moderation_endpoint or args.endpoint, destination, args.nsfw_threshold, args.moderation_secret_env)
+                started = time.monotonic()
+                moderation_input = destination if args.moderate_full or thumb_destination is None else thumb_destination
+                is_nsfw, score = moderate_image(args.moderation_endpoint or args.endpoint, moderation_input, args.nsfw_threshold,
+                                                args.moderation_secret_env, unload_after=args.moderation_unload)
+                timings['moderate'] = time.monotonic() - started
                 print(f'[{number}/{len(pending)}] nsfw_score={score:.4f} flagged={is_nsfw}', flush=True)
-            if client and is_nsfw is not True:
-                object_key = f"{prefix}/{relpath}"
-                client.upload_file(str(destination), bucket, object_key, ExtraArgs={"ContentType": "image/webp", "CacheControl": "public, max-age=31536000, immutable"})
-                # Do not put a broken URL in the catalog when an endpoint,
-                # credential, or bucket mapping is misconfigured.
-                client.head_object(Bucket=bucket, Key=object_key)
-            with conn.cursor() as cur:
-                cur.execute(
-                    '''INSERT INTO generated_images
-                       (id, prompt, width, height, file_path, thumb_path, med_path, file_size, model, seed, steps, is_nsfw, created_by_user_id)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, '')''',
-                    (image_id, prompt, image.width, image.height, relpath, relpath, relpath, size, 'zimage-turbo-native', seed, 4, is_nsfw),
-                )
-            conn.commit()
-            indexed = True
-            generated += 1
-            if is_nsfw is True:
-                print(f'[{number}/{len(pending)}] quarantined {relpath}', flush=True)
-            else:
-                print(f'[{number}/{len(pending)}] indexed {relpath}', flush=True)
-            if args.reindex_every and generated % args.reindex_every == 0:
-                reindex(args.database_url)
+            item = RenderedImage(number, prompt, image_id, relpath, thumb_relpath, destination, thumb_destination,
+                                 image.width, image.height, destination.stat().st_size, seed, is_nsfw, timings)
+            finish_publish()
+            in_flight = (publisher.submit(publish_image, item, publish_conn, client, bucket, prefix), item)
+            handed_off = True
         except (OSError, RuntimeError, urllib.error.URLError, urllib.error.HTTPError, requests.RequestException, ValueError, psycopg2.Error) as error:
-            conn.rollback()
-            if not indexed and object_key and client:
-                try:
-                    client.delete_object(Bucket=bucket, Key=object_key)
-                except Exception:
-                    pass
-            if not indexed and destination:
-                try:
-                    destination.unlink()
-                except OSError:
-                    pass
+            for path in (destination, thumb_destination):
+                if path is not None:
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
             print(f'[{number}/{len(pending)}] failed: {error}', flush=True)
-            if isinstance(error, RuntimeError) and str(error).startswith('stopping safely:'):
-                break
+            stop_run = isinstance(error, RuntimeError) and str(error).startswith('stopping safely:')
         finally:
-            release_prompt(conn, prompt)
+            if not handed_off:
+                release_prompt(conn, prompt)
+        if stop_run:
+            break
         if args.delay:
             time.sleep(args.delay)
+
+    finish_publish()
+    publisher.shutdown(wait=True)
+    publish_conn.close()
 
     if args.moderate_after and generated:
         print(f"moderating up to {generated} generated images", flush=True)

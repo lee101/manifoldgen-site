@@ -22,6 +22,10 @@ const sitemapImagePageSize = 45000
 // Sitemaps are generated from public content at request time so new gallery
 // images and completed videos become crawlable without a separate cron job.
 func handleSitemapIndex(ctx *fasthttp.RequestCtx) {
+	sitemapCache.serve(ctx, "index", buildSitemapIndex)
+}
+
+func buildSitemapIndex(ctx *fasthttp.RequestCtx) {
 	setXML(ctx)
 	var b strings.Builder
 	b.WriteString(xml.Header)
@@ -60,6 +64,10 @@ var staticSitemapPages = []string{
 }
 
 func handleSitemapPages(ctx *fasthttp.RequestCtx) {
+	sitemapCache.serve(ctx, "pages", buildSitemapPages)
+}
+
+func buildSitemapPages(ctx *fasthttp.RequestCtx) {
 	setXML(ctx)
 	var b strings.Builder
 	b.WriteString(xml.Header)
@@ -136,14 +144,22 @@ func seoRoutesFromExport() []string {
 }
 
 func handleSitemapImages(ctx *fasthttp.RequestCtx, pageText string) {
-	setXML(ctx)
-	var b strings.Builder
-	b.WriteString(xml.Header)
-	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`)
 	page := 1
 	if parsed, err := strconv.Atoi(pageText); err == nil && parsed > 0 {
 		page = parsed
 	}
+	if page > 1000 {
+		buildSitemapImages(ctx, page)
+		return
+	}
+	sitemapCache.serve(ctx, "images-"+strconv.Itoa(page), func(c *fasthttp.RequestCtx) { buildSitemapImages(c, page) })
+}
+
+func buildSitemapImages(ctx *fasthttp.RequestCtx, page int) {
+	setXML(ctx)
+	var b strings.Builder
+	b.WriteString(xml.Header)
+	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`)
 	offset := (page - 1) * sitemapImagePageSize
 
 	if dbConn != nil {
@@ -180,6 +196,10 @@ func handleSitemapImages(ctx *fasthttp.RequestCtx, pageText string) {
 }
 
 func handleSitemapVideos(ctx *fasthttp.RequestCtx) {
+	sitemapCache.serve(ctx, "videos", buildSitemapVideos)
+}
+
+func buildSitemapVideos(ctx *fasthttp.RequestCtx) {
 	setXML(ctx)
 	var b strings.Builder
 	b.WriteString(xml.Header)

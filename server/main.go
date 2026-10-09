@@ -106,7 +106,7 @@ func main() {
 		startRunpodBilledRateRefresher()
 	}
 
-	if err := fasthttp.Serve(listener, requestHandler); err != nil {
+	if err := fasthttp.Serve(listener, compressDynamic(requestHandler)); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }
