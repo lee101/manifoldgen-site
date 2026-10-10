@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestSubscriptionCreditGrant(t *testing.T) {
@@ -348,5 +350,74 @@ func TestValidateZImageParams(t *testing.T) {
 		if err := validateZImageParams(r); err == nil {
 			t.Errorf("%+v accepted", r)
 		}
+	}
+}
+
+func TestPartialRefundCUTE(t *testing.T) {
+	cases := []struct {
+		charged  float64
+		del, req int
+		want     float64
+	}{
+		{8, 2, 4, 4}, {8, 4, 4, 0}, {9, 1, 3, 6}, {8, 0, 4, 8}, {8, 5, 4, 0},
+	}
+	for _, c := range cases {
+		if got := partialRefundCUTE(c.charged, c.del, c.req); math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("partialRefundCUTE(%v,%d,%d)=%v want %v", c.charged, c.del, c.req, got, c.want)
+		}
+	}
+}
+
+func TestZImageBatchReturnsPartialOnMidBatchFailure(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 3 {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{{"b64_json": fmt.Sprintf("img%d", calls)}}})
+	}))
+	defer srv.Close()
+	t.Setenv("RA2_BACKEND_URL", srv.URL)
+
+	out, err := proxyZImageBatch(ServiceUsageRequest{Service: "zimage", Prompt: "x", Quality: "hq"}, "", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["n"] != float64(2) || m["partial"] != true || m["requested"] != float64(4) || m["lane"] != "ra2" {
+		t.Fatalf("unexpected partial result: %s", out)
+	}
+	if d, r, p := zimagePartialDelivery(out); d != 2 || r != 4 || !p {
+		t.Fatalf("delivery = %d/%d/%v", d, r, p)
+	}
+
+	// Failure on the very first image is still an error (full refund).
+	calls = 2
+	if _, err := proxyZImageBatch(ServiceUsageRequest{Service: "zimage", Prompt: "x", Quality: "hq"}, "", 2); err == nil {
+		t.Fatal("expected error when no image was delivered")
+	}
+}
+
+func TestZImageBatchDeadlineStopsEarly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(20 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{{"b64_json": "a"}}})
+	}))
+	defer srv.Close()
+	t.Setenv("RA2_BACKEND_URL", srv.URL)
+	old := zimageBatchDeadline
+	zimageBatchDeadline = time.Millisecond
+	defer func() { zimageBatchDeadline = old }()
+	out, err := proxyZImageBatch(ServiceUsageRequest{Service: "zimage", Prompt: "x", Quality: "hq"}, "", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, r, p := zimagePartialDelivery(out); d != 1 || r != 5 || !p {
+		t.Fatalf("delivery = %d/%d/%v: %s", d, r, p, out)
 	}
 }

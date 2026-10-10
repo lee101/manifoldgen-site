@@ -60,6 +60,10 @@ var servicePricesUSD = map[string]float64{
 }
 
 var zimageDefaultSteps = 8
+
+// zimageBatchDeadline bounds how long a multi-image request keeps starting new
+// renders; images finished by then are delivered and the rest are refunded.
+var zimageBatchDeadline = 4 * time.Minute
 var zimageHighStepPriceUSD = 0.10
 
 // First-party services run on our hardware — priced at ATH rate to reward early holders.
@@ -809,6 +813,26 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		}
 		jsonError(ctx, 502, "service temporarily unavailable")
 		return
+	}
+	if req.Service == "zimage" && !unlimitedImage {
+		if delivered, requested, partial := zimagePartialDelivery(result); partial {
+			refund := partialRefundCUTE(cuteCost, delivered, requested)
+			if refund > 0 {
+				if balance, refundErr := dbConn.AddUserCredits(user.ID, refund); refundErr == nil {
+					newBalance = balance
+					go dbConn.CreateBillingEvent(&BillingEvent{
+						UserID: user.ID, EventType: "refund", Amount: refund, CuteAmount: refund,
+						USDAmount: refund * cutePrice, CreditsAfter: balance,
+						Description: fmt.Sprintf("Refund: zimage batch delivered %d of %d images", delivered, requested),
+					})
+					cuteCost -= refund
+					billableCost = cuteCost
+					usdEquiv = cuteCost * cutePrice
+				} else {
+					log.Printf("zimage partial refund failed for user=%s: %v", user.WalletAddress, refundErr)
+				}
+			}
+		}
 	}
 	if req.Service == "image_edit" && !unlimitedImage && cutePrice > 0 && resultEngine(result) == "ra2" && usdEquiv > ra2ImageEditPriceUSD {
 		// The RA2 lane is far cheaper than the metered OpenPaths edit price
@@ -1691,6 +1715,27 @@ func proxySingleZImageWithFallbacks(req ServiceUsageRequest, primaryURL string) 
 	return nil, fmt.Errorf("all image backends failed: %s", strings.Join(errs, " | "))
 }
 
+// zimagePartialDelivery reads the partial-batch markers from a zimage result.
+func zimagePartialDelivery(result []byte) (delivered, requested int, partial bool) {
+	var probe struct {
+		N         int  `json:"n"`
+		Requested int  `json:"requested"`
+		Partial   bool `json:"partial"`
+	}
+	if err := json.Unmarshal(result, &probe); err != nil || !probe.Partial || probe.Requested <= 0 {
+		return 0, 0, false
+	}
+	return probe.N, probe.Requested, probe.N < probe.Requested
+}
+
+// partialRefundCUTE is the share of a batch charge covering undelivered images.
+func partialRefundCUTE(charged float64, delivered, requested int) float64 {
+	if requested <= 0 || delivered >= requested || delivered < 0 {
+		return 0
+	}
+	return charged * float64(requested-delivered) / float64(requested)
+}
+
 // annotateZImageLane records which backend lane actually served the render.
 func annotateZImageLane(result []byte, lane string) []byte {
 	var payload map[string]interface{}
@@ -1709,8 +1754,14 @@ func annotateZImageLane(result []byte, lane string) []byte {
 func proxyZImageBatch(req ServiceUsageRequest, primaryURL string, n int) ([]byte, error) {
 	images := make([]map[string]interface{}, 0, n)
 	var first map[string]interface{}
-	var engine, model string
+	var engine, model, lane string
+	var failure error
+	deadline := time.Now().Add(zimageBatchDeadline)
 	for i := 0; i < n; i++ {
+		if i > 0 && time.Now().After(deadline) {
+			failure = fmt.Errorf("batch deadline of %s exceeded after %d of %d images", zimageBatchDeadline, i, n)
+			break
+		}
 		one := req
 		one.N = 1
 		one.NumImages = 1
@@ -1719,23 +1770,33 @@ func proxyZImageBatch(req ServiceUsageRequest, primaryURL string, n int) ([]byte
 		}
 		result, err := proxySingleZImageWithFallbacks(one, primaryURL)
 		if err != nil {
-			return nil, fmt.Errorf("image %d of %d: %w", i+1, n, err)
+			failure = fmt.Errorf("image %d of %d: %w", i+1, n, err)
+			break
 		}
 
 		var payload map[string]interface{}
 		if err := json.Unmarshal(result, &payload); err != nil {
-			return nil, fmt.Errorf("image %d of %d returned invalid JSON: %w", i+1, n, err)
+			failure = fmt.Errorf("image %d of %d returned invalid JSON: %w", i+1, n, err)
+			break
 		}
 		image := imageResultItem(payload)
 		if len(image) == 0 {
-			return nil, fmt.Errorf("image %d of %d response contained no image", i+1, n)
+			failure = fmt.Errorf("image %d of %d response contained no image", i+1, n)
+			break
 		}
 		if first == nil {
 			first = image
 			engine, _ = payload["engine"].(string)
 			model, _ = payload["model"].(string)
+			lane, _ = payload["lane"].(string)
 		}
 		images = append(images, image)
+	}
+	if len(images) == 0 {
+		return nil, failure
+	}
+	if failure != nil {
+		log.Printf("zimage batch partial: delivering %d of %d images: %v", len(images), n, failure)
 	}
 
 	width, height := req.Width, req.Height
@@ -1757,6 +1818,14 @@ func proxyZImageBatch(req ServiceUsageRequest, primaryURL string, n int) ([]byte
 	}
 	if model != "" {
 		out["model"] = model
+	}
+	if lane != "" {
+		out["lane"] = lane
+	}
+	if failure != nil {
+		out["partial"] = true
+		out["requested"] = n
+		out["partial_error"] = failure.Error()
 	}
 	for _, key := range []string{"image_base64", "image_url"} {
 		if value, ok := first[key]; ok {
