@@ -1,0 +1,46 @@
+{
+  "campaign": "manifoldgen_winback",
+  "description": "5-email win-back chain after a subscription ends; days counted from subscription end",
+  "from_email": "lee.penkman@netwrck.com",
+  "from_name": "ManifoldGen",
+  "base_url": "https://manifoldgen.com",
+  "cdn_url": "https://manifoldgenstatic.manifoldgen.com",
+  "logo_url": "https://manifoldgenstatic.manifoldgen.com/static/brand/logo-mark.webp",
+  "emails": [
+    {
+      "id": 1,
+      "delay_days": 2,
+      "subject": "We saved your place on ManifoldGen",
+      "template": "winback-01.html",
+      "description": "Your plan ended. Your account and gallery are still here."
+    },
+    {
+      "id": 2,
+      "delay_days": 7,
+      "subject": "One week on: character swaps without reshooting",
+      "template": "winback-02.html",
+      "description": "Swap who is in the shot, keep the camera and motion."
+    },
+    {
+      "id": 3,
+      "delay_days": 14,
+      "subject": "Music, loops and relighting you may have missed",
+      "template": "winback-03.html",
+      "description": "Audio and image tools that need no subscription to try."
+    },
+    {
+      "id": 4,
+      "delay_days": 21,
+      "subject": "Automate it: ManifoldGen API and LoRA training",
+      "template": "winback-04.html",
+      "description": "Same models, from your own code."
+    },
+    {
+      "id": 5,
+      "delay_days": 30,
+      "subject": "Last note from us, and a quick question",
+      "template": "winback-05.html",
+      "description": "Final email in the series."
+    }
+  ]
+}

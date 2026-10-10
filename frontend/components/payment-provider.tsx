@@ -11,11 +11,12 @@ import {
   SUBSCRIPTION_PLANS,
   PAYMENT_REQUIRED_EVENT,
   type PaymentDialogDetail,
+  type SubscriptionPlanKind,
 } from '../lib/payments';
 import { parseJSONResponse } from '../lib/http';
 import styles from './payment-provider.module.css';
 
-type CheckoutKind = 'credits' | 'creator_monthly' | 'creator_annual' | 'pro_monthly' | 'pro_annual';
+type CheckoutKind = 'credits' | SubscriptionPlanKind;
 
 const planLabels = Object.fromEntries(SUBSCRIPTION_PLANS.map((plan) => [plan.kind, plan.label])) as Record<Exclude<CheckoutKind, 'credits'>, string>;
 

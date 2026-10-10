@@ -64,6 +64,7 @@ func initEmail() {
 
 	// Start drip scheduler (check every 15 minutes)
 	go dripSchedulerLoop()
+	startWinbackScheduler()
 	// Start credits-expired checker (check every hour)
 	go creditsExpiredLoop()
 	// Start low-balance checker (default alert under $5)
@@ -78,6 +79,15 @@ func handleUnsubscribe(ctx *fasthttp.RequestCtx) {
 	email := strings.TrimSpace(string(ctx.QueryArgs().Peek("email")))
 	if email == "" {
 		email = strings.TrimSpace(string(ctx.PostArgs().Peek("email")))
+	}
+	if tok := string(ctx.QueryArgs().Peek("t")); tok != "" || ctx.QueryArgs().Has("e") {
+		var ok bool
+		email, ok = verifyUnsubscribeToken(string(ctx.QueryArgs().Peek("e")), tok)
+		if !ok {
+			ctx.SetStatusCode(400)
+			ctx.SetBodyString("invalid unsubscribe link")
+			return
+		}
 	}
 	if email == "" {
 		ctx.SetStatusCode(400)
@@ -107,6 +117,10 @@ func handleUnsubscribe(ctx *fasthttp.RequestCtx) {
 
 // sendEmail sends an HTML email via AWS SES SMTP
 func sendEmail(toEmail, subject, htmlBody string) error {
+	return sendEmailWithUnsub(toEmail, subject, htmlBody, unsubscribeURL(toEmail))
+}
+
+func sendEmailWithUnsub(toEmail, subject, htmlBody, unsubURL string) error {
 	region := os.Getenv("AWS_REGION")
 	if region == "" {
 		region = "us-east-1"
@@ -129,7 +143,7 @@ func sendEmail(toEmail, subject, htmlBody string) error {
 
 	boundary := "----=_Part_" + hex.EncodeToString(func() []byte { b := make([]byte, 8); rand.Read(b); return b }())
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"%s\"\r\nList-Unsubscribe: <%s>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n\r\n--%s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\n--%s\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n--%s--\r\n",
-		from, toEmail, subject, boundary, unsubscribeURL(toEmail), boundary, plainText, boundary, htmlBody, boundary)
+		from, toEmail, subject, boundary, unsubURL, boundary, plainText, boundary, htmlBody, boundary)
 
 	auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
 

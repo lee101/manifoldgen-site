@@ -300,6 +300,16 @@ def publish_image(item: RenderedImage, conn: object, client: object | None, buck
                     pass
         raise
     item.timings['publish'] = time.monotonic() - started
+    if uploaded:
+        for path in (item.destination, item.thumb_destination):
+            if path is None:
+                continue
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                print(f'[{item.number}] R2 copy is safe; local spool cleanup failed: {error}', flush=True)
 
 
 def moderate_and_publish(item: RenderedImage, moderation: tuple | None, conn: object, client: object | None,

@@ -312,6 +312,12 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStripePortal(ctx)
 	case path == "/api/stripe/retention" && method == "POST":
 		handleStripeRetentionCoupon(ctx)
+	case path == "/api/stripe/cancel-options" && method == "GET":
+		handleStripeCancelOptions(ctx)
+	case path == "/api/stripe/pause" && method == "POST":
+		handleStripePause(ctx)
+	case path == "/api/stripe/downgrade" && method == "POST":
+		handleStripeDowngrade(ctx)
 	case path == "/api/stripe/cancel" && method == "POST":
 		handleStripeCancelSubscription(ctx)
 

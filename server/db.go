@@ -41,8 +41,8 @@ const userSelectColumns = `id, wallet_address, email, COALESCE(password_hash, ''
 
 func scanUser(row interface {
 	Scan(dest ...interface{}) error
-}, user *User) error {
-	return row.Scan(
+}, user *User, extra ...interface{}) error {
+	dest := []interface{}{
 		&user.ID, &user.WalletAddress, &user.Email, &user.PasswordHash, &user.APIKey, &user.Credits,
 		&user.UnlimitedAPI, &user.TotalDeposited, &user.StripeCustomerID,
 		&user.StripePaymentMethodID, &user.StripeSubscriptionID, &user.StripePriceID,
@@ -50,7 +50,8 @@ func scanUser(row interface {
 		&user.AutotopupEnabled,
 		&user.AutotopupThresholdUSD, &user.AutotopupAmountUSD, &user.AutotopupLastAt,
 		&user.DripStep, &user.DripStartedAt, &user.AllowNSFW, &user.CreatedAt, &user.UpdatedAt,
-	)
+	}
+	return row.Scan(append(dest, extra...)...)
 }
 
 // NewDB opens the PostgreSQL database and runs migrations
@@ -310,6 +311,65 @@ func (db *DB) migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_autotopup_user_created ON autotopup_charges(user_id, created_at DESC);
+
+	CREATE TABLE IF NOT EXISTS retention_coupon_claims (
+		customer_id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL UNIQUE,
+		created_at TIMESTAMPTZ DEFAULT NOW()
+	);
+
+	CREATE TABLE IF NOT EXISTS cancel_surveys (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		stripe_customer_id TEXT DEFAULT '',
+		plan TEXT DEFAULT '',
+		reason TEXT NOT NULL,
+		detail TEXT DEFAULT '',
+		outcome TEXT NOT NULL,
+		created_at TIMESTAMPTZ DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_cancel_surveys_user ON cancel_surveys(user_id, created_at DESC);
+
+	CREATE TABLE IF NOT EXISTS subscription_cancellations (
+		stripe_subscription_id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		stripe_customer_id TEXT DEFAULT '',
+		plan TEXT DEFAULT '',
+		source TEXT NOT NULL DEFAULT '',
+		reason TEXT NOT NULL DEFAULT '',
+		detail TEXT NOT NULL DEFAULT '',
+		ends_at TIMESTAMPTZ NOT NULL,
+		rescinded BOOLEAN NOT NULL DEFAULT FALSE,
+		created_at TIMESTAMPTZ DEFAULT NOW(),
+		updated_at TIMESTAMPTZ DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_sub_cancellations_user ON subscription_cancellations(user_id, ends_at DESC);
+
+	CREATE TABLE IF NOT EXISTS email_optouts (
+		email TEXT PRIMARY KEY,
+		source TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ DEFAULT NOW()
+	);
+
+	CREATE TABLE IF NOT EXISTS winback_claims (
+		recipient TEXT NOT NULL,
+		step INTEGER NOT NULL,
+		status TEXT NOT NULL DEFAULT 'sending',
+		attempts INTEGER NOT NULL DEFAULT 1,
+		claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		sent_at TIMESTAMPTZ,
+		UNIQUE (recipient, step)
+	);
+
+	CREATE TABLE IF NOT EXISTS winback_sends (
+		user_id TEXT NOT NULL,
+		step INTEGER NOT NULL,
+		cycle_end TIMESTAMPTZ NOT NULL,
+		sent_at TIMESTAMPTZ DEFAULT NOW(),
+		PRIMARY KEY (user_id, step, cycle_end)
+	);
 
 	-- Full-text search via pg_trgm (fast ILIKE with GIN index)
 	CREATE EXTENSION IF NOT EXISTS pg_trgm;
@@ -1170,7 +1230,7 @@ func (db *DB) UpdateStripeSubscription(userID, customerID, subscriptionID, price
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	active := stripeSubscriptionIsActive(status)
+	active := stripeSubscriptionIsActive(status) && !isCreditPlan(plan)
 	_, err := db.conn.Exec(
 		`UPDATE users
 		 SET stripe_customer_id = COALESCE(NULLIF($1, ''), stripe_customer_id),
@@ -1193,7 +1253,7 @@ func (db *DB) UpdateStripeSubscriptionBySubscriptionID(subscriptionID, customerI
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	active := stripeSubscriptionIsActive(status)
+	active := stripeSubscriptionIsActive(status) && !isCreditPlan(plan)
 	_, err := db.conn.Exec(
 		`UPDATE users
 		 SET stripe_customer_id = COALESCE(NULLIF($1, ''), stripe_customer_id),
@@ -1768,8 +1828,19 @@ func (db *DB) UnsubscribeEmail(email string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
+	return db.optOutEmailLocked(email, "page")
+}
+
+func (db *DB) optOutEmailLocked(email, source string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if _, err := db.conn.Exec(
+		`INSERT INTO email_optouts (email, source) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING`,
+		email, source,
+	); err != nil {
+		return err
+	}
 	_, err := db.conn.Exec(
-		"UPDATE users SET unsubscribed = TRUE, updated_at = NOW() WHERE LOWER(email) = LOWER($1)",
+		"UPDATE users SET unsubscribed = TRUE, updated_at = NOW() WHERE LOWER(email) = $1",
 		email,
 	)
 	return err
@@ -2420,4 +2491,43 @@ func newUUID() string {
 // Close closes the database connection
 func (db *DB) Close() error {
 	return db.conn.Close()
+}
+
+func (db *DB) ClaimRetentionCoupon(customerID, userID string) (bool, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	var got string
+	err := db.conn.QueryRow(
+		`INSERT INTO retention_coupon_claims (customer_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING customer_id`,
+		customerID, userID,
+	).Scan(&got)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (db *DB) ReleaseRetentionCoupon(customerID string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.conn.Exec(`DELETE FROM retention_coupon_claims WHERE customer_id = $1`, customerID)
+	return err
+}
+
+func (db *DB) RetentionCouponClaimed(customerID, userID string) (bool, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	var n int
+	err := db.conn.QueryRow(`SELECT COUNT(*) FROM retention_coupon_claims WHERE customer_id = $1 OR user_id = $2`, customerID, userID).Scan(&n)
+	return n > 0, err
+}
+
+func (db *DB) RecordCancelSurvey(userID, customerID, plan, reason, detail, outcome string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.conn.Exec(
+		`INSERT INTO cancel_surveys (id, user_id, stripe_customer_id, plan, reason, detail, outcome) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		newUUID(), userID, customerID, plan, reason, detail, outcome,
+	)
+	return err
 }

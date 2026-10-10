@@ -12,6 +12,7 @@ import {
 } from '../../lib/auth';
 import { friendlyError, parseJSONResponse } from '../../lib/http';
 import VideoDownload from '../../components/video-download';
+import type { SubscriptionPlanKind } from '../../lib/payments';
 
 const API = '/api';
 
@@ -80,6 +81,14 @@ type RemakeAccountJob = {
   result?: RemakeAccountResult;
 };
 
+const CREDIT_PLAN_OPTIONS: { kind: SubscriptionPlanKind; label: string }[] = [
+  { kind: 'credits_maker', label: 'Maker · $29/mo · 3,000 credits' },
+  { kind: 'credits_studio', label: 'Studio · $99/mo · 10,500 credits' },
+  { kind: 'credits_scale', label: 'Scale · $299/mo · 33,000 credits' },
+];
+
+type CancelOptions = { kind: 'standard' | 'credit_plan'; plan: string; coupon_available: boolean; can_pause: boolean; can_downgrade: boolean };
+
 export default function AccountPage() {
   const [apiKey, setApiKey] = useState('');
   const [email, setEmail] = useState('');
@@ -93,6 +102,8 @@ export default function AccountPage() {
   const [message, setMessage] = useState('');
   const [cancellationOpen, setCancellationOpen] = useState(false);
   const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationDetail, setCancellationDetail] = useState('');
+  const [cancelOptions, setCancelOptions] = useState<CancelOptions | null>(null);
   const [cancellationBusy, setCancellationBusy] = useState(false);
   const [clientSecret, setClientSecret] = useState('');
   const [publishableKey, setPublishableKey] = useState('');
@@ -311,7 +322,7 @@ export default function AccountPage() {
     embeddedCheckoutRef.current = null;
   }
 
-  async function buyCredits(kind: 'credits' | 'creator_monthly' | 'creator_annual' | 'pro_monthly' | 'pro_annual') {
+  async function buyCredits(kind: 'credits' | SubscriptionPlanKind) {
     if (!apiKey) {
       setError('Sign in first');
       return;
@@ -393,42 +404,42 @@ export default function AccountPage() {
     }
   }
 
-  async function applyRetentionOffer() {
+  async function openCancellation() {
+    setCancellationReason('');
+    setCancellationDetail('');
+    setCancelOptions(null);
+    setCancellationOpen(true);
+    try {
+      const res = await fetch(`${API}/stripe/cancel-options`, { headers: { Authorization: `Bearer ${apiKey}` } });
+      setCancelOptions(await parseJSONResponse<CancelOptions>(res, 'Unable to load options'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load options');
+    }
+  }
+
+  async function cancellationAction(path: string, okMessage: string, fallback: string) {
     setCancellationBusy(true);
     setError('');
     try {
-      const res = await fetch(`${API}/stripe/retention`, {
+      const res = await fetch(`${API}/stripe/${path}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: cancellationReason, detail: cancellationDetail }),
       });
-      await parseJSONResponse(res, 'Unable to apply discount');
+      await parseJSONResponse(res, fallback);
       setCancellationOpen(false);
-      setMessage('Your 50% discount is active for the next 3 months. Thanks for staying with us!');
+      setMessage(okMessage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to apply discount');
+      setError(err instanceof Error ? err.message : fallback);
     } finally {
       setCancellationBusy(false);
     }
   }
 
-  async function confirmCancellation() {
-    setCancellationBusy(true);
-    setError('');
-    try {
-      const res = await fetch(`${API}/stripe/cancel`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: cancellationReason }),
-      });
-      await parseJSONResponse(res, 'Unable to cancel subscription');
-      setCancellationOpen(false);
-      setMessage('Your subscription will remain active until the end of the current billing period.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to cancel subscription');
-    } finally {
-      setCancellationBusy(false);
-    }
-  }
+  const applyRetentionOffer = () => cancellationAction('retention', 'Your 50% discount is active for the next 3 months. Thanks for staying with us!', 'Unable to apply discount');
+  const pauseSubscription = () => cancellationAction('pause', 'Billing is paused for one cycle. Your credits never expire.', 'Unable to pause subscription');
+  const downgradeSubscription = () => cancellationAction('downgrade', 'You will move to Maker from your next billing date.', 'Unable to change plan');
+  const confirmCancellation = () => cancellationAction('cancel', 'Your subscription will remain active until the end of the current billing period.', 'Unable to cancel subscription');
 
   return (
     <main className="min-h-screen bg-[var(--color-ink)] px-4 py-10 text-white">
@@ -716,6 +727,18 @@ export default function AccountPage() {
               >
                 Pro annual · $490/yr
               </button>
+              {CREDIT_PLAN_OPTIONS.map((p) => (
+                <button
+                  key={p.kind}
+                  type="button"
+                  disabled={busy}
+                  data-testid={`account-buy-${p.kind}`}
+                  onClick={() => buyCredits(p.kind)}
+                  className="rounded-full border border-white/15 px-4 py-2 text-sm"
+                >
+                  {p.label}
+                </button>
+              ))}
             </div>
 
             <button
@@ -733,7 +756,7 @@ export default function AccountPage() {
               type="button"
               data-testid="account-cancel-subscription"
               disabled={busy}
-              onClick={() => { setCancellationReason(''); setCancellationOpen(true); }}
+              onClick={() => void openCancellation()}
               className="mt-3 inline-flex w-full items-center justify-center rounded-full border border-red-300/30 px-4 py-2.5 text-sm font-medium text-red-200 disabled:opacity-50"
             >
               Cancel subscription
@@ -763,15 +786,41 @@ export default function AccountPage() {
                     <option value="too_expensive">Too expensive</option>
                     <option value="not_using">I’m not using it enough</option>
                     <option value="missing_features">Missing features</option>
+                    <option value="quality">Output quality</option>
+                    <option value="technical_issues">Technical issues</option>
+                    <option value="found_alternative">Found an alternative</option>
+                    <option value="temporary">Only needed it for a project</option>
                     <option value="other">Other</option>
                   </select>
-                  <div className="mt-6 rounded-2xl border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 p-4 text-center">
-                    <p className="font-semibold">Stay with us at 50% off</p>
-                    <p className="mt-1 text-sm text-[var(--color-mute)]">We’ll apply half-price billing for your next 3 months.</p>
-                    <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void applyRetentionOffer()} className="mt-4 inline-flex w-full justify-center rounded-full bg-[var(--color-accent)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
-                      {cancellationBusy ? 'Applying…' : 'Accept 50% discount'}
-                    </button>
-                  </div>
+                  <textarea
+                    value={cancellationDetail}
+                    onChange={(event) => setCancellationDetail(event.target.value)}
+                    maxLength={1000}
+                    rows={3}
+                    placeholder="Anything else we should know? (optional)"
+                    className="mt-3 w-full rounded-xl border border-white/15 bg-black/30 px-3 py-2.5 text-sm text-white"
+                  />
+                  {cancelOptions?.coupon_available ? (
+                    <div className="mt-6 rounded-2xl border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 p-4 text-center">
+                      <p className="font-semibold">Stay with us at 50% off</p>
+                      <p className="mt-1 text-sm text-[var(--color-mute)]">We’ll apply half-price billing for your next 3 months. One-time offer.</p>
+                      <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void applyRetentionOffer()} className="mt-4 inline-flex w-full justify-center rounded-full bg-[var(--color-accent)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
+                        {cancellationBusy ? 'Applying…' : 'Accept 50% discount'}
+                      </button>
+                    </div>
+                  ) : null}
+                  {cancelOptions?.kind === 'credit_plan' ? (
+                    <div className="mt-6 space-y-3 rounded-2xl border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 p-4 text-center">
+                      <p className="font-semibold">Not the right time?</p>
+                      <p className="text-sm text-[var(--color-mute)]">Your credits never expire. Pause billing for a month or move to a smaller plan.</p>
+                      {cancelOptions.can_pause ? (
+                        <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void pauseSubscription()} className="inline-flex w-full justify-center rounded-full bg-[var(--color-accent)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50">Pause for 1 month</button>
+                      ) : null}
+                      {cancelOptions.can_downgrade ? (
+                        <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void downgradeSubscription()} className="inline-flex w-full justify-center rounded-full border border-white/20 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">Switch to Maker · $29/mo</button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="mt-4 flex gap-3">
                     <button type="button" disabled={cancellationBusy} onClick={() => setCancellationOpen(false)} className="flex-1 rounded-full border border-white/15 px-4 py-2.5 text-sm">Keep subscription</button>
                     <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void confirmCancellation()} className="flex-1 rounded-full border border-red-300/30 px-4 py-2.5 text-sm text-red-200 disabled:opacity-50">Continue cancelling</button>

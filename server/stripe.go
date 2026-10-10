@@ -71,15 +71,33 @@ type stripeWebhookEvent struct {
 }
 
 type stripeSubscription struct {
-	ID                string `json:"id"`
-	Customer          string `json:"customer"`
-	Status            string `json:"status"`
-	CurrentPeriodEnd  int64  `json:"current_period_end"`
-	CancelAtPeriodEnd bool   `json:"cancel_at_period_end"`
-	LatestInvoice     string `json:"latest_invoice"`
-	Items             struct {
+	ID                  string `json:"id"`
+	Customer            string `json:"customer"`
+	Status              string `json:"status"`
+	CurrentPeriodEnd    int64  `json:"current_period_end"`
+	CancelAtPeriodEnd   bool   `json:"cancel_at_period_end"`
+	CancelAt            int64  `json:"cancel_at"`
+	CanceledAt          int64  `json:"canceled_at"`
+	EndedAt             int64  `json:"ended_at"`
+	LatestInvoice       string `json:"latest_invoice"`
+	CancellationDetails *struct {
+		Reason   string `json:"reason"`
+		Feedback string `json:"feedback"`
+		Comment  string `json:"comment"`
+	} `json:"cancellation_details"`
+	Discount *struct {
+		Coupon struct {
+			ID string `json:"id"`
+		} `json:"coupon"`
+	} `json:"discount"`
+	PauseCollection *struct {
+		Behavior string `json:"behavior"`
+	} `json:"pause_collection"`
+	Items struct {
 		Data []struct {
-			Price struct {
+			ID               string `json:"id"`
+			CurrentPeriodEnd int64  `json:"current_period_end"`
+			Price            struct {
 				ID string `json:"id"`
 			} `json:"price"`
 		} `json:"data"`
@@ -87,29 +105,23 @@ type stripeSubscription struct {
 	Metadata map[string]string `json:"metadata"`
 }
 
-const retentionCouponID = "KJBkDvAB"
+func retentionCouponID() string { return getEnv("CHURN_COUPON_ID", "CHURN50_3M") }
 
 var errNoEligibleSubscription = errors.New("no eligible subscription found")
 
 func (s *stripeService) applyRetentionCoupon(customerID string) error {
-	var subscriptions struct {
-		Data []stripeSubscription `json:"data"`
+	sub, err := s.activeSubscription(customerID)
+	if err != nil {
+		return err
 	}
-	path := "/v1/subscriptions?" + url.Values{"customer": {customerID}, "status": {"all"}}.Encode()
-	if err := s.get(path, &subscriptions); err != nil {
-		return fmt.Errorf("list subscriptions: %w", err)
+	if _, ok := creditPlanByPriceID(sub.priceID()); ok {
+		return errCouponNotForPlan
 	}
-	for _, subscription := range subscriptions.Data {
-		if subscription.Status != "active" && subscription.Status != "trialing" && subscription.Status != "past_due" {
-			continue
-		}
-		vals := url.Values{"coupon": {retentionCouponID}}
-		if err := s.post("/v1/subscriptions/"+url.PathEscape(subscription.ID), vals, nil, &struct{}{}); err != nil {
-			return fmt.Errorf("apply retention coupon: %w", err)
-		}
-		return nil
+	vals := url.Values{"discounts[0][coupon]": {retentionCouponID()}}
+	if err := s.post("/v1/subscriptions/"+url.PathEscape(sub.ID), vals, nil, &struct{}{}); err != nil {
+		return fmt.Errorf("apply retention coupon: %w", err)
 	}
-	return errNoEligibleSubscription
+	return nil
 }
 
 func (s *stripeService) cancelSubscription(customerID string) error {
@@ -124,7 +136,7 @@ func (s *stripeService) cancelSubscription(customerID string) error {
 		if subscription.Status != "active" && subscription.Status != "trialing" {
 			continue
 		}
-		vals := url.Values{"cancel_at_period_end": {"true"}}
+		vals := url.Values{"cancel_at_period_end": {"true"}, "metadata[cancel_source]": {"app"}}
 		if err := s.post("/v1/subscriptions/"+url.PathEscape(subscription.ID), vals, nil, &struct{}{}); err != nil {
 			return fmt.Errorf("cancel subscription: %w", err)
 		}
@@ -139,6 +151,23 @@ type stripeInvoice struct {
 	Subscription  string `json:"subscription"`
 	BillingReason string `json:"billing_reason"`
 	AmountPaid    int64  `json:"amount_paid"`
+	Parent        *struct {
+		SubscriptionDetails *struct {
+			Subscription string `json:"subscription"`
+		} `json:"subscription_details"`
+	} `json:"parent"`
+	Lines struct {
+		Data []struct {
+			Price struct {
+				ID string `json:"id"`
+			} `json:"price"`
+			Pricing *struct {
+				PriceDetails *struct {
+					Price string `json:"price"`
+				} `json:"price_details"`
+			} `json:"pricing"`
+		} `json:"data"`
+	} `json:"lines"`
 }
 
 var (
@@ -416,6 +445,9 @@ func stripeProAnnualPriceID() string {
 }
 
 func stripePlanPriceID(plan string) (string, string) {
+	if spec, ok := creditPlanByName(plan); ok {
+		return spec.Plan, spec.priceID()
+	}
 	switch strings.ToLower(strings.TrimSpace(plan)) {
 	case "pro_monthly", "pro-monthly", "pro":
 		return "pro_monthly", stripeProMonthlyPriceID()
@@ -430,6 +462,9 @@ func stripePlanPriceID(plan string) (string, string) {
 
 func stripePlanFromPriceID(priceID string) string {
 	priceID = strings.TrimPrefix(strings.TrimSpace(priceID), "/")
+	if spec, ok := creditPlanByPriceID(priceID); ok {
+		return spec.Plan
+	}
 	switch priceID {
 	case stripeCreatorAnnualPriceID(), "price_1U23cXHS07k89Tt2xAwAPV8Y":
 		return "creator_annual"
@@ -533,27 +568,29 @@ func handleStripeRetentionCoupon(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, 405, "method not allowed")
 		return
 	}
-	_, customerID, err := stripeAuthenticatedCustomer(ctx)
-	if err != nil {
-		status := 401
-		if err.Error() == "no subscription found" {
-			status = 400
-		}
-		if err.Error() == "stripe payments not configured" {
-			status = 503
-		}
-		jsonError(ctx, status, err.Error())
+	user, ok := churnAuthUser(ctx)
+	if !ok {
 		return
 	}
-	if err := stripeSvc.applyRetentionCoupon(customerID); err != nil {
-		if errors.Is(err, errNoEligibleSubscription) {
+	reason, detail, ok := parseCancelRequest(ctx)
+	if !ok {
+		return
+	}
+	if err := offerRetentionCoupon(dbConn, stripeSvc, user); err != nil {
+		switch {
+		case errors.Is(err, errCouponAlreadyUsed):
+			jsonError(ctx, 409, "retention discount already used")
+		case errors.Is(err, errCouponNotForPlan):
+			jsonError(ctx, 403, "retention discount is not available for your plan")
+		case errors.Is(err, errNoEligibleSubscription):
 			jsonError(ctx, 400, "no active subscription found")
-			return
+		default:
+			log.Printf("stripe retention coupon error: %v", err)
+			jsonError(ctx, 502, "failed to apply discount")
 		}
-		log.Printf("stripe retention coupon error: %v", err)
-		jsonError(ctx, 502, "failed to apply discount")
 		return
 	}
+	recordSurvey(user, reason, detail, "retained_coupon")
 	jsonResponse(ctx, 200, map[string]interface{}{"success": true, "message": "50% discount applied for 3 months"})
 }
 
@@ -562,19 +599,15 @@ func handleStripeCancelSubscription(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, 405, "method not allowed")
 		return
 	}
-	_, customerID, err := stripeAuthenticatedCustomer(ctx)
-	if err != nil {
-		status := 401
-		if err.Error() == "no subscription found" {
-			status = 400
-		}
-		if err.Error() == "stripe payments not configured" {
-			status = 503
-		}
-		jsonError(ctx, status, err.Error())
+	user, ok := churnAuthUser(ctx)
+	if !ok {
 		return
 	}
-	if err := stripeSvc.cancelSubscription(customerID); err != nil {
+	reason, detail, ok := parseCancelRequest(ctx)
+	if !ok {
+		return
+	}
+	if err := stripeSvc.cancelSubscription(user.StripeCustomerID); err != nil {
 		if errors.Is(err, errNoEligibleSubscription) {
 			jsonError(ctx, 400, "no active subscription found")
 			return
@@ -583,6 +616,7 @@ func handleStripeCancelSubscription(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, 502, "failed to cancel subscription")
 		return
 	}
+	recordSurvey(user, reason, detail, "cancelled")
 	jsonResponse(ctx, 200, map[string]interface{}{"success": true, "message": "Subscription cancellation scheduled"})
 }
 
@@ -756,6 +790,7 @@ func handleStripeWebhook(ctx *fasthttp.RequestCtx) {
 		handleStripeInvoicePaid(evt.Data.Object)
 	case "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted":
 		handleStripeSubscriptionUpdated(evt.Data.Object)
+		handleStripeSubscriptionCancellation(evt.Type, evt.Data.Object)
 	default:
 		log.Printf("stripe webhook ignored: %s", evt.Type)
 	}
@@ -845,7 +880,9 @@ func handleStripeSubscriptionCheckoutCompleted(session stripeCheckoutSession, us
 		log.Printf("stripe subscription save error user=%s subscription=%s: %v", userID, subscriptionID, err)
 		return
 	}
-	grantSubscriptionAPICredits(session, userID, plan)
+	if !isCreditPlan(plan) {
+		grantSubscriptionAPICredits(session, userID, plan)
+	}
 	if session.PaymentStatus == "paid" {
 		awardReferralAfterPurchase(userID)
 	}
@@ -892,17 +929,7 @@ func handleStripeInvoicePaid(raw json.RawMessage) {
 		log.Printf("stripe webhook parse invoice: %v", err)
 		return
 	}
-	// Checkout completion grants the first allowance. Renewal invoices grant
-	// subsequent allowances, with the invoice ID providing idempotency.
-	if invoice.Subscription == "" || invoice.BillingReason == "subscription_create" {
-		return
-	}
-	user, err := dbConn.GetUserByStripeSubscription(invoice.Subscription, invoice.Customer)
-	if err != nil {
-		log.Printf("stripe invoice %s subscription user lookup failed: %v", invoice.ID, err)
-		return
-	}
-	creditSubscriptionAllowance(user.ID, invoice.Customer, "subscription-invoice:"+invoice.ID, "", subscriptionCreditGrantUSD(user.SubscriptionPlan))
+	processStripeInvoicePaid(dbConn, invoice)
 }
 
 func handleStripeSubscriptionUpdated(raw json.RawMessage) {
@@ -915,12 +942,9 @@ func handleStripeSubscriptionUpdated(raw json.RawMessage) {
 	if len(sub.Items.Data) > 0 {
 		priceID = sub.Items.Data[0].Price.ID
 	}
-	plan := ""
-	if sub.Metadata != nil {
+	plan := stripePlanFromPriceID(priceID)
+	if plan == "" && sub.Metadata != nil {
 		plan = sub.Metadata["plan"]
-	}
-	if plan == "" {
-		plan = stripePlanFromPriceID(priceID)
 	}
 	periodEnd := stripePeriodEnd(sub.CurrentPeriodEnd)
 	if err := dbConn.UpdateStripeSubscriptionBySubscriptionID(sub.ID, sub.Customer, priceID, sub.Status, plan, periodEnd); err != nil {
