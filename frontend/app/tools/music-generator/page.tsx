@@ -1,10 +1,21 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import MusicTool from './MusicTool';
 
 export const metadata = {
-  title: 'AI Song Generator — Manifold Music Generator — ManifoldGen',
-  description: 'Describe a song in plain English, expand it into a production-ready Manifold Music Generator arrangement, then generate the full record.',
+  title: 'AI Music Generator — Songs and Instrumentals — ManifoldGen',
+  description: 'Describe a song in plain English, create an arrangement and lyrics, then generate the full track with AI Music Generator.',
+  alternates: { canonical: '/tools/music-generator' },
 };
 
-export default function MusicGeneratorPage() {
+function MusicGeneratorPage() {
   return <MusicTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/music-generator')} />
+      <MusicGeneratorPage />
+    </>
+  );
 }

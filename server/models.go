@@ -158,18 +158,19 @@ type ServiceUsageRequest struct {
 	WalletAddress string `json:"wallet_address"`
 	Service       string `json:"service"` // defaults to zimage; other values: chronos2, tts, stt, gemma4, caption
 	// Common fields
-	Prompt               string `json:"prompt,omitempty"`
-	SettingPrompt        string `json:"setting_prompt,omitempty"`
-	CharacterBible       string `json:"character_bible,omitempty"`
-	ConsistentCharacters bool   `json:"consistent_characters,omitempty"`
-	ConsistencyPasses    int    `json:"consistency_passes,omitempty"`
-	Sketch               bool   `json:"sketch,omitempty"`
-	Lyrics               string `json:"lyrics,omitempty"`
-	Kind                 string `json:"kind,omitempty"`
-	ImageURL             string `json:"image_url,omitempty"`
-	Text                 string `json:"text,omitempty"`
-	Input                string `json:"input,omitempty"`
-	AudioURL             string `json:"audio_url,omitempty"`
+	Prompt               string   `json:"prompt,omitempty"`
+	SettingPrompt        string   `json:"setting_prompt,omitempty"`
+	CharacterBible       string   `json:"character_bible,omitempty"`
+	ConsistentCharacters bool     `json:"consistent_characters,omitempty"`
+	ConsistencyPasses    int      `json:"consistency_passes,omitempty"`
+	Sketch               bool     `json:"sketch,omitempty"`
+	Lyrics               string   `json:"lyrics,omitempty"`
+	Kind                 string   `json:"kind,omitempty"`
+	ImageURL             string   `json:"image_url,omitempty"`
+	TargetSizes          []string `json:"target_sizes,omitempty"`
+	Text                 string   `json:"text,omitempty"`
+	Input                string   `json:"input,omitempty"`
+	AudioURL             string   `json:"audio_url,omitempty"`
 	// video generation fields
 	VideoURL            string   `json:"video_url,omitempty"`
 	AnimationMode       string   `json:"animation_mode,omitempty"`

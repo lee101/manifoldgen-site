@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import AnimaTool from './AnimaTool';
 
 export const metadata = {
@@ -6,6 +7,15 @@ export const metadata = {
   alternates: { canonical: '/tool/anima' },
 };
 
-export default function AnimaPage() {
+function AnimaPage() {
   return <AnimaTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tool/anima')} />
+      <AnimaPage />
+    </>
+  );
 }

@@ -40,7 +40,7 @@ func h3ImageEstimate(req ServiceUsageRequest) (float64, float64) {
 		price = servicePricesUSD["h3_image_edit"]
 	}
 	if req.NumSteps >= 20 {
-		price += 0.15
+		price += 0.20
 	}
 	credits := 0.0
 	if cutePrice := getCUTEPriceUSD(); cutePrice > 0 {
@@ -282,6 +282,9 @@ func handleH3ImageService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		inputScore = math.Max(inputScore, score)
 	}
 	route := h3RouteForContent(req.Prompt, inputNSFW)
+	if estimatedUSD, _ := h3ImageEstimate(req); rejectCreditsBelowEstimate(ctx, user, estimatedUSD, meteredPreflightShare) {
+		return
+	}
 	if route.RunpodEndpointID == "" {
 		jsonError(ctx, http.StatusServiceUnavailable, "H3 image generation is temporarily unavailable")
 		return
@@ -306,13 +309,15 @@ func handleH3ImageService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 	scheduleH3ScaleToZero(route.RunpodEndpointID)
 	job, err := dbConn.CreateVideoJobForService(user.ID, "runpod:"+route.RunpodEndpointID+":"+queued.ID, req.Service, req.Prompt)
 	if err != nil {
-		_, _ = callH3Runpod(route.RunpodEndpointID, "/cancel/"+url.PathEscape(queued.ID), http.MethodPost, nil, nil)
+		runpodCancelBestEffort(route.RunpodEndpointID, queued.ID)
 		jsonError(ctx, http.StatusInternalServerError, "failed to create image job")
 		return
 	}
 	input["_h3_variant"] = route.Variant
 	stored, _ := json.Marshal(input)
 	if err := dbConn.UpdateVideoJob(job.ID, "queued", stored, ""); err != nil {
+		runpodCancelBestEffort(route.RunpodEndpointID, queued.ID)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "failed to persist image job")
 		jsonError(ctx, http.StatusInternalServerError, "failed to persist image job")
 		return
 	}

@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import StyleTransferTool from './StyleTransferTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/style-transfer' },
 };
 
-export default function StyleTransferPage() {
+function StyleTransferPage() {
   return <StyleTransferTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/style-transfer')} />
+      <StyleTransferPage />
+    </>
+  );
 }

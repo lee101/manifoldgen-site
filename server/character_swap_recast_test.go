@@ -22,11 +22,11 @@ func TestRecastPriceCoversFalAndLoraFallback(t *testing.T) {
 }
 
 func TestRecastChargeMinimumAndRounding(t *testing.T) {
-	if got := recastChargeUSD("768P", 2); math.Abs(got-3.10) > 1e-9 {
-		t.Fatalf("5 s minimum at 768P = %.2f, want 3.10", got)
+	if got := recastChargeUSD("768P", 2); math.Abs(got-3.30) > 1e-9 {
+		t.Fatalf("5 s minimum at 768P = %.2f, want 3.30", got)
 	}
-	if got := recastChargeUSD("1080P", 30); math.Abs(got-21.00) > 1e-9 {
-		t.Fatalf("30 s at 1080P = %.2f, want 21.00", got)
+	if got := recastChargeUSD("1080P", 30); math.Abs(got-22.50) > 1e-9 {
+		t.Fatalf("30 s at 1080P = %.2f, want 22.50", got)
 	}
 }
 

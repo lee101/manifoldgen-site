@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft, ArrowRight, Code2 } from 'lucide-react';
@@ -6,11 +7,11 @@ import CharacterSwapTool from '../character-swap/CharacterSwapTool';
 
 export const metadata: Metadata = {
   title: 'Character Swap LoRA — ManifoldGen',
-  description: 'Replace the people in any video with new characters using MiniMax H3 and a character-swap LoRA: the source scene, camera and motion are kept, original soundtrack on top.',
+  description: 'Replace the people in any video with new characters using MiniMax H3 and a character-swap LoRA: scene, camera and motion kept, original soundtrack on top.',
   alternates: { canonical: '/tools/character-swap-lora' },
 };
 
-export default function CharacterSwapLoraPage() {
+function CharacterSwapLoraPage() {
   return (
     <main className="min-h-screen bg-[var(--color-ink)] text-white">
       <GeneratorHeader section="Tools" />
@@ -26,5 +27,14 @@ export default function CharacterSwapLoraPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/character-swap-lora')} />
+      <CharacterSwapLoraPage />
+    </>
   );
 }

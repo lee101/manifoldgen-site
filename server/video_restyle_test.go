@@ -48,7 +48,7 @@ func TestH3ControlEstimateUsesMeasuredColdStartAndDuration(t *testing.T) {
 	req := ServiceUsageRequest{Model: "h3-control", Resolution: "480p", Duration: 3}
 	provider := restyleFalProviderCost(req)
 	charged, _ := restyleEstimate(req)
-	if math.Abs(provider-0.96) > 0.000001 || math.Abs(charged-1.16) > 0.000001 {
+	if math.Abs(provider-0.96) > 0.000001 || math.Abs(charged-1.64) > 0.000001 {
 		t.Fatalf("provider=%f charged=%f", provider, charged)
 	}
 }

@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft, ArrowRight, Code2 } from 'lucide-react';
@@ -6,11 +7,11 @@ import CharacterSwapTool from './CharacterSwapTool';
 
 export const metadata: Metadata = {
   title: 'Character Swap Music Video — ManifoldGen',
-  description: 'Swap the performers in any music video: GPT Image 2 redraws the first frame with your new characters, MiniMax H3 re-performs every shot with the same moves, and the original soundtrack is kept.',
+  description: 'Swap the performers in any music video: GPT Image 2 redraws the first frame, MiniMax H3 re-performs every shot, and the original soundtrack is kept.',
   alternates: { canonical: '/tools/character-swap' },
 };
 
-export default function CharacterSwapPage() {
+function CharacterSwapPage() {
   return (
     <main className="min-h-screen bg-[var(--color-ink)] text-white">
       <GeneratorHeader section="Tools" />
@@ -26,5 +27,14 @@ export default function CharacterSwapPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/character-swap')} />
+      <CharacterSwapPage />
+    </>
   );
 }

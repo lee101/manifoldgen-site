@@ -3,7 +3,7 @@
   "template": "wan-2.2-a14b-v2v",
   "workersMin": 0,
   "workersMax": 2,
-  "idleTimeout": 30,
+  "idleTimeout": 10,
   "flashboot": true,
   "scalerType": "QUEUE_DELAY",
   "scalerValue": 4,

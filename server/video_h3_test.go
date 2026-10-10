@@ -375,8 +375,8 @@ func TestH3DownstreamPricingHasMarginAndMinimum(t *testing.T) {
 	if got := h3DownstreamMicros(1); got != h3MinimumChargeMicros {
 		t.Fatalf("minimum charge = %d, want %d", got, h3MinimumChargeMicros)
 	}
-	if got := h3DownstreamMicros(1_000_000); got != 1_500_000 {
-		t.Fatalf("$1 provider charge = %d micros, want 1500000", got)
+	if got := h3DownstreamMicros(1_000_000); got != 1_950_000 {
+		t.Fatalf("$1 provider charge = %d micros, want 1950000", got)
 	}
 }
 
@@ -399,14 +399,14 @@ func TestH3VideoPricingTiersExposeResolutionAndDurationMatrix(t *testing.T) {
 			t.Fatalf("%s price matrix = %#v", tier.Size, tier.Prices)
 		}
 	}
-	if got := tiers[0].Prices[0].PriceUSD; got != 0.81 {
-		t.Fatalf("5s preview = %.2f, want 0.81", got)
+	if got := tiers[0].Prices[0].PriceUSD; got != 1.06 {
+		t.Fatalf("5s preview = %.2f, want 1.06", got)
 	}
-	if got := tiers[1].Prices[1].PriceUSD; got != 2.52 {
-		t.Fatalf("10s balanced = %.2f, want 2.52", got)
+	if got := tiers[1].Prices[1].PriceUSD; got != 3.28 {
+		t.Fatalf("10s balanced = %.2f, want 3.28", got)
 	}
-	if got := tiers[2].Prices[4].PriceUSD; got != 21.60 {
-		t.Fatalf("60s native = %.2f, want 21.60", got)
+	if got := tiers[2].Prices[4].PriceUSD; got != 28.08 {
+		t.Fatalf("60s native = %.2f, want 28.08", got)
 	}
 }
 

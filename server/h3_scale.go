@@ -144,7 +144,7 @@ func h3SetWorkersMax(endpointID string, workersMax int) error {
 		h3ControlBase()+"/endpoints/"+url.PathEscape(endpointID)+"/update",
 		map[string]interface{}{
 			"workersMin": 0, "workersMax": workersMax, "idleTimeout": h3EndpointIdleSeconds(endpointID),
-			"executionTimeoutMs": 4 * 60 * 60 * 1000, "flashboot": true,
+			"executionTimeoutMs": 2 * 60 * 60 * 1000, "flashboot": true,
 			"scalerType": "REQUEST_COUNT", "scalerValue": 1,
 		},
 		nil,
@@ -168,7 +168,7 @@ func submitScaledH3RunpodJob(route h3WorkerRoute, input map[string]interface{}, 
 	reasserted := false
 	var status int
 	for attempt := 0; attempt < 7; attempt++ {
-		status, err = callH3Runpod(route.RunpodEndpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, queued)
+		status, err = callH3Runpod(route.RunpodEndpointID, "/run", http.MethodPost, runpodRunBody(input, h3ExecutionBudget(input)), queued)
 		paused := status == http.StatusConflict && err != nil && strings.Contains(err.Error(), "ENDPOINT_PAUSED")
 		if !paused {
 			return status, err

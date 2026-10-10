@@ -1,11 +1,11 @@
 ---
 slug: video-restyle-character-animation-api
 title: Video-to-video restyle and character animation APIs with fixed pre-dispatch pricing
-description: ManifoldGen runs Wan 2.2 video restyle from $0.48 per default clip and character animation at $0.75 fixed for a five-second standard clip — priced before dispatch, settled on prepaid credits, delivered as durable files.
+description: ManifoldGen runs Wan 2.2 video restyle from $0.48 per default clip and character animation at $1.00 fixed for a five-second standard clip — priced before dispatch, settled on prepaid credits, delivered as durable files.
 read_when: A developer wants to restyle existing footage with AI (video-to-video) or animate characters from reference images through an API, and needs prices fixed before the job runs.
 ---
 
-ManifoldGen covers the post-generation video workflow: video-to-video restyle through Wan 2.2 controls from $0.48 per default clip, and character animation at $0.75 fixed for a five-second standard render. Both price before dispatch, run on the same keys and credits as everything else, and return durable files.
+ManifoldGen covers the post-generation video workflow: video-to-video restyle through Wan 2.2 controls from $0.48 per default clip, and character animation at $1.00 fixed for a five-second standard render. Both price before dispatch, run on the same keys and credits as everything else, and return durable files.
 
 ## Introduction
 
@@ -17,7 +17,7 @@ These are v2v and animation problems, and they have different economics than t2v
 
 *   **Wan 2.2 restyle:** Video-to-video with motion controls and ordered image/video/audio references; $0.48 estimated for a default clip.
 *   **Wan Animate modes:** `move` animates the reference image's world; `replace` preserves the driving-video scene while swapping its performer.
-*   **Fixed-price animation:** Character clips cost $0.75 for five seconds standard tier, locked before dispatch — fast costs 2x, xfast 4x, stated up front.
+*   **Fixed-price animation:** Character clips cost $1.00 for five seconds standard tier, locked before dispatch — fast costs 2x, xfast 4x, stated up front.
 *   **Failover routing:** Restyle jobs move to a standby queue on provider failure without changing the public job ID.
 *   **One pipeline:** Outputs feed directly into the platform's matting, music, and speech services.
 
@@ -38,7 +38,7 @@ For character motion, send `model: "wan-animate-2"` with `animation_mode:
 rejects obvious media-type swaps before dispatch and exposes the same setting in
 the web tool and MCP schema.
 
-Character animation generates five-second standard clips from reference imagery with quality tiers selected per request. Fixed pre-dispatch pricing makes budget math trivial: ten variations of a walk cycle cost $7.50 standard, knowable before submitting.
+Character animation generates five-second standard clips from reference imagery with quality tiers selected per request. Fixed pre-dispatch pricing makes budget math trivial: ten variations of a walk cycle cost $10.00 standard, knowable before submitting.
 
 Completed outputs land in the shared job store, chainable with background removal ($0.10/second) for compositing, music generation ($0.35/track) for scoring, and speech synthesis for dialogue — a complete finishing pipeline behind one key.
 
@@ -62,7 +62,7 @@ $0.48 estimated for a default clip, settled from measured generation time like o
 
 **Is character animation really fixed price?**
 
-Yes — $0.75 for a five-second standard clip regardless of actual GPU time consumed, with fast and xfast tiers at explicit 2x and 4x multipliers chosen at submission.
+Yes — $1.00 for a five-second standard clip regardless of actual GPU time consumed, with fast and xfast tiers at explicit 2x and 4x multipliers chosen at submission.
 
 **Can I keep characters consistent across multiple restyled shots?**
 

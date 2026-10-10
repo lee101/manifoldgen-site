@@ -13,7 +13,7 @@ their DBs) alerts once its accrued cost passes RUNPOD_COST_GUARD_POD_ALERT_USD
 ($10) and is stopped, not deleted, after two checks over
 RUNPOD_COST_GUARD_POD_STOP_USD ($25). Name a pod keep-* to make it alert-only.
 The account balance is checked each run; under RUNPOD_COST_GUARD_MIN_BALANCE_USD
-($20) it alerts, since serverless then returns 402 and volumes are at risk.
+($5) it alerts, since serverless then returns 402 and volumes are at risk.
 
 Daily spend caps come from the RunPod billing API (bucketSize=day, UTC). A
 ManifoldGen-owned endpoint over its cap, or any spending owned endpoint while
@@ -22,6 +22,12 @@ workersMax=0; the prior value is kept in state and restored once the day's
 spend is back under the cap. Endpoints that other services own are alert-only.
 Capped endpoint IDs are also written to a world-readable cap file so the site
 does not scale them back up on demand.
+
+Account alerts (deduplicated for six hours, never destructive): exhausted
+balance (HTTP 402 from any queue health call), balance below a floor or runway
+below twelve hours at the current burn, daily direct-Pod spend, non-scratch Pods
+older than six hours, network volumes attached to no endpoint, and monthly
+volume storage above a limit.
 """
 
 from __future__ import annotations
@@ -40,13 +46,13 @@ import urllib.request
 from typing import Any
 
 REST_BASE = "https://rest.runpod.io/v1"
+GRAPHQL_URL = "https://api.runpod.io/graphql"
 QUEUE_BASE = "https://api.runpod.ai/v2"
 DEFAULT_PREFIXES = ("cog-manifold-h3", "omniserve-minimax-music3", "omniserve-yue2-")
 ALERT_ONLY_PREFIXES = ("omniserve-ra2-", "omniserve-qwen-", "cog-qwen-image-", "pixal3d")
 IDLE_ALERT_ONLY_PREFIXES = ("omniserve-ra2-",)
 SCRATCH_PREFIXES = ("h3upscale-probe-", "ltx-bench-", "bench-", "probe-", "scratch-")
 KEEP_POD_PREFIX = "keep-"
-GRAPHQL_URL = "https://api.runpod.io/graphql"
 CUSTOMER_POD_QUERIES = (
     ("appnz", "select provider_id from cloud_instances where provider = 'runpod' and provider_id <> '' and terminated_at is null"),
     ("codex_infinity", "select external_server_id from instances where provider ilike '%runpod%' and coalesce(external_server_id, '') <> '' and stopped_at is null"),
@@ -63,6 +69,13 @@ DAILY_CAP_RULES = (
 GLOBAL_DAILY_CAP_ENV = "RUNPOD_COST_GUARD_GLOBAL_DAILY_USD"
 GLOBAL_DAILY_CAP_USD = 120.0
 SPEND_CAP_CHECKS = 2
+MIN_BALANCE_ENV, MIN_BALANCE_USD = "RUNPOD_COST_GUARD_MIN_BALANCE_USD", 5.0
+MIN_RUNWAY_HOURS_ENV, MIN_RUNWAY_HOURS = "RUNPOD_COST_GUARD_MIN_RUNWAY_HOURS", 12.0
+PODS_DAILY_ENV, PODS_DAILY_USD = "RUNPOD_COST_GUARD_PODS_DAILY_USD", 25.0
+POD_ALERT_HOURS_ENV, POD_ALERT_HOURS = "RUNPOD_COST_GUARD_POD_ALERT_HOURS", 6.0
+STORAGE_MONTHLY_ENV, STORAGE_MONTHLY_USD = "RUNPOD_COST_GUARD_STORAGE_MONTHLY_USD", 40.0
+STORAGE_USD_PER_GB_MONTH = 0.07
+ACCOUNT_ALERT_REPEAT_HOURS = 6.0
 
 
 def load_env(path: pathlib.Path) -> None:
@@ -106,21 +119,16 @@ def request_json(
 
 
 def account_balance(api_key: str) -> dict[str, Any]:
-    query = {"query": "{ myself { clientBalance currentSpendPerHr spendLimit underBalance } }"}
-    body = request_json(f"{GRAPHQL_URL}?api_key={urllib.parse.quote(api_key)}", api_key, "POST", query)
-    return (body.get("data") or {}).get("myself") or {}
-
-
-def balance_alerts(report: dict[str, Any], api_key: str) -> list[str]:
-    me = account_balance(api_key)
-    balance = float(me.get("clientBalance") or 0.0)
-    rate = float(me.get("currentSpendPerHr") or 0.0)
-    floor = env_usd("RUNPOD_COST_GUARD_MIN_BALANCE_USD", 20.0)
-    runway = round(balance / rate, 1) if rate > 0 and balance > 0 else None
-    report["balance"] = {"usd": round(balance, 2), "spend_per_hour": rate, "runway_hours": runway, "under_balance": bool(me.get("underBalance")), "floor_usd": floor}
-    if me.get("underBalance") or balance < floor:
-        return [f"RunPod balance ${balance:.2f} < ${floor:.2f} floor (spend ${rate:.3f}/h, runway {runway}h); top up: serverless returns 402 and network volumes are at risk"]
-    return []
+    body = request_json(
+        GRAPHQL_URL,
+        api_key,
+        "POST",
+        {"query": "query{myself{clientBalance currentSpendPerHr spendLimit underBalance}}"},
+    )
+    myself = ((body or {}).get("data") or {}).get("myself") if isinstance(body, dict) else None
+    if not isinstance(myself, dict):
+        raise RuntimeError("RunPod account query returned no data")
+    return myself
 
 
 def customer_pod_ids() -> set[str] | None:
@@ -134,10 +142,6 @@ def customer_pod_ids() -> set[str] | None:
             return None
         ids.update(line.strip() for line in out.stdout.splitlines() if line.strip())
     return ids
-
-
-def insufficient_balance(error: Exception) -> bool:
-    return " 402:" in str(error) or "insufficient balance" in str(error).lower()
 
 
 def managed_endpoint(name: str, prefixes: tuple[str, ...]) -> bool:
@@ -283,6 +287,73 @@ def fetch_daily_spend(api_key: str, now: dt.datetime) -> dict[str, float]:
     return daily_spend(normalize_list(rows), day)
 
 
+def is_balance_error(error: BaseException) -> bool:
+    text = str(error)
+    return "returned 402" in text or "insufficient balance" in text.lower()
+
+
+def fetch_account(api_key: str) -> dict[str, float | None]:
+    myself = account_balance(api_key)
+
+    def number(key: str) -> float | None:
+        try:
+            return float(myself[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    return {"balance_usd": number("clientBalance"), "spend_per_hour_usd": number("currentSpendPerHr")}
+
+
+def account_messages(account: dict[str, float | None]) -> list[str]:
+    messages: list[str] = []
+    balance = account.get("balance_usd")
+    burn = account.get("spend_per_hour_usd") or 0.0
+    floor = env_usd(MIN_BALANCE_ENV, MIN_BALANCE_USD)
+    if balance is not None and balance < floor:
+        messages.append(f"RunPod account balance ${balance:.2f} is below ${floor:.2f}; serverless jobs fail with 402 once it reaches zero")
+    elif balance is not None and burn > 0:
+        hours = balance / burn
+        if hours < env_usd(MIN_RUNWAY_HOURS_ENV, MIN_RUNWAY_HOURS):
+            messages.append(f"RunPod balance ${balance:.2f} lasts only {hours:.1f} hours at the current ${burn:.2f}/h burn")
+    return messages
+
+
+def fetch_daily_pod_spend(api_key: str, now: dt.datetime) -> float:
+    day = now.strftime("%Y-%m-%d")
+    query = urllib.parse.urlencode({"bucketSize": "day", "startTime": f"{day}T00:00:00Z", "endTime": (now + dt.timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")})
+    rows = normalize_list(request_json(f"{REST_BASE}/billing/pods?{query}", api_key))
+    return round(sum(float(row.get("amount") or 0) for row in rows if str(row.get("time") or "").startswith(day)), 4)
+
+
+def attached_volume_ids(endpoints: list[dict[str, Any]]) -> set[str]:
+    attached: set[str] = set()
+    for endpoint in endpoints:
+        single = str(endpoint.get("networkVolumeId") or "")
+        if single:
+            attached.add(single)
+        for value in endpoint.get("networkVolumeIds") or []:
+            if isinstance(value, dict):
+                value = value.get("networkVolumeId") or value.get("id")
+            if value:
+                attached.add(str(value))
+    return attached
+
+
+def volume_messages(volumes: list[dict[str, Any]], endpoints: list[dict[str, Any]]) -> tuple[list[str], float]:
+    attached = attached_volume_ids(endpoints)
+    monthly = round(sum(int(volume.get("size") or 0) for volume in volumes) * STORAGE_USD_PER_GB_MONTH, 2)
+    messages: list[str] = []
+    for volume in volumes:
+        if str(volume.get("id") or "") in attached:
+            continue
+        size = int(volume.get("size") or 0)
+        messages.append(f"network volume {volume.get('name')} ({volume.get('id')}, {size} GB, about ${size * STORAGE_USD_PER_GB_MONTH:.2f}/month) is attached to no endpoint; archive to R2 and delete if unused")
+    limit = env_usd(STORAGE_MONTHLY_ENV, STORAGE_MONTHLY_USD)
+    if monthly > limit:
+        messages.append(f"network volume storage is about ${monthly:.2f}/month, above ${limit:.2f}")
+    return messages, monthly
+
+
 def send_alert(status: str, detail: str) -> dict[str, Any]:
     alerts_dir = os.environ.get("RUNPOD_COST_GUARD_ALERTS_DIR", "/nvme0n1-disk/code/app-site/monitoring")
     try:
@@ -413,7 +484,7 @@ def restore_endpoint(api_key: str, state_path: pathlib.Path, cap_path: pathlib.P
     return {"restored": endpoint_id, "workersMax": prior}
 
 
-def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap_path: pathlib.Path | None = None) -> dict[str, Any]:
+def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap_path: pathlib.Path | None = None, now: dt.datetime | None = None) -> dict[str, Any]:
     prefixes = env_prefixes("RUNPOD_COST_GUARD_PREFIXES", DEFAULT_PREFIXES)
     alert_prefixes = env_prefixes("RUNPOD_COST_GUARD_ALERT_ONLY_PREFIXES", ALERT_ONLY_PREFIXES)
     idle_alert_prefixes = env_prefixes("RUNPOD_COST_GUARD_IDLE_ALERT_ONLY_PREFIXES", IDLE_ALERT_ONLY_PREFIXES)
@@ -422,8 +493,9 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
     old_counts = old.get("counts") if isinstance(old.get("counts"), dict) else {}
     old_pod_counts = old.get("pod_counts") if isinstance(old.get("pod_counts"), dict) else {}
     endpoints = normalize_list(request_json(f"{REST_BASE}/endpoints", api_key))
+    now = now or dt.datetime.now(dt.timezone.utc)
     report: dict[str, Any] = {
-        "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "checked_at": now.isoformat(),
         "mode": "apply" if apply else "dry-run",
         "threshold_checks": threshold,
         "status": "ok",
@@ -442,6 +514,10 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
         "pod_alerts": [],
         "actions": [],
         "errors": [],
+        "balance_depleted": False,
+        "account": {},
+        "storage_monthly_usd": 0.0,
+        "account_alerts": [],
     }
 
     for endpoint in endpoints:
@@ -457,10 +533,10 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
         try:
             health = queue_health(endpoint_id, api_key)
         except Exception as error:  # keep checking unrelated endpoints
-            if insufficient_balance(error):
-                report["insufficient_balance"] = True
-            else:
-                report["errors"].append({"endpoint": name, "error": str(error)})
+            if is_balance_error(error):
+                report["balance_depleted"] = True
+                break
+            report["errors"].append({"endpoint": name, "error": str(error)})
             continue
 
         try:
@@ -530,9 +606,9 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
 
     spend_messages: list[str] = []
     try:
-        spend_messages = spend_guard(report, endpoints, old, api_key, apply, dt.datetime.now(dt.timezone.utc), prefixes, alert_prefixes)
+        spend_messages = spend_guard(report, endpoints, old, api_key, apply, now, prefixes, alert_prefixes)
         if apply:
-            write_cap_file(cap_path, report["capped"], dt.datetime.now(dt.timezone.utc))
+            write_cap_file(cap_path, report["capped"], now)
     except Exception as error:
         report["errors"].append({"scope": "spend", "error": str(error)})
         report["spend_counts"] = old.get("spend_counts") if isinstance(old.get("spend_counts"), dict) else {}
@@ -544,7 +620,7 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
     # consecutive checks; normal Pods and Serverless workers are never deleted.
     try:
         pods = normalize_list(request_json(f"{REST_BASE}/pods", api_key))
-        now = dt.datetime.now(dt.timezone.utc)
+        pod_alert_hours = env_usd(POD_ALERT_HOURS_ENV, POD_ALERT_HOURS)
         max_scratch_hours = max(
             2.0, float(os.environ.get("RUNPOD_COST_GUARD_SCRATCH_MAX_HOURS", "3"))
         )
@@ -568,7 +644,7 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
                 report["pod_counts"][pod_id] = stale_count
             rate = float(pod.get("costPerHr") or 0.0)
             accrued = round(age_hours * rate, 2)
-            costly = running and not scratch and (age_hours >= 24 or accrued >= pod_alert_usd)
+            costly = running and not scratch and (age_hours >= pod_alert_hours or accrued >= pod_alert_usd)
             if costly and not customers_loaded:
                 customers, customers_loaded = customer_pod_ids(), True
             if costly and customers is not None and pod_id in customers:
@@ -640,8 +716,32 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
             size = int(volume.get("size") or 0)
             report["allocated_storage_gb"] += size
             report["network_volumes"].append({"id": volume.get("id"), "name": volume.get("name"), "size_gb": size, "data_center": volume.get("dataCenterId")})
+        volume_alerts, report["storage_monthly_usd"] = volume_messages(volumes, endpoints)
+        report["account_alerts"] += volume_alerts
     except Exception as error:
         report["errors"].append({"scope": "network_volumes", "error": str(error)})
+
+    if report["balance_depleted"]:
+        report["account_alerts"].append("RunPod account balance is exhausted (HTTP 402): every serverless job fails until credit is added")
+    try:
+        report["account"] = fetch_account(api_key)
+        report["account_alerts"] += account_messages(report["account"])
+    except Exception as error:
+        if is_balance_error(error):
+            report["balance_depleted"] = True
+        else:
+            report["errors"].append({"scope": "account", "error": str(error)})
+    try:
+        pods_usd = fetch_daily_pod_spend(api_key, now)
+        report.setdefault("spend", {})["pods_usd"] = pods_usd
+        pods_cap = env_usd(PODS_DAILY_ENV, PODS_DAILY_USD)
+        if pods_usd >= pods_cap:
+            report["account_alerts"].append(f"direct Pod spend today ${pods_usd:.2f} >= ${pods_cap:.2f}; list pods and terminate leftovers")
+    except Exception as error:
+        if not is_balance_error(error):
+            report["errors"].append({"scope": "pod_spend", "error": str(error)})
+    for pod_alert in report["pod_alerts"]:
+        report["account_alerts"].append(f"pod {pod_alert.get('name')} ({pod_alert.get('id')}): {pod_alert.get('status')}")
 
     if report["errors"]:
         report["status"] = "error"
@@ -654,17 +754,31 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
         spend_messages += archive_guard(report, endpoints, api_key, apply)
     except Exception as error:
         report["errors"].append({"scope": "archive", "error": str(error)})
-    balance_messages: list[str] = []
-    try:
-        balance_messages = balance_alerts(report, api_key)
-    except Exception as error:
-        report["errors"].append({"scope": "balance", "error": str(error)})
-    if report.get("insufficient_balance") and not balance_messages:
-        balance_messages = ["RunPod queue health returned 402 insufficient balance; top up the account"]
-    pod_messages = [f"pod {item.get('name')} ({item.get('id')}): {item['status']}" for item in report["pod_alerts"]]
-    pod_messages += [f"pod {item['pod']} ({item['stop']}): {item['reason']}; " + ("stopped" if item["applied"] else item.get("skipped", "dry-run")) for item in report["actions"] if "stop" in item]
-    alert_status = "low_balance" if balance_messages else "spend_cap" if spend_messages else "pod_cost" if pod_messages else "idle_worker"
-    spend_messages = balance_messages + spend_messages + pod_messages + report["idle_alerts"]
+    alert_status = "spend_cap" if spend_messages else "idle_worker"
+    spend_messages += report["idle_alerts"]
+    for item in report["actions"]:
+        if "stop" in item:
+            report["account_alerts"].append(f"pod {item['pod']} ({item['stop']}): {item['reason']}; " + ("stopped" if item["applied"] else item.get("skipped", "dry-run")))
+    account_alerts = report["account_alerts"]
+    if account_alerts:
+        digest = "\n".join(account_alerts)
+        last_at = old.get("account_alert_at")
+        repeat = old.get("account_alert_digest") != digest
+        if not repeat and isinstance(last_at, str):
+            try:
+                repeat = (now - dt.datetime.fromisoformat(last_at)).total_seconds() >= ACCOUNT_ALERT_REPEAT_HOURS * 3600
+            except ValueError:
+                repeat = True
+        if repeat:
+            if apply:
+                report["account_alert_delivery"] = send_alert("account_balance" if report["balance_depleted"] or any("balance" in item for item in account_alerts) else "account_cost", digest)
+            report["account_alert_digest"] = digest
+            report["account_alert_at"] = now.isoformat()
+        else:
+            report["account_alert_digest"] = old.get("account_alert_digest")
+            report["account_alert_at"] = old.get("account_alert_at")
+        if report["status"] == "ok":
+            report["status"] = "warning"
     if spend_messages:
         report["alerts"] = spend_messages
         if report["status"] == "ok":

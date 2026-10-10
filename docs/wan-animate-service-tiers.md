@@ -6,9 +6,9 @@ jobs:
 
 | Service class | Multiplier | Public price / output second | Five-second price | Preferred compute | Drain delay |
 | --- | ---: | ---: | ---: | --- | ---: |
-| Standard | 1x | $0.15 | $0.75 | Ada 48 GB; warm MI300X cost pool | 30 s |
-| Fast | 2x | $0.30 | $1.50 | H100; B200 capacity fallback | 15 s |
-| XFast | 4x | $0.60 | $3.00 | B300 target; B200 serverless fallback | 10 s |
+| Standard | 1x | $0.20 | $1.00 | Ada 48 GB; warm MI300X cost pool | 30 s |
+| Fast | 2x | $0.40 | $2.00 | H100; B200 capacity fallback | 15 s |
+| XFast | 4x | $0.80 | $4.00 | B300 target; B200 serverless fallback | 10 s |
 
 RunPod does not currently expose full B300 through the private Serverless GPU
 pools (the management API exposes `BLACKWELL_180` for B200, but not a 288 GB

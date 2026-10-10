@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft, Check } from 'lucide-react';
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tool/animate-video' },
 };
 
-export default function AnimateVideoToolPage() {
+function AnimateVideoToolPage() {
   return <main className="min-h-screen bg-[var(--color-ink)] text-white">
     <GeneratorHeader section="Tools" />
     <div className="mx-auto max-w-7xl px-5 py-10 md:py-14">
@@ -23,4 +24,13 @@ export default function AnimateVideoToolPage() {
       <section className="mt-10 rounded-3xl border border-white/10 bg-white/[.025] p-6"><h2 className="font-display text-xl font-700">Built for the Studio workflow</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-white/45">Start here and open the result directly in a new Studio project, or right-click a video already on the Studio timeline and choose Animation Transfer. The same durable job, credit settlement, and result library power both paths.</p></section>
     </div>
   </main>;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tool/animate-video')} />
+      <AnimateVideoToolPage />
+    </>
+  );
 }

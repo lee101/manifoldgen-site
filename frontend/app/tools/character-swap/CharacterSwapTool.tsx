@@ -58,7 +58,7 @@ const DEFAULT_VIDEO_PROMPT = 'Image 1 is the exact target look: Elon Musk in a b
 const DEFAULT_LORA_PROMPT = "Replace every person in <Video 1> with the corresponding character in <Picture 1>, matching left to right: the man on the left becomes Elon Musk in a black blazer, the man on the right becomes a white-and-black Tesla Optimus humanoid robot. Keep each replacement character's identity, outfit, and look from <Picture 1>. Preserve the source video's camera, background, lighting, and objects. Match each person's position, scale, pose, and movement. Do not show the reference image or its background.";
 const FRAME_PRICE_USD = 0.24;
 const LORA_FRAME_PRICE_USD = 0.04;
-const LORA_RATES: Record<Tier, number> = { standard: 0.14, fast: 0.09 };
+const LORA_RATES: Record<Tier, number> = { standard: 0.15, fast: 0.13 };
 const LORA_RES_MULTIPLIER: Record<string, number> = { '480p': 1, '768p': 4 };
 
 export function sleep(ms: number): Promise<void> {

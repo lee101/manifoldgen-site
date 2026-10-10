@@ -64,7 +64,7 @@ func TestH3ImageEstimateUsesConfiguredServiceFloor(t *testing.T) {
 	if price, _ := h3ImageEstimate(ServiceUsageRequest{Service: "h3_image", NumSteps: 12}); price != 0.30 {
 		t.Fatalf("text-to-image estimate = %v", price)
 	}
-	if price, _ := h3ImageEstimate(ServiceUsageRequest{Service: "h3_image_edit", NumSteps: 20}); price != 0.50 {
+	if price, _ := h3ImageEstimate(ServiceUsageRequest{Service: "h3_image_edit", NumSteps: 20}); price != 0.55 {
 		t.Fatalf("quality edit estimate = %v", price)
 	}
 }

@@ -8,13 +8,13 @@ from unittest.mock import patch
 
 import runpod_cost_guard as guard
 
-TODAY = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d 00:00:00")
+TODAY = "2026-09-23 00:00:00"
 HEALTHY = {"clientBalance": 500.0, "currentSpendPerHr": 0.02, "underBalance": False}
 _patches = []
 
 
 def setUpModule():
-    _patches.extend([patch.object(guard, "account_balance", return_value=HEALTHY), patch.object(guard, "customer_pod_ids", return_value=set())])
+    _patches.extend([patch.object(guard, "customer_pod_ids", return_value=set())])
     for item in _patches:
         item.start()
 
@@ -22,6 +22,8 @@ def setUpModule():
 def tearDownModule():
     for item in _patches:
         item.stop()
+
+GRAPHQL_OK = {"data": {"myself": {"clientBalance": 500.0, "currentSpendPerHr": 0.02}}}
 
 
 class RunPodCostGuardTest(unittest.TestCase):
@@ -64,10 +66,12 @@ class RunPodCostInventoryTest(unittest.TestCase):
 
     def test_non_scratch_pods_and_storage_are_visible_but_not_deleted(self):
         def request(url, key, method="GET", payload=None, **kwargs):
+            if url == guard.GRAPHQL_URL:
+                return GRAPHQL_OK
             self.assertEqual(method, "GET")
             if url.endswith("/endpoints"):
                 return []
-            if "/billing/endpoints" in url:
+            if "/billing/" in url:
                 return []
             if url.endswith("/pods"):
                 return [{"id": "failed-cog", "name": "cog-pixal3d-example", "desiredStatus": "RUNNING", "costPerHr": .34, "createdAt": "2020-01-01T00:00:00Z"}]
@@ -91,7 +95,7 @@ class RunPodCostInventoryTest(unittest.TestCase):
                 return [{"id": "h3", "name": "cog-manifold-h3-normal", "workersMax": 1}] if health_error else []
             if url.endswith("/health"):
                 raise RuntimeError(health_error)
-            if "/billing/endpoints" in url or url.endswith("/networkvolumes"):
+            if "/billing/" in url or url.endswith("/networkvolumes"):
                 return []
             if url.endswith("/pods"):
                 return pods
@@ -113,7 +117,7 @@ class RunPodCostInventoryTest(unittest.TestCase):
         report, calls, alerts = self.pod_runs([pod], checks=1)
         self.assertNotIn(("POST", f"{guard.REST_BASE}/pods/h100/stop"), calls)
         self.assertEqual(report["pod_alerts"][0]["id"], "h100")
-        self.assertEqual(alerts[0][0], "pod_cost")
+        self.assertEqual(alerts[0][0], "account_cost")
         report, calls, alerts = self.pod_runs([pod], checks=2)
         self.assertIn(("POST", f"{guard.REST_BASE}/pods/h100/stop"), calls)
         self.assertEqual(report["status"], "remediated")
@@ -146,8 +150,8 @@ class RunPodCostInventoryTest(unittest.TestCase):
         report, _, alerts = self.pod_runs([], checks=1, balance=broke, health_error="RunPod GET x returned 402: insufficient balance")
         self.assertEqual(report["status"], "warning")
         self.assertEqual(report["errors"], [])
-        self.assertEqual(alerts[0][0], "low_balance")
-        self.assertIn("top up", alerts[0][1])
+        self.assertEqual(alerts[0][0], "account_balance")
+        self.assertIn("exhausted", alerts[0][1])
 
 
 class SpendCapTest(unittest.TestCase):
@@ -185,6 +189,8 @@ class SpendCapTest(unittest.TestCase):
         state = {}
 
         def request(url, key, method="GET", payload=None, **kwargs):
+            if url == guard.GRAPHQL_URL:
+                return GRAPHQL_OK
             if method == "PATCH":
                 patches.append((url.rsplit("/", 1)[-1], payload))
                 for endpoint in self.ENDPOINTS:
@@ -193,6 +199,8 @@ class SpendCapTest(unittest.TestCase):
                 return {}
             if url.endswith("/endpoints"):
                 return [dict(endpoint) for endpoint in self.ENDPOINTS]
+            if "/billing/pods" in url:
+                return []
             if "/billing/endpoints" in url:
                 self.assertIn("bucketSize=day", url)
                 return [{"endpointId": eid, "amount": amount, "time": TODAY} for eid, amount in state["spend"].items()]
@@ -211,7 +219,7 @@ class SpendCapTest(unittest.TestCase):
             state_path = pathlib.Path(work) / "state.json"
             for spend in spends:
                 state["spend"] = spend
-                reports.append(guard.run("key", state_path, 6, True))
+                reports.append(guard.run("key", state_path, 6, True, now=self.NOW))
             cap_file = guard.json.loads((pathlib.Path(work) / "spend-caps.json").read_text())
             mode = (pathlib.Path(work) / "spend-caps.json").stat().st_mode & 0o777
         return reports, patches, alerts, cap_file, mode
@@ -219,6 +227,9 @@ class SpendCapTest(unittest.TestCase):
     def setUp(self):
         for endpoint, value in zip(self.ENDPOINTS, (2, 1, 2, 3)):
             endpoint["workersMax"] = value
+        account = patch.object(guard, "account_balance", return_value=HEALTHY)
+        account.start()
+        self.addCleanup(account.stop)
 
     def test_endpoint_cap_requires_two_checks_then_restores(self):
         reports, patches, alerts, cap_file, mode = self.run_checks(
@@ -251,6 +262,8 @@ class SpendCapTest(unittest.TestCase):
         calls = []
 
         def request(url, key, method="GET", payload=None, **kwargs):
+            if url == guard.GRAPHQL_URL:
+                return GRAPHQL_OK
             calls.append(method)
             if url.endswith("/endpoints"):
                 return [dict(self.ENDPOINTS[0])]
@@ -262,8 +275,8 @@ class SpendCapTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as work, patch.object(guard, "request_json", side_effect=request), patch.object(guard, "send_alert") as alert:
             state_path = pathlib.Path(work) / "state.json"
-            guard.run("key", state_path, 6, False)
-            report = guard.run("key", state_path, 6, False)
+            guard.run("key", state_path, 6, False, now=self.NOW)
+            report = guard.run("key", state_path, 6, False, now=self.NOW)
             self.assertFalse((pathlib.Path(work) / "spend-caps.json").exists())
         self.assertNotIn("PATCH", calls)
         self.assertEqual(report["capped"], {})
@@ -278,6 +291,8 @@ class SpendCapTest(unittest.TestCase):
         patches = []
 
         def request(url, key, method="GET", payload=None, **kwargs):
+            if url == guard.GRAPHQL_URL:
+                return GRAPHQL_OK
             if method == "PATCH":
                 patches.append((url.rsplit("/", 1)[-1], payload))
                 return {}
@@ -311,6 +326,8 @@ class SpendCapTest(unittest.TestCase):
         health = {"jobs": {"inProgress": 0, "inQueue": 0}, "workers": {"idle": 1, "ready": 1}}
 
         def request(url, key, method="GET", payload=None, **kwargs):
+            if url == guard.GRAPHQL_URL:
+                return GRAPHQL_OK
             if url.endswith("/endpoints"):
                 return endpoints
             if "/billing/endpoints" in url:
@@ -353,6 +370,8 @@ class SpendCapTest(unittest.TestCase):
         patches = []
 
         def request(url, key, method="GET", payload=None, **kwargs):
+            if url == guard.GRAPHQL_URL:
+                return GRAPHQL_OK
             if method == "PATCH":
                 patches.append((url.rsplit("/", 1)[-1], payload))
                 return {}
@@ -379,6 +398,111 @@ class SpendCapTest(unittest.TestCase):
             self.assertEqual(result["workersMax"], 2)
             patched.assert_called_once_with("m3", "key", {"workersMax": 2})
             self.assertEqual(guard.read_state(state_path)["capped"], {})
+
+
+class AccountGuardTest(unittest.TestCase):
+    NOW = dt.datetime(2026, 10, 8, 12, tzinfo=dt.timezone.utc)
+
+    def run_guard(self, account, *, health_error=None, pods=None, volumes=None, endpoints=None, pod_spend=0.0, env=None, old_state=None):
+        alerts = []
+        endpoints = endpoints if endpoints is not None else [{"id": "h3", "name": "cog-manifold-h3-normal", "workersMax": 0, "workersMin": 0}]
+
+        def request(url, key, method="GET", payload=None, **kwargs):
+            if url == guard.GRAPHQL_URL:
+                if isinstance(account, Exception):
+                    raise account
+                return {"data": {"myself": account}}
+            if url.endswith("/endpoints"):
+                return endpoints
+            if "/billing/pods" in url:
+                return [{"podId": "p", "amount": pod_spend, "time": "2026-10-08 00:00:00"}]
+            if "/billing/endpoints" in url:
+                return []
+            if url.endswith("/health"):
+                if health_error:
+                    raise RuntimeError(health_error)
+                return {"jobs": {"inProgress": 0, "inQueue": 0}, "workers": {}}
+            if url.endswith("/pods"):
+                return pods or []
+            if url.endswith("/networkvolumes"):
+                return volumes or []
+            raise AssertionError(url)
+
+        with tempfile.TemporaryDirectory() as work, \
+                patch.object(guard, "request_json", side_effect=request), \
+                patch.object(guard, "send_alert", side_effect=lambda status, detail: alerts.append((status, detail)) or {}), \
+                patch.dict(guard.os.environ, env or {}):
+            state_path = pathlib.Path(work) / "state.json"
+            if old_state:
+                guard.write_state(state_path, old_state)
+            report = guard.run("key", state_path, 6, True, now=self.NOW)
+        return report, alerts
+
+    def test_402_is_a_single_balance_alert_not_endpoint_errors(self):
+        endpoints = [{"id": "a", "name": "cog-manifold-h3-normal", "workersMax": 0}, {"id": "b", "name": "cog-manifold-h3-swap", "workersMax": 0}]
+        report, alerts = self.run_guard({"clientBalance": -0.27, "currentSpendPerHr": 0.02}, health_error='RunPod GET x/health returned 402: {"title":"Insufficient Balance"}', endpoints=endpoints)
+        self.assertEqual(report["errors"], [])
+        self.assertTrue(report["balance_depleted"])
+        self.assertEqual(report["status"], "warning")
+        self.assertEqual(alerts[0][0], "account_balance")
+        self.assertIn("exhausted", alerts[0][1])
+        self.assertIn("below $5.00", alerts[0][1])
+
+    def test_low_balance_and_short_runway_alert(self):
+        report, alerts = self.run_guard({"clientBalance": 3.0, "currentSpendPerHr": 0.5})
+        self.assertEqual(report["account"]["balance_usd"], 3.0)
+        self.assertTrue(any("below $5.00" in item for item in report["account_alerts"]))
+        report, _ = self.run_guard({"clientBalance": 30.0, "currentSpendPerHr": 5.0})
+        self.assertTrue(any("lasts only 6.0 hours" in item for item in report["account_alerts"]))
+        report, alerts = self.run_guard({"clientBalance": 200.0, "currentSpendPerHr": 0.02})
+        self.assertEqual(report["account_alerts"], [])
+        self.assertEqual(alerts, [])
+        self.assertEqual(report["status"], "ok")
+
+    def test_account_alert_is_not_resent_until_it_changes_or_six_hours_pass(self):
+        account = {"clientBalance": 4.0, "currentSpendPerHr": 0.0}
+        first, alerts = self.run_guard(account)
+        self.assertEqual(len(alerts), 1)
+        state = {key: first[key] for key in ("account_alert_digest", "account_alert_at")}
+        _, alerts = self.run_guard(account, old_state=state)
+        self.assertEqual(alerts, [])
+        stale = dict(state, account_alert_at=(self.NOW - dt.timedelta(hours=7)).isoformat())
+        _, alerts = self.run_guard(account, old_state=stale)
+        self.assertEqual(len(alerts), 1)
+
+    def test_other_account_query_failures_are_errors(self):
+        report, _ = self.run_guard(RuntimeError("graphql down"))
+        self.assertEqual(report["status"], "error")
+        self.assertEqual(report["errors"][0]["scope"], "account")
+
+    def test_direct_pod_spend_and_long_running_pods_alert(self):
+        pods = [{"id": "p1", "name": "mystery", "desiredStatus": "RUNNING", "costPerHr": 3.5, "createdAt": (self.NOW - dt.timedelta(hours=7)).strftime("%Y-%m-%dT%H:%M:%SZ")}]
+        report, alerts = self.run_guard({"clientBalance": 500.0, "currentSpendPerHr": 3.5}, pods=pods, pod_spend=60.19)
+        self.assertEqual(report["spend"]["pods_usd"], 60.19)
+        joined = "\n".join(report["account_alerts"])
+        self.assertIn("direct Pod spend today $60.19", joined)
+        self.assertIn("pod mystery (p1)", joined)
+        self.assertEqual(report["actions"], [])
+        young = [dict(pods[0], createdAt=(self.NOW - dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))]
+        report, _ = self.run_guard({"clientBalance": 500.0, "currentSpendPerHr": 3.5}, pods=young, pod_spend=1.0)
+        self.assertEqual(report["pod_alerts"], [])
+
+    def test_unattached_and_expensive_volumes_alert(self):
+        volumes = [
+            {"id": "used", "name": "models", "size": 150, "dataCenterId": "EU-NL-1"},
+            {"id": "orphan", "name": "old-cache", "size": 100, "dataCenterId": "US-CA-2"},
+        ]
+        endpoints = [{"id": "h3", "name": "cog-manifold-h3-normal", "workersMax": 0, "networkVolumeId": "used"}]
+        report, _ = self.run_guard({"clientBalance": 500.0, "currentSpendPerHr": 0.02}, volumes=volumes, endpoints=endpoints)
+        self.assertEqual(report["storage_monthly_usd"], 17.5)
+        self.assertEqual(len([item for item in report["account_alerts"] if "attached to no endpoint" in item]), 1)
+        self.assertIn("old-cache", "\n".join(report["account_alerts"]))
+        report, _ = self.run_guard({"clientBalance": 500.0, "currentSpendPerHr": 0.02}, volumes=volumes, endpoints=endpoints, env={"RUNPOD_COST_GUARD_STORAGE_MONTHLY_USD": "10"})
+        self.assertTrue(any("above $10.00" in item for item in report["account_alerts"]))
+
+    def test_attached_volume_ids_accepts_both_endpoint_shapes(self):
+        endpoints = [{"networkVolumeId": "a"}, {"networkVolumeIds": ["b", {"networkVolumeId": "c"}]}, {}]
+        self.assertEqual(guard.attached_volume_ids(endpoints), {"a", "b", "c"})
 
 
 if __name__ == "__main__":

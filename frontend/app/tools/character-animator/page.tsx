@@ -197,7 +197,7 @@ export default function CharacterAnimatorPage() {
         <button data-testid="character-animate-run" className={styles.run} type="button" disabled={busy || !character || !driving || !prompt.trim()} onClick={() => void animate()}>
           {busy ? <LoaderCircle className={styles.spin} size={19} /> : <Play size={18} fill="currentColor" />}{busy ? status : 'Animate character'}
         </button>
-        <div className={styles.price}><span>10-step distilled · {serviceTier} lane</span><span>${(Math.max(duration, 5) * .15 * (serviceTier === 'fast' ? 2 : serviceTier === 'xfast' ? 4 : 1)).toFixed(2)} fixed price · 5s minimum</span></div>
+        <div className={styles.price}><span>10-step distilled · {serviceTier} lane</span><span>${(Math.max(duration, 5) * .20 * (serviceTier === 'fast' ? 2 : serviceTier === 'xfast' ? 4 : 1)).toFixed(2)} fixed price · 5s minimum</span></div>
         {phase === 'error' && <div className={styles.error}>{status}</div>}
       </div>
       <div className={styles.previewPanel}>

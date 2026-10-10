@@ -14,7 +14,7 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-const characterAnimationStandardUSDPerSecond = 0.15
+const characterAnimationStandardUSDPerSecond = 0.20
 
 type characterAnimationStoredRequest struct {
 	Input        ServiceUsageRequest `json:"input"`
@@ -236,7 +236,7 @@ func submitCharacterAnimationRunpod(endpointID, tier string, input map[string]in
 	}
 	var status int
 	for attempt := 0; attempt < 7; attempt++ {
-		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, queued)
+		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, runpodRunBody(input, 90*time.Minute), queued)
 		if status != http.StatusConflict || err == nil || !strings.Contains(err.Error(), "ENDPOINT_PAUSED") {
 			return status, err
 		}

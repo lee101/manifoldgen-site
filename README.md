@@ -100,8 +100,8 @@ certificate from `mkcert`.
 
 ## Pricing
 
-H3 settles from app.nz `costMicros` with `h3DownstreamMarkupPercent = 50`,
-giving a 33% gross margin before fixed costs. The minimum video charge is $0.10.
+H3 settles from measured RunPod execution seconds with `h3DownstreamMarkupPercent = 95`,
+giving a 49% gross margin before cold-start and idle overhead. The minimum video charge is $0.10.
 The customer-facing estimate uses a measured 5-second native baseline and scales
 with output duration, steps, and size; the final job response reports actual cost.
 

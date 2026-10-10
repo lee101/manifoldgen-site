@@ -159,7 +159,7 @@ describe('character swap page registrations', () => {
     const docs = read('app/api/page.tsx');
     expect(docs).toContain('LoRA lane:');
     expect(docs).toContain('"kind":"lora"');
-    expect(docs).toContain('$0.14 per source second at 480p');
+    expect(docs).toContain('$0.15 per source second at 480p');
   });
 
   test('api docs describe the exact motion lane', () => {
@@ -183,7 +183,7 @@ describe('character recast tool', () => {
 
   test('caps people at four and shows the per-second rates', () => {
     expect(recast).toContain('const MAX_PEOPLE = 4');
-    expect(recast).toContain("{ '768P': 0.62, '1080P': 0.70 }");
+    expect(recast).toContain("{ '768P': 0.66, '1080P': 0.75 }");
   });
 
   test('page, catalog, footer and sitemaps register the route', () => {
@@ -203,6 +203,6 @@ describe('character recast tool', () => {
 
   test('server prices match the page rates', () => {
     const server = readRoot('server/character_swap_recast.go');
-    expect(server).toContain('{"768P": 0.62, "1080P": 0.70}');
+    expect(server).toContain('{"768P": 0.66, "1080P": 0.75}');
   });
 });

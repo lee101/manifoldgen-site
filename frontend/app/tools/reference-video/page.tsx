@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft, ArrowRight, Code2 } from 'lucide-react';
@@ -6,11 +7,11 @@ import ReferenceVideoTool from './ReferenceVideoTool';
 
 export const metadata: Metadata = {
   title: 'Reference Video Studio — ManifoldGen',
-  description: 'Direct a video from reference images, a motion reference video and a soundtrack: Seedance 2.0 follows the choreography, cuts and camera of your video, up to 60 seconds.',
+  description: 'Direct a video from reference images, a motion video and a soundtrack: Seedance 2.0 follows your choreography, cuts and camera, up to 60 seconds.',
   alternates: { canonical: '/tools/reference-video' },
 };
 
-export default function ReferenceVideoPage() {
+function ReferenceVideoPage() {
   return (
     <main className="min-h-screen bg-[var(--color-ink)] text-white">
       <GeneratorHeader section="Tools" />
@@ -26,5 +27,14 @@ export default function ReferenceVideoPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/reference-video')} />
+      <ReferenceVideoPage />
+    </>
   );
 }

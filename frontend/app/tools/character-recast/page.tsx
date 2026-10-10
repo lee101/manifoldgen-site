@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft, ArrowRight, Code2 } from 'lucide-react';
@@ -6,11 +7,11 @@ import CharacterRecastTool from './CharacterRecastTool';
 
 export const metadata: Metadata = {
   title: 'Character Recast — ManifoldGen',
-  description: 'Replace the people in a video with new people from reference photos using H3 Max: motion, camera, cuts and soundtrack are kept, up to four people and 30 seconds.',
+  description: 'Replace the people in a video with new people from reference photos using H3 Max: motion, camera, cuts and soundtrack kept, up to four people, 30 seconds.',
   alternates: { canonical: '/tools/character-recast' },
 };
 
-export default function CharacterRecastPage() {
+function CharacterRecastPage() {
   return (
     <main className="min-h-screen bg-[var(--color-ink)] text-white">
       <GeneratorHeader section="Tools" />
@@ -26,5 +27,14 @@ export default function CharacterRecastPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/character-recast')} />
+      <CharacterRecastPage />
+    </>
   );
 }

@@ -203,6 +203,9 @@ func indexImagePrompt(img *GeneratedImage) {
 	if img == nil || img.Prompt == "" {
 		return
 	}
+	if img.IsNSFW == nil && (img.Model == "smart-resize" || img.Model == "birefnet") {
+		return
+	}
 	if img.IsNSFW != nil && *img.IsNSFW {
 		promptSearchNSFW.IndexIncremental(img.ID, img.Prompt)
 		return

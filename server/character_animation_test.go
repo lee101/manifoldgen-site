@@ -37,13 +37,13 @@ func TestCharacterAnimationEstimateScalesWithDuration(t *testing.T) {
 	one, _ := characterAnimationEstimate(ServiceUsageRequest{Duration: 1})
 	five, _ := characterAnimationEstimate(ServiceUsageRequest{Duration: 5})
 	eight, _ := characterAnimationEstimate(ServiceUsageRequest{Duration: 8})
-	if math.Abs(one-0.75) > 1e-9 || math.Abs(five-0.75) > 1e-9 || math.Abs(eight-1.20) > 1e-9 {
+	if math.Abs(one-1.00) > 1e-9 || math.Abs(five-1.00) > 1e-9 || math.Abs(eight-1.60) > 1e-9 {
 		t.Fatalf("unexpected estimates: %f %f %f", one, five, eight)
 	}
 }
 
 func TestCharacterAnimationServiceTiers(t *testing.T) {
-	for tier, want := range map[string]float64{"standard": 0.75, "fast": 1.50, "xfast": 3.00} {
+	for tier, want := range map[string]float64{"standard": 1.00, "fast": 2.00, "xfast": 4.00} {
 		got, _ := characterAnimationEstimate(ServiceUsageRequest{Duration: 5, ServiceTier: tier})
 		if math.Abs(got-want) > 1e-9 {
 			t.Fatalf("%s estimate = %.2f, want %.2f", tier, got, want)

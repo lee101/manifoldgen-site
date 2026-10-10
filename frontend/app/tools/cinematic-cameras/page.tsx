@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import CinematicCamerasTool from './CinematicCamerasTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/cinematic-cameras' },
 };
 
-export default function CinematicCamerasPage() {
+function CinematicCamerasPage() {
   return <CinematicCamerasTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/cinematic-cameras')} />
+      <CinematicCamerasPage />
+    </>
+  );
 }

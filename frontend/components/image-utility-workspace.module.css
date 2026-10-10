@@ -1,0 +1,4 @@
+.customInput { padding: 11px; border: 1px solid #40395c; border-radius: 8px; background: #0d0d16; color: #f6f3ff; font: inherit; }
+.customInput:focus { outline: 2px solid #c5a7ff; outline-offset: 2px; }
+.run { margin-top: 18px; }
+.status { margin-top: 10px; color: #9c9bad; font-size: 12px; }
