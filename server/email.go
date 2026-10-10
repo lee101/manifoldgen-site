@@ -11,6 +11,7 @@ import (
 	"net/smtp"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,6 +66,8 @@ func initEmail() {
 	go dripSchedulerLoop()
 	// Start credits-expired checker (check every hour)
 	go creditsExpiredLoop()
+	// Start low-balance checker (default alert under $5)
+	go lowBalanceLoop()
 }
 
 func unsubscribeURL(email string) string {
@@ -323,6 +326,71 @@ func processCreditsExpired() {
 			log.Printf("Credits expired: send error for %s: %v", user.Email, err)
 		} else {
 			log.Printf("Sent credits expired email to %s", user.Email)
+		}
+	}
+}
+
+// creditsPerUSD is the credit-to-dollar rate (default 100 credits = $1).
+func creditsPerUSD() float64 { return 1.0 / getCUTEPriceUSD() }
+
+// lowBalanceThresholdCredits is the balance under which users are emailed.
+// Default $5; override with LOW_BALANCE_ALERT_USD (<=0 disables).
+func lowBalanceThresholdCredits() float64 {
+	usd := 5.0
+	if v := strings.TrimSpace(os.Getenv("LOW_BALANCE_ALERT_USD")); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			usd = parsed
+		}
+	}
+	return usd * creditsPerUSD()
+}
+
+// renderLowBalanceEmail fills the low-balance template for a user.
+func renderLowBalanceEmail(tpl string, user *User, thresholdCredits float64) string {
+	html := personalizeTemplate(tpl, user)
+	return strings.NewReplacer(
+		"{{.BalanceUSD}}", fmt.Sprintf("%.2f", user.Credits/creditsPerUSD()),
+		"{{.ThresholdUSD}}", fmt.Sprintf("%.2f", thresholdCredits/creditsPerUSD()),
+	).Replace(html)
+}
+
+func lowBalanceLoop() {
+	time.Sleep(3 * time.Minute)
+	for {
+		processLowBalance()
+		time.Sleep(10 * time.Minute)
+	}
+}
+
+func processLowBalance() {
+	threshold := lowBalanceThresholdCredits()
+	if threshold <= 0 {
+		return
+	}
+	if err := dbConn.ResetLowBalanceAlerts(threshold); err != nil {
+		log.Printf("Low balance: reset error: %v", err)
+	}
+	users, err := dbConn.ClaimLowBalanceUsers(threshold)
+	if err != nil {
+		log.Printf("Low balance: error claiming users: %v", err)
+		return
+	}
+	tpl, err := loadEmailTemplate("low-balance.html")
+	if err != nil {
+		log.Printf("Low balance: template error: %v", err)
+		for _, u := range users {
+			_ = dbConn.ClearLowBalanceAlert(u.ID)
+		}
+		return
+	}
+	for _, user := range users {
+		user := user
+		subject := fmt.Sprintf("Your ManifoldGen balance is under $%.0f — top up to keep creating", threshold/creditsPerUSD())
+		if err := sendEmail(user.Email, subject, renderLowBalanceEmail(tpl, &user, threshold)); err != nil {
+			log.Printf("Low balance: send error for %s: %v", user.Email, err)
+			_ = dbConn.ClearLowBalanceAlert(user.ID)
+		} else {
+			log.Printf("Sent low balance email to %s (%.0f credits)", user.Email, user.Credits)
 		}
 	}
 }

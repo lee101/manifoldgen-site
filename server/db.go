@@ -257,6 +257,7 @@ func (db *DB) migrate() error {
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS unlimited_api BOOLEAN DEFAULT FALSE;
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT DEFAULT '';
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS unsubscribed BOOLEAN NOT NULL DEFAULT FALSE;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS low_balance_alerted_at TIMESTAMPTZ;
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS allow_nsfw BOOLEAN NOT NULL DEFAULT FALSE;
 
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT DEFAULT '';
@@ -1797,6 +1798,51 @@ func (db *DB) ListLowCreditUsers() ([]User, error) {
 		users = append(users, u)
 	}
 	return users, nil
+}
+
+// ClaimLowBalanceUsers atomically marks and returns depositing, subscribed users
+// whose balance is positive but under thresholdCredits and who have not been
+// alerted since their last refill. Zero balances are handled by the credits-expired email.
+func (db *DB) ClaimLowBalanceUsers(thresholdCredits float64) ([]User, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	rows, err := db.conn.Query(
+		`UPDATE users SET low_balance_alerted_at = NOW()
+		 WHERE email != '' AND NOT unsubscribed AND total_deposited > 0
+		   AND credits > 0 AND credits < $1 AND low_balance_alerted_at IS NULL
+		 RETURNING `+userSelectColumns, thresholdCredits,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := scanUser(rows, &u); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+// ResetLowBalanceAlerts re-arms the alert for users who topped back up to the threshold.
+func (db *DB) ResetLowBalanceAlerts(thresholdCredits float64) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.conn.Exec(`UPDATE users SET low_balance_alerted_at = NULL WHERE low_balance_alerted_at IS NOT NULL AND credits >= $1`, thresholdCredits)
+	return err
+}
+
+// ClearLowBalanceAlert un-marks a user whose alert email failed to send so it retries.
+func (db *DB) ClearLowBalanceAlert(userID string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.conn.Exec(`UPDATE users SET low_balance_alerted_at = NULL WHERE id = $1`, userID)
+	return err
 }
 
 // InsertGeneratedImage stores a generated image record

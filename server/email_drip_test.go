@@ -52,7 +52,7 @@ func TestDripConfigAndTemplatesPresent(t *testing.T) {
 		}
 	}
 
-	for _, extra := range []string{"credits-expired.html", "password-reset.html"} {
+	for _, extra := range []string{"credits-expired.html", "low-balance.html", "password-reset.html"} {
 		body, err := os.ReadFile(filepath.Join(root, extra))
 		if err != nil {
 			t.Fatalf("missing %s: %v", extra, err)
@@ -113,5 +113,35 @@ func TestSESFromDefaults(t *testing.T) {
 	os.Unsetenv("SES_FROM_NAME")
 	if got := getEnv("SES_FROM_EMAIL", "lee.penkman@netwrck.com"); got != "lee.penkman@netwrck.com" {
 		t.Fatalf("default from email = %s", got)
+	}
+}
+
+func TestLowBalanceThresholdDefaultsToFiveDollars(t *testing.T) {
+	t.Setenv("LOW_BALANCE_ALERT_USD", "")
+	t.Setenv("CREDIT_PRICE_USD", "")
+	if got := lowBalanceThresholdCredits(); got < 499.9 || got > 500.1 {
+		t.Fatalf("default threshold = %v credits, want 500 ($5)", got)
+	}
+	t.Setenv("LOW_BALANCE_ALERT_USD", "0")
+	if got := lowBalanceThresholdCredits(); got != 0 {
+		t.Fatalf("disabled threshold = %v, want 0", got)
+	}
+}
+
+func TestRenderLowBalanceEmail(t *testing.T) {
+	t.Setenv("CREDIT_PRICE_USD", "")
+	body, err := loadEmailTemplate("low-balance.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "{{.UnsubscribeURL}}") {
+		t.Fatal("low-balance.html missing unsubscribe placeholder")
+	}
+	out := renderLowBalanceEmail(body, &User{Email: "a@b.com", Credits: 312}, 500)
+	if strings.Contains(out, "{{.") {
+		t.Fatalf("unrendered placeholder in output")
+	}
+	if !strings.Contains(out, "$3.12") || !strings.Contains(out, "$5.00") {
+		t.Fatalf("expected balance $3.12 and threshold $5.00 in email")
 	}
 }

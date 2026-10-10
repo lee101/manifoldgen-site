@@ -361,7 +361,10 @@ def send_alert(status: str, detail: str) -> dict[str, Any]:
             sys.path.insert(0, alerts_dir)
         from alerts import record_alert  # type: ignore
 
-        return record_alert("manifoldgen-runpod-cost-guard", status, detail, "runpod_cost_guard", email_detail=detail)
+        try:
+            return record_alert("manifoldgen-runpod-cost-guard", status, detail, "runpod_cost_guard", email_detail=detail)
+        except TypeError:  # older alerts.py without email_detail
+            return record_alert("manifoldgen-runpod-cost-guard", status, detail, "runpod_cost_guard")
     except Exception as error:  # alerting must never break the guard
         print(f"ALERT {status}: {detail} (alert delivery failed: {error})", file=sys.stderr)
         return {"emailed": False, "error": str(error)}
