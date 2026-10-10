@@ -8,6 +8,21 @@ from unittest.mock import patch
 
 import runpod_cost_guard as guard
 
+TODAY = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d 00:00:00")
+HEALTHY = {"clientBalance": 500.0, "currentSpendPerHr": 0.02, "underBalance": False}
+_patches = []
+
+
+def setUpModule():
+    _patches.extend([patch.object(guard, "account_balance", return_value=HEALTHY), patch.object(guard, "customer_pod_ids", return_value=set())])
+    for item in _patches:
+        item.start()
+
+
+def tearDownModule():
+    for item in _patches:
+        item.stop()
+
 
 class RunPodCostGuardTest(unittest.TestCase):
     def test_only_expected_endpoint_prefixes_are_managed(self) -> None:
@@ -67,6 +82,73 @@ class RunPodCostInventoryTest(unittest.TestCase):
         self.assertEqual(report["actions"], [])
         self.assertEqual(report["status"], "warning")
 
+    def pod_runs(self, pods, checks=2, customers=frozenset(), apply=True, balance=HEALTHY, health_error=None):
+        calls = []
+
+        def request(url, key, method="GET", payload=None, **kwargs):
+            calls.append((method, url))
+            if url.endswith("/endpoints"):
+                return [{"id": "h3", "name": "cog-manifold-h3-normal", "workersMax": 1}] if health_error else []
+            if url.endswith("/health"):
+                raise RuntimeError(health_error)
+            if "/billing/endpoints" in url or url.endswith("/networkvolumes"):
+                return []
+            if url.endswith("/pods"):
+                return pods
+            if url.endswith("/stop"):
+                return {}
+            raise AssertionError(url)
+        alerts = []
+        with tempfile.TemporaryDirectory() as work, patch.object(guard, "request_json", side_effect=request), \
+                patch.object(guard, "customer_pod_ids", return_value=None if customers is None else set(customers)), \
+                patch.object(guard, "account_balance", return_value=balance), \
+                patch.object(guard, "send_alert", side_effect=lambda status, detail: alerts.append((status, detail)) or {}):
+            for _ in range(checks):
+                report = guard.run("key", pathlib.Path(work) / "state.json", 2, apply)
+        return report, calls, alerts
+
+    def test_costly_pod_alerts_early_then_stops_after_two_checks(self):
+        created = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=14)).isoformat()
+        pod = {"id": "h100", "name": "mystery", "desiredStatus": "RUNNING", "costPerHr": 3.49, "createdAt": created}
+        report, calls, alerts = self.pod_runs([pod], checks=1)
+        self.assertNotIn(("POST", f"{guard.REST_BASE}/pods/h100/stop"), calls)
+        self.assertEqual(report["pod_alerts"][0]["id"], "h100")
+        self.assertEqual(alerts[0][0], "pod_cost")
+        report, calls, alerts = self.pod_runs([pod], checks=2)
+        self.assertIn(("POST", f"{guard.REST_BASE}/pods/h100/stop"), calls)
+        self.assertEqual(report["status"], "remediated")
+        self.assertTrue(any("stopped" in detail for _, detail in alerts))
+
+    def test_customer_pods_are_never_stopped_or_alerted(self):
+        created = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=30)).isoformat()
+        pod = {"id": "cust", "name": "my-label", "desiredStatus": "RUNNING", "costPerHr": 3.49, "createdAt": created}
+        report, calls, alerts = self.pod_runs([pod], checks=3, customers={"cust"})
+        self.assertFalse(any(url.endswith("/stop") for _, url in calls))
+        self.assertEqual(report["pod_alerts"], [])
+        self.assertEqual(report["customer_pods"][0]["id"], "cust")
+
+    def test_keep_prefixed_pods_alert_but_never_stop(self):
+        created = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=30)).isoformat()
+        pod = {"id": "k", "name": "keep-training", "desiredStatus": "RUNNING", "costPerHr": 3.49, "createdAt": created}
+        report, calls, _ = self.pod_runs([pod], checks=3)
+        self.assertFalse(any(url.endswith("/stop") for _, url in calls))
+        self.assertEqual(report["pod_alerts"][0]["id"], "k")
+
+    def test_unknown_customers_make_stop_alert_only(self):
+        created = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=30)).isoformat()
+        pod = {"id": "x", "name": "x", "desiredStatus": "RUNNING", "costPerHr": 3.49, "createdAt": created}
+        report, calls, _ = self.pod_runs([pod], checks=2, customers=None)
+        self.assertFalse(any(url.endswith("/stop") for _, url in calls))
+        self.assertIn("lookup failed", report["actions"][0]["skipped"])
+
+    def test_low_balance_and_402_alert_without_error_exit(self):
+        broke = {"clientBalance": -0.27, "currentSpendPerHr": 0.024, "underBalance": True}
+        report, _, alerts = self.pod_runs([], checks=1, balance=broke, health_error="RunPod GET x returned 402: insufficient balance")
+        self.assertEqual(report["status"], "warning")
+        self.assertEqual(report["errors"], [])
+        self.assertEqual(alerts[0][0], "low_balance")
+        self.assertIn("top up", alerts[0][1])
+
 
 class SpendCapTest(unittest.TestCase):
     NOW = dt.datetime(2026, 9, 23, 12, tzinfo=dt.timezone.utc)
@@ -81,6 +163,8 @@ class SpendCapTest(unittest.TestCase):
         self.assertEqual(guard.daily_cap_usd("omniserve-minimax-music3-xfast"), 40.0)
         self.assertEqual(guard.daily_cap_usd("omniserve-yue2-quality"), 15.0)
         self.assertEqual(guard.daily_cap_usd("pixal3d"), 15.0)
+        self.assertEqual(guard.daily_cap_usd("omniserve-qwen-mt-overflow"), 15.0)
+        self.assertTrue(guard.managed_endpoint("omniserve-qwen-mt-overflow", guard.ALERT_ONLY_PREFIXES))
         self.assertIsNone(guard.daily_cap_usd("customer-model"))
         self.assertTrue(guard.managed_endpoint("omniserve-yue2-quality", guard.DEFAULT_PREFIXES))
         self.assertFalse(guard.managed_endpoint("omniserve-ra2-overflow", guard.DEFAULT_PREFIXES))
@@ -111,7 +195,7 @@ class SpendCapTest(unittest.TestCase):
                 return [dict(endpoint) for endpoint in self.ENDPOINTS]
             if "/billing/endpoints" in url:
                 self.assertIn("bucketSize=day", url)
-                return [{"endpointId": eid, "amount": amount, "time": "2026-09-23 00:00:00"} for eid, amount in state["spend"].items()]
+                return [{"endpointId": eid, "amount": amount, "time": TODAY} for eid, amount in state["spend"].items()]
             if url.endswith("/health"):
                 return {"jobs": {"inProgress": 0, "inQueue": 0}, "workers": {}}
             if url.endswith("/pods") or url.endswith("/networkvolumes"):
@@ -171,7 +255,7 @@ class SpendCapTest(unittest.TestCase):
             if url.endswith("/endpoints"):
                 return [dict(self.ENDPOINTS[0])]
             if "/billing/endpoints" in url:
-                return [{"endpointId": "m3", "amount": 100, "time": "2026-09-23 00:00:00"}]
+                return [{"endpointId": "m3", "amount": 100, "time": TODAY}]
             if url.endswith("/health"):
                 return {"jobs": {"inProgress": 0, "inQueue": 0}, "workers": {}}
             return []

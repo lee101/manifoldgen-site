@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -90,5 +93,51 @@ func TestH3AdultLanePrefersLtxOverPinkCherry(t *testing.T) {
 	t.Setenv("H3_LTX_RUNPOD_MAX_WORKERS", "3")
 	if got := h3DesiredWorkersMax(h3WorkerRoute{Variant: h3LtxVariant}); got != 3 {
 		t.Fatalf("ltx workers max = %d", got)
+	}
+}
+
+func TestH3EndpointIdleSecondsOnlyForPinkCherry(t *testing.T) {
+	t.Setenv("H3_PINKCHERRY_RUNPOD_ENDPOINT", "pink")
+	t.Setenv("H3_PINKCHERRY_RUNPOD_IDLE_SECONDS", "60")
+	if got := h3EndpointIdleSeconds("pink"); got != 60 {
+		t.Fatalf("pink idle = %d", got)
+	}
+	if got := h3EndpointIdleSeconds("normal"); got != 5 {
+		t.Fatalf("normal idle = %d", got)
+	}
+	t.Setenv("H3_PINKCHERRY_RUNPOD_IDLE_SECONDS", "9999")
+	if got := h3EndpointIdleSeconds("pink"); got != 5 {
+		t.Fatalf("out of range idle = %d", got)
+	}
+	t.Setenv("H3_PINKCHERRY_RUNPOD_IDLE_SECONDS", "")
+	if got := h3EndpointIdleSeconds("pink"); got != 5 {
+		t.Fatalf("default idle = %d", got)
+	}
+}
+
+func TestH3RunpodJobsBusyUsesJobStatus(t *testing.T) {
+	statuses := map[string]string{"/ep/status/a": "COMPLETED", "/ep/status/b": "IN_PROGRESS", "/ep/status/c": "FAILED"}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status, ok := statuses[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{"status":%q}`, status)
+	}))
+	defer upstream.Close()
+	t.Setenv("H3_RUNPOD_BASE_URL", upstream.URL)
+	t.Setenv("H3_RUNPOD_API_KEY", "test")
+	if h3RunpodJobsBusy("ep", []string{"runpod:ep:a", "runpod:ep:c"}) {
+		t.Fatal("finished jobs reported busy")
+	}
+	if !h3RunpodJobsBusy("ep", []string{"runpod:ep:a", "runpod:ep:b"}) {
+		t.Fatal("in-progress job not reported busy")
+	}
+	if !h3RunpodJobsBusy("ep", []string{"runpod:ep:missing"}) {
+		t.Fatal("status lookup failure must keep workers")
+	}
+	if h3RunpodJobsBusy("ep", nil) {
+		t.Fatal("no tracked jobs reported busy")
 	}
 }

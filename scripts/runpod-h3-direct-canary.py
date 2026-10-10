@@ -73,6 +73,7 @@ def request_json(url: str, api_key: str, payload: dict | None = None, *, method:
     data = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request(url, data=data, method=method)
     request.add_header("Authorization", f"Bearer {api_key}")
+    request.add_header("User-Agent", "curl/8.10 ManifoldGen-H3-canary")
     if data is not None:
         request.add_header("Content-Type", "application/json")
     with urllib.request.urlopen(request, timeout=60) as response:
@@ -91,6 +92,8 @@ def main() -> int:
     parser.add_argument("--duration", type=float, default=5)
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--structured-prompt", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--first-frame", default="")
+    parser.add_argument("--last-frame", default="")
     parser.add_argument("--output-path", type=Path)
     parser.add_argument("--summary-path", type=Path)
     parser.add_argument("--leave-active", action="store_true")
@@ -119,6 +122,9 @@ def main() -> int:
             "_output_public_url": public_url,
         }
     }
+    for key in ("first_frame", "last_frame"):
+        if getattr(args, key):
+            payload["input"][key] = getattr(args, key)
     base = f"https://api.runpod.ai/v2/{args.endpoint}"
     control_url = f"https://rest.runpod.io/v1/endpoints/{args.endpoint}"
     previous_max = int(request_json(control_url, runpod_key).get("workersMax") or 0)
@@ -172,8 +178,10 @@ def main() -> int:
         "metrics": {key: metrics.get(key) for key in (
             "total_seconds", "generation_seconds", "face_refine_seconds", "encode_seconds",
             "output_upload_seconds", "output_transport", "output_bytes", "frames", "width", "height",
-            "attention_backend", "face_refine",
+            "attention_backend", "face_refine", "steps", "worker_cold_start", "worker_boot_prewarm",
+            "worker_boot_init_seconds", "worker_ready_wait_seconds", "worker_job_seconds",
         )},
+        "worker_id": state.get("workerId"),
         "error": state.get("error"),
     }
     summary_json = json.dumps(summary, indent=2, sort_keys=True) + "\n"
