@@ -304,3 +304,28 @@ func TestProxyOmniserveSendsHQAndStepOverrides(t *testing.T) {
 		t.Fatalf("payload = %v", got)
 	}
 }
+
+func TestUnlimitedPlanCoversTurboOnly(t *testing.T) {
+	turbo := ServiceUsageRequest{Service: "zimage", N: 2}
+	if isPremiumZImage(turbo) {
+		t.Fatal("turbo must not be premium")
+	}
+	for _, req := range []ServiceUsageRequest{
+		{Service: "zimage", Quality: "hq", N: 2},
+		{Service: "zimage", NumSteps: 20, N: 2},
+		{Service: "zimage", NumSteps: 40, N: 2},
+	} {
+		if !isPremiumZImage(req) {
+			t.Fatalf("%+v must be premium", req)
+		}
+		full := getRequestServicePriceCUTE(req)
+		got := zimageUnlimitedPremiumCUTE(req, full)
+		if got <= 0 || got >= full {
+			t.Fatalf("%+v: unlimited premium charge %v must be in (0, %v)", req, got, full)
+		}
+		wantUSD := (zimageUnitPriceUSD(req, servicePricesUSD["zimage"]) - servicePricesUSD["zimage"]) * 2
+		if gotUSD := got * getCUTEPriceATH(); math.Abs(gotUSD-wantUSD) > 1e-6 {
+			t.Fatalf("%+v: charged $%v, want delta $%v", req, gotUSD, wantUSD)
+		}
+	}
+}

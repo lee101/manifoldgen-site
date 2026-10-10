@@ -302,6 +302,20 @@ func zimageUnitPriceUSD(req ServiceUsageRequest, base float64) float64 {
 	return math.Max(zimagePriceHQ(base), zimageHighStepPriceUSD)
 }
 
+// zimageUnlimitedPremiumCUTE returns what an unlimited-plan subscriber owes for
+// a premium zimage request: the full price minus the turbo-equivalent price
+// the plan already includes.
+func zimageUnlimitedPremiumCUTE(req ServiceUsageRequest, full float64) float64 {
+	turbo := req
+	turbo.Quality = ""
+	turbo.NumSteps = 0
+	delta := full - getRequestServicePriceCUTE(turbo)
+	if delta < 0 {
+		return 0
+	}
+	return delta
+}
+
 func getImageCount(req ServiceUsageRequest) int {
 	n := req.N
 	if n <= 0 {
@@ -698,7 +712,14 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	billableCost := cuteCost
 	// Subscriptions include unlimited image generation only. Video and every
 	// other service continue to consume the subscriber's rollover credits.
-	unlimitedImage := user.UnlimitedAPI && req.Service == "zimage"
+	// The unlimited plan covers turbo renders only. Premium renders (HQ or
+	// steps >= the HQ threshold) cost ~2x GPU, so unlimited subscribers pay
+	// the premium over the turbo price they already have included.
+	unlimitedImage := user.UnlimitedAPI && req.Service == "zimage" && !isPremiumZImage(req)
+	if user.UnlimitedAPI && req.Service == "zimage" && !unlimitedImage {
+		cuteCost = zimageUnlimitedPremiumCUTE(req, cuteCost)
+		billableCost = cuteCost
+	}
 	if unlimitedImage {
 		billableCost = 0
 	} else {
