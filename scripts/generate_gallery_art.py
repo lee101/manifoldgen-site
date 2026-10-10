@@ -302,6 +302,18 @@ def publish_image(item: RenderedImage, conn: object, client: object | None, buck
     item.timings['publish'] = time.monotonic() - started
 
 
+def moderate_and_publish(item: RenderedImage, moderation: tuple | None, conn: object, client: object | None,
+                         bucket: str, prefix: str) -> None:
+    if moderation is not None:
+        endpoint, threshold, secret_env, unload_after, moderate_full, total = moderation
+        started = time.monotonic()
+        moderation_input = item.destination if moderate_full or item.thumb_destination is None else item.thumb_destination
+        item.is_nsfw, score = moderate_image(endpoint, moderation_input, threshold, secret_env, unload_after=unload_after)
+        item.timings['moderate'] = time.monotonic() - started
+        print(f'[{item.number}/{total}] nsfw_score={score:.4f} flagged={item.is_nsfw}', flush=True)
+    publish_image(item, conn, client, bucket, prefix)
+
+
 def claim_prompt(conn: object, prompt: str) -> bool:
     with conn.cursor() as cur:
         cur.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (prompt,))
@@ -488,18 +500,14 @@ def main() -> None:
                 thumb_destination = args.images_dir / thumb_relpath
                 save_thumbnail(image, thumb_destination, args.thumb_size, args.thumb_quality)
             timings['encode'] = time.monotonic() - started
-            is_nsfw = None
-            if args.moderate_before_index:
-                started = time.monotonic()
-                moderation_input = destination if args.moderate_full or thumb_destination is None else thumb_destination
-                is_nsfw, score = moderate_image(args.moderation_endpoint or args.endpoint, moderation_input, args.nsfw_threshold,
-                                                args.moderation_secret_env, unload_after=args.moderation_unload)
-                timings['moderate'] = time.monotonic() - started
-                print(f'[{number}/{len(pending)}] nsfw_score={score:.4f} flagged={is_nsfw}', flush=True)
             item = RenderedImage(number, prompt, image_id, relpath, thumb_relpath, destination, thumb_destination,
-                                 image.width, image.height, destination.stat().st_size, seed, is_nsfw, timings)
+                                 image.width, image.height, destination.stat().st_size, seed, None, timings)
+            moderation = None
+            if args.moderate_before_index:
+                moderation = (args.moderation_endpoint or args.endpoint, args.nsfw_threshold,
+                              args.moderation_secret_env, args.moderation_unload, args.moderate_full, len(pending))
             finish_publish()
-            in_flight = (publisher.submit(publish_image, item, publish_conn, client, bucket, prefix), item)
+            in_flight = (publisher.submit(moderate_and_publish, item, moderation, publish_conn, client, bucket, prefix), item)
             handed_off = True
         except (OSError, RuntimeError, urllib.error.URLError, urllib.error.HTTPError, requests.RequestException, ValueError, psycopg2.Error) as error:
             for path in (destination, thumb_destination):

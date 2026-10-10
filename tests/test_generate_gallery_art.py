@@ -237,3 +237,21 @@ def test_farm_overlaps_publish_with_next_generation(monkeypatch, tmp_path):
     for row in inserted:
         assert row[4].startswith("originals/") and row[5].startswith("thumbs/") and row[6] == row[4]
     assert sorted(k.split("/")[1] for k in r2.keys) == ["originals", "originals", "thumbs", "thumbs"]
+
+
+def test_background_moderation_flags_before_any_upload(monkeypatch, tmp_path):
+    generator = load_generator()
+    events = []
+    conn = FakeConn(events, generator.psycopg2)
+    r2 = FakeR2(events)
+    original, thumb = tmp_path / "o.webp", tmp_path / "t.webp"
+    original.write_bytes(b"o")
+    thumb.write_bytes(b"t")
+    seen = []
+    monkeypatch.setattr(generator, "moderate_image",
+                        lambda endpoint, path, threshold, env, unload_after=True: (seen.append(path), (True, 0.97))[1])
+    item = generator.RenderedImage(1, "p", "id", "originals/a.webp", "thumbs/a.webp", original, thumb, 1024, 1024, 1, 7, None, {})
+    generator.moderate_and_publish(item, ("http://w:8100", 0.5, "S", False, False, 1), conn, r2, "bucket", "gallery")
+    assert seen == [thumb]
+    assert item.is_nsfw is True and "moderate" in item.timings
+    assert r2.keys == []
