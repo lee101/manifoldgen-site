@@ -11,7 +11,10 @@ checks. Dry-run is the default.
 Any other direct pod (not app.nz / codex-infinity customer-owned, looked up in
 their DBs) alerts once its accrued cost passes RUNPOD_COST_GUARD_POD_ALERT_USD
 ($10) and is stopped, not deleted, after two checks over
-RUNPOD_COST_GUARD_POD_STOP_USD ($25). Name a pod keep-* to make it alert-only.
+RUNPOD_COST_GUARD_POD_STOP_USD ($25). A pod whose GPUs stay at or under
+RUNPOD_COST_GUARD_POD_IDLE_GPU_PCT (2%) alerts after 3 checks and is stopped after
+RUNPOD_COST_GUARD_POD_IDLE_STOP_CHECKS (12, ~2h) once it has accrued $2.
+Name a pod keep-* to make it alert-only.
 The account balance is checked each run; under RUNPOD_COST_GUARD_MIN_BALANCE_USD
 ($5) it alerts, since serverless then returns 402 and volumes are at risk.
 
@@ -129,6 +132,18 @@ def account_balance(api_key: str) -> dict[str, Any]:
     if not isinstance(myself, dict):
         raise RuntimeError("RunPod account query returned no data")
     return myself
+
+
+def pod_gpu_utils(api_key: str) -> dict[str, float]:
+    query = {"query": "{ myself { pods { id runtime { uptimeInSeconds gpus { gpuUtilPercent } } } } }"}
+    body = request_json(f"{GRAPHQL_URL}?api_key={urllib.parse.quote(api_key)}", api_key, "POST", query)
+    utils: dict[str, float] = {}
+    for pod in ((body.get("data") or {}).get("myself") or {}).get("pods") or []:
+        gpus = ((pod.get("runtime") or {}).get("gpus")) or []
+        values = [float(gpu["gpuUtilPercent"]) for gpu in gpus if isinstance(gpu, dict) and gpu.get("gpuUtilPercent") is not None]
+        if pod.get("id") and values:
+            utils[str(pod["id"])] = max(values)
+    return utils
 
 
 def customer_pod_ids() -> set[str] | None:
@@ -505,6 +520,7 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
         "counts": {},
         "pod_counts": {},
         "pod_cost_counts": {},
+        "pod_idle_counts": {},
         "customer_pods": [],
         "spend_counts": {},
         "capped": old.get("capped") if isinstance(old.get("capped"), dict) else {},
@@ -630,6 +646,17 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
         pod_alert_usd = env_usd("RUNPOD_COST_GUARD_POD_ALERT_USD", 10.0)
         pod_stop_usd = env_usd("RUNPOD_COST_GUARD_POD_STOP_USD", 25.0)
         old_cost_counts = old.get("pod_cost_counts") if isinstance(old.get("pod_cost_counts"), dict) else {}
+        old_idle_counts = old.get("pod_idle_counts") if isinstance(old.get("pod_idle_counts"), dict) else {}
+        idle_pct = env_usd("RUNPOD_COST_GUARD_POD_IDLE_GPU_PCT", 2.0)
+        idle_alert_checks = max(2, int(env_usd("RUNPOD_COST_GUARD_POD_IDLE_ALERT_CHECKS", 3)))
+        idle_stop_checks = max(idle_alert_checks, int(env_usd("RUNPOD_COST_GUARD_POD_IDLE_STOP_CHECKS", 12)))
+        idle_min_usd = env_usd("RUNPOD_COST_GUARD_POD_IDLE_MIN_USD", 2.0)
+        gpu_utils: dict[str, float] = {}
+        if any(str(pod.get("desiredStatus") or "").upper() == "RUNNING" for pod in pods):
+            try:
+                gpu_utils = pod_gpu_utils(api_key)
+            except Exception as error:
+                report["errors"].append({"scope": "pod_gpu_util", "error": str(error)})
         customers: set[str] | None = None
         customers_loaded = False
         for pod in pods:
@@ -658,8 +685,27 @@ def run(api_key: str, state_path: pathlib.Path, threshold: int, apply: bool, cap
             over_count = consecutive(int(old_cost_counts.get(pod_id) or 0), running and not scratch and accrued >= pod_stop_usd)
             if pod_id:
                 report["pod_cost_counts"][pod_id] = over_count
+            util = gpu_utils.get(pod_id)
+            idle_count = consecutive(int(old_idle_counts.get(pod_id) or 0), running and not scratch and util is not None and util <= idle_pct and age_hours >= 0.5)
+            if pod_id:
+                report["pod_idle_counts"][pod_id] = idle_count
+            if idle_count >= idle_alert_checks and not customers_loaded:
+                customers, customers_loaded = customer_pod_ids(), True
+            idle_customer = customers is not None and pod_id in customers
+            if idle_count >= idle_alert_checks and not idle_customer:
+                report["pod_alerts"].append({"id": pod_id, "name": name, "status": f"GPU idle (<= {idle_pct:g}%) for {idle_count} checks, up {age_hours:.1f}h at ${rate:.2f}/h (~${accrued:.2f})", "cost_per_hour": rate, "accrued_usd": accrued, "gpu_util": util})
             if over_count >= 2 and name.startswith(KEEP_POD_PREFIX):
                 pass
+            elif idle_count >= idle_stop_checks and accrued >= idle_min_usd and not name.startswith(KEEP_POD_PREFIX) and not idle_customer:
+                action = {"pod": name, "reason": f"GPU idle for {idle_count} checks (~${accrued:.2f} accrued)", "stop": pod_id, "applied": False}
+                if customers is None:
+                    action["skipped"] = "customer pod lookup failed; alert-only"
+                elif apply:
+                    request_json(f"{REST_BASE}/pods/{urllib.parse.quote(pod_id)}/stop", api_key, "POST")
+                    action["applied"] = True
+                    report["pod_idle_counts"][pod_id] = 0
+                    report["pod_cost_counts"][pod_id] = 0
+                report["actions"].append(action)
             elif over_count >= 2 and not (customers is not None and pod_id in customers):
                 action = {"pod": name, "reason": f"direct pod accrued ~${accrued:.2f} >= ${pod_stop_usd:.2f} stop ceiling for two checks", "stop": pod_id, "applied": False}
                 if customers is None:
