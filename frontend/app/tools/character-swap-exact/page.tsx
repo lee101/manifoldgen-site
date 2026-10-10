@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft, ArrowRight, Code2 } from 'lucide-react';
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/character-swap-exact' },
 };
 
-export default function CharacterSwapExactPage() {
+function CharacterSwapExactPage() {
   return (
     <main className="min-h-screen bg-[var(--color-ink)] text-white">
       <GeneratorHeader section="Tools" />
@@ -26,5 +27,14 @@ export default function CharacterSwapExactPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/character-swap-exact')} />
+      <CharacterSwapExactPage />
+    </>
   );
 }

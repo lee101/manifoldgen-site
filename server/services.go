@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/png"
 	"io"
 	"log"
 	"net/http"
@@ -36,10 +38,11 @@ var servicePricesUSD = map[string]float64{
 	"ltx_video":                0.30,   // per ~6s 1080p video via fal.ai
 	"video_generate":           0.15,   // OpenPaths auto-video base price; model overrides below
 	"h3_video":                 4.80,   // H100 flex GPU-hour as billed by RunPod; exact execution is settled asynchronously
-	"h3_image":                 0.30,   // conservative 12-step estimate; async settlement uses measured execution
-	"h3_image_edit":            0.35,   // conservative 12-step REF2VA estimate; measured execution is final
+	"h3_image":                 0.39,   // conservative 12-step estimate; async settlement uses measured execution
+	"h3_image_edit":            0.46,   // conservative 12-step REF2VA estimate; measured execution is final
 	"video_restyle":            0.48,   // estimated five-second 720p ceiling; async settlement uses the selected backend
-	"character_animation":      0.75,   // five-second Wan-Animate-2 standard lane; fast/xfast are exact 2x/4x multipliers
+	"orbit_video":              0.50,   // fixed price per 3 s 360 degree orbit clip
+	"character_animation":      1.00,   // five-second Wan-Animate-2 standard lane; fast/xfast are exact 2x/4x multipliers
 	"video_background_removal": 0.0252, // five-second estimate at the public per-second rate
 	"video_dramatize":          3.00,   // nominal multi-shot agent run; settled from the plan the agent runs
 	"audio_generation":         0.35,   // MiniMax-Music3 minimum; final price follows duration
@@ -51,11 +54,13 @@ var servicePricesUSD = map[string]float64{
 	"openpaths_tts":            1.20,   // per 1M text input tokens; audio output is $24 per 1M tokens
 	"lyria_generation":         0.08,   // per render; Clip overrides to $0.04
 	"extend_image":             0.10,   // per outpaint expansion through OpenPaths extend-image
-	"relight":                  0.12,   // per relit image through fal IC-Light v2
-	"upscale_image":            0.15,   // per 2x creative upscale through fal
-	"lofi_loop":                0.12,   // per looping video: cover still + motion + visualizer + loop mux
-	"reference_video":          3.72,   // 15 s Seedance 2.0 Mini 720p with a 15 s reference video, 1.5x
-	"character_swap_video":     6.24,   // 30 s source at 768P: $0.16 per source second plus one GPT Image 2 frame
+	"smart_resize":             0.24,
+	"remove_background":        0.03,
+	"relight":                  0.12, // per relit image through fal IC-Light v2
+	"upscale_image":            0.15, // per 2x creative upscale through fal
+	"lofi_loop":                0.12, // per looping video: cover still + motion + visualizer + loop mux
+	"reference_video":          3.72, // 15 s Seedance 2.0 Mini 720p with a 15 s reference video, 1.5x
+	"character_swap_video":     6.24, // 30 s source at 768P: $0.16 per source second plus one GPT Image 2 frame
 }
 
 var zimageDefaultSteps = 8
@@ -147,6 +152,8 @@ func initServices() {
 	serviceBackends["openpaths_tts"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
 	serviceBackends["lyria_generation"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
 	serviceBackends["extend_image"] = getEnv("OPENPATHS_BASE_URL", "https://openpaths.io")
+	serviceBackends["smart_resize"] = "https://queue.fal.run"
+	serviceBackends["remove_background"] = "https://queue.fal.run"
 	serviceBackends["relight"] = "https://queue.fal.run"
 	serviceBackends["upscale_image"] = "https://queue.fal.run"
 
@@ -182,6 +189,7 @@ func initServices() {
 		"h3_image":         "H3_IMAGE_ESTIMATE_USD",
 		"h3_image_edit":    "H3_IMAGE_EDIT_ESTIMATE_USD",
 		"video_restyle":    "VIDEO_RESTYLE_ESTIMATE_USD",
+		"orbit_video":      "ORBIT_VIDEO_ESTIMATE_USD",
 		"flux_image":       "FLUX_IMAGE_PRICE_USD",
 		"nsfw_detect":      "NSFW_DETECT_PRICE_USD",
 		"relight":          "RELIGHT_PRICE_USD",
@@ -265,6 +273,9 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 	}
 	if req.Service == "lyria_generation" && strings.Contains(strings.ToLower(req.Model), "clip") {
 		usdPrice = 0.04
+	}
+	if req.Service == "smart_resize" {
+		return 0.06 + 0.18*float64(len(req.TargetSizes))
 	}
 	if req.Service == "relight" {
 		usdPrice *= float64(clampImageCount(getImageCount(req)))
@@ -379,6 +390,7 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "forecast", Internal: "chronos2"},
 	{Public: "video_restyle", Internal: "video_restyle"},
 	{Public: "character_animation", Internal: "character_animation"},
+	{Public: "orbit-video", Internal: "orbit_video"},
 	{Public: "video_background_removal", Internal: "video_background_removal"},
 	{Public: "video-dramatize", Internal: "video_dramatize"},
 	{Public: "safety", Internal: "nsfw_detect"},
@@ -386,6 +398,8 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "gemini-tts", Internal: "openpaths_tts"},
 	{Public: "lyria", Internal: "lyria_generation"},
 	{Public: "extend-image", Internal: "extend_image"},
+	{Public: "smart-resize", Internal: "smart_resize"},
+	{Public: "remove-background", Internal: "remove_background"},
 	{Public: "relight", Internal: "relight"},
 	{Public: "upscale-image", Internal: "upscale_image"},
 	{Public: "lofi_loop", Internal: "lofi_loop"},
@@ -439,6 +453,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"h3_image":                 "per still; final price follows measured generation time",
 		"h3_image_edit":            "per REF2VA edit; final price follows measured generation time",
 		"video_restyle":            "estimated default clip; final price follows length and quality",
+		"orbit_video":              "per 3 s 360 degree orbit clip; fixed before dispatch",
 		"character_animation":      "five-second standard clip; fixed before dispatch (fast 2x, xfast 4x)",
 		"video_background_removal": "per second of source video (30 seconds maximum)",
 		"audio_generation":         "per music track by default; set kind to music or sfx",
@@ -449,11 +464,13 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"openpaths_tts":            "$1.20 per 1M text input tokens + $24.00 per 1M audio output tokens",
 		"lyria_generation":         "per render; $0.04 Clip or $0.08 Pro through OpenPaths",
 		"extend_image":             "per outpaint expansion",
+		"smart_resize":             "$0.06 per request + $0.18 per target size (64-2048 px, up to 6 sizes)",
+		"remove_background":        "per transparent PNG cutout",
 		"relight":                  "per relit image",
 		"upscale_image":            "per 2x creative upscale",
 		"lofi_loop":                "per looping video (cover still, motion, visualizer, loop mux); add music at the track rate",
 		"reference_video":          "Seedance 2.0 reference-to-video: Mini $0.23/s output + $0.14/s reference video at 720p ($0.11 + $0.07 at 480p); Pro $0.46 + $0.27 at 720p, $1.02 + $0.61 at 1080p",
-		"character_swap_video":     "per second of source video ($0.20/s at 768P, $0.36/s at 2K), plus $0.30 per detected shot after the first for per-shot reference frames, plus one GPT Image 2 frame when no image_url is supplied; kind=recast (H3 Max recast from reference photos, 5-30 s) is $0.62/s at 768P and $0.70/s at 1080P with no image fee; kind=lora is $0.14/s at 480p ($0.09/s fast tier, 4x at 768p) plus a small character-image fee when no image_url is supplied",
+		"character_swap_video":     "per second of source video ($0.20/s at 768P, $0.36/s at 2K), plus $0.30 per detected shot after the first for per-shot reference frames, plus one GPT Image 2 frame when no image_url is supplied; kind=recast (H3 Max recast from reference photos, 5-30 s) is $0.66/s at 768P and $0.75/s at 1080P with no image fee; kind=lora is $0.15/s at 480p ($0.13/s fast tier, 4x at 768p) plus a small character-image fee when no image_url is supplied",
 	}
 	pricing := make([]ServicePricing, 0, len(publicServiceAliases))
 	for _, alias := range publicServiceAliases {
@@ -557,6 +574,13 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
+	if req.Service == "smart_resize" || req.Service == "remove_background" {
+		if err := validateImageUtility(req); err != nil {
+			jsonError(ctx, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
 	// Authenticate: API key (Authorization header) or wallet_address in body
 	var user *User
 	var err error
@@ -608,6 +632,10 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 	if req.Service == characterSwapService {
 		handleCharacterSwapService(ctx, req, user)
+		return
+	}
+	if req.Service == orbitVideoService {
+		handleOrbitVideoService(ctx, req, user)
 		return
 	}
 	if req.Service == "character_animation" {
@@ -820,7 +848,7 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	if savedImage != nil {
 		savedImages = append(savedImages, savedImage)
 	}
-	if req.Service == "zimage" && getImageCount(req) > 1 {
+	if (req.Service == "zimage" && getImageCount(req) > 1) || (req.Service == "smart_resize" && len(req.TargetSizes) > 1) {
 		var additional []*GeneratedImage
 		result, additional = persistAdditionalZImages(req, user, result)
 		savedImages = append(savedImages, additional...)
@@ -900,7 +928,12 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 
 	imageID := newUUID()
 	hash := sha1.Sum([]byte(persistPrompt))
-	fileName := fmt.Sprintf("%s_%s.webp", hex.EncodeToString(hash[:])[:16], imageID[:8])
+	extension := ".webp"
+	utility := req.Service == "smart_resize" || req.Service == "remove_background"
+	if utility {
+		extension = ".png"
+	}
+	fileName := fmt.Sprintf("%s_%s%s", hex.EncodeToString(hash[:])[:16], imageID[:8], extension)
 	relPath := filepath.ToSlash(filepath.Join("originals", fileName))
 	imageDir := getEnv("IMAGES_DIR", "/sdb-disk/manifoldgen-images")
 	fullPath := filepath.Join(imageDir, relPath)
@@ -912,10 +945,12 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 		log.Printf("zimage persist write failed: %v", err)
 		return result, nil
 	}
-	if recompressed, err := recompressWebPQ85(fullPath); err == nil && len(recompressed) > 0 {
-		imageBytes = recompressed
-	} else if err != nil {
-		log.Printf("zimage webp q85 recompress skipped: %v", err)
+	if !utility {
+		if recompressed, err := recompressWebPQ85(fullPath); err == nil && len(recompressed) > 0 {
+			imageBytes = recompressed
+		} else if err != nil {
+			log.Printf("zimage webp q85 recompress skipped: %v", err)
+		}
 	}
 	if err := uploadGalleryImageToR2(relPath, imageBytes); err != nil {
 		// Do not discard a successful generation if storage is temporarily down;
@@ -928,6 +963,11 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 		width = 1024
 	}
 	height := intFromPayload(payload, "height", req.Height)
+	if utility {
+		if config, _, err := image.DecodeConfig(bytes.NewReader(imageBytes)); err == nil {
+			width, height = config.Width, config.Height
+		}
+	}
 	if height <= 0 {
 		height = 1024
 	}
@@ -943,6 +983,12 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 		steps = 0
 	case "extend_image":
 		modelName = "extend-image"
+		steps = 0
+	case "smart_resize":
+		modelName = "smart-resize"
+		steps = 0
+	case "remove_background":
+		modelName = "birefnet"
 		steps = 0
 	case "relight":
 		modelName = "iclight-v2"
@@ -971,6 +1017,9 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 	// semantic-search hydrator do not hide it as an unclassified local image.
 	// Locally generated Z-Image output remains nil until our classifier runs.
 	img.IsNSFW = generatedImageSafetyStatus(req.Service)
+	if utility {
+		img.IsNSFW, _ = classifyH3ImageFlag(imageBytes, "image utility="+req.Service)
+	}
 	if err := dbConn.InsertGeneratedImage(img); err != nil {
 		log.Printf("zimage persist db insert failed: %v", err)
 		return result, nil
@@ -988,7 +1037,7 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 // gallery. All of them return either base64 payloads or hosted URLs.
 func imagePersistService(service string) bool {
 	switch service {
-	case "zimage", "gpt_image", "image_edit", "openpaths_image", "extend_image", "relight", "upscale_image":
+	case "zimage", "gpt_image", "image_edit", "openpaths_image", "extend_image", "relight", "upscale_image", "smart_resize", "remove_background":
 		return true
 	default:
 		return false
@@ -1046,6 +1095,9 @@ func persistAdditionalZImages(req ServiceUsageRequest, user *User, result []byte
 		return result, nil
 	}
 	rows, ok := payload["images"].([]interface{})
+	if req.Service == "smart_resize" {
+		rows, ok = payload["data"].([]interface{})
+	}
 	if !ok || len(rows) < 2 {
 		return result, nil
 	}
@@ -1060,11 +1112,12 @@ func persistAdditionalZImages(req ServiceUsageRequest, user *User, result []byte
 			continue
 		}
 		b64, _ := item["image_base64"].(string)
-		if b64 == "" {
+		if b64 == "" && req.Service != "smart_resize" {
 			continue
 		}
 		one, _ := json.Marshal(map[string]interface{}{
 			"image_base64": b64,
+			"data":         []interface{}{item},
 			"width":        payload["width"], "height": payload["height"], "seed": payload["seed"],
 		})
 		updated, saved := persistGeneratedZImage(req, user, one)
@@ -1097,7 +1150,11 @@ func uploadGalleryImageToR2(relPath string, image []byte) error {
 		return fmt.Errorf("gallery image is empty")
 	}
 	key := strings.TrimSuffix(r2PathPrefix, "/") + "/" + strings.TrimLeft(relPath, "/")
-	uploadURL, err := presignR2PutObject(key, "image/webp", 900)
+	contentType := "image/webp"
+	if strings.HasSuffix(relPath, ".png") {
+		contentType = "image/png"
+	}
+	uploadURL, err := presignR2PutObject(key, contentType, 900)
 	if err != nil {
 		return err
 	}
@@ -1106,7 +1163,7 @@ func uploadGalleryImageToR2(relPath string, image []byte) error {
 		return err
 	}
 	req.ContentLength = int64(len(image))
-	req.Header.Set("Content-Type", "image/webp")
+	req.Header.Set("Content-Type", contentType)
 	resp, err := backendClient.Do(req)
 	if err != nil {
 		return err
@@ -1140,7 +1197,7 @@ func recompressWebPQ85(path string) ([]byte, error) {
 		return nil, err
 	}
 	tmp := path + ".q85.tmp"
-	cmd := exec.Command(cwebp, "-q", "85", "-m", "6", path, "-o", tmp)
+	cmd := exec.Command(cwebp, "-q", "85", "-m", "4", path, "-o", tmp)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = os.Remove(tmp)
 		return nil, fmt.Errorf("%v: %s", err, truncateString(string(out), 200))
@@ -1266,6 +1323,9 @@ func proxyToBackend(req ServiceUsageRequest, backendURL string) ([]byte, error) 
 
 	case "extend_image":
 		return proxyOpenPathsExtendImage(req)
+
+	case "smart_resize", "remove_background":
+		return proxyFalImageUtility(req)
 
 	case "relight":
 		return proxyFalRelight(req)

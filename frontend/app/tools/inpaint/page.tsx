@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import InpaintTool from './InpaintTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/inpaint' },
 };
 
-export default function InpaintPage() {
+function InpaintPage() {
   return <InpaintTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/inpaint')} />
+      <InpaintPage />
+    </>
+  );
 }

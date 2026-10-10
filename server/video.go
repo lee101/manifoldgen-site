@@ -31,7 +31,7 @@ const (
 	videoGenerationCancelledMessage   = "generation cancelled by user"
 )
 
-const h3DownstreamMarkupPercent = int64(50)
+const h3DownstreamMarkupPercent = int64(95)
 const h3MinimumChargeMicros = int64(100_000) // $0.10; video should never cost less than an image.
 const h3NativeFiveSecondBaseline = 15 * time.Minute
 const h3RunpodQueueTimeoutDefault = 10 * time.Minute
@@ -554,9 +554,18 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 	}
 	route := h3RouteForRequest(req)
 	if route.Variant == h3NormalVariant && h3FalCanHandle(req) {
+		if rejectCreditsBelowEstimate(ctx, user, math.Ceil(h3FalProviderCost(req)*h3FalMarkup*100)/100, 1) {
+			return
+		}
 		log.Printf("[h3] selected fal H3 Max mode=%s prompt_bytes=%d", h3FalMode(req), len(req.Prompt))
 		handleFalH3MaxService(ctx, req, user)
 		return
+	}
+	if route.RunpodEndpointID != "" || route.CogURL != "" {
+		estimatedUSD, _, _ := h3Estimate(req)
+		if rejectCreditsBelowEstimate(ctx, user, estimatedUSD, meteredPreflightShare) {
+			return
+		}
 	}
 	if route.RunpodEndpointID != "" {
 		logH3Route(req.Prompt, route)
@@ -646,7 +655,7 @@ func callH3Runpod(endpointID, suffix string, method string, input interface{}, o
 	}
 	var body io.Reader
 	if input != nil {
-		encoded, err := json.Marshal(input)
+		encoded, err := json.Marshal(withDefaultRunpodPolicy(method, suffix, input))
 		if err != nil {
 			return 0, err
 		}
@@ -703,6 +712,7 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 	job, err := dbConn.CreateVideoJobForService(user.ID, "runpod:"+route.RunpodEndpointID+":"+queued.ID, h3JobService(req), req.Prompt)
 	if err != nil {
 		log.Printf("[video] persist hosted generation job failed: %v", err)
+		runpodCancelBestEffort(route.RunpodEndpointID, queued.ID)
 		jsonError(ctx, http.StatusInternalServerError, "failed to create video job")
 		return
 	}
@@ -712,6 +722,8 @@ func handleRunpodH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageReques
 	persisted := persistH3Request(req, input)
 	if err := dbConn.UpdateVideoJob(job.ID, "queued", persisted, ""); err != nil {
 		log.Printf("[video] persist generation input failed job=%s: %v", job.ID, err)
+		runpodCancelBestEffort(route.RunpodEndpointID, queued.ID)
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 		jsonError(ctx, http.StatusInternalServerError, "failed to create video job")
 		return
 	}
@@ -861,6 +873,10 @@ func processVideoJob(jobID string) {
 	}
 	if job.Service == referenceVideoService {
 		processReferenceVideoJob(job)
+		return
+	}
+	if job.Service == orbitVideoService {
+		processOrbitVideoJob(job)
 		return
 	}
 	if job.Service == "character_animation" {
@@ -1370,6 +1386,7 @@ func processRunpodH3VideoJob(job *VideoJob) {
 			consecutiveErrors++
 			if consecutiveErrors >= 10 {
 				log.Printf("[video] hosted generation status unavailable job=%s: %v", job.ID, err)
+				runpodCancelBestEffort(endpointID, providerJobID)
 				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationUnavailableMessage)
 				return
 			}
@@ -1481,6 +1498,7 @@ func processRunpodH3VideoJob(job *VideoJob) {
 			return
 		}
 	}
+	runpodCancelBestEffort(endpointID, providerJobID)
 	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationTimedOutMessage)
 }
 

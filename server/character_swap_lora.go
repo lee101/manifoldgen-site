@@ -72,7 +72,7 @@ var loraResolutions = map[string]loraResolution{
 // loraPriceUSDPerSecond is the public price per source second at 480p and
 // the standard tier; 768p (4x the attention cost) and the fast tier scale it. It covers the GPU time,
 // the 8% overlap between clips in one shot, cold starts and retries.
-var loraPriceUSDPerSecond = map[string]float64{"standard": 0.14, "fast": 0.09}
+var loraPriceUSDPerSecond = map[string]float64{"standard": 0.15, "fast": 0.13}
 
 const loraDefaultPrompt = "Replace every person in <Video 1> with the corresponding character in <Picture 1>, matching left to right. Keep each replacement character's identity, outfit, and look from <Picture 1>. Preserve the source video's camera, background, lighting, and objects. Match each person's position, scale, pose, and movement. Do not show the reference image or its background."
 
@@ -309,7 +309,7 @@ func submitLoraRunpod(endpointID string, input map[string]interface{}, queued *h
 	}
 	var status int
 	for attempt := 0; attempt < 7; attempt++ {
-		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, queued)
+		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, runpodRunBody(input, 40*time.Minute), queued)
 		if status != http.StatusConflict || err == nil || !strings.Contains(err.Error(), "ENDPOINT_PAUSED") {
 			return status, err
 		}

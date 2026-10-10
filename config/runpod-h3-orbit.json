@@ -1,0 +1,28 @@
+{
+  "image": "ghcr.io/lee101/h3-orbit:cu130-20261005-r1",
+  "dockerStartCmd": ["python", "-u", "/src/orbit_handler.py"],
+  "env": {
+    "H3_MODERATION_DEVICE": "cpu",
+    "MINIMAX_H3_LICENSE_ACCEPTED": "1",
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "NVIDIA_DRIVER_CAPABILITIES": "all"
+  },
+  "containerDiskInGb": 100,
+  "workersMin": 0,
+  "idleTimeout": 5,
+  "executionTimeoutMs": 2700000,
+  "flashboot": true,
+  "scalerType": "REQUEST_COUNT",
+  "scalerValue": 1,
+  "allowedCudaVersions": ["13.0"],
+  "endpoints": [
+    {
+      "id": "j53ervq74hskaf",
+      "templateId": "1r7gukcsg9",
+      "name": "cog-manifold-h3-orbit",
+      "workersMax": 0,
+      "gpuTypeIds": ["NVIDIA H100 PCIe", "NVIDIA H100 80GB HBM3", "NVIDIA H100 NVL"]
+    }
+  ],
+  "notes": "360 orbit lane: MiniMax H3 FL2VA int8 plus pablodawson/MiniMax-H3-360-Orbit-LoRA (mirrored at manifoldgenstatic models/h3-orbit, pinned to HF revision 5ddbc2d and sha256). Request contract: {image_url, prompt, steps, frames, size, seed, lora_strength, _output_upload_url, _output_public_url}; the server app (H3_ORBIT_RUNPOD_ENDPOINT_ID) sets workersMax to 1 per job and back to 0 after. Only FL2VA, text encoder and video VAE are installed. See workers/h3-orbit/README.md."
+}

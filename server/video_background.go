@@ -188,6 +188,9 @@ func handleVideoBackgroundRemovalService(ctx *fasthttp.RequestCtx, req ServiceUs
 	}
 	requestKey := videoBackgroundRequestKey(req)
 	estimatedUSD, estimatedCredits := videoBackgroundEstimate(req)
+	if rejectCreditsBelowEstimate(ctx, user, estimatedUSD, 1) {
+		return
+	}
 
 	// Serialize the read/submit/write window in this API process. The durable
 	// JSON key below also deduplicates browser retries after a restart.
@@ -378,7 +381,7 @@ func submitScaledVideoBackgroundRunpod(endpointID string, input map[string]inter
 	}
 	var status int
 	for attempt := 0; attempt < 7; attempt++ {
-		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, queued)
+		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, runpodRunBody(input, 30*time.Minute), queued)
 		if status != http.StatusConflict || err == nil || !strings.Contains(err.Error(), "ENDPOINT_PAUSED") {
 			return status, err
 		}

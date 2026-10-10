@@ -10,8 +10,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -174,9 +176,87 @@ func proxyOpenPathsExtendImage(req ServiceUsageRequest) ([]byte, error) {
 	return withImageEngine(result, "extend-image", req)
 }
 
-// proxyFalRelight relights a photo with fal IC-Light v2. Kind selects the
-// lighting direction ("left"/"right"/"top"/"bottom"); parameters follow the
-// production-tuned values netwrck uses for the same endpoint.
+func validateImageUtility(req ServiceUsageRequest) error {
+	if strings.TrimSpace(req.ImageURL) == "" {
+		return fmt.Errorf("image_url is required")
+	}
+	if err := validateHTTPURL(req.ImageURL); err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(req.ImageURL)
+	host := strings.ToLower(parsed.Hostname())
+	if parsed.Scheme != "https" || parsed.User != nil || host == "localhost" || strings.HasSuffix(host, ".local") {
+		return fmt.Errorf("a public HTTPS image URL is required")
+	}
+	if address := net.ParseIP(host); address != nil && (address.IsPrivate() || address.IsLoopback() || address.IsLinkLocalUnicast() || !address.IsGlobalUnicast()) {
+		return fmt.Errorf("a public HTTPS image URL is required")
+	}
+	if getImageCount(req) != 1 {
+		return fmt.Errorf("image utilities support one image per target size")
+	}
+	if req.Service != "smart_resize" {
+		return nil
+	}
+	if len(req.TargetSizes) < 1 || len(req.TargetSizes) > 6 {
+		return fmt.Errorf("target_sizes requires 1 to 6 WIDTHxHEIGHT dimensions")
+	}
+	seen := make(map[string]bool, len(req.TargetSizes))
+	for _, size := range req.TargetSizes {
+		if seen[size] {
+			return fmt.Errorf("target_sizes must be unique")
+		}
+		seen[size] = true
+		parts := strings.Split(size, "x")
+		if len(parts) != 2 {
+			return fmt.Errorf("target_sizes must use WIDTHxHEIGHT")
+		}
+		for _, part := range parts {
+			n, err := strconv.Atoi(part)
+			if err != nil || n < 64 || n > 2048 || strconv.Itoa(n) != part {
+				return fmt.Errorf("target dimensions must be integers from 64 to 2048")
+			}
+		}
+	}
+	return nil
+}
+
+func proxyFalImageUtility(req ServiceUsageRequest) ([]byte, error) {
+	if err := validateImageUtility(req); err != nil {
+		return nil, err
+	}
+	model := "fal-ai/birefnet"
+	payload := map[string]interface{}{
+		"image_url": req.ImageURL, "output_format": "png",
+		"model": "General Use (Light)", "refine_foreground": true,
+	}
+	if req.Service == "smart_resize" {
+		model = "fal-ai/smart-resize"
+		payload = map[string]interface{}{
+			"image_url": req.ImageURL, "target_sizes": req.TargetSizes,
+			"prompt": req.Prompt, "num_images_per_size": 1,
+			"resolution": "2K", "output_format": "png", "safety_tolerance": "4",
+		}
+		if req.Seed != 0 {
+			payload["seed"] = req.Seed
+		}
+	}
+	result, err := runFalQueuedJob(model, payload)
+	if err != nil {
+		return nil, err
+	}
+	urls := extractPayloadImageURLs(result)
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("image utility returned no images")
+	}
+	if req.Service == "smart_resize" && len(urls) != len(req.TargetSizes) {
+		return nil, fmt.Errorf("smart resize returned an incomplete batch")
+	}
+	return json.Marshal(map[string]interface{}{
+		"engine": model, "data": urlsToDataRows(urls), "target_sizes": req.TargetSizes,
+	})
+}
+
+// Kind selects the lighting direction using netwrck's tuned IC-Light profile.
 func proxyFalRelight(req ServiceUsageRequest) ([]byte, error) {
 	if strings.TrimSpace(falAPIKey) == "" {
 		return nil, fmt.Errorf("relight requires FAL_KEY")

@@ -20,7 +20,7 @@ const SAMPLE_BASE = 'https://manifoldgenstatic.manifoldgen.com/static/tools/char
 const SAMPLE_VIDEO = `${SAMPLE_BASE}/dance-source.webm`;
 const SAMPLE_PHOTO = `${SAMPLE_BASE}/cat-reference.webp`;
 const SAMPLE_OUTPUT = `${SAMPLE_BASE}/cat-recast.webm`;
-const RATES: Record<Resolution, number> = { '768P': 0.62, '1080P': 0.70 };
+const RATES: Record<Resolution, number> = { '768P': 0.66, '1080P': 0.75 };
 const MAX_PEOPLE = 4;
 
 function stageLabel(result?: JobResult): string {

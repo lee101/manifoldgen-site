@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import NanoBananaTool from './NanoBananaTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/nano-banana' },
 };
 
-export default function NanoBananaPage() {
+function NanoBananaPage() {
   return <NanoBananaTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/nano-banana')} />
+      <NanoBananaPage />
+    </>
+  );
 }

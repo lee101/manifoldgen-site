@@ -29,7 +29,7 @@ const (
 // least 20% above that and above the self-hosted LoRA lane at 768p standard,
 // which is the internal fallback when fal fails.
 var recastFalUSDPerSecond = map[string]float64{"768P": 0.30, "1080P": 0.45}
-var recastPriceUSDPerSecond = map[string]float64{"768P": 0.62, "1080P": 0.70}
+var recastPriceUSDPerSecond = map[string]float64{"768P": 0.66, "1080P": 0.75}
 
 type recastState struct {
 	Engine     string `json:"engine"`

@@ -22,11 +22,11 @@ export const FOOTER_TOOL_GROUPS: { title: string; links: FooterLink[]; more?: Fo
   },
   {
     title: 'Edit & enhance',
-    links: byHref(['/tools/style-transfer', '/tools/relight', '/tools/inpaint', '/tools/outpaint', '/tools/image-upscale', '/tools/moodboard', '/tools/h3-image-editor']),
+    links: byHref(['/tools/style-transfer', '/tools/relight', '/tools/smart-resize', '/tools/image-background-remover', '/tools/inpaint', '/tools/outpaint', '/tools/image-upscale', '/tools/moodboard', '/tools/h3-image-editor']),
   },
   {
     title: 'Motion & audio',
-    links: byHref(['/tools/character-animator', '/tools/cinematic-cameras', '/tools/video-background-remover', '/tools/trailer-agent', '/tools/character-recast', '/tools/character-swap', '/tools/character-swap-exact', '/tools/character-swap-lora', '/tools/reference-video', '/tools/music-generator', '/tools/lofi-loop', '/voice']),
+    links: byHref(['/tools/character-animator', '/tools/cinematic-cameras', '/tools/video-background-remover', '/tools/trailer-agent', '/tools/character-recast', '/tools/character-swap', '/tools/character-swap-exact', '/tools/character-swap-lora', '/tools/orbit-video', '/tools/reference-video', '/tools/music-generator', '/tools/lofi-loop', '/voice']),
     more: { href: '/tools', label: 'All tools' },
   },
 ];

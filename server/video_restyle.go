@@ -20,7 +20,7 @@ import (
 const (
 	falRestyleMarkup = 1.20
 	wanAnimateMarkup = 2.00
-	h3ControlMarkup  = 1.20
+	h3ControlMarkup  = 1.70
 )
 
 var h3ControlTypes = map[string]bool{

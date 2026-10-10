@@ -59,13 +59,14 @@ test('relight tool sends the selected lighting direction and renders the result'
   await page.setInputFiles('input[type="file"]', { name: 'relight-fixture.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
   await page.getByTestId('relight-prompt').fill('warm golden-hour sunlight, soft shadows');
   await page.getByLabel('Lighting direction').selectOption('left');
+  await page.getByLabel('Output shape').selectOption('16:9');
   await page.getByTestId('relight-run').click();
   await expect(page.getByTestId('relight-result').locator('img')).toBeVisible();
   expect(requests[0]).toMatchObject({
     service: 'relight',
     kind: 'left',
     image_url: 'https://uploads.example/relight-fixture.png',
-    aspect_ratio: 'square',
+    aspect_ratio: '16:9',
     n: 1,
   });
 });

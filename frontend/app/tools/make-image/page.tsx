@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import BulkImageTool from './BulkImageTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/make-image' },
 };
 
-export default function MakeImagePage() {
+function MakeImagePage() {
   return <BulkImageTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/make-image')} />
+      <MakeImagePage />
+    </>
+  );
 }

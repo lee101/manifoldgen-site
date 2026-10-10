@@ -3,7 +3,7 @@
   "template": "image-editor-sam2-sdxl",
   "workersMin": 0,
   "workersMax": 2,
-  "idleTimeout": 30,
+  "idleTimeout": 10,
   "flashboot": true,
   "scalerType": "QUEUE_DELAY",
   "scalerValue": 4,

@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import RelightTool from './RelightTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/relight' },
 };
 
-export default function RelightPage() {
+function RelightPage() {
   return <RelightTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/relight')} />
+      <RelightPage />
+    </>
+  );
 }

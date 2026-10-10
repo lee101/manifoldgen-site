@@ -93,6 +93,7 @@ export default function RelightTool() {
   const [negativePrompt, setNegativePrompt] = useState('');
   const [kind, setKind] = useState<Kind>('');
   const [count, setCount] = useState(1);
+  const [aspect, setAspect] = useState('square');
   const [busy, setBusy] = useState<'upload' | 'run' | ''>('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -148,7 +149,7 @@ export default function RelightTool() {
           prompt: prompt.trim(),
           negative_prompt: negativePrompt.trim(),
           kind,
-          aspect_ratio: 'square',
+          aspect_ratio: aspect,
           n: count,
         }),
       });
@@ -194,6 +195,7 @@ export default function RelightTool() {
         <label className={styles.field}><span>Negative prompt (optional)</span><textarea value={negativePrompt} maxLength={1200} onChange={(event) => setNegativePrompt(event.target.value)} rows={2} placeholder="harsh flash, blown highlights" /></label>
         <div className={styles.options}>
           <label><span>Lighting direction</span><select aria-label="Lighting direction" value={kind} onChange={(event) => setKind(event.target.value as Kind)}>{KINDS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+          <label><span>Output shape</span><select aria-label="Output shape" value={aspect} disabled={Boolean(busy)} onChange={(event) => setAspect(event.target.value)}><option value="square">Square</option><option value="9:16">Vertical 9:16</option><option value="16:9">Widescreen 16:9</option><option value="3:4">Portrait 3:4</option><option value="4:3">Landscape 4:3</option></select></label>
           <label><span>Images</span><select aria-label="Image count" value={count} onChange={(event) => setCount(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option></select></label>
         </div>
         <button className={styles.run} type="button" disabled={Boolean(busy) || !prompt.trim()} data-testid="relight-run" onClick={() => void run()}>{busy ? <Loader2 className={styles.spin} size={18} /> : <WandSparkles size={18} />}{busy ? status : `Relight ${count > 1 ? `${count} images` : 'image'}`}</button>

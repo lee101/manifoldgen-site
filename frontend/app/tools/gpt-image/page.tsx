@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import GptImageTool from './GptImageTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/gpt-image' },
 };
 
-export default function GptImagePage() {
+function GptImagePage() {
   return <GptImageTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/gpt-image')} />
+      <GptImagePage />
+    </>
+  );
 }

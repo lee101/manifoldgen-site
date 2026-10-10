@@ -50,9 +50,9 @@ func handleSitemapIndex(ctx *fasthttp.RequestCtx) {
 var staticSitemapPages = []string{
 	"/", "/tools", "/tools/h3-image", "/tools/music-generator", "/tools/lofi-loop", "/tools/lyria", "/tools/gemini-tts", "/tools/make-image",
 	"/tools/style-transfer", "/tools/h3-image-editor", "/tools/character-animator",
-	"/tools/video-background-remover", "/tools/video-dramatizer", "/tools/video-remake", "/tools/character-swap", "/tools/character-swap-exact", "/tools/character-swap-lora", "/tools/character-recast", "/tools/reference-video", "/tools/trailer-agent",
+	"/tools/video-background-remover", "/tools/video-dramatizer", "/tools/video-remake", "/tools/character-swap", "/tools/character-swap-exact", "/tools/character-swap-lora", "/tools/character-recast", "/tools/orbit-video", "/tools/reference-video", "/tools/trailer-agent",
 	"/tools/canny-video", "/tools/depth-video", "/tools/hed-video", "/tools/mlsd-video", "/tools/pose-video", "/tools/video-inpainting",
-	"/tools/cinematic-cameras", "/tools/relight", "/tools/inpaint",
+	"/tools/cinematic-cameras", "/tools/relight", "/tools/smart-resize", "/tools/image-background-remover", "/tools/inpaint",
 	"/tools/image-upscale", "/tools/outpaint", "/tools/moodboard",
 	"/tools/nano-banana", "/tools/grok-imagine", "/tools/flux-2", "/tools/gpt-image",
 	"/tool/animate-video", "/tool/image-editor", "/tool/anima",

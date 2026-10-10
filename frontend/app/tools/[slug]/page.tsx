@@ -7,6 +7,7 @@ import { VideoGeneratorWorkspace } from '@/components/video-generator-workspace'
 import { VideoControlWorkspace } from '@/components/video-control-workspace';
 import { VIDEO_GENERATORS, videoGenerator } from '@/lib/video-generators';
 import { VIDEO_CONTROL_TOOLS, videoControlTool } from '@/lib/video-controls';
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 
 export const dynamicParams = false;
 export function generateStaticParams() { return [...VIDEO_GENERATORS, ...VIDEO_CONTROL_TOOLS].map(({ slug }) => ({ slug })); }
@@ -19,7 +20,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   return { title: `${generator.name} AI Video Creator`, description: `${generator.description} Create and edit AI video in ManifoldGen Studio.`, alternates: { canonical: `/tools/${generator.slug}` } };
 }
 
-export default async function GeneratorToolPage({ params }: { params: Promise<{ slug: string }> }) {
+async function GeneratorToolPage({ params }: { params: Promise<{ slug: string }> }) {
   const slug = (await params).slug;
   const control = videoControlTool(slug);
   if (control) return (
@@ -60,5 +61,16 @@ export default async function GeneratorToolPage({ params }: { params: Promise<{ 
         <section className="mt-10 flex flex-col justify-between gap-5 rounded-3xl border border-white/15 bg-white/[0.05] p-6 sm:flex-row sm:items-center"><div><h2 className="font-display text-xl font-700">Build this workflow into your product</h2><p className="mt-1 text-sm text-white/60">Stable JSON API, async jobs, durable outputs, and the same ManifoldGen billing.</p></div><Link href={`/api/video-generators/${generator.slug}`} className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/20 px-4 py-3 text-sm font-semibold hover:border-white/40"><Code2 size={16} /> API reference <ArrowRight size={15} /></Link></section>
       </div>
     </main>
+  );
+}
+
+export default async function Page(props: { params: Promise<{ slug: string }> }) {
+  const meta = await generateMetadata(props);
+  const slug = (await props.params).slug;
+  return (
+    <>
+      <JsonLd data={toolJsonLd(meta, `/tools/${slug}`)} />
+      {await GeneratorToolPage(props)}
+    </>
   );
 }

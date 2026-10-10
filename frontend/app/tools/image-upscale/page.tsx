@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import ImageUpscaleTool from './ImageUpscaleTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/image-upscale' },
 };
 
-export default function ImageUpscalePage() {
+function ImageUpscalePage() {
   return <ImageUpscaleTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/image-upscale')} />
+      <ImageUpscalePage />
+    </>
+  );
 }

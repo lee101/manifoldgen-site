@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import MoodboardTool from './MoodboardTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/moodboard' },
 };
 
-export default function MoodboardPage() {
+function MoodboardPage() {
   return <MoodboardTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/moodboard')} />
+      <MoodboardPage />
+    </>
+  );
 }

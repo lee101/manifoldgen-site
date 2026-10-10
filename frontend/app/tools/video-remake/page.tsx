@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import VideoRemakeTool from './VideoRemakeTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/video-remake' },
 };
 
-export default function VideoRemakePage() {
+function VideoRemakePage() {
   return <VideoRemakeTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/video-remake')} />
+      <VideoRemakePage />
+    </>
+  );
 }

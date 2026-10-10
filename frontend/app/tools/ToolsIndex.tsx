@@ -38,7 +38,7 @@ export default function ToolsIndex({ tools }: { tools: readonly ToolCard[] }) {
       {filtered.map((tool) => <Link key={tool.href} href={tool.href} className={`${styles.card} ${tool.layout ? styles[tool.layout] : ''}`}>
         {tool.kind === 'video'
           ? <video src={tool.src} muted autoPlay loop playsInline preload="metadata" />
-          : <img src={tool.src} alt={`${tool.name} real output`} loading="lazy" />}
+          : <img src={tool.src} alt={tool.assetLabel || `${tool.name} real output`} loading="lazy" />}
         <span className={styles.tag}>{tool.label}</span>
         <div className={styles.copy}>
           <h2>{tool.name}</h2>

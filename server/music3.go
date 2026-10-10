@@ -282,7 +282,7 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int, serviceTie
 	var queued h3RunpodQueuedJob
 	var status int
 	for attempt := 0; attempt < 7; attempt++ {
-		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, map[string]interface{}{"input": input}, &queued)
+		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, runpodRunBody(input, 25*time.Minute), &queued)
 		if status != http.StatusConflict || err == nil || !strings.Contains(err.Error(), "ENDPOINT_PAUSED") {
 			break
 		}
@@ -333,6 +333,9 @@ func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics
 	}
 	if seed < 0 {
 		jsonError(ctx, http.StatusBadRequest, "seed must be a non-negative integer")
+		return
+	}
+	if rejectCreditsBelowEstimate(ctx, user, music3PublicPriceUSDForTier(duration, tier), 1) {
 		return
 	}
 	job, err := submitMusic3Job(user, prompt, lyrics, duration, tier, seed)
@@ -387,6 +390,7 @@ func processMusic3Job(job *VideoJob) {
 			consecutiveErrors++
 			if consecutiveErrors >= 10 {
 				log.Printf("[music3] status unavailable job=%s: %v", job.ID, err)
+				runpodCancelBestEffort(endpointID, providerJobID)
 				recordMusic3Event("music3_job_error", job.ID, map[string]interface{}{"stage": "status", "error": err.Error()})
 				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "music generation is temporarily unavailable")
 				return
@@ -454,6 +458,7 @@ func processMusic3Job(job *VideoJob) {
 		time.Sleep(3 * time.Second)
 	}
 	log.Printf("[music3] generation timed out job=%s", job.ID)
+	runpodCancelBestEffort(endpointID, providerJobID)
 	recordMusic3Event("music3_job_error", job.ID, map[string]interface{}{"stage": "timeout"})
 	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "music generation timed out; no credits were charged")
 }

@@ -36,6 +36,7 @@ func TestProxyZImageBatchSerializesNativeRequests(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("OMNISERVE_NATIVE_URL", server.URL)
+	t.Setenv("RA2_BACKEND_URL", "http://127.0.0.1:1")
 	result, err := proxyZImageWithFallbacks(ServiceUsageRequest{
 		Prompt: "four kittens",
 		Width:  512,

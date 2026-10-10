@@ -31,7 +31,7 @@
   },
   "workersMin": 0,
   "idleTimeout": 5,
-  "executionTimeoutMs": 14400000,
+  "executionTimeoutMs": 7200000,
   "flashboot": true,
   "scalerType": "REQUEST_COUNT",
   "scalerValue": 1,

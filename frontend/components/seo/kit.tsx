@@ -24,6 +24,18 @@ export function JsonLd({ data }: { data: Record<string, unknown> }) {
   return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />;
 }
 
+export function toolJsonLd(meta: { title?: unknown; description?: unknown }, path: string) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: String(meta.title ?? '').replace(/\s+[—|-]\s+ManifoldGen$/, ''),
+    description: String(meta.description ?? ''),
+    applicationCategory: 'MultimediaApplication',
+    operatingSystem: 'Web',
+    url: `https://manifoldgen.com${path}`,
+  };
+}
+
 export function faqJsonLd(faqs: Faq[]) {
   return {
     '@context': 'https://schema.org',

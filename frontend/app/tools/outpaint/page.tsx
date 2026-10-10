@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import OutpaintTool from './OutpaintTool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/outpaint' },
 };
 
-export default function OutpaintPage() {
+function OutpaintPage() {
   return <OutpaintTool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/outpaint')} />
+      <OutpaintPage />
+    </>
+  );
 }

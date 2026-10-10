@@ -1,3 +1,4 @@
+import { JsonLd, toolJsonLd } from '@/components/seo/kit';
 import type { Metadata } from 'next';
 import Flux2Tool from './Flux2Tool';
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: '/tools/flux-2' },
 };
 
-export default function Flux2Page() {
+function Flux2Page() {
   return <Flux2Tool />;
+}
+
+export default function Page() {
+  return (
+    <>
+      <JsonLd data={toolJsonLd(metadata, '/tools/flux-2')} />
+      <Flux2Page />
+    </>
+  );
 }
