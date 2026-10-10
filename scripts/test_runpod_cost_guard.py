@@ -14,7 +14,7 @@ _patches = []
 
 
 def setUpModule():
-    _patches.extend([patch.object(guard, "account_balance", return_value=HEALTHY), patch.object(guard, "customer_pod_ids", return_value=set()), patch.object(guard, "pod_gpu_utils", return_value={})])
+    _patches.extend([patch.object(guard, "customer_pod_ids", return_value=set()), patch.object(guard, "pod_gpu_utils", return_value={})])
     for item in _patches:
         item.start()
 
