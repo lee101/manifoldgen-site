@@ -278,15 +278,21 @@ func TestZImagePriceMatrix(t *testing.T) {
 	}
 }
 
-func TestRA2HQTierOnlyUsesOmniserveBackends(t *testing.T) {
-	got := zimageBackendOrder(ServiceUsageRequest{Quality: "hq"}, "")
-	for _, b := range got {
-		if b.name != "ra2" && b.name != "omniserve" {
-			t.Fatalf("hq tier may fall back to %q", b.name)
-		}
+func TestRA2HQTierOnlyUsesRA2(t *testing.T) {
+	got := zimageBackendOrder(ServiceUsageRequest{Quality: "hq", ImageBackend: "images3"}, "http://legacy.example")
+	if len(got) != 1 || got[0].name != "ra2" {
+		t.Fatalf("hq order = %+v, want only ra2", got)
 	}
-	if len(got) == 0 || got[0].name != "ra2" {
-		t.Fatalf("hq order = %+v", got)
+}
+
+func TestZImageLaneReported(t *testing.T) {
+	out := annotateZImageLane([]byte(`{"image_base64":"AA"}`), "ra2")
+	var m map[string]interface{}
+	if err := json.Unmarshal(out, &m); err != nil || m["lane"] != "ra2" || m["image_base64"] != "AA" {
+		t.Fatalf("annotated = %s (%v)", out, err)
+	}
+	if got := annotateZImageLane([]byte("not json"), "ra2"); string(got) != "not json" {
+		t.Fatalf("non-json mutated: %s", got)
 	}
 }
 

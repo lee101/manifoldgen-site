@@ -1677,15 +1677,31 @@ func proxySingleZImageWithFallbacks(req ServiceUsageRequest, primaryURL string) 
 	for _, b := range backends {
 		result, err := proxyZImageBackend(req, b.name, b.url)
 		if err == nil {
-			return result, nil
+			return annotateZImageLane(result, b.name), nil
 		}
 		log.Printf("zimage backend %s failed: %v", b.name, err)
 		errs = append(errs, fmt.Sprintf("%s: %v", b.name, err))
 	}
 	if len(errs) == 0 {
+		if isHQImage(req) {
+			return nil, fmt.Errorf("no HQ-capable (RA2) image backend configured")
+		}
 		return nil, fmt.Errorf("no image backends configured")
 	}
 	return nil, fmt.Errorf("all image backends failed: %s", strings.Join(errs, " | "))
+}
+
+// annotateZImageLane records which backend lane actually served the render.
+func annotateZImageLane(result []byte, lane string) []byte {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(result, &payload); err != nil || payload == nil {
+		return result
+	}
+	payload["lane"] = lane
+	if out, err := json.Marshal(payload); err == nil {
+		return out
+	}
+	return result
 }
 
 // proxyZImageBatch preserves the existing normalized image response while
@@ -1793,14 +1809,16 @@ func zimageBackendOrder(req ServiceUsageRequest, primaryURL string) []namedBacke
 	}
 
 	if isHQImage(req) {
-		// Only the omniserve lanes can run the base-model tier; do not charge 2x for a fallback render.
-		omniserveOnly := make([]namedBackend, 0, len(ordered))
+		// Only RA2 honours turbo:false / steps. The older omniserve (RA1)
+		// lane ignores them and would render turbo while we charge the HQ
+		// price, so HQ never falls back to anything else.
+		hqOnly := make([]namedBackend, 0, 1)
 		for _, b := range ordered {
-			if b.name == "ra2" || b.name == "omniserve" {
-				omniserveOnly = append(omniserveOnly, b)
+			if b.name == "ra2" {
+				hqOnly = append(hqOnly, b)
 			}
 		}
-		return filterNonEmptyBackends(omniserveOnly)
+		return filterNonEmptyBackends(hqOnly)
 	}
 	if prefer == "" || prefer == "auto" {
 		return filterNonEmptyBackends(ordered)
