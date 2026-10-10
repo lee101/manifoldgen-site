@@ -329,3 +329,18 @@ func TestUnlimitedPlanCoversTurboOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateZImageParams(t *testing.T) {
+	ok := []ServiceUsageRequest{{}, {NumSteps: 1}, {NumSteps: 50}, {Guidance: 0.5}, {Guidance: 20}, {NumSteps: 30, Guidance: 4}}
+	for _, r := range ok {
+		if err := validateZImageParams(r); err != nil {
+			t.Errorf("%+v rejected: %v", r, err)
+		}
+	}
+	bad := []ServiceUsageRequest{{NumSteps: 51}, {NumSteps: 100000}, {NumSteps: -3}, {Guidance: 21}, {Guidance: -1}, {Guidance: math.NaN()}}
+	for _, r := range bad {
+		if err := validateZImageParams(r); err == nil {
+			t.Errorf("%+v accepted", r)
+		}
+	}
+}

@@ -273,6 +273,23 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 	return usdPrice
 }
 
+const (
+	zimageMaxSteps    = 50
+	zimageMaxGuidance = 20.0
+)
+
+// validateZImageParams bounds the user-controlled sampler knobs that are
+// forwarded to the GPU lanes. Zero means "use the default".
+func validateZImageParams(req ServiceUsageRequest) error {
+	if req.NumSteps < 0 || req.NumSteps > zimageMaxSteps {
+		return fmt.Errorf("num_steps must be between 1 and %d", zimageMaxSteps)
+	}
+	if math.IsNaN(req.Guidance) || req.Guidance < 0 || req.Guidance > zimageMaxGuidance {
+		return fmt.Errorf("guidance must be between 0 and %d", int(zimageMaxGuidance))
+	}
+	return nil
+}
+
 // isHQImage reports the RA2 long-quality tier (base model, 30 steps) rather than turbo.
 func isHQImage(req ServiceUsageRequest) bool {
 	q := strings.ToLower(strings.TrimSpace(req.Quality))
@@ -690,6 +707,13 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	if req.Service == "sfx_generation" {
 		handleSFXGeneration(ctx, req, user)
 		return
+	}
+
+	if req.Service == "zimage" {
+		if err := validateZImageParams(req); err != nil {
+			jsonError(ctx, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	// Calculate cost in $CUTE
