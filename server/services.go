@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -239,11 +240,8 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 	if !ok {
 		return 0
 	}
-	if req.Service == "zimage" && getZImageSteps(req) >= 20 {
-		usdPrice = zimageHighStepPriceUSD
-	}
-	if req.Service == "zimage" && isHQImage(req) && usdPrice < zimagePriceHQ(usdPrice) {
-		usdPrice = zimagePriceHQ(usdPrice)
+	if req.Service == "zimage" {
+		usdPrice = zimageUnitPriceUSD(req, usdPrice)
 	}
 	if req.Service == "video_generate" {
 		model := normalizeVideoModel(req.Model)
@@ -281,8 +279,28 @@ func isHQImage(req ServiceUsageRequest) bool {
 	return q == "hq" || q == "high" || q == "max"
 }
 
-// zimagePriceHQ is the long-quality price: twice the base per-image price.
+// zimageHQThresholdSteps is the step count at which a render is priced as a
+// premium (non-turbo) render.
+const zimageHQThresholdSteps = 20
+
+// zimagePriceHQ is the long-quality multiplier price: twice the base price.
 func zimagePriceHQ(base float64) float64 { return base * 2 }
+
+// isPremiumZImage reports whether a zimage request is a long render (HQ tier
+// or step count at/above the threshold) rather than a turbo render.
+func isPremiumZImage(req ServiceUsageRequest) bool {
+	return isHQImage(req) || getZImageSteps(req) >= zimageHQThresholdSteps
+}
+
+// zimageUnitPriceUSD is the single per-image pricing rule: turbo renders cost
+// the base price; premium renders (quality=hq and/or steps >= threshold) cost
+// max(2x base, high-step price). The two triggers never stack.
+func zimageUnitPriceUSD(req ServiceUsageRequest, base float64) float64 {
+	if !isPremiumZImage(req) {
+		return base
+	}
+	return math.Max(zimagePriceHQ(base), zimageHighStepPriceUSD)
+}
 
 func getImageCount(req ServiceUsageRequest) int {
 	n := req.N

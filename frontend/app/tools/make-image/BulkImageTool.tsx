@@ -9,7 +9,9 @@ import styles from './page.module.css';
 type Engine = 'omniserve' | 'images3' | 'r1';
 type Quality = 'turbo' | 'hq';
 
-const HQ_MULTIPLIER = 2;
+const TURBO_PRICE = 0.04;
+// Mirrors server zimageUnitPriceUSD: max(2x turbo, 20+ step price of $0.10).
+const HQ_PRICE = Math.max(TURBO_PRICE * 2, 0.1);
 
 interface Variant {
   url: string;
@@ -130,7 +132,7 @@ export default function BulkImageTool() {
   const total = prompts.length * count;
   const aspectValue = ASPECTS.find((a) => a.id === aspect)!;
   const hq = quality === 'hq' && engine === 'omniserve';
-  const unitPrice = 0.04 * (hq ? HQ_MULTIPLIER : 1);
+  const unitPrice = hq ? HQ_PRICE : TURBO_PRICE;
 
   async function generate() {
     const currentUser = user || loadStoredUser();

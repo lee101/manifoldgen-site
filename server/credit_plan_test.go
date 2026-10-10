@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -245,15 +246,35 @@ func TestProxyOmniserveMultiImage(t *testing.T) {
 	}
 }
 
-func TestRA2HQTierDoublesImagePrice(t *testing.T) {
-	base := getRequestServicePriceUSD(ServiceUsageRequest{Service: "zimage"})
-	hq := getRequestServicePriceUSD(ServiceUsageRequest{Service: "zimage", Quality: "hq"})
-	if hq != base*2 {
-		t.Fatalf("hq usd = %v, want %v", hq, base*2)
+func TestZImagePriceMatrix(t *testing.T) {
+	base := servicePricesUSD["zimage"]
+	high := zimageHighStepPriceUSD
+	hq := math.Max(base*2, high)
+	cases := []struct {
+		name string
+		req  ServiceUsageRequest
+		want float64
+	}{
+		{"turbo default", ServiceUsageRequest{Service: "zimage"}, base},
+		{"turbo 19 steps", ServiceUsageRequest{Service: "zimage", NumSteps: 19}, base},
+		{"20 steps", ServiceUsageRequest{Service: "zimage", NumSteps: 20}, hq},
+		{"hq no steps", ServiceUsageRequest{Service: "zimage", Quality: "hq"}, hq},
+		{"hq 30 steps does not stack", ServiceUsageRequest{Service: "zimage", Quality: "hq", NumSteps: 30}, hq},
+		{"hq 8 steps", ServiceUsageRequest{Service: "zimage", Quality: "hq", NumSteps: 8}, hq},
+		{"30 steps no hq", ServiceUsageRequest{Service: "zimage", NumSteps: 30}, hq},
+		{"hq batch of 3", ServiceUsageRequest{Service: "zimage", Quality: "hq", N: 3}, hq * 3},
 	}
-	batch := getRequestServicePriceUSD(ServiceUsageRequest{Service: "zimage", Quality: "hq", N: 3})
-	if batch != base*2*3 {
-		t.Fatalf("hq batch usd = %v, want %v", batch, base*6)
+	for _, c := range cases {
+		if got := getRequestServicePriceUSD(c.req); math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("%s: price = %v, want %v", c.name, got, c.want)
+		}
+	}
+	// The same 30-step render must cost the same however it is requested.
+	a := getRequestServicePriceUSD(ServiceUsageRequest{Service: "zimage", Quality: "hq"})
+	b := getRequestServicePriceUSD(ServiceUsageRequest{Service: "zimage", NumSteps: 30})
+	c := getRequestServicePriceUSD(ServiceUsageRequest{Service: "zimage", Quality: "hq", NumSteps: 30})
+	if a != b || b != c {
+		t.Fatalf("inconsistent 30-step prices: %v %v %v", a, b, c)
 	}
 }
 
