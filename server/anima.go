@@ -121,6 +121,10 @@ func submitAnimaRunpod(input map[string]interface{}, queued *h3RunpodQueuedJob) 
 	if endpointID == "" {
 		return 0, fmt.Errorf("Anima endpoint is not configured")
 	}
+	return submitSingleWorkerRunpod(endpointID, input, queued)
+}
+
+func submitSingleWorkerRunpod(endpointID string, input map[string]interface{}, queued *h3RunpodQueuedJob) (int, error) {
 	lock := h3EndpointScaleLock(endpointID)
 	lock.Lock()
 	defer lock.Unlock()

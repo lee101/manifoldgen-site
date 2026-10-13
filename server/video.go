@@ -847,6 +847,10 @@ func processVideoJob(jobID string) {
 		processAnimaJob(job)
 		return
 	}
+	if isAnimeControlService(job.Service) {
+		processAnimeControlJob(job)
+		return
+	}
 	if job.Service == "music_generation" {
 		processMusic3Job(job)
 		return
@@ -1777,7 +1781,7 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 		if cutePrice := getCUTEPriceUSD(); cutePrice > 0 {
 			if _, _, settleErr := dbConn.SettleGeneratedVideoJob(job.ID, job.Result, job.ProviderCost, job.ChargedUSD, cutePrice); settleErr == nil {
 				job, _ = dbConn.GetVideoJob(job.ID, user.ID)
-				if job.Service == "h3_image" || job.Service == "h3_image_edit" || job.Service == "anima" {
+				if job.Service == "h3_image" || job.Service == "h3_image_edit" || job.Service == "anima" || isAnimeControlService(job.Service) {
 					if persistErr := persistH3ImageJobResult(job); persistErr != nil {
 						log.Printf("H3 image persistence after payment failed job=%s: %v", job.ID, persistErr)
 					}
@@ -2036,7 +2040,7 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 	// Provider settlement inputs stay server-side. Public callers only see the
 	// amount actually charged to their account.
 	out.ProviderCost = 0
-	if job.Service == "h3_video" || job.Service == "h3_image" || job.Service == "h3_image_edit" || job.Service == "anima" || job.Service == "sfx_generation" || job.Service == "music_generation" || job.Service == "music_video" || job.Service == lofiLoopService {
+	if job.Service == "h3_video" || job.Service == "h3_image" || job.Service == "h3_image_edit" || job.Service == "anima" || isAnimeControlService(job.Service) || job.Service == "sfx_generation" || job.Service == "music_generation" || job.Service == "music_video" || job.Service == lofiLoopService {
 		switch strings.ToLower(strings.TrimSpace(job.Status)) {
 		case "cancelled", "canceled":
 			out.Error = videoGenerationCancelledMessage
@@ -2072,7 +2076,7 @@ func publicVideoJob(job *VideoJob) *VideoJob {
 					delete(result, key)
 				}
 			}
-			if (job.Service == "h3_image" || job.Service == "h3_image_edit" || job.Service == "anima") && strings.EqualFold(job.Status, "payment_required") {
+			if (job.Service == "h3_image" || job.Service == "h3_image_edit" || job.Service == "anima" || isAnimeControlService(job.Service)) && strings.EqualFold(job.Status, "payment_required") {
 				delete(result, "image_url")
 				delete(result, "gallery_file_path")
 				delete(result, "image_id")

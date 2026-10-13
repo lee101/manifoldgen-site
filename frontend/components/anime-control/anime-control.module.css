@@ -1,0 +1,12 @@
+.tabs{margin:0 0 12px;display:flex;gap:4px;padding:3px;border:1px solid #263b38;border-radius:9px;background:#080d0e}.tabs button{flex:1;padding:8px 6px;color:#6d817d;border:0;border-radius:6px;background:transparent;font-size:11px;font-weight:800;cursor:pointer}.tabs .on{color:#07110f;background:#dff5ee}
+.pad{display:grid;gap:8px}.padTools{display:flex;flex-wrap:wrap;align-items:center;gap:5px}.padTools button{width:32px;height:32px;display:grid;place-items:center;color:#9bb3ad;border:1px solid #2b423e;border-radius:8px;background:#0a1112;cursor:pointer}.padTools .on{color:#07110f;background:#dff5ee}.padTools input{flex:1;min-width:80px}
+.swatches{display:flex;gap:6px}.swatches button{width:26px;height:26px;border:2px solid transparent;border-radius:50%;cursor:pointer}.swatches .swatchOn{border-color:#fff}
+.padCanvas{width:100%;max-height:560px;object-fit:contain;border:1px solid #2b423e;border-radius:10px;background:#000;touch-action:none;cursor:crosshair}
+.studio{min-height:520px;border:1px solid #2b423e;border-radius:12px;overflow:hidden;background:#05090a}
+.photo{display:grid;gap:10px}.photo img{width:100%;max-height:420px;object-fit:contain;border-radius:10px;background:#000}
+.drop{padding:26px 14px;text-align:center;color:#6d817d;border:1px dashed #37524d;border-radius:12px;font-size:12px;cursor:pointer}
+.range{margin-top:11px;display:grid;gap:6px;color:#839995;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.range input{width:100%}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}.pair figure{margin:0;min-width:0}.pair figcaption{margin-bottom:6px;color:#5f7570;font:700 9px var(--font-ibm-plex-mono),monospace;letter-spacing:.12em}.pair img{width:100%;border-radius:10px;border:1px solid #223632;background:#000}
+.examples{max-width:1320px;margin:0 auto 30px;padding:0 26px;display:grid;gap:14px}.examples h2{margin:0;font:700 24px var(--font-display),sans-serif}.exampleCard{padding:14px;border:1px solid #213532;border-radius:16px;background:rgba(11,17,18,.93)}.exampleCard p{margin:10px 0 0;color:#829692;font-size:11px;line-height:1.55}.exampleCard small{display:block;margin-top:6px;color:#5e7771;font:700 9px var(--font-ibm-plex-mono),monospace;letter-spacing:.12em}
+.stack{display:grid;gap:14px;max-width:1320px;margin:auto;padding:0 26px 40px;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr)}.stack>*{min-width:0}
+@media(max-width:900px){.stack{grid-template-columns:1fr;padding:0 12px 30px}.pair{grid-template-columns:1fr}.examples{padding:0 12px}}

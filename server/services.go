@@ -28,6 +28,10 @@ import (
 var servicePricesUSD = map[string]float64{
 	"zimage":                   0.04,  // per generation
 	"anima":                    0.04,  // per Anima illustration through OmniServe native
+	"anime_pose_control":       0.08,  // photo or 3D-posed skeleton to anime character; fixed before dispatch
+	"anime_scene_control":      0.10,  // regional layout and 3D body pose, multi-character scenes
+	"anime_depth_control":      0.10,  // depth-guided illustration
+	"anime_sketch_control":     0.12,  // edge or scribble guided illustration
 	"gpt_image":                0.24,  // GPT Image 2 via OpenPaths; always metered, including subscriptions
 	"image_edit":               0.30,  // OpenPaths image-to-image edit; provider fallback is owned by OpenPaths
 	"chronos2":                 0.002, // per forecast (Chronos-2, our own ~120M model, ms-scale call)
@@ -178,29 +182,33 @@ func initServices() {
 
 	// Load custom prices from env
 	envPriceMap := map[string]string{
-		"zimage":           "ZIMAGE_PRICE_USD",
-		"anima":            "ANIMA_PRICE_USD",
-		"gpt_image":        "GPT_IMAGE_PRICE_USD",
-		"image_edit":       "GPT_IMAGE_EDIT_PRICE_USD",
-		"chronos2":         "CHRONOS_PRICE_USD",
-		"tts":              "TTS_PRICE_USD_PER_100CHARS",
-		"stt":              "STT_PRICE_USD_PER_MINUTE",
-		"gemma4":           "GEMMA4_PRICE_USD",
-		"caption":          "CAPTION_PRICE_USD",
-		"lora_training":    "LORA_TRAINING_PRICE_USD",
-		"ltx_video":        "LTX_VIDEO_PRICE_USD",
-		"video_generate":   "VIDEO_GENERATE_PRICE_USD",
-		"h3_video":         "H3_VIDEO_PRICE_USD_PER_GPU_HOUR",
-		"h3_image":         "H3_IMAGE_ESTIMATE_USD",
-		"h3_image_edit":    "H3_IMAGE_EDIT_ESTIMATE_USD",
-		"video_restyle":    "VIDEO_RESTYLE_ESTIMATE_USD",
-		"orbit_video":      "ORBIT_VIDEO_ESTIMATE_USD",
-		"flux_image":       "FLUX_IMAGE_PRICE_USD",
-		"nsfw_detect":      "NSFW_DETECT_PRICE_USD",
-		"relight":          "RELIGHT_PRICE_USD",
-		"upscale_image":    "UPSCALE_IMAGE_PRICE_USD",
-		"extend_image":     "EXTEND_IMAGE_PRICE_USD",
-		"music_generation": "MUSIC_GENERATION_PRICE_USD",
+		"zimage":               "ZIMAGE_PRICE_USD",
+		"anima":                "ANIMA_PRICE_USD",
+		"anime_pose_control":   "ANIME_POSE_CONTROL_PRICE_USD",
+		"anime_scene_control":  "ANIME_SCENE_CONTROL_PRICE_USD",
+		"anime_depth_control":  "ANIME_DEPTH_CONTROL_PRICE_USD",
+		"anime_sketch_control": "ANIME_SKETCH_CONTROL_PRICE_USD",
+		"gpt_image":            "GPT_IMAGE_PRICE_USD",
+		"image_edit":           "GPT_IMAGE_EDIT_PRICE_USD",
+		"chronos2":             "CHRONOS_PRICE_USD",
+		"tts":                  "TTS_PRICE_USD_PER_100CHARS",
+		"stt":                  "STT_PRICE_USD_PER_MINUTE",
+		"gemma4":               "GEMMA4_PRICE_USD",
+		"caption":              "CAPTION_PRICE_USD",
+		"lora_training":        "LORA_TRAINING_PRICE_USD",
+		"ltx_video":            "LTX_VIDEO_PRICE_USD",
+		"video_generate":       "VIDEO_GENERATE_PRICE_USD",
+		"h3_video":             "H3_VIDEO_PRICE_USD_PER_GPU_HOUR",
+		"h3_image":             "H3_IMAGE_ESTIMATE_USD",
+		"h3_image_edit":        "H3_IMAGE_EDIT_ESTIMATE_USD",
+		"video_restyle":        "VIDEO_RESTYLE_ESTIMATE_USD",
+		"orbit_video":          "ORBIT_VIDEO_ESTIMATE_USD",
+		"flux_image":           "FLUX_IMAGE_PRICE_USD",
+		"nsfw_detect":          "NSFW_DETECT_PRICE_USD",
+		"relight":              "RELIGHT_PRICE_USD",
+		"upscale_image":        "UPSCALE_IMAGE_PRICE_USD",
+		"extend_image":         "EXTEND_IMAGE_PRICE_USD",
+		"music_generation":     "MUSIC_GENERATION_PRICE_USD",
 	}
 	for svc, envKey := range envPriceMap {
 		if p := os.Getenv(envKey); p != "" {
@@ -429,6 +437,10 @@ type publicServiceAlias struct {
 var publicServiceAliases = []publicServiceAlias{
 	{Public: "image", Internal: "zimage"},
 	{Public: "anima", Internal: "anima"},
+	{Public: "anime-pose-control", Internal: "anime_pose_control"},
+	{Public: "anime-scene-control", Internal: "anime_scene_control"},
+	{Public: "anime-depth-control", Internal: "anime_depth_control"},
+	{Public: "anime-sketch-control", Internal: "anime_sketch_control"},
 	{Public: "gpt-image-2", Internal: "gpt_image"},
 	{Public: "image-edit", Internal: "image_edit"},
 	{Public: "video", Internal: "h3_video"},
@@ -492,6 +504,10 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 	units := map[string]string{
 		"zimage":                   fmt.Sprintf("per generation (base); $%.2f for 20+ steps", zimageHighStepPriceUSD),
 		"anima":                    "per illustration; generated through the licensed OmniServe native image lane",
+		"anime_pose_control":       "per illustration; the character follows a reference photo or a posed 3D skeleton; fixed before dispatch",
+		"anime_scene_control":      "per illustration; colour regions and a 3D body pose set the layout; fixed before dispatch",
+		"anime_depth_control":      "per illustration; a depth map fixes the scene geometry; fixed before dispatch",
+		"anime_sketch_control":     "per illustration; edges or a scribble drive the drawing; fixed before dispatch",
 		"gpt_image":                "per image; always metered and excluded from unlimited image plans",
 		"image_edit":               "per OpenPaths image edit; always metered",
 		"chronos2":                 "per forecast",
@@ -669,6 +685,10 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 	if req.Service == "anima" {
 		handleAnimaService(ctx, req, user)
+		return
+	}
+	if isAnimeControlService(req.Service) {
+		handleAnimeControlService(ctx, req, user)
 		return
 	}
 	if req.Service == lofiLoopService {
