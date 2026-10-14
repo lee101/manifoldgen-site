@@ -71,6 +71,10 @@ var prodkitTools = []prodkitTool{
 	{prodkitVectorize, "vectorize", "Vectorize", "vector", 0.02, "per layered SVG; $0.03 with the AI tracer", []string{"mode", "colors", "detail", "corners", "smooth", "engine"}},
 	{prodkitShotCleanup, "shot-cleanup", "Shot Cleanup", "eraser", prodkitEraserUSDSec, "per second of video (max 30 s) with objects removed",
 		[]string{"points", "keep_audio"}},
+	{prodkitFootageSorter, "footage-sorter", "Footage Sorter", "footage", prodkitFootageBaseUSD, "base + $0.02 per clip (up to 24): bins, audio sync, OTIO/FCPXML/Studio timeline, contact sheet",
+		[]string{"clips", "reference_audio", "sync", "fps"}},
+	{prodkitShotComposer, "shot-composer", "Shot Composer", "composer", prodkitComposerBaseUSD, "per composite (max 30 s): AI matte adds the video background removal per-second rate, chroma key adds $0.01/s; +$0.04 for a generated background",
+		[]string{"background_video_url", "position", "scale", "match_color", "light_wrap", "grain", "shadow", "keep_audio", "key", "key_color"}},
 }
 
 func prodkitToolFor(service string) (prodkitTool, bool) {
@@ -148,6 +152,10 @@ func prodkitPriceUSD(req ServiceUsageRequest) float64 {
 			seconds = 5
 		}
 		return prodkitEraserUSDSec * math.Ceil(math.Min(seconds, prodkitEraserMaxSec))
+	case "footage":
+		return prodkitFootagePriceUSD(req)
+	case "composer":
+		return prodkitComposerPriceUSD(req, float64(req.Duration))
 	}
 	return 0
 }
@@ -251,6 +259,10 @@ func normalizeProdkitRequest(req *ServiceUsageRequest) error {
 		if req.Duration <= 0 || req.Duration > int(prodkitEraserMaxSec) {
 			req.Duration = int(prodkitEraserMaxSec)
 		}
+	case "footage":
+		return normalizeProdkitFootage(params)
+	case "composer":
+		return normalizeProdkitComposer(req, params)
 	}
 	return nil
 }
@@ -371,6 +383,8 @@ func prodkitUsesPaidProvider(req ServiceUsageRequest) bool {
 		return true
 	case "vector":
 		return prodkitString(prodkitParams(req), "engine") == "ai"
+	case "composer":
+		return !prodkitComposerChroma(req)
 	}
 	return prodkitNeeds3D(req)
 }
@@ -516,6 +530,13 @@ func processProdkitJob(job *VideoJob) {
 		var seconds float64
 		result, seconds, providerUSD, err = runProdkitShotCleanup(ctx, job, req, workDir, setStage)
 		chargedUSD = prodkitEraserUSDSec * math.Ceil(seconds)
+	case "footage":
+		result, providerUSD, err = runProdkitFootageSorter(ctx, job, req, workDir, setStage)
+		chargedUSD = prodkitPriceUSD(req)
+	case "composer":
+		var seconds float64
+		result, seconds, providerUSD, err = runProdkitShotComposer(ctx, job, req, workDir, setStage)
+		chargedUSD = prodkitComposerPriceUSD(req, seconds)
 	default:
 		err = fmt.Errorf("unsupported engine")
 	}
@@ -533,6 +554,11 @@ func processProdkitJob(job *VideoJob) {
 		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "credit pricing unavailable; retry status")
 		return
 	}
+	studio, _ := result["_studio"].(prodkitStudioPending)
+	delete(result, "_studio")
+	if studio.ID != "" {
+		result["studio_url"] = "/studio?project=" + url.QueryEscape(studio.ID)
+	}
 	result["service"] = tool.Public
 	result["charged_usd"] = chargedUSD
 	result["credits_used"] = chargedUSD / cutePrice
@@ -545,6 +571,11 @@ func processProdkitJob(job *VideoJob) {
 		}
 		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "settlement unavailable; retry status")
 		return
+	}
+	if studio.ID != "" {
+		if err := prodkitSaveStudioProject(job.UserID, studio); err != nil {
+			log.Printf("[prodkit] job=%s studio project save: %v", job.ID, err)
+		}
 	}
 	maybeTriggerAutoTopup(job.UserID)
 }
@@ -1233,6 +1264,9 @@ func prodkitFPS(fps float64) string {
 var prodkitContentExt = map[string]string{
 	"video/mp4": "mp4", "image/jpeg": "jpg", "image/png": "png", "image/svg+xml": "svg",
 	"application/x-blender": "blend", "model/gltf-binary": "glb", "text/plain": "txt",
+	"video/webm": "webm", "audio/mp4": "m4a", "application/json": "json", "application/x-otio+json": "otio",
+	"application/x-fcpxml+xml": "fcpxml", "text/x-cube": "cube", "image/webp": "webp", "video/quicktime": "mov",
+	"video/x-matroska": "mkv", "audio/wav": "wav", "audio/mpeg": "mp3", "audio/aac": "aac", "audio/flac": "flac", "audio/ogg": "ogg",
 }
 
 var uploadProdkitFile = func(ctx context.Context, path, userID, contentType string) (string, error) {

@@ -73,6 +73,8 @@ var servicePricesUSD = map[string]float64{
 	prodkitImageTo3D:           0.06,
 	prodkitVectorize:           0.02,
 	prodkitShotCleanup:         prodkitEraserUSDSec * 5,
+	prodkitFootageSorter:       prodkitFootageBaseUSD,
+	prodkitShotComposer:        prodkitComposerBaseUSD,
 }
 
 var zimageDefaultSteps = 8
@@ -487,6 +489,8 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "image-to-3d", Internal: prodkitImageTo3D},
 	{Public: "vectorize", Internal: prodkitVectorize},
 	{Public: "shot-cleanup", Internal: prodkitShotCleanup},
+	{Public: "footage-sorter", Internal: prodkitFootageSorter},
+	{Public: "shot-composer", Internal: prodkitShotComposer},
 }
 
 func requestedServiceName(service string) string {

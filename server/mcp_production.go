@@ -140,10 +140,44 @@ func mcpProductionTools() []mcpProductionTool {
 			},
 			Required: []string{"video_url"},
 		},
+		{
+			Name: "organize_footage", Title: "Sort, bin and sync footage", Service: "footage-sorter",
+			Description: "Project-sorter for up to 24 video/audio clips: probes and captions each clip, classifies A-roll/B-roll and wide/medium/close, groups bins by scene, camera and role, syncs clips by audio (±60 s, with confidence) and exports an OTIO timeline, FCPXML 1.10 (Premiere, Resolve, Final Cut), a ManifoldGen Studio project, a contact sheet and a JSON report. $0.05 + $0.02 per clip.",
+			Properties: map[string]interface{}{
+				"clips":           map[string]interface{}{"type": "array", "minItems": 1, "maxItems": 24, "items": map[string]string{"type": "string"}, "description": "Public video or audio URLs (use create_upload for local files); 2 GB total."},
+				"reference_audio": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 23, "description": "Index of the clip whose audio is the sync reference (defaults to the longest audio)."},
+				"sync":            map[string]interface{}{"type": "boolean", "default": true},
+				"fps":             mcpNumber(1, 120, "Timeline frame rate (defaults to the most common clip rate)."),
+			},
+			Required: []string{"clips"},
+		},
+		{
+			Name: "composite_shot", Title: "Composite a subject onto a new background", Service: "shot-composer",
+			Description: "After Effects-style composite: mattes the subject (AI background removal, or chroma key with key=chroma), places it on a background image, video or generated plate (prompt), matches color via a Lab .cube LUT, adds light wrap, drop shadow and grain. Returns the composite MP4, the alpha WebM, the background, the LUT and an editable Studio project. AI matte: video background removal per-second rate + $0.10; chroma: $0.10 + $0.01/s; +$0.04 for a prompt background; max 30 s.",
+			Properties: map[string]interface{}{
+				"video_url":            map[string]string{"type": "string", "description": "Foreground subject video."},
+				"image_url":            map[string]string{"type": "string", "description": "Background still."},
+				"background_video_url": map[string]string{"type": "string", "description": "Background video (used when image_url is absent)."},
+				"prompt":               map[string]string{"type": "string", "description": "Describe a background to generate when no background media is given."},
+				"key":                  mcpEnum("ai", "chroma"),
+				"key_color":            map[string]string{"type": "string", "description": "green, blue or hex (chroma only)."},
+				"position":             mcpEnum("center", "left", "right", "bottom"),
+				"scale":                mcpNumber(0.3, 1.5, "Subject size relative to fitting the frame."),
+				"match_color":          map[string]interface{}{"type": "boolean", "default": true},
+				"light_wrap":           mcpNumber(0, 1, "Background light spilling over subject edges."),
+				"grain":                mcpNumber(0, 1, "Film grain over the composite."),
+				"shadow":               map[string]string{"type": "boolean"},
+				"keep_audio":           map[string]string{"type": "boolean"},
+				"duration":             map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 30, "description": "Seconds from the start (defaults to the clip up to 30 s)."},
+			},
+			Required: []string{"video_url"},
+		},
 	}
 }
 
 var mcpTopLevelFields = map[string]bool{"image_url": true, "model_url": true, "model_urls": true, "video_url": true, "prompt": true, "duration": true}
+
+var mcpTopLevelDuration = map[string]bool{"remove_video_objects": true, "composite_shot": true}
 
 func mcpProductionToolDefs() []map[string]interface{} {
 	writeTool := map[string]bool{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true}
@@ -320,7 +354,7 @@ type mcpPrompt struct {
 
 var mcpPrompts = []mcpPrompt{
 	{"production-bundle", "Production skills bundle", "Turn an idea into an editable production project using the best-fit ManifoldGen workflow.",
-		"Help me turn my idea into an editable production project. Pick the workflow that fits: destruction-studio, exploded-view, scene-builder, toon-shader, shot-cleanup, shot-composer, vectorize, image-fixer, color-grade or shader-fx. Ask about goals, reference assets, output format and duration, check cost with list_services, then run it. Keep outputs editable (.blend, layered SVG, .cube LUT, Studio project) and return every download link."},
+		"Help me turn my idea into an editable production project. Pick the workflow that fits: destruction-studio, exploded-view, scene-builder, toon-shader, shot-cleanup, shot-composer, footage-sorter, vectorize, image-fixer, color-grade or shader-fx. Ask about goals, reference assets, output format and duration, check cost with list_services, then run it. Keep outputs editable (.blend, layered SVG, .cube LUT, Studio project) and return every download link."},
 	{"destruction-studio", "Simulate destruction", "Cinematic fracture, debris and dust with an editable .blend.",
 		"Create a destruction shot with blender_destruction. Ask what should break (preset subject, 3D text, my model or a photo), the material, impact type, slow motion and aspect. Start at quality draft to check framing, then render standard or high. Return the MP4, poster and .blend links and offer a Studio edit."},
 	{"exploded-view", "Animate assembly", "Exploded or assembling parts with clean product staging.",
@@ -332,7 +366,9 @@ var mcpPrompts = []mcpPrompt{
 	{"shot-cleanup", "Remove objects from video", "Erase unwanted elements while keeping motion and texture.",
 		"Clean up a shot with remove_video_objects. Ask what to remove; prefer a short noun prompt (person, car, logo). For clips under 4.8 s, points on the first frame are also possible. Confirm the per-second cost first. Return the cleaned MP4."},
 	{"shot-composer", "Composite a VFX shot", "Key a subject and place it on a new plate with matched color and grain.",
-		"Composite a shot: remove the background with generate_media service video_background_removal (transparent output), get or generate a background plate, then open both in ManifoldGen Studio (https://manifoldgen.com/studio) on separate tracks, use chroma/luma key or the alpha clip, match color with the grade panel and add grain. Return links and the steps taken."},
+		"Composite a shot with composite_shot. Ask for the subject video, the background (image_url, background_video_url or a prompt to generate one), whether it was shot on green/blue screen (key chroma, cheaper) or needs AI background removal, placement (position, scale) and the finish (match_color, light_wrap, shadow, grain). Confirm the cost, run it, then return the composite MP4, alpha WebM, LUT and the Studio project link so layers stay editable."},
+	{"footage-sorter", "Organize footage", "Bin, caption and audio-sync a pile of clips into an NLE-ready timeline.",
+		"Organize my footage with organize_footage. Collect up to 24 clip URLs (upload local files with create_upload), ask which clip has the best audio for reference_audio and the timeline frame rate, confirm the $0.05 + $0.02/clip cost, then run it. Summarize the bins, the A-roll/B-roll split and each sync offset with its confidence, flag low-confidence clips, and return the FCPXML (Premiere/Resolve/Final Cut), OTIO, Studio project, contact sheet and report links."},
 	{"vectorize", "Convert images to vectors", "Layered SVG with one group per color.",
 		"Vectorize an image with vectorize_image. Ask whether it is a logo/flat art (mode poster, fewer colors), line art (lineart) or illustration (color). Return the layered SVG link and the palette."},
 	{"image-fixer", "Clean up images", "Fix textures, remove objects, relight and upscale.",
@@ -393,7 +429,7 @@ func mcpProductionRequestBody(tool mcpProductionTool, arguments json.RawMessage)
 		switch {
 		case key == "wait_seconds":
 			_ = json.Unmarshal(value, &wait)
-		case mcpTopLevelFields[key] && !(key == "duration" && tool.Name != "remove_video_objects"):
+		case mcpTopLevelFields[key] && (key != "duration" || mcpTopLevelDuration[tool.Name]):
 			request[key] = value
 		default:
 			params[key] = value
