@@ -303,7 +303,7 @@ func stubProdkitIO(t *testing.T, dir string) *prodkitTestStubs {
 		stubs.uploaded[publicURL] = local
 		return publicURL, nil
 	}
-	prodkitSaveStudioProject = func(string, string, []byte) string { return "" }
+	prodkitSaveStudioProject = func(string, prodkitStudioPending) error { return nil }
 	return stubs
 }
 
@@ -378,6 +378,9 @@ func TestProdkitFootageSorterIntegration(t *testing.T) {
 		if stubs.uploaded[result[key].(string)] == "" {
 			t.Fatalf("%s missing: %v", key, result)
 		}
+	}
+	if pending, _ := result["_studio"].(prodkitStudioPending); pending.ID == "" || !strings.Contains(string(pending.Doc), "https://cdn.test/") || strings.Contains(string(pending.Doc), "media.test") {
+		t.Fatalf("studio pending = %+v", result["_studio"])
 	}
 	summary := result["report"].(map[string]interface{})
 	if summary["synced"] != 4 || summary["reference_clip"] != "01 ref" || summary["timeline_fps"] != 30.0 {
@@ -456,6 +459,9 @@ func TestProdkitShotComposerChroma(t *testing.T) {
 			t.Fatalf("%s missing: %v", key, result)
 		}
 	}
+	if !strings.HasPrefix(result["background_url"].(string), "https://cdn.test/") || result["_studio"].(prodkitStudioPending).ID == "" {
+		t.Fatalf("background not mirrored or studio missing: %v", result)
+	}
 	composite := stubs.uploaded[result["video_url"].(string)]
 	info, err := prodkitProbeMedia(context.Background(), composite)
 	if err != nil || info.Width != 640 || info.Height != 360 || math.Abs(info.Duration-2) > 0.15 || !info.HasAudio {
@@ -520,5 +526,40 @@ func TestProdkitComposeFilterShape(t *testing.T) {
 				t.Fatalf("lab roundtrip %v -> %v", rgb, back)
 			}
 		}
+	}
+}
+
+func TestProdkitShotComposerLoopsBackgroundVideo(t *testing.T) {
+	ffmpeg := prodkitTestFFmpeg(t)
+	dir := t.TempDir()
+	stubs := stubProdkitIO(t, dir)
+	fg := filepath.Join(dir, "fg.mp4")
+	bg := filepath.Join(dir, "bg.mp4")
+	for _, args := range [][]string{
+		{"-f", "lavfi", "-i", "color=c=0x0000FF:s=160x120:r=25:d=3,drawbox=x=40:y=30:w=60:h=60:color=yellow@1:t=fill", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", fg},
+		{"-f", "lavfi", "-i", "testsrc=s=320x180:r=25:d=1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", bg},
+	} {
+		if out, err := exec.Command(ffmpeg, append([]string{"-v", "error", "-y"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("ffmpeg: %v %s", err, out)
+		}
+	}
+	stubs.sources["https://media.test/fg.mp4"] = fg
+	stubs.sources["https://media.test/bg.mp4"] = bg
+	req := ServiceUsageRequest{Service: prodkitShotComposer, VideoURL: "https://media.test/fg.mp4", Params: json.RawMessage(`{"key":"chroma","key_color":"blue","match_color":false,"background_video_url":"https://media.test/bg.mp4"}`)}
+	if err := normalizeProdkitRequest(&req); err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(dir, "work")
+	_ = os.MkdirAll(work, 0o755)
+	result, _, _, err := runProdkitShotComposer(context.Background(), &VideoJob{ID: "job", UserID: "user"}, req, work, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop, err := prodkitProbeMedia(context.Background(), stubs.uploaded[result["background_url"].(string)])
+	if err != nil || math.Abs(loop.Duration-3) > 0.15 || loop.Width != 320 {
+		t.Fatalf("looped background %+v err=%v", loop, err)
+	}
+	if _, ok := result["lut_url"]; ok {
+		t.Fatal("lut produced with match_color false")
 	}
 }

@@ -336,6 +336,7 @@ type prodkitClip struct {
 	Lane         int      `json:"lane"`
 	Bins         []string `json:"bins"`
 	path         string
+	studioURL    string
 	frames       []string
 	talking      bool
 	env          []float64
@@ -381,16 +382,34 @@ var prodkitCaptionClip = func(ctx context.Context, frames []string) (prodkitCapt
 	return out, err
 }
 
-var prodkitSaveStudioProject = func(userID, name string, doc []byte) string {
-	if dbConn == nil || len(doc) > maxStudioProjectDocumentBytes {
-		return ""
+type prodkitStudioPending struct {
+	ID, Name string
+	Doc      []byte
+}
+
+func prodkitPendingStudio(name string, doc []byte) prodkitStudioPending {
+	if len(doc) > maxStudioProjectDocumentBytes {
+		return prodkitStudioPending{}
 	}
-	id := uuid.NewString()
-	if _, err := dbConn.UpsertStudioProject(userID, id, name, doc); err != nil {
-		log.Printf("[prodkit] studio project save: %v", err)
-		return ""
+	return prodkitStudioPending{ID: uuid.NewString(), Name: name, Doc: doc}
+}
+
+var prodkitSaveStudioProject = func(userID string, pending prodkitStudioPending) error {
+	if dbConn == nil {
+		return fmt.Errorf("database unavailable")
 	}
-	return "/studio?project=" + url.QueryEscape(id)
+	_, err := dbConn.UpsertStudioProject(userID, pending.ID, pending.Name, pending.Doc)
+	return err
+}
+
+func prodkitMirror(ctx context.Context, path, raw, userID, contentType string) string {
+	if parsed, err := url.Parse(raw); err == nil && parsed.Hostname() == r2PublicHost {
+		return raw
+	}
+	if mirrored, err := uploadProdkitFile(ctx, path, userID, contentType); err == nil {
+		return mirrored
+	}
+	return raw
 }
 
 func prodkitClipName(raw string, index int) string {
@@ -1126,7 +1145,11 @@ func buildProdkitFootageStudio(clips []*prodkitClip, bins []prodkitBin, tl prodk
 		if clip.Synced && !clip.Reference && clip.HasAudio {
 			volume = 0
 		}
-		assets = append(assets, prodkitStudioAsset(uuid.NewString(), clip.Name, clip.Kind, clip.URL, prodkitClipContentType(clip), clip.Duration, clip.Width, clip.Height, clip.Start, track[clip.Index], volume, clip.Size))
+		cloudURL := clip.studioURL
+		if cloudURL == "" {
+			cloudURL = clip.URL
+		}
+		assets = append(assets, prodkitStudioAsset(uuid.NewString(), clip.Name, clip.Kind, cloudURL, prodkitClipContentType(clip), clip.Duration, clip.Width, clip.Height, clip.Start, track[clip.Index], volume, clip.Size))
 	}
 	return prodkitStudioDocument(assets, tl.Width, tl.Height)
 }
@@ -1286,6 +1309,10 @@ func runProdkitFootageSorter(ctx context.Context, job *VideoJob, req ServiceUsag
 	if err != nil {
 		return nil, 0, err
 	}
+	setStage("staging media for Studio")
+	for _, clip := range clips {
+		clip.studioURL = prodkitMirror(ctx, clip.path, clip.URL, job.UserID, prodkitClipContentType(clip))
+	}
 	studio, err := buildProdkitFootageStudio(clips, bins, tl)
 	if err != nil {
 		return nil, 0, err
@@ -1332,9 +1359,7 @@ func runProdkitFootageSorter(ctx context.Context, job *VideoJob, req ServiceUsag
 		return nil, 0, err
 	}
 	result["contact_sheet_url"] = sheetURL
-	if studioURL := prodkitSaveStudioProject(job.UserID, "Footage: "+truncateString(clips[0].Name, 60), studio); studioURL != "" {
-		result["studio_url"] = studioURL
-	}
+	result["_studio"] = prodkitPendingStudio("Footage: "+truncateString(clips[0].Name, 60), studio)
 	synced := 0
 	for _, clip := range clips {
 		if clip.Synced && doSync {
@@ -1750,16 +1775,34 @@ func runProdkitShotComposer(ctx context.Context, job *VideoJob, req ServiceUsage
 	if err != nil || bgInfo.Width <= 0 {
 		return nil, 0, 0, prodkitUserError{"the background could not be read"}
 	}
-	if kind == "prompt" {
+	w, h := prodkitCanvas(bgInfo.Width, bgInfo.Height)
+	fw, fh, x, y := prodkitPlacement(position, scale, w, h, matteInfo.Width, matteInfo.Height)
+	bgType := map[string]string{".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}[prodkitURLExt(backgroundURL)]
+	if bgType == "" {
+		bgType = "image/png"
+	}
+	switch kind {
+	case "prompt":
 		if backgroundURL, err = uploadProdkitFile(ctx, background, job.UserID, "image/png"); err != nil {
 			return nil, 0, 0, err
 		}
+	case "image":
+		backgroundURL = prodkitMirror(ctx, background, backgroundURL, job.UserID, bgType)
+	case "video":
+		looped := filepath.Join(workDir, "background_loop.mp4")
+		if err := prodkitRun(ctx, "background loop", "-stream_loop", "-1", "-i", background, "-t", fmt.Sprintf("%.3f", seconds), "-an",
+			"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1,fps=%s", w, h, w, h, fps),
+			"-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", looped); err != nil {
+			return nil, 0, 0, prodkitUserError{"the background video could not be read"}
+		}
+		background, bgType = looped, "video/mp4"
+		if backgroundURL, err = uploadProdkitFile(ctx, looped, job.UserID, "video/mp4"); err != nil {
+			return nil, 0, 0, err
+		}
 	}
-	w, h := prodkitCanvas(bgInfo.Width, bgInfo.Height)
-	fw, fh, x, y := prodkitPlacement(position, scale, w, h, matteInfo.Width, matteInfo.Height)
 	bgInput := []string{"-loop", "1", "-framerate", fps, "-t", fmt.Sprintf("%.3f", seconds+0.5), "-i", background}
 	if kind == "video" {
-		bgInput = []string{"-stream_loop", "-1", "-t", fmt.Sprintf("%.3f", seconds+0.5), "-i", background}
+		bgInput = []string{"-i", background}
 	}
 	alphaInput := []string{"-c:v", "libvpx-vp9", "-i", matte}
 	lut := ""
@@ -1818,15 +1861,9 @@ func runProdkitShotComposer(ctx context.Context, job *VideoJob, req ServiceUsage
 			result["lut_url"] = lutURL
 		}
 	}
-	bgKind, bgType := "image", map[string]string{".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}[prodkitURLExt(backgroundURL)]
-	if bgType == "" {
-		bgType = "image/png"
-	}
+	bgKind := "image"
 	if kind == "video" {
-		bgKind, bgType = "video", prodkitMediaTypes[prodkitMediaExt(backgroundURL)]
-		if bgType == "" {
-			bgType = "video/mp4"
-		}
+		bgKind = "video"
 	}
 	fgAsset := prodkitStudioAsset(uuid.NewString(), "Foreground (alpha)", "video", alphaURL, "video/webm", seconds, matteInfo.Width, matteInfo.Height, 0, 1, 0, 0)
 	fgAsset["stageScale"] = scale
@@ -1854,8 +1891,6 @@ func runProdkitShotComposer(ctx context.Context, job *VideoJob, req ServiceUsage
 		return nil, 0, 0, err
 	}
 	result["studio_project_url"] = studioURL
-	if open := prodkitSaveStudioProject(job.UserID, "Composite: "+truncateString(prodkitJobPrompt(req, prodkitTool{Title: "Shot Composer"}), 60), doc); open != "" {
-		result["studio_url"] = open
-	}
+	result["_studio"] = prodkitPendingStudio("Composite: "+truncateString(prodkitJobPrompt(req, prodkitTool{Title: "Shot Composer"}), 60), doc)
 	return result, seconds, providerUSD + 0.0005*math.Ceil(seconds), nil
 }
