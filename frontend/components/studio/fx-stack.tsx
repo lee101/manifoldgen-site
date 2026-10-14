@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, Pipette, Trash2 } from 'lucide-react';
-import { FX_BY_TYPE, FX_DEFINITIONS, createFxLayer, type FxControl, type StudioFxLayer, type StudioFxType } from '../../lib/studio-fx/registry';
+import { FX_BY_TYPE, FX_DEFINITIONS, MAX_FX_LAYERS, createFxLayer, type FxControl, type StudioFxLayer, type StudioFxType } from '../../lib/studio-fx/registry';
 import styles from './production.module.css';
 
 const GROUPS = ['Motion', 'Distort', 'Stylize', 'Light', 'Retro', 'Key'] as const;
@@ -45,8 +45,8 @@ export function FxStack({ layers, onChange, onPickColor }: FxStackProps) {
     return <label key={item.key} className={styles.row}><span><b>{item.label}</b><output>{item.step >= 1 ? Math.round(value) : value.toFixed(item.step < 0.01 ? 3 : 2)}</output></span><input type="range" min={item.min} max={item.max} step={item.step} value={value} onChange={(event) => setParams(layer, { [item.key]: Number(event.target.value) }, item.key)} /></label>;
   };
   return <div className={styles.stack} data-testid="fx-stack">
-    <select className={styles.select} data-testid="fx-add" aria-label="Add effect" value="" onChange={(event) => { if (event.target.value) add(event.target.value as StudioFxType); }}>
-      <option value="">+ Add effect…</option>
+    <select className={styles.select} data-testid="fx-add" aria-label="Add effect" value="" disabled={layers.length >= MAX_FX_LAYERS} title={layers.length >= MAX_FX_LAYERS ? `Up to ${MAX_FX_LAYERS} effects` : undefined} onChange={(event) => { if (event.target.value) add(event.target.value as StudioFxType); }}>
+      <option value="">{layers.length >= MAX_FX_LAYERS ? `Limit: ${MAX_FX_LAYERS} effects` : '+ Add effect…'}</option>
       {GROUPS.map((group) => <optgroup key={group} label={group}>{FX_DEFINITIONS.filter((definition) => definition.group === group).map((definition) => <option key={definition.type} value={definition.type}>{definition.label}</option>)}</optgroup>)}
     </select>
     {!layers.length && <p className={styles.empty}>Stack GPU effects. Applied top to bottom.</p>}

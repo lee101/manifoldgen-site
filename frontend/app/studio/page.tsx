@@ -1301,7 +1301,7 @@ function PassiveStageMedia({ asset, playhead, playing, lut, mediaStyle }: { asse
     } else if (element.paused) {
       void element.play().catch(() => undefined);
     }
-  }, [playing, playhead, asset.trimStart, asset.trimEnd, asset.timelineStart]);
+  }, [playing, playhead, shaded, asset.trimStart, asset.trimEnd, asset.timelineStart]);
   if (shaded) {
     return <>
       {asset.kind === 'image'
@@ -2257,10 +2257,14 @@ export default function StudioPage() {
     if (playing) playbackClockRef.current = { wallStart: performance.now(), timelineStart: nextTime };
     const active = preferredID
       ? assets.find((asset) => asset.id === preferredID)
-      : assets.find((asset) => asset.id === selectedID && nextTime >= asset.timelineStart && nextTime <= clipEnd(asset));
+      : assets.find((asset) => {
+        if (asset.id !== selectedID) return false;
+        const span = asset.kind === 'audio' ? { start: asset.timelineStart, end: clipEnd(asset) } : clipWindow(asset, assets);
+        return nextTime >= span.start && nextTime <= span.end;
+      });
     if (active?.id === selectedID) {
       const sourceTime = active.trimStart + Math.max(0, Math.min(clipDuration(active), nextTime - active.timelineStart));
-      if (active.kind === 'video' && videoRef.current) videoRef.current.currentTime = sourceTime;
+      if (active.kind === 'video' && videoRef.current) videoRef.current.currentTime = stageSourceTime(active, nextTime);
       if (active.kind === 'audio') {
         const element = timelineAudioRefs.current.get(active.id);
         if (element) element.currentTime = sourceTime;

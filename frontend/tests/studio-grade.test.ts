@@ -24,7 +24,7 @@ import {
   type StudioAdjustments,
 } from '../lib/studio-grade';
 import { decodeStudioLUTs, encodeStudioLUTs, migrateStudioDocument, STUDIO_PROJECT_VERSION, type PortableStudioDocument } from '../lib/studio-projects';
-import { clipWindow, transitionState, wipeRect } from '../lib/studio-composite';
+import { clipWindow, compositeClipPath, transitionState, wipeRect } from '../lib/studio-composite';
 import { createFxLayer, normalizeFxLayers } from '../lib/studio-fx/registry';
 
 const identityLUT = (size: number) => {
@@ -249,5 +249,6 @@ describe('transitions', () => {
     const wipe = [clips[0], { ...clips[1], transition: { type: 'wipe-right' as const, duration: 1 } }];
     expect(transitionState(wipe[1], wipe, 4)?.wipe?.progress).toBeCloseTo(0.5, 6);
     expect(wipeRect('wipe-left', 0.25, 100, 50)).toEqual({ x: 75, y: 0, width: 25, height: 50 });
+    expect(compositeClipPath({ left: 0.1, top: 0.2, right: 0, bottom: 0 }, { type: 'wipe-right', progress: 0.25 })).toBe('inset(20.00% 75.00% 0.00% 10.00%)');
   });
 });

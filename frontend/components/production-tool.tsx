@@ -183,7 +183,7 @@ export function ProductionTool({ mode }: { mode: Mode }) {
     }
     draw();
     return () => {
-      rendererRef.current?.release();
+      rendererRef.current?.destroy();
       rendererRef.current = null;
     };
   }, [source, draw]);

@@ -51,6 +51,8 @@ export const FX_DEFINITIONS: FxDefinition[] = [
 
 export const FX_BY_TYPE = Object.fromEntries(FX_DEFINITIONS.map((definition) => [definition.type, definition])) as Record<StudioFxType, FxDefinition>;
 
+export const MAX_FX_LAYERS = 12;
+
 export function createFxLayer(type: StudioFxType, id = `fx-${Math.random().toString(36).slice(2, 10)}`): StudioFxLayer {
   return { id, type, enabled: true, params: { mix: 1, ...FX_BY_TYPE[type].defaults } };
 }
@@ -68,7 +70,7 @@ export function normalizeFxLayers(value: unknown): StudioFxLayer[] {
       if (key in params && Number.isFinite(number)) params[key] = number;
     }
     return [{ id: typeof layer.id === 'string' && layer.id ? layer.id : `fx-${Math.random().toString(36).slice(2, 10)}`, type: definition.type, enabled: layer.enabled !== false, params }];
-  }).slice(0, 12);
+  }).slice(0, MAX_FX_LAYERS);
 }
 
 export function activeFx(layers: StudioFxLayer[] | undefined) {
