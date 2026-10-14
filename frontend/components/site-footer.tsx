@@ -113,6 +113,7 @@ export default function SiteFooter() {
         </div>
 
         <div className="mt-12 grid gap-x-8 gap-y-10 border-t border-white/10 pt-10 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+          <FooterColumn {...FOOTER_TOOL_GROUPS[3]} />
           <FooterColumn title="Blog" links={FOOTER_BLOG_LINKS} more={{ href: '/blog', label: 'All posts' }} />
           <FooterColumn title="Guides" links={FOOTER_GUIDE_LINKS} more={{ href: '/blog/guides', label: 'All guides' }} />
           {SEO_LINK_GROUPS.map((group) => (

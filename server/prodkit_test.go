@@ -137,7 +137,7 @@ func TestMCPProductionRequestBody(t *testing.T) {
 	if !ok {
 		t.Fatal("tool missing")
 	}
-	body, wait, err := mcpProductionRequestBody(tool, json.RawMessage(`{"image_url":"https://x/a.png","pieces":60,"impact":"ball","wait_seconds":30}`))
+	body, wait, err := mcpProductionRequestBody(tool, json.RawMessage(`{"image_url":"https://x/a.png","pieces":60,"impact":"ball","duration":6,"wait_seconds":30}`))
 	if err != nil || wait != 30 {
 		t.Fatalf("err=%v wait=%d", err, wait)
 	}
@@ -145,7 +145,7 @@ func TestMCPProductionRequestBody(t *testing.T) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		t.Fatal(err)
 	}
-	if requestedServiceName(req.Service) != prodkitDestruction || req.ImageURL != "https://x/a.png" || !strings.Contains(string(req.Params), `"pieces":60`) {
+	if requestedServiceName(req.Service) != prodkitDestruction || req.ImageURL != "https://x/a.png" || !strings.Contains(string(req.Params), `"pieces":60`) || !strings.Contains(string(req.Params), `"duration":6`) || req.Duration != 0 {
 		t.Fatalf("request = %s", body)
 	}
 	if _, _, err := mcpProductionRequestBody(tool, json.RawMessage(`{"wallet_address":"x"}`)); err == nil {

@@ -29,6 +29,11 @@ export const FOOTER_TOOL_GROUPS: { title: string; links: FooterLink[]; more?: Fo
     links: byHref(['/tools/character-animator', '/tools/cinematic-cameras', '/tools/video-background-remover', '/tools/trailer-agent', '/tools/character-recast', '/tools/character-swap', '/tools/character-swap-exact', '/tools/character-swap-lora', '/tools/orbit-video', '/tools/reference-video', '/tools/music-generator', '/tools/lofi-loop', '/voice']),
     more: { href: '/tools', label: 'All tools' },
   },
+  {
+    title: 'Production',
+    links: byHref(['/tools/destruction-studio', '/tools/exploded-view', '/tools/toon-shader', '/tools/blender-scene', '/tools/image-to-3d', '/tools/vectorize', '/tools/shot-cleanup']),
+    more: { href: '/tools/production', label: 'Production suite' },
+  },
 ];
 
 export const FOOTER_VIDEO_MODEL_LINKS: FooterLink[] = [

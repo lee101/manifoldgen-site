@@ -393,7 +393,7 @@ func mcpProductionRequestBody(tool mcpProductionTool, arguments json.RawMessage)
 		switch {
 		case key == "wait_seconds":
 			_ = json.Unmarshal(value, &wait)
-		case mcpTopLevelFields[key]:
+		case mcpTopLevelFields[key] && !(key == "duration" && tool.Service != "shot-cleanup"):
 			request[key] = value
 		default:
 			params[key] = value
