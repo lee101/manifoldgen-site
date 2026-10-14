@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, existsSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { coerce, parseArgs } from '../src/args';
-import { mediaUrls } from '../src/media';
+import { downloadAll, mediaUrls } from '../src/media';
 import { buildServiceBody, localFiles, mcpSnippets, run, type Io } from '../src/main';
 import { readConfig, writeConfig } from '../src/config';
 
@@ -79,6 +79,10 @@ describe('service body', () => {
     expect(localFiles(scene)).toEqual(['a.glb']);
   });
 
+  test('--model keeps model selectors that are not 3D files', () => {
+    expect(buildServiceBody('video', parseArgs(['--model', 'minimax/h3-max/text-to-video']).flags, [])).toEqual({ service: 'video', model: 'minimax/h3-max/text-to-video' });
+  });
+
   test('bad params exit 2', async () => {
     const h = harness({}, { MANIFOLDGEN_API_KEY: 'k' });
     expect(await run(['generate', 'vectorize', '--params', '{bad'], h.io)).toBe(2);
@@ -97,6 +101,16 @@ describe('mediaUrls', () => {
   test('walks nested results and skips status urls', () => {
     const urls = mediaUrls({ video_url: 'https://cdn/v.mp4', status_url: 'https://mg/api/video-jobs/1.json', files: [{ url: 'https://cdn/scene.blend' }, 'https://cdn/grade.cube'], page: 'https://mg/x' });
     expect(urls).toEqual(['https://cdn/v.mp4', 'https://cdn/scene.blend', 'https://cdn/grade.cube']);
+  });
+});
+
+describe('downloads', () => {
+  test('never overwrite existing files', async () => {
+    writeFileSync(join(dir, 'a.png'), 'old');
+    writeFileSync(join(dir, '1-a.png'), 'old1');
+    const saved = await downloadAll(async () => new Response('new'), ['https://c/a.png', 'https://c/x/a.png'], dir);
+    expect(saved).toEqual([join(dir, '2-a.png'), join(dir, '3-a.png')]);
+    expect(readFileSync(join(dir, '1-a.png'), 'utf8')).toBe('old1');
   });
 });
 

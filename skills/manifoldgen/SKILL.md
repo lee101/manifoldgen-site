@@ -34,6 +34,7 @@ mg generate music --prompt "warm modular synths" --duration 60 --wait --out out/
 mg generate image-edit --image photo.jpg --prompt "make it dusk" --out out/
 ```
 
+- `--model` with a .glb/.gltf/.obj/.fbx/.stl/.ply path or URL becomes `model_url` (repeat for `model_urls`); any other value stays the `model` selector.
 - `--image/--video/--audio/--mask/--model` and any `--<name>_url` / `--<name>_urls` accept a local path or URL. Local files are uploaded (presigned R2) automatically.
 - Tool options go in `params`: `--param pieces=80 --param impact=ball` or `--params '{"pieces":80}'`.
 - Other `--kebab-case value` flags become `snake_case` JSON fields (`--aspect-ratio 16:9` -> `aspect_ratio`).

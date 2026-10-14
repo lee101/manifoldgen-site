@@ -77,12 +77,13 @@ export async function downloadAll(fetcher: Fetch, urls: string[], outDir: string
       name = decodeURIComponent(basename(new URL(url).pathname)).replace(/[^\w.\-]+/g, '_');
     } catch {}
     if (!name) name = `output-${i + 1}`;
-    if (used.has(name) || existsSync(join(outDir, name))) name = `${i + 1}-${name}`;
+    const base = name;
+    for (let n = 1; used.has(name) || existsSync(join(outDir, name)); n++) name = `${n}-${base}`;
     used.add(name);
     const res = await fetcher(url);
     if (!res.ok) throw new ApiError(`Download failed: ${url} (HTTP ${res.status})`, res.status);
     const target = join(outDir, name);
-    writeFileSync(target, Buffer.from(await res.arrayBuffer()));
+    writeFileSync(target, Buffer.from(await res.arrayBuffer()), { flag: 'wx' });
     saved.push(target);
   }
   return saved;

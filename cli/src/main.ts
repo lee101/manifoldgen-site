@@ -56,7 +56,7 @@ Examples
 
 const ACTIVE = new Set(['queued', 'pending', 'processing', 'running', 'starting', 'in_progress', 'submitted']);
 const MEDIA_ALIASES: Record<string, string> = {
-  image: 'image_url', video: 'video_url', audio: 'audio_url', mask: 'mask_url', model: 'model_url', models: 'model_urls',
+  image: 'image_url', video: 'video_url', audio: 'audio_url', mask: 'mask_url', models: 'model_urls',
   'first-frame': 'first_frame', 'last-frame': 'last_frame',
   'ref-image': 'reference_image_urls', 'ref-video': 'reference_video_urls', 'ref-audio': 'reference_audio_urls',
 };
@@ -248,6 +248,14 @@ async function services(ctx: Ctx): Promise<number> {
   return 0;
 }
 
+const MODEL_FILE = /\.(glb|gltf|obj|fbx|stl|ply)(\?.*)?$/i;
+
+function modelKey(raw: FlagValue): string {
+  const values = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
+  if (!values.length || !values.every((v) => MODEL_FILE.test(v.trim()))) return 'model';
+  return Array.isArray(raw) ? 'model_urls' : 'model_url';
+}
+
 function parseParams(name: string, raw: FlagValue): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const item of Array.isArray(raw) ? raw : [raw]) {
@@ -279,7 +287,7 @@ export function buildServiceBody(service: string, flags: Record<string, FlagValu
       continue;
     }
     const list = Array.isArray(raw);
-    const key = name === 'model' && list ? 'model_urls' : MEDIA_ALIASES[name] || name.replace(/-/g, '_');
+    const key = name === 'model' ? modelKey(raw) : MEDIA_ALIASES[name] || name.replace(/-/g, '_');
     if (key.endsWith('_urls')) {
       const items = (list ? raw : typeof raw === 'string' ? raw.split(',') : []).map((s) => s.trim()).filter(Boolean);
       body[key] = [...((body[key] as string[]) || []), ...items];

@@ -6,8 +6,8 @@ function prompt(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: process.stdin.isTTY === true });
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
-      rl.close();
       resolve(answer);
+      rl.close();
     });
     rl.on('close', () => resolve(''));
   });
