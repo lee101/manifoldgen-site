@@ -171,8 +171,8 @@ func normalizeProdkitRequest(req *ServiceUsageRequest) error {
 	if !ok {
 		return fmt.Errorf("unknown production tool")
 	}
-	if tool.Engine == "timeline" && len(req.Params) > timelineMaxParams {
-		return fmt.Errorf("params exceed %d KiB", timelineMaxParams>>10)
+	if tool.Engine == "timeline" && len(req.Params) > timelineMaxProjectParams {
+		return fmt.Errorf("params exceed %d KiB", timelineMaxProjectParams>>10)
 	}
 	if tool.Engine != "timeline" && len(req.Params) > prodkitMaxParams {
 		return fmt.Errorf("params exceed 64 KiB")

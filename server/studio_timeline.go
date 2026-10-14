@@ -26,21 +26,23 @@ import (
 var studioSchemaJSON []byte
 
 const (
-	timelineMaxDocBytes  = 512 << 10
-	timelineMaxClips     = 200
-	timelineMaxSeconds   = 600.0
-	timelineMaxWidth     = 3840
-	timelineMaxHeight    = 2160
-	timelineMaxFPS       = 60
-	timelineMaxLUTs      = 8
-	timelineMaxFx        = 12
-	timelineMaxTracks    = 12
-	timelineMaxParams    = timelineMaxDocBytes + 8<<10
-	timelineTextWidth    = 1920
-	timelineTextHeight   = 1080
-	timelineImageSeconds = 5.0
-	timelineStoredLUT    = 33
-	timelineMinUSD       = 0.05
+	timelineMaxDocBytes = 512 << 10
+	timelineMaxClips    = 200
+	timelineMaxSeconds  = 600.0
+	timelineMaxWidth    = 3840
+	timelineMaxHeight   = 2160
+	timelineMaxFPS      = 60
+	timelineMaxLUTs     = 8
+	timelineMaxFx       = 12
+	timelineMaxTracks   = 12
+	timelineMaxParams   = timelineMaxDocBytes + 8<<10
+
+	timelineMaxProjectParams = maxStudioProjectDocumentBytes + 8<<10
+	timelineTextWidth        = 1920
+	timelineTextHeight       = 1080
+	timelineImageSeconds     = 5.0
+	timelineStoredLUT        = 33
+	timelineMinUSD           = 0.05
 )
 
 var timelineMediaNamespace = uuid.MustParse("6f1c3c2e-9a57-4b0e-8f0a-6d9b8f6c2a11")
@@ -210,6 +212,7 @@ type timelineMediaInfo struct {
 	Height      float64
 	ContentType string
 	Size        int64
+	Transcoded  bool
 }
 
 var (
@@ -226,13 +229,13 @@ func timelineValue(value *float64, fallback float64) float64 {
 	return *value
 }
 
-func parseTimelineDocument(raw []byte) (*timelineDocument, error) {
+func parseTimelineDocument(raw []byte, limit int) (*timelineDocument, error) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("document is required")
 	}
-	if len(raw) > timelineMaxDocBytes {
-		return nil, fmt.Errorf("document exceeds %d KB", timelineMaxDocBytes>>10)
+	if len(raw) > limit {
+		return nil, fmt.Errorf("document exceeds %d KB", limit>>10)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -603,12 +606,14 @@ func (doc *timelineDocument) finalize(media func(*timelineAsset) (timelineMediaI
 				return fail("width and height are unknown")
 			}
 		}
+		if asset.TrimStart == nil {
+			asset.TrimStart = timelineFloat(0)
+		}
 		if asset.Kind == "image" {
-			length := timelineValue(asset.TrimEnd, math.Max(timelineValue(asset.Duration, timelineImageSeconds), timelineImageSeconds))
-			asset.Duration = timelineFloat(math.Max(timelineValue(asset.Duration, timelineImageSeconds), length))
 			if asset.TrimEnd == nil {
-				asset.TrimEnd = timelineFloat(timelineValue(asset.TrimStart, 0) + timelineImageSeconds)
+				asset.TrimEnd = timelineFloat(*asset.TrimStart + timelineImageSeconds)
 			}
+			asset.Duration = timelineFloat(math.Max(timelineValue(asset.Duration, timelineImageSeconds), *asset.TrimEnd))
 		} else {
 			if known && info.Duration > 0 {
 				asset.Duration = timelineFloat(info.Duration)
@@ -619,9 +624,6 @@ func (doc *timelineDocument) finalize(media func(*timelineAsset) (timelineMediaI
 			if asset.TrimEnd == nil || *asset.TrimEnd > *asset.Duration {
 				asset.TrimEnd = timelineFloat(*asset.Duration)
 			}
-		}
-		if asset.TrimStart == nil {
-			asset.TrimStart = timelineFloat(0)
 		}
 		if *asset.TrimEnd-*asset.TrimStart < 0.05 {
 			return fail("trimStart %.2f leaves no media before trimEnd %.2f", *asset.TrimStart, *asset.TrimEnd)
@@ -798,7 +800,7 @@ func timelineDocumentParam(params map[string]interface{}) []byte {
 }
 
 func timelineEstimate(params map[string]interface{}) (float64, int, int) {
-	doc, err := parseTimelineDocument(timelineDocumentParam(params))
+	doc, err := parseTimelineDocument(timelineDocumentParam(params), timelineDocLimit(params))
 	if err != nil {
 		return 0, 1920, 1080
 	}

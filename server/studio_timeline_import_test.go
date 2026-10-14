@@ -12,7 +12,9 @@ import (
 func TestTimelineImportAndRehost(t *testing.T) {
 	uploads := []string{}
 	previousUpload, previousSave, previousHost := uploadTimelineStudioFile, saveTimelineProject, r2PublicHost
-	defer func() { uploadTimelineStudioFile, saveTimelineProject, r2PublicHost = previousUpload, previousSave, previousHost }()
+	defer func() {
+		uploadTimelineStudioFile, saveTimelineProject, r2PublicHost = previousUpload, previousSave, previousHost
+	}()
 	r2PublicHost = "media.manifoldgen.test"
 	uploadTimelineStudioFile = func(_ context.Context, path, objectKey, contentType string) (string, error) {
 		uploads = append(uploads, objectKey+"|"+contentType)

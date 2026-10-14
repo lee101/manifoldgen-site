@@ -71,14 +71,14 @@ func TestStudioSchemaMatchesGoTypes(t *testing.T) {
 	if len(studioSchema.FxTypes) != 18 || len(studioSchema.Transitions) != 6 || len(studioSchema.BlendModes) != 6 || len(studioSchema.Fonts) != 15 {
 		t.Fatalf("enums fx=%d transitions=%d blend=%d fonts=%d", len(studioSchema.FxTypes), len(studioSchema.Transitions), len(studioSchema.BlendModes), len(studioSchema.Fonts))
 	}
-	if _, err := parseTimelineDocument(schemaExample(t)); err != nil {
+	if _, err := parseTimelineDocument(schemaExample(t), timelineMaxDocBytes); err != nil {
 		t.Fatalf("schema example rejected: %v", err)
 	}
 }
 
 func timelineDoc(t *testing.T, raw string) *timelineDocument {
 	t.Helper()
-	doc, err := parseTimelineDocument([]byte(raw))
+	doc, err := parseTimelineDocument([]byte(raw), timelineMaxDocBytes)
 	if err != nil {
 		t.Fatalf("parse %s: %v", raw, err)
 	}
@@ -121,13 +121,13 @@ func TestParseTimelineDocumentValidation(t *testing.T) {
 		{`{"assets":[` + clip + `]}{}`, "single JSON object"},
 	}
 	for _, tc := range cases {
-		_, err := parseTimelineDocument([]byte(tc.doc))
+		_, err := parseTimelineDocument([]byte(tc.doc), timelineMaxDocBytes)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%.80s: err = %v, want %q", tc.doc, err, tc.want)
 		}
 	}
 	big := `{"assets":[` + clip + `],"selectedID":"` + strings.Repeat("x", timelineMaxDocBytes) + `"}`
-	if _, err := parseTimelineDocument([]byte(big)); err == nil || !strings.Contains(err.Error(), "512 KB") {
+	if _, err := parseTimelineDocument([]byte(big), timelineMaxDocBytes); err == nil || !strings.Contains(err.Error(), "512 KB") {
 		t.Fatalf("oversized doc: %v", err)
 	}
 	doc := timelineDoc(t, `{"assets":[{"id":"t","kind":"image","text":{"content":" Hello "}}],"history":{"undo":[]}}`)
@@ -326,7 +326,7 @@ func TestNormalizeTimelineRequest(t *testing.T) {
 			t.Errorf("%.60s: err=%v want %q", tc.params, err, tc.want)
 		}
 	}
-	huge := ServiceUsageRequest{Service: prodkitTimeline, Params: json.RawMessage(`{"name":"` + strings.Repeat("x", timelineMaxParams) + `"}`)}
+	huge := ServiceUsageRequest{Service: prodkitTimeline, Params: json.RawMessage(`{"name":"` + strings.Repeat("x", timelineMaxProjectParams) + `"}`)}
 	if err := normalizeProdkitRequest(&huge); err == nil || !strings.Contains(err.Error(), "params exceed") {
 		t.Fatalf("huge params: %v", err)
 	}

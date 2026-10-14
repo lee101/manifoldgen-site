@@ -35,6 +35,8 @@ const (
 	timelineMaxCubeBytes  = 4 << 20
 )
 
+var timelineDownload = prodkitDownload
+
 var timelineDecodableVideo = map[string]bool{"h264": true, "vp8": true, "vp9": true, "av1": true}
 
 func prodkitChromeBinary() string {
@@ -133,14 +135,18 @@ func probeTimelineFile(ctx context.Context, path string) (timelineProbe, error) 
 	return probe, nil
 }
 
-func timelineContentType(path string, probe timelineProbe, kind string) string {
+func timelineSniff(path string) string {
 	head := make([]byte, 512)
 	if file, err := os.Open(path); err == nil {
 		n, _ := io.ReadFull(file, head)
 		head = head[:n]
 		file.Close()
 	}
-	sniffed := strings.SplitN(http.DetectContentType(head), ";", 2)[0]
+	return strings.SplitN(http.DetectContentType(head), ";", 2)[0]
+}
+
+func timelineContentType(path string, probe timelineProbe, kind string) string {
+	sniffed := timelineSniff(path)
 	if strings.HasPrefix(sniffed, kind+"/") {
 		return sniffed
 	}
@@ -212,8 +218,15 @@ func fetchTimelineMedia(ctx context.Context, doc *timelineDocument, workDir stri
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return media, err
 	}
+	fetchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var mu sync.Mutex
-	var total int64
+	var reserved int64
+	var budgetErr error
+	overBudget := func() {
+		budgetErr = prodkitUserError{fmt.Sprintf("timeline media exceeds %d GiB in total", timelineMaxTotalBytes>>30)}
+		cancel()
+	}
 	errs := make([]error, len(items))
 	limiter := make(chan struct{}, 4)
 	var wg sync.WaitGroup
@@ -221,31 +234,55 @@ func fetchTimelineMedia(ctx context.Context, doc *timelineDocument, workDir stri
 		wg.Add(1)
 		go func(entry item) {
 			defer wg.Done()
-			limiter <- struct{}{}
-			defer func() { <-limiter }()
-			limit := map[string]int64{"video": prodkitMaxVideo, "image": prodkitMaxImage, "audio": timelineMaxAudio}[entry.kind]
-			path := filepath.Join(dir, strconv.Itoa(entry.index)+prodkitURLExt(entry.url))
-			if err := prodkitDownload(ctx, entry.url, path, limit); err != nil {
-				errs[entry.index] = prodkitUserError{err.Error()}
+			select {
+			case limiter <- struct{}{}:
+			case <-fetchCtx.Done():
 				return
 			}
-			info, path, err := inspectTimelineMedia(ctx, path, entry.kind, entry.url)
+			defer func() { <-limiter }()
+			limit := map[string]int64{"video": prodkitMaxVideo, "image": prodkitMaxImage, "audio": timelineMaxAudio}[entry.kind]
+			mu.Lock()
+			share := min(limit, timelineMaxTotalBytes-reserved)
+			if share <= 0 || fetchCtx.Err() != nil {
+				if share <= 0 && budgetErr == nil {
+					overBudget()
+				}
+				mu.Unlock()
+				return
+			}
+			reserved += share
+			mu.Unlock()
+			path := filepath.Join(dir, strconv.Itoa(entry.index)+prodkitURLExt(entry.url))
+			downloadErr := timelineDownload(fetchCtx, entry.url, path, share)
+			var used int64
+			if stat, err := os.Stat(path); err == nil {
+				used = min(stat.Size(), share)
+			}
+			mu.Lock()
+			reserved -= share - used
+			if downloadErr != nil && share < limit && fetchCtx.Err() == nil && used >= share && budgetErr == nil {
+				overBudget()
+			}
+			mu.Unlock()
+			if downloadErr != nil {
+				errs[entry.index] = prodkitUserError{downloadErr.Error()}
+				return
+			}
+			info, path, err := inspectTimelineMedia(fetchCtx, path, entry.kind, entry.url)
 			if err != nil {
 				errs[entry.index] = err
 				return
 			}
 			mu.Lock()
-			defer mu.Unlock()
-			total += info.Size
-			if total > timelineMaxTotalBytes {
-				errs[entry.index] = prodkitUserError{"timeline media exceeds 2 GiB in total"}
-				return
-			}
 			media.Info[entry.url] = info
 			media.Paths[entry.url] = path
+			mu.Unlock()
 		}(entry)
 	}
 	wg.Wait()
+	if budgetErr != nil {
+		return media, budgetErr
+	}
 	for _, err := range errs {
 		if err != nil {
 			return media, err
@@ -256,6 +293,7 @@ func fetchTimelineMedia(ctx context.Context, doc *timelineDocument, workDir stri
 
 func inspectTimelineMedia(ctx context.Context, path, kind, source string) (timelineMediaInfo, string, error) {
 	name := truncateString(timelineURLName(source), 80)
+	transcoded := false
 	probe, err := probeTimelineFile(ctx, path)
 	if err != nil {
 		return timelineMediaInfo{}, "", prodkitUserError{name + " is not a readable " + kind}
@@ -277,13 +315,15 @@ func inspectTimelineMedia(ctx context.Context, path, kind, source string) (timel
 			if probe, err = probeTimelineFile(ctx, path); err != nil {
 				return timelineMediaInfo{}, "", err
 			}
+			transcoded = true
 		}
 	case "audio":
 		if probe.AudioCodec == "" || probe.Duration <= 0 {
 			return timelineMediaInfo{}, "", prodkitUserError{name + " has no audio stream"}
 		}
 	case "image":
-		if probe.Width <= 0 || probe.Height <= 0 {
+		sniffed := timelineSniff(path)
+		if probe.Width <= 0 || probe.Height <= 0 || strings.HasPrefix(sniffed, "video/") || strings.HasPrefix(sniffed, "audio/") {
 			return timelineMediaInfo{}, "", prodkitUserError{name + " is not a readable image"}
 		}
 		probe.Duration = 0
@@ -294,7 +334,7 @@ func inspectTimelineMedia(ctx context.Context, path, kind, source string) (timel
 	}
 	return timelineMediaInfo{
 		Duration: probe.Duration, Width: float64(probe.Width), Height: float64(probe.Height),
-		ContentType: timelineContentType(path, probe, kind), Size: stat.Size(),
+		ContentType: timelineContentType(path, probe, kind), Size: stat.Size(), Transcoded: transcoded,
 	}, path, nil
 }
 
@@ -361,7 +401,7 @@ func rehostTimelineMedia(ctx context.Context, userID, projectID string, doc *tim
 		if asset.PreviewURL != "" && !timelineOwnedURL(asset.PreviewURL) {
 			asset.PreviewURL = ""
 		}
-		if asset.CloudURL == "" || timelineOwnedURL(asset.CloudURL) {
+		if asset.CloudURL == "" || (timelineOwnedURL(asset.CloudURL) && !media.Info[asset.CloudURL].Transcoded) {
 			continue
 		}
 		source := asset.CloudURL
@@ -477,8 +517,8 @@ func resolveTimelineProject(req *ServiceUsageRequest, user *User) error {
 	if err != nil {
 		return err
 	}
-	if len(encoded) > timelineMaxParams {
-		return fmt.Errorf("project document exceeds %d KB", timelineMaxDocBytes>>10)
+	if len(encoded) > timelineMaxProjectParams {
+		return fmt.Errorf("project document exceeds %d KB", maxStudioProjectDocumentBytes>>10)
 	}
 	req.Params = encoded
 	return nil
@@ -501,8 +541,15 @@ func normalizeTimelineParams(params map[string]interface{}) error {
 	if params["document"] == nil {
 		return fmt.Errorf("timeline-render needs params.document or params.project_id")
 	}
-	_, err := parseTimelineDocument(timelineDocumentParam(params))
+	_, err := parseTimelineDocument(timelineDocumentParam(params), timelineDocLimit(params))
 	return err
+}
+
+func timelineDocLimit(params map[string]interface{}) int {
+	if projectID, _ := params["project_id"].(string); projectID != "" {
+		return maxStudioProjectDocumentBytes
+	}
+	return timelineMaxDocBytes
 }
 
 func timelineRandomToken() string {
@@ -789,7 +836,7 @@ func runProdkitTimeline(ctx context.Context, job *VideoJob, req ServiceUsageRequ
 	if err != nil {
 		return nil, 0, 0, prodkitUserError{err.Error()}
 	}
-	doc, err := parseTimelineDocument(timelineDocumentParam(params))
+	doc, err := parseTimelineDocument(timelineDocumentParam(params), timelineDocLimit(params))
 	if err != nil {
 		return nil, 0, 0, prodkitUserError{err.Error()}
 	}
@@ -822,7 +869,7 @@ func runProdkitTimeline(ctx context.Context, job *VideoJob, req ServiceUsageRequ
 	started := time.Now()
 	lastStage := ""
 	raw, gpu, err := renderTimelineInChrome(ctx, doc, media.Paths, settings, workDir, func(value float64) {
-		stage := fmt.Sprintf("rendering %d%%", int(value*100))
+		stage := fmt.Sprintf("rendering %d%%", int(value*10)*10)
 		if stage != lastStage {
 			lastStage = stage
 			setStage(stage)
@@ -888,7 +935,7 @@ func handleStudioProjectImport(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	doc, err := parseTimelineDocument(input.Document)
+	doc, err := parseTimelineDocument(input.Document, timelineMaxDocBytes)
 	if err != nil {
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return

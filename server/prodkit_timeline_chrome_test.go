@@ -54,7 +54,7 @@ func requireTimelineChrome(t *testing.T) {
 func renderTimelineFixture(t *testing.T, ctx context.Context, raw string, files map[string]string, settings timelineRenderSettings) (timelineProbe, string, float64) {
 	t.Helper()
 	dir := t.TempDir()
-	doc, err := parseTimelineDocument([]byte(raw))
+	doc, err := parseTimelineDocument([]byte(raw), timelineMaxDocBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
