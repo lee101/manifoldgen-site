@@ -297,3 +297,100 @@ describe('auth', () => {
     expect(n.out[0]).toContain('Not signed in');
   });
 });
+
+describe('timeline', () => {
+  function timelineFixture() {
+    writeFileSync(join(dir, 'shot.mp4'), 'MP4');
+    writeFileSync(join(dir, 'warm.cube'), 'LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n');
+    const file = join(dir, 'edit.json');
+    writeFileSync(file, JSON.stringify({
+      luts: { warm: { name: 'Warm', url: 'warm.cube' } },
+      assets: [
+        { id: 'title', kind: 'image', text: { content: 'Hello' }, trimEnd: 2 },
+        { id: 'a', kind: 'video', cloudURL: 'shot.mp4', adjustments: { lutID: 'warm' } },
+        { id: 'b', kind: 'video', cloudURL: './shot.mp4', transition: { type: 'crossfade', duration: 1 } },
+        { id: 'm', kind: 'audio', cloudURL: 'https://cdn.test/bed.mp3' },
+      ],
+    }));
+    return file;
+  }
+
+  const uploads = {
+    'POST /api/studio/assets/presign': () => json({ upload_url: 'https://r2.test/put', public_url: 'https://cdn.test/shot.mp4' }),
+    'PUT /put': () => new Response('', { status: 200 }),
+  };
+
+  test('render uploads local media once, inlines LUTs and waits for the job', async () => {
+    const file = timelineFixture();
+    const out = join(dir, 'renders');
+    let sent: any;
+    const h = harness(
+      {
+        ...uploads,
+        'POST /api/service': (_u, init) => {
+          sent = JSON.parse(String(init?.body));
+          return json({ result: { job_id: 't1', status: 'queued', status_url: '/api/video-jobs/t1' }, estimated_cost_usd: 0.05 }, 202);
+        },
+        'GET /api/video-jobs/t1': () => json({ job: { job_id: 't1', status: 'completed', charged_usd: 0.05, result: {
+          video_url: 'https://cdn.test/r/timeline.mp4', poster_url: 'https://cdn.test/r/poster.jpg', studio_url: 'https://manifoldgen.com/studio?project=p1',
+        } } }),
+        'GET /r/timeline.mp4': () => new Response('VIDEO'),
+        'GET /r/poster.jpg': () => new Response('JPG'),
+      },
+      { MANIFOLDGEN_API_KEY: 'k' },
+    );
+    expect(await run(['render', file, '--fps', '24', '--quality', 'high', '--out', out], h.io)).toBe(0);
+    expect(sent.service).toBe('timeline-render');
+    expect(sent.params).toMatchObject({ fps: 24, quality: 'high' });
+    expect(sent.params.document.assets.map((a: any) => a.cloudURL)).toEqual([undefined, 'https://cdn.test/shot.mp4', 'https://cdn.test/shot.mp4', 'https://cdn.test/bed.mp3']);
+    expect(sent.params.document.luts.warm).toEqual({ name: 'Warm', cube: expect.stringContaining('LUT_3D_SIZE 2') });
+    expect(calls.filter((c) => c.url.endsWith('/presign'))).toHaveLength(1);
+    expect(readFileSync(join(out, 'timeline.mp4'), 'utf8')).toBe('VIDEO');
+    expect(h.out.join('\n')).toContain('studio https://manifoldgen.com/studio?project=p1');
+  });
+
+  test('render a saved project dry run lists the request without spending', async () => {
+    const h = harness({});
+    expect(await run(['render', '--project', 'p1', '--format', 'webm', '--dry-run', '--json'], h.io)).toBe(0);
+    expect(JSON.parse(h.out[0])).toMatchObject({ dry_run: true, request: { service: 'timeline-render', params: { project_id: 'p1', format: 'webm' } }, uploads: [] });
+    expect(calls).toHaveLength(0);
+  });
+
+  test('render dry run reports local uploads', async () => {
+    const file = timelineFixture();
+    const h = harness({});
+    expect(await run(['render', file, '--dry-run', '--json'], h.io)).toBe(0);
+    expect(JSON.parse(h.out[0]).uploads).toEqual([join(dir, 'shot.mp4')]);
+  });
+
+  test('studio open imports the document and opens Studio', async () => {
+    const file = timelineFixture();
+    let sent: any;
+    const h = harness(
+      {
+        ...uploads,
+        'POST /api/studio/projects/import': (_u, init) => {
+          sent = JSON.parse(String(init?.body));
+          return json({ project_id: 'p2', studio_url: 'https://manifoldgen.com/studio?project=p2', duration_seconds: 8 });
+        },
+      },
+      { MANIFOLDGEN_API_KEY: 'k' },
+    );
+    expect(await run(['studio', 'open', file], h.io)).toBe(0);
+    expect(sent.name).toBe('edit');
+    expect(sent.document.assets[1].cloudURL).toBe('https://cdn.test/shot.mp4');
+    expect(h.opened).toEqual(['https://manifoldgen.com/studio?project=p2']);
+    expect(h.out[0]).toBe('project p2  8s\nhttps://manifoldgen.com/studio?project=p2');
+  });
+
+  test('timeline usage errors exit 2', async () => {
+    const h = harness({}, { MANIFOLDGEN_API_KEY: 'k' });
+    expect(await run(['render'], h.io)).toBe(2);
+    expect(await run(['render', 'a.json', '--project', 'p'], h.io)).toBe(2);
+    expect(await run(['render', '--project', 'p', '--fps', '29.97'], h.io)).toBe(2);
+    expect(await run(['studio'], h.io)).toBe(2);
+    expect(await run(['studio', 'open'], h.io)).toBe(2);
+    writeFileSync(join(dir, 'bad.json'), '{"clips":[]}');
+    expect(await run(['studio', 'open', join(dir, 'bad.json')], h.io)).toBe(1);
+  });
+});

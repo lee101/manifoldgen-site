@@ -80,7 +80,7 @@ func handleMCPWithExecutor(ctx *fasthttp.RequestCtx, execute mcpToolExecutor) {
 				"title":   "ManifoldGen",
 				"version": "1.0.0",
 			},
-			"instructions": "Search public ManifoldGen media without a key. Pricing, generation, production (hosted Blender, vectorize, video cleanup) and job tools use the current API; generation and private jobs require Authorization: Bearer with a ManifoldGen API key and may spend account credits. Upload local files with create_upload, poll with wait_for_job, and see prompts/list for guided production workflows.",
+			"instructions": "Search public ManifoldGen media without a key. Pricing, generation, production (hosted Blender, vectorize, video cleanup) and job tools use the current API; generation and private jobs require Authorization: Bearer with a ManifoldGen API key and may spend account credits. Upload local files with create_upload, poll with wait_for_job, edit video as JSON with get_studio_schema, create_studio_project and render_timeline, and see prompts/list for guided production workflows.",
 		})
 	case "ping":
 		writeMCPResult(ctx, request.ID, map[string]interface{}{})

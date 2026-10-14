@@ -1,9 +1,10 @@
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { parseArgs, coerce, flagList, flagString, type FlagValue } from './args';
 import { Api, ApiError, hintFor, type Fetch } from './api';
 import { clearConfigKey, configPath, readConfig, resolveCredentials, writeConfig, type Env } from './config';
 import { newState, startCallbackServer } from './auth';
 import { downloadAll, isRemote, mediaUrls, uploadFile } from './media';
+import { localTimelineFiles, prepareTimeline, readTimeline } from './timeline';
 
 export const VERSION = '0.1.0';
 
@@ -38,6 +39,10 @@ Usage
   mg generate <service> [--prompt ..] [--image|--video|--audio|--model f|url]
               [--param k=v ...] [--params '{json}'] [--key=value ...]
               [--wait] [--out dir] [--dry-run]
+  mg render <timeline.json> [--format mp4|webm] [--quality draft|balanced|high]
+            [--resolution source|1080p|720p] [--fps n] [--name ..] [--wait] [--out dir]
+  mg render --project <id> [--wait] [--out dir]   Render a saved Studio project
+  mg studio open <timeline.json> [--name ..] [--no-browser]
   mg job <id> [--wait] [--out dir]
   mg jobs [--kind video|audio] [--limit n]
   mg search <query> [--kind images|videos|audio] [--limit n]
@@ -52,7 +57,9 @@ Examples
   mg generate image --prompt "neon koi, ink wash" --width 1024 --height 1024 --out .
   mg generate video --prompt "rain on a glass roof" --duration 5 --wait --out clips
   mg generate destruction-studio --image vase.png --param pieces=80 --param impact=ball --wait --out fx
-  mg generate vectorize --image logo.png --wait --out vector`;
+  mg generate vectorize --image logo.png --wait --out vector
+  mg studio open edit.json           Local paths in cloudURL upload automatically
+  mg render edit.json --wait --out renders`;
 
 const ACTIVE = new Set(['queued', 'pending', 'processing', 'running', 'starting', 'in_progress', 'submitted']);
 const MEDIA_ALIASES: Record<string, string> = {
@@ -61,6 +68,7 @@ const MEDIA_ALIASES: Record<string, string> = {
   'ref-image': 'reference_image_urls', 'ref-video': 'reference_video_urls', 'ref-audio': 'reference_audio_urls',
 };
 const RESERVED = new Set(['json', 'wait', 'out', 'dry-run', 'help', 'version', 'timeout', 'interval', 'yes', 'quiet']);
+const RENDER_FLAGS = ['format', 'quality', 'resolution', 'name'];
 
 export async function run(argv: string[], io: Io): Promise<number> {
   const { _: args, flags } = parseArgs(argv);
@@ -96,6 +104,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
       case 'generate':
       case 'gen':
         return await generate(ctx);
+      case 'render':
+        return await render(ctx);
+      case 'studio':
+        if (sub === 'open') return await studioOpen(ctx);
+        throw new UsageError('Usage: mg studio open <timeline.json> [--name ..] [--no-browser]');
       case 'job':
         return await job(ctx);
       case 'jobs':
@@ -390,6 +403,8 @@ async function finish(ctx: Ctx, service: string, response: any, jobObj: any | un
     ...outputs,
     ...files.map((f) => `saved ${f}`),
   ];
+  const studioUrl = (jobObj ? jobObj.result : response)?.studio_url;
+  if (typeof studioUrl === 'string' && studioUrl) lines.push(`studio ${studioUrl}`);
   if (!outputs.length && !failed && !ctx.json) lines.push(JSON.stringify(source?.result ?? source, null, 2));
   emit(ctx, { service, job_id: jobObj?.job_id, status, cost_usd: cost, outputs, files, response: source }, lines);
   return failed ? 1 : 0;
@@ -413,7 +428,10 @@ async function generate(ctx: Ctx): Promise<number> {
   }
   ctx.api.requireKey();
   await uploadLocal(ctx, body);
-  const response = await ctx.api.request('POST', '/api/service', body);
+  return settle(ctx, service, await ctx.api.request('POST', '/api/service', body));
+}
+
+async function settle(ctx: Ctx, service: string, response: any): Promise<number> {
   const id = jobIdOf(response);
   if (!id) return finish(ctx, service, response, undefined);
   if (ctx.flags.wait !== true && !flagString(ctx.flags, 'out')) {
@@ -426,6 +444,49 @@ async function generate(ctx: Ctx): Promise<number> {
   }
   const final = await poll(ctx, id, statusPathOf(response, id, ctx.api.baseUrl));
   return finish(ctx, service, response, final);
+}
+
+async function render(ctx: Ctx): Promise<number> {
+  const file = ctx.args[1];
+  const project = flagString(ctx.flags, 'project');
+  if (!file === !project) throw new UsageError('Usage: mg render <timeline.json> | --project <id> [--format mp4|webm] [--quality ..] [--resolution ..] [--fps n] [--wait] [--out dir]');
+  const params: Record<string, unknown> = {};
+  for (const key of RENDER_FLAGS) {
+    const value = flagString(ctx.flags, key);
+    if (value) params[key] = value;
+  }
+  const fps = flagString(ctx.flags, 'fps');
+  if (fps) {
+    if (!/^\d+$/.test(fps)) throw new UsageError('--fps must be a whole number from 1 to 60');
+    params.fps = Number(fps);
+  }
+  if (project) params.project_id = project;
+  if (ctx.flags['dry-run'] === true) {
+    const uploads: string[] = [];
+    if (file) {
+      const { document, base } = readTimeline(file);
+      params.document = document;
+      uploads.push(...localTimelineFiles(document, base));
+    }
+    const body = { service: 'timeline-render', params };
+    emit(ctx, { dry_run: true, request: body, uploads }, [`POST ${ctx.api.baseUrl}/api/service`, JSON.stringify(body, null, 2), ...uploads.map((u) => `upload ${u}`)]);
+    return 0;
+  }
+  ctx.api.requireKey();
+  if (file) params.document = await prepareTimeline(ctx.api, ctx.io.fetch, file, (s) => !ctx.json && ctx.io.err(s));
+  return settle(ctx, 'timeline-render', await ctx.api.request('POST', '/api/service', { service: 'timeline-render', params }));
+}
+
+async function studioOpen(ctx: Ctx): Promise<number> {
+  const file = ctx.args[2];
+  if (!file) throw new UsageError('Usage: mg studio open <timeline.json> [--name ..] [--no-browser]');
+  ctx.api.requireKey();
+  const document = await prepareTimeline(ctx.api, ctx.io.fetch, file, (s) => !ctx.json && ctx.io.err(s));
+  const name = flagString(ctx.flags, 'name') || basename(file).replace(/\.json$/i, '');
+  const data = await ctx.api.request('POST', '/api/studio/projects/import', { name, document });
+  if (!ctx.json && ctx.flags['no-browser'] !== true && data?.studio_url) ctx.io.open(data.studio_url);
+  emit(ctx, data, [`project ${data.project_id}  ${data.duration_seconds ?? '?'}s`, data.studio_url]);
+  return 0;
 }
 
 async function job(ctx: Ctx): Promise<number> {
