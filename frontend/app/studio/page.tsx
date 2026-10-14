@@ -78,10 +78,14 @@ import {
   DEFAULT_ADJUSTMENTS,
   StudioRenderer,
   type StudioAdjustments,
+  type StudioNumericAdjustments,
 } from '../../lib/studio-renderer';
 import {
   STUDIO_PROJECT_VERSION,
   cacheLocalStudioFiles,
+  decodeStudioLUTs,
+  encodeStudioLUTs,
+  migrateStudioDocument,
   loadLocalStudioProject,
   saveLocalStudioProject,
   type LocalStudioProject,
@@ -94,6 +98,13 @@ import { FILMSTRIP_FRAME_HEIGHT, FILMSTRIP_FRAME_WIDTH, dropFilmstrip, ensureFil
 import { MAX_TIMELINE_ZOOM, MIN_TIMELINE_ZOOM, adjacentEdge, fitZoom, rippleRemove } from '../../lib/studio-timeline-ops';
 import { h3Dimensions, loopAnchorURL, type H3Aspect, type H3Size } from '../../lib/h3-loop';
 import { VIDEO_GENERATORS } from '../../lib/video-generators';
+import { curvesActive, samplePixels, type PixelSample, type StudioLUT } from '../../lib/studio-grade';
+import { activeFx, fxAnimated, fxKeyed, type StudioFxLayer } from '../../lib/studio-fx/registry';
+import { blendMode, clipWindow, cropClipPath, previousAdjacent, transitionState, wipeClipPath, wipeRect, type StudioBlendMode, type StudioCrop, type StudioTransition } from '../../lib/studio-composite';
+import { GradeControls } from '../../components/studio/grade-controls';
+import { CompositeControls, type CompositePatch } from '../../components/studio/composite-controls';
+import { FxStack } from '../../components/studio/fx-stack';
+import { takeStudioHandoff } from '../../lib/studio-handoff';
 import styles from './page.module.css';
 
 type MediaKind = 'video' | 'image' | 'audio';
@@ -669,6 +680,10 @@ type StudioAsset = {
   stageRotation: number;
   attribution?: string;
   adjustments: StudioAdjustments;
+  opacity?: number;
+  blendMode?: StudioBlendMode;
+  crop?: StudioCrop;
+  transition?: StudioTransition;
   cloudURL?: string;
   objectKey?: string;
   previewURL?: string;
@@ -767,7 +782,7 @@ const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   audio: 'aac',
 };
 
-const ADJUSTMENTS: { key: keyof StudioAdjustments; label: string; min: number; max: number; step: number }[] = [
+const ADJUSTMENTS: { key: keyof StudioNumericAdjustments; label: string; min: number; max: number; step: number }[] = [
   { key: 'exposure', label: 'Exposure', min: -2, max: 2, step: 0.01 },
   { key: 'brightness', label: 'Brightness', min: -0.5, max: 0.5, step: 0.01 },
   { key: 'contrast', label: 'Contrast', min: -0.8, max: 1, step: 0.01 },
@@ -790,7 +805,7 @@ const FILTERS: { name: string; values: Partial<StudioAdjustments>; colors: strin
   { name: 'Mist', values: { fade: 0.58, contrast: -0.18, highlights: 0.22 }, colors: '#d6e2e4,#8590a2' },
 ];
 
-const GLITCH_CONTROLS: { key: keyof StudioAdjustments; label: string; min: number; max: number; step: number }[] = [
+const GLITCH_CONTROLS: { key: keyof StudioNumericAdjustments; label: string; min: number; max: number; step: number }[] = [
   { key: 'glitchAmount', label: 'Amount', min: 0, max: 1, step: 0.01 },
   { key: 'glitchRGB', label: 'RGB split', min: 0, max: 1, step: 0.01 },
   { key: 'glitchTear', label: 'Horizontal tear', min: 0, max: 1, step: 0.01 },
@@ -1014,6 +1029,7 @@ function portableAsset(asset: StudioAsset): PortableStudioAsset {
     stageX: asset.stageX, stageY: asset.stageY, attribution: asset.attribution,
     stageScale: asset.stageScale, stageRotation: asset.stageRotation,
     adjustments: asset.adjustments, cloudURL: asset.cloudURL, objectKey: asset.objectKey, previewURL: asset.previewURL,
+    opacity: asset.opacity, blendMode: asset.blendMode, crop: asset.crop, transition: asset.transition,
     text: asset.text,
     contentType: asset.file.type || 'application/octet-stream', size: asset.file.size,
     lastModified: asset.file.lastModified,
@@ -1029,11 +1045,12 @@ function portableHistoryState(state: EditorHistoryState): PortableStudioHistoryS
   };
 }
 
-function projectDocument(assets: StudioAsset[], selectedID: string, history: EditorHistory, canvas: DesignSize, audioTrackVolume: number): PortableStudioDocument {
+function projectDocument(assets: StudioAsset[], selectedID: string, history: EditorHistory, canvas: DesignSize, audioTrackVolume: number, luts: Record<string, StudioLUT> = {}): PortableStudioDocument {
   const document: PortableStudioDocument = {
     version: STUDIO_PROJECT_VERSION,
     selectedID,
     assets: assets.map(portableAsset),
+    luts: encodeStudioLUTs(luts, [...assets, ...history.undo.flatMap((state) => state.assets), ...history.redo.flatMap((state) => state.assets)]),
     canvas,
     audioTrackVolume,
     history: {
@@ -1210,13 +1227,74 @@ const ClipFilmstrip = memo(function ClipFilmstrip({ asset, pixelsPerSecond }: { 
   </span>;
 });
 
-function PassiveStageMedia({ asset, playhead, playing }: { asset: StudioAsset; playhead: number; playing: boolean }) {
+function hasShaderLook(adjustments: StudioAdjustments) {
+  if (adjustments.lutID || curvesActive(adjustments.curves) || activeFx(adjustments.fx).length) return true;
+  return (Object.keys(DEFAULT_ADJUSTMENTS) as (keyof StudioNumericAdjustments)[]).some((key) => Math.abs(adjustments[key] - DEFAULT_ADJUSTMENTS[key]) > 1e-6);
+}
+
+function stageSourceTime(asset: StudioAsset, playhead: number) {
+  return Math.max(0, Math.min(Math.max(0, asset.duration - 0.02), asset.trimStart + playhead - asset.timelineStart));
+}
+
+function PassiveStageMedia({ asset, playhead, playing, lut, mediaStyle }: { asset: StudioAsset; playhead: number; playing: boolean; lut?: StudioLUT | null; mediaStyle?: CSSProperties }) {
   const video = useRef<HTMLVideoElement>(null);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const image = useRef<HTMLImageElement>(null);
+  const shaded = hasShaderLook(asset.adjustments);
+  const drawRef = useRef<() => void>(() => undefined);
+  const playheadRef = useRef(playhead);
+  playheadRef.current = playhead;
+  const latestRef = useRef({ asset, lut });
+  latestRef.current = { asset, lut };
+
+  useEffect(() => {
+    if (!shaded || !canvas.current) return undefined;
+    let renderer: StudioRenderer | null = null;
+    try {
+      renderer = new StudioRenderer(canvas.current);
+    } catch {
+      return undefined;
+    }
+    drawRef.current = () => {
+      const { asset, lut } = latestRef.current;
+      const source = asset.kind === 'video' ? video.current : image.current;
+      if (!renderer || !source) return;
+      const width = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+      const height = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+      if (!width || !height || (source instanceof HTMLVideoElement && source.readyState < 2)) return;
+      const size = fitWithin(width, height, 1280, 720);
+      renderer.resize(size.width, size.height);
+      const time = source instanceof HTMLVideoElement ? source.currentTime - asset.trimStart : playheadRef.current - asset.timelineStart;
+      renderer.draw(source, asset.adjustments, (source instanceof HTMLVideoElement ? source.currentTime : playheadRef.current) * 24, { time, lut, stateKey: asset.id });
+    };
+    drawRef.current();
+    return () => {
+      drawRef.current = () => undefined;
+      renderer?.release();
+    };
+  }, [shaded, asset.id, asset.kind]);
+
+  useEffect(() => {
+    drawRef.current();
+  }, [asset.adjustments, lut]);
+
+  useEffect(() => {
+    if (!shaded) return undefined;
+    let frame = 0;
+    const animate = fxAnimated(asset.adjustments.fx) || asset.adjustments.glitchAmount > 0;
+    const loop = () => {
+      drawRef.current();
+      frame = requestAnimationFrame(loop);
+    };
+    if (playing && (asset.kind === 'video' || animate)) frame = requestAnimationFrame(loop);
+    else drawRef.current();
+    return () => cancelAnimationFrame(frame);
+  }, [shaded, playing, playhead, asset.kind, asset.adjustments]);
 
   useEffect(() => {
     const element = video.current;
     if (!element) return;
-    const sourceTime = asset.trimStart + Math.max(0, Math.min(clipDuration(asset), playhead - asset.timelineStart));
+    const sourceTime = stageSourceTime(asset, playhead);
     if (!playing || Math.abs(element.currentTime - sourceTime) > 0.25) element.currentTime = sourceTime;
     if (!playing) {
       element.pause();
@@ -1224,8 +1302,16 @@ function PassiveStageMedia({ asset, playhead, playing }: { asset: StudioAsset; p
       void element.play().catch(() => undefined);
     }
   }, [playing, playhead, asset.trimStart, asset.trimEnd, asset.timelineStart]);
-  if (asset.kind === 'image') return <img className={styles.stageLayerMedia} src={asset.url} alt="" draggable={false} />;
-  return <video ref={video} className={styles.stageLayerMedia} src={asset.url} muted playsInline preload="auto" />;
+  if (shaded) {
+    return <>
+      {asset.kind === 'image'
+        ? <img ref={image} className={styles.sourceVideo} src={asset.url} alt="" draggable={false} onLoad={() => drawRef.current()} />
+        : <video ref={video} className={styles.sourceVideo} src={asset.url} muted playsInline preload="auto" onLoadedData={() => drawRef.current()} onSeeked={() => drawRef.current()} />}
+      <canvas ref={canvas} className={styles.previewCanvas} style={{ background: 'transparent', ...mediaStyle }} />
+    </>;
+  }
+  if (asset.kind === 'image') return <img className={styles.stageLayerMedia} style={mediaStyle} src={asset.url} alt="" draggable={false} />;
+  return <video ref={video} className={styles.stageLayerMedia} style={mediaStyle} src={asset.url} muted playsInline preload="auto" />;
 }
 
 
@@ -1625,6 +1711,9 @@ export default function StudioPage() {
   if (typeof window !== 'undefined') { const diagnostics = perfDiagnostics(); diagnostics.renders = (diagnostics.renders ?? 0) + 1; }
   const [isMacOS, setIsMacOS] = useState(false);
   const [assets, setAssets] = useState<StudioAsset[]>([]);
+  const [luts, setLuts] = useState<Record<string, StudioLUT>>({});
+  const lutsRef = useRef(luts);
+  lutsRef.current = luts;
   const [projectID, setProjectID] = useState('');
   const [projectName, setProjectName] = useState('Untitled project');
   const [designSize, setDesignSize] = useState<DesignSize>(DEFAULT_DESIGN_SIZE);
@@ -1736,6 +1825,48 @@ export default function StudioPage() {
     setColorPicking(label);
     setNotice(`${label}: click a video or image on the stage · Esc cancels`);
   }
+
+  const addLUT = useCallback((lut: StudioLUT) => setLuts((current) => ({ ...current, [lut.id]: lut })), []);
+
+  function sampleSelectedFrame(): PixelSample | null {
+    if (!selected || selected.kind === 'audio') return null;
+    if (selected.kind === 'video') {
+      const video = videoRef.current;
+      return video && video.readyState >= 2 ? samplePixels(video, video.videoWidth, video.videoHeight) : null;
+    }
+    const image = imageRef.current;
+    return image ? samplePixels(image, image.naturalWidth, image.naturalHeight) : null;
+  }
+
+  async function sampleAssetFrame(id: string): Promise<PixelSample | null> {
+    const asset = assets.find((item) => item.id === id);
+    if (!asset || asset.kind === 'audio') return null;
+    if (asset.kind === 'image') {
+      const image = new Image();
+      image.src = asset.url;
+      await image.decode();
+      return samplePixels(image, image.naturalWidth, image.naturalHeight);
+    }
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'auto';
+    video.src = asset.url;
+    await new Promise<void>((resolve, reject) => {
+      video.onloadeddata = () => resolve();
+      video.onerror = () => reject(new Error('Could not read the reference clip'));
+    });
+    await new Promise<void>((resolve) => {
+      video.onseeked = () => resolve();
+      video.currentTime = asset.trimStart + clipDuration(asset) / 2;
+    });
+    const pixels = samplePixels(video, video.videoWidth, video.videoHeight);
+    video.removeAttribute('src');
+    video.load();
+    return pixels;
+  }
+
+  const applyVisualPatch = (patch: Partial<StudioAdjustments>, key: string) => applyToSelection((asset) => (asset.kind === 'audio' ? null : { adjustments: patch }), `grade-${key}`);
+  const applyCompositePatch = (patch: CompositePatch, key: string) => applyToSelection((asset) => (asset.kind === 'audio' ? null : patch), `composite-${key}`);
   const [extendOpen, setExtendOpen] = useState(false);
   const [extendPrompt, setExtendPrompt] = useState('The camera continues forward as the scene naturally unfolds.');
   const [extendDuration, setExtendDuration] = useState(6);
@@ -1880,14 +2011,24 @@ export default function StudioPage() {
   const selected = assets.find((asset) => asset.id === selectedID) || null;
   const audioVideoAsset = assets.find((asset) => asset.id === audioVideo.assetID && asset.kind === 'audio') || null;
   const selectedAssets = useMemo(() => assets.filter((asset) => selectedIDs.includes(asset.id)), [assets, selectedIDs]);
+  const stageTransitions = useMemo(() => {
+    const states = new Map<string, ReturnType<typeof transitionState>>();
+    for (const asset of assets) {
+      if (asset.kind === 'audio') continue;
+      const state = transitionState(asset, assets, playhead);
+      if (state) states.set(asset.id, state);
+    }
+    return states;
+  }, [assets, playhead]);
   const activeVisualAssets = useMemo(() => assets
-    .filter((asset) => asset.kind !== 'audio' && playhead >= asset.timelineStart && playhead < clipEnd(asset))
-    .sort((left, right) => left.visualTrack - right.visualTrack), [assets, playhead]);
+    .filter((asset) => asset.kind !== 'audio' && stageTransitions.has(asset.id))
+    .sort((left, right) => left.visualTrack - right.visualTrack || left.timelineStart - right.timelineStart), [assets, stageTransitions]);
   const stageVisualAssets = useMemo(() => {
     if (activeVisualAssets.length) return activeVisualAssets;
     const selectedVisual = selected && selected.kind !== 'audio' ? selected : null;
     return selectedVisual ? [selectedVisual] : [];
   }, [activeVisualAssets, selected]);
+  const selectedPrevious = useMemo(() => (selected && selected.kind !== 'audio' ? previousAdjacent(selected, assets) : null), [assets, selected]);
   const firstSelectedVideo = useMemo(() => selectedAssets.find((asset) => asset.kind === 'video') || null, [selectedAssets]);
   const timelineAudioAssets = useMemo(() => assets.filter((asset) => asset.kind === 'audio'), [assets]);
   const playableTimelineAssets = useMemo(() => assets.filter((asset) => asset.kind === 'video' || asset.kind === 'audio'), [assets]);
@@ -2133,7 +2274,9 @@ export default function StudioPage() {
     });
   }, [assets, playing, selectedID, timelineAudioAssets, timelineDuration]);
 
-  const applyProject = useCallback(async (id: string, name: string, document: PortableStudioDocument, files?: Map<string, File>) => {
+  const applyProject = useCallback(async (id: string, name: string, storedDocument: PortableStudioDocument, files?: Map<string, File>) => {
+    const document = migrateStudioDocument(storedDocument);
+    setLuts(decodeStudioLUTs(document.luts));
     // A cloud-only project may reference the same immutable source in its
     // live timeline and several undo snapshots. One shared cache map makes
     // that a single proxied download, then every playback path uses its Blob.
@@ -2411,7 +2554,7 @@ export default function StudioPage() {
     void (async () => {
       const storedUser = loadStoredUser();
       const params = new URLSearchParams(window.location.search);
-      const hasMediaHandoff = Boolean((params.get('video_url') || params.get('image_url') || params.get('audio_url'))?.trim());
+      const hasMediaHandoff = Boolean((params.get('video_url') || params.get('image_url') || params.get('audio_url') || params.get('handoff'))?.trim());
       const forceNewProject = hasMediaHandoff || params.get('new') === '1';
       const requestedID = forceNewProject ? null : params.get('project');
       try {
@@ -2572,7 +2715,7 @@ export default function StudioPage() {
     const sequence = ++projectSaveSequenceRef.current;
     setSaveStatus(user ? (assets.some((asset) => !asset.cloudURL) ? 'Uploading assets…' : 'Saving to cloud…') : 'Saving locally…');
     const timer = window.setTimeout(() => {
-      const document = projectDocument(assets, selectedID, editHistory, designSize, audioTrackVolume);
+      const document = projectDocument(assets, selectedID, editHistory, designSize, audioTrackVolume, lutsRef.current);
       const retainedAssets = [
         ...assets,
         ...editHistory.undo.flatMap((state) => state.assets),
@@ -2606,10 +2749,34 @@ export default function StudioPage() {
       });
     }, 650);
     return () => window.clearTimeout(timer);
-  }, [assets, audioTrackVolume, designSize, editHistory, projectID, projectName, projectReady, saveRetry, selectedID, user]);
+  }, [assets, audioTrackVolume, designSize, editHistory, luts, projectID, projectName, projectReady, saveRetry, selectedID, user]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const handoffID = params.get('handoff')?.trim();
+    if (handoffID && !galleryImportStartedRef.current) {
+      galleryImportStartedRef.current = true;
+      setNotice('Loading media…');
+      takeStudioHandoff(handoffID)
+        .then(async (handoff) => {
+          if (!handoff) throw new Error('This handoff has expired. Open it from the tool again.');
+          const [first] = await importFiles([handoff.file]);
+          if (first) {
+            let lutID: string | undefined;
+            if (handoff.lut && handoff.adjustments.lutID) {
+              lutID = handoff.adjustments.lutID;
+              const lut: StudioLUT = { id: lutID, name: handoff.lut.name, size: handoff.lut.size, data: handoff.lut.data };
+              setLuts((current) => ({ ...current, [lut.id]: lut }));
+            }
+            setAssets((current) => current.map((asset) => (asset.id === first.id ? { ...asset, adjustments: { ...DEFAULT_ADJUSTMENTS, ...handoff.adjustments, lutID } } : asset)));
+          }
+          setNotice('Opened in Studio with your grade');
+          const projectID = mediaHandoffProjectIDRef.current;
+          window.history.replaceState({}, '', projectID ? `/studio?project=${encodeURIComponent(projectID)}` : '/studio');
+        })
+        .catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not open the handoff'));
+      return;
+    }
     const mediaURL = (params.get('video_url') || params.get('image_url') || params.get('audio_url'))?.trim();
     if (!mediaURL || galleryImportStartedRef.current) return;
     let parsed: URL;
@@ -2661,13 +2828,13 @@ export default function StudioPage() {
     if (selected.kind === 'video') {
       const video = videoRef.current;
       if (video && video.readyState >= 2) {
-        renderer.draw(video, selected.adjustments, video.currentTime * 24);
+        renderer.draw(video, selected.adjustments, video.currentTime * 24, { time: video.currentTime - selected.trimStart, lut: selected.adjustments.lutID ? luts[selected.adjustments.lutID] : null, stateKey: selected.id });
         perfDiagnostics().previewMediaTime = video.currentTime;
       }
     } else if (imageRef.current) {
-      renderer.draw(imageRef.current, selected.adjustments, playheadRef.current * 24);
+      renderer.draw(imageRef.current, selected.adjustments, playheadRef.current * 24, { time: playheadRef.current - selected.timelineStart, lut: selected.adjustments.lutID ? luts[selected.adjustments.lutID] : null, stateKey: selected.id });
     }
-  }, [selected]);
+  }, [selected, luts]);
 
   useEffect(() => {
     const diagnostics = perfDiagnostics();
@@ -2702,7 +2869,7 @@ export default function StudioPage() {
   }, [drawCurrent]);
 
   useEffect(() => {
-    if (!playing || selected?.kind !== 'image' || selected.adjustments.glitchAmount <= 0) return undefined;
+    if (!playing || selected?.kind !== 'image' || (selected.adjustments.glitchAmount <= 0 && !fxAnimated(selected.adjustments.fx))) return undefined;
     let animationFrame = 0;
     const animateGlitch = () => {
       drawCurrent();
@@ -2710,7 +2877,7 @@ export default function StudioPage() {
     };
     animationFrame = requestAnimationFrame(animateGlitch);
     return () => cancelAnimationFrame(animationFrame);
-  }, [drawCurrent, playing, selected?.adjustments.glitchAmount, selected?.kind]);
+  }, [drawCurrent, playing, selected?.adjustments.glitchAmount, selected?.adjustments.fx, selected?.kind]);
 
   useEffect(() => {
     if (!selected) return;
@@ -4883,7 +5050,8 @@ export default function StudioPage() {
     const sharedCanvas = document.createElement('canvas');
     const sharedRenderer = new StudioRenderer(sharedCanvas, { preserveDrawingBuffer: true });
     const sharedRaster = document.createElement('canvas');
-    const sharedRasterContext = sharedRaster.getContext('2d', { alpha: false });
+    const sharedRasterContext = sharedRaster.getContext('2d', { alpha: true });
+    const lutFor = (asset: StudioAsset) => (asset.adjustments.lutID ? luts[asset.adjustments.lutID] || null : null);
     let sharedContextLost = false;
     sharedCanvas.addEventListener('webglcontextlost', (event) => {
       event.preventDefault();
@@ -4967,11 +5135,11 @@ export default function StudioPage() {
           const image = new Image();
           image.src = asset.url;
           await image.decode();
-          if (asset.adjustments.glitchAmount > 0) {
+          if (asset.adjustments.glitchAmount > 0 || fxAnimated(asset.adjustments.fx)) {
             state.imageSource = image;
           } else {
             resizeSharedRaster(asset.width, asset.height);
-            sharedRenderer.draw(image, asset.adjustments, 0);
+            sharedRenderer.draw(image, asset.adjustments, 0, { time: 0, lut: lutFor(asset), stateKey: asset.id });
             // Ordinary images filter once and keep a persistent raster. An
             // animated glitch still instead goes through the shared renderer
             // per output frame below, just like video.
@@ -4987,7 +5155,8 @@ export default function StudioPage() {
           const track = await state.input.getPrimaryVideoTrack();
           if (!track || !(await track.canDecode())) throw new Error(`${asset.name} cannot be decoded in this browser`);
           const sink = new VideoSampleSink(track, { optimizeForLatency: true });
-          state.iterator = sink.samples(asset.trimStart, asset.trimEnd)[Symbol.asyncIterator]();
+          const span = clipWindow(asset, visualAssets);
+          state.iterator = sink.samples(Math.max(0, asset.trimStart - span.handleIn), Math.min(asset.duration, asset.trimEnd + span.handleOut))[Symbol.asyncIterator]();
           const first = await state.iterator.next();
           state.next = first.done ? null : first.value;
         }
@@ -5031,7 +5200,7 @@ export default function StudioPage() {
       const outputFPS = settings.frameRate === 'source' ? 30 : settings.frameRate;
       const frameDuration = 1 / outputFPS;
       const frames = Math.max(1, Math.ceil(duration * outputFPS));
-      const orderedStates = [...visualStates].sort((left, right) => left.asset.visualTrack - right.asset.visualTrack || visualAssets.indexOf(left.asset) - visualAssets.indexOf(right.asset));
+      const orderedStates = [...visualStates].sort((left, right) => left.asset.visualTrack - right.asset.visualTrack || left.asset.timelineStart - right.asset.timelineStart || visualAssets.indexOf(left.asset) - visualAssets.indexOf(right.asset));
 
       for (let index = 0; index < frames; index += 1) {
         const timestamp = index * frameDuration;
@@ -5040,14 +5209,15 @@ export default function StudioPage() {
         compositor.fillRect(0, 0, width, height);
         for (const state of orderedStates) {
           const { asset } = state;
-          if (timestamp < asset.timelineStart || timestamp >= clipEnd(asset)) continue;
+          const transition = transitionState(asset, visualAssets, timestamp);
+          if (!transition) continue;
           if (state.imageSource) {
             if (sharedContextLost) throw new Error('The graphics context was lost during export. Retry the export once other graphics-heavy tabs are closed.');
             resizeSharedRaster(asset.width, asset.height);
-            sharedRenderer.draw(state.imageSource, asset.adjustments, timestamp * 24);
+            sharedRenderer.draw(state.imageSource, asset.adjustments, timestamp * 24, { time: timestamp - asset.timelineStart, lut: lutFor(asset), stateKey: asset.id });
             sharedRenderer.copyToCanvas(sharedRasterContext!);
           } else if (asset.kind === 'video') {
-            const sourceTime = asset.trimStart + timestamp - asset.timelineStart;
+            const sourceTime = Math.max(0, Math.min(asset.duration, asset.trimStart + timestamp - asset.timelineStart));
             while (state.next && state.next.timestamp <= sourceTime + 1e-7) {
               state.current?.close();
               state.current = state.next;
@@ -5059,17 +5229,32 @@ export default function StudioPage() {
             if (sharedContextLost) throw new Error('The graphics context was lost during export. Retry the export once other graphics-heavy tabs are closed.');
             resizeSharedRaster(asset.width, asset.height);
             const frame = sample.toVideoFrame();
-            sharedRenderer.draw(frame, asset.adjustments, timestamp * 24);
+            sharedRenderer.draw(frame, asset.adjustments, timestamp * 24, { time: sourceTime - asset.trimStart, lut: lutFor(asset), stateKey: asset.id });
             sharedRenderer.copyToCanvas(sharedRasterContext!);
             frame.close();
           }
           const fit = Math.min(width / Math.max(1, asset.width), height / Math.max(1, asset.height));
           const drawWidth = asset.width * fit * asset.stageScale;
           const drawHeight = asset.height * fit * asset.stageScale;
+          const raster = state.rasterCanvas ?? sharedRaster;
+          const crop = asset.crop || { left: 0, top: 0, right: 0, bottom: 0 };
           compositor.save();
+          compositor.globalAlpha = Math.max(0, Math.min(1, (asset.opacity ?? 1) * transition.alpha));
+          compositor.globalCompositeOperation = blendMode(asset.blendMode).canvas;
+          if (transition.wipe) {
+            const rect = wipeRect(transition.wipe.type, transition.wipe.progress, width, height);
+            compositor.beginPath();
+            compositor.rect(rect.x, rect.y, rect.width, rect.height);
+            compositor.clip();
+          }
           compositor.translate(width * (0.5 + asset.stageX), height * (0.5 + asset.stageY));
           compositor.rotate(asset.stageRotation * Math.PI / 180);
-          compositor.drawImage(state.rasterCanvas ?? sharedRaster, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+          const sourceWidth = raster.width * (1 - crop.left - crop.right);
+          const sourceHeight = raster.height * (1 - crop.top - crop.bottom);
+          if (sourceWidth >= 1 && sourceHeight >= 1) {
+            compositor.drawImage(raster, raster.width * crop.left, raster.height * crop.top, sourceWidth, sourceHeight,
+              -drawWidth / 2 + drawWidth * crop.left, -drawHeight / 2 + drawHeight * crop.top, drawWidth * (1 - crop.left - crop.right), drawHeight * (1 - crop.top - crop.bottom));
+          }
           compositor.restore();
         }
         if (antiAliasRenderer) antiAliasRenderer.draw(workCanvas, DEFAULT_ADJUSTMENTS, index, { fxaa: true });
@@ -5426,12 +5611,17 @@ export default function StudioPage() {
             {!selected || selected.kind === 'audio' ? <PanelEmpty /> : <div className={styles.controls}>
               {ADJUSTMENTS.map((item) => <label key={item.key} className={styles.sliderRow}><span><b>{item.label}</b><output>{Math.round(selected.adjustments[item.key] * 100)}</output></span><input type="range" min={item.min} max={item.max} step={item.step} value={selected.adjustments[item.key]} onChange={(event) => updateAsset(selected.id, { adjustments: { ...selected.adjustments, [item.key]: Number(event.target.value) } })} /></label>)}
               <fieldset className={styles.toneHues}><legend>Hue by tonal range</legend><p>Shift colour without flattening light or contrast.</p>{([{ key: 'shadowHue', label: 'Shadows' }, { key: 'midtoneHue', label: 'Midtones' }, { key: 'highlightHue', label: 'Highlights' }] as const).map((tone) => <div key={tone.key} className={styles.hueRow}><label><span>{tone.label}</span><input aria-label={`${tone.label} hue colour`} type="color" value={hueToHex(selected.adjustments[tone.key])} onChange={(event) => updateAsset(selected.id, { adjustments: { ...selected.adjustments, [tone.key]: hexToHue(event.target.value) } })} /><button type="button" aria-label={`Pick ${tone.label.toLowerCase()} hue from stage`} title="Eyedrop a hue from the stage" className={`${styles.colorPickButton} ${colorPicking === tone.key ? styles.colorPickActive : ''}`} onClick={() => beginColorPick(`${tone.label} hue`, (hex) => updateAsset(selected.id, { adjustments: { ...selected.adjustments, [tone.key]: hexToHue(hex) } }))}><Pipette size={11} /></button></label><input aria-label={`${tone.label} hue`} type="range" min="-180" max="180" step="1" value={selected.adjustments[tone.key]} onChange={(event) => updateAsset(selected.id, { adjustments: { ...selected.adjustments, [tone.key]: Number(event.target.value) } })} /><output>{Math.round(selected.adjustments[tone.key])}°</output></div>)}</fieldset>
+              <GradeControls adjustments={selected.adjustments} onChange={applyVisualPatch} luts={luts} onAddLUT={addLUT} sampleFrame={sampleSelectedFrame} references={timelineVisuals.filter((asset) => asset.id !== selected.id).map((asset) => ({ id: asset.id, label: asset.text?.content.slice(0, 40) || asset.name }))} sampleReference={sampleAssetFrame} onNotice={(message, isError) => (isError ? setError(message) : setNotice(message))} exportName={`${projectName}-grade`} />
             </div>}
           </>}
 
           {tool === 'effects' && <>
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>GPU EFFECTS</span><h2>Looks & glitch</h2></div></div>
             {!selected || selected.kind === 'audio' ? <PanelEmpty /> : <div className={styles.effectsPanel}>
+              <section className={styles.effectSection} data-testid="studio-shader-fx">
+                <div className={styles.effectSectionHead}><span className={styles.sectionLabel}>SHADER FX</span>{!!selected.adjustments.fx?.length && <button type="button" onClick={() => applyVisualPatch({ fx: [] }, 'fx-clear')}>Clear</button>}</div>
+                <FxStack layers={selected.adjustments.fx || []} onChange={(layers: StudioFxLayer[], key) => applyVisualPatch({ fx: layers }, key)} onPickColor={(apply) => beginColorPick('Key color', apply)} />
+              </section>
               <section className={styles.effectSection}>
                 <span className={styles.sectionLabel}>COLOR LOOKS</span>
                 <div className={styles.lookGrid}>{FILTERS.map((filter) => <button key={filter.name} onClick={() => updateAsset(selected.id, { adjustments: { ...DEFAULT_ADJUSTMENTS, ...filter.values } })}><span style={{ background: `linear-gradient(135deg, ${filter.colors})` }} /><b>{filter.name}</b></button>)}</div>
@@ -5457,6 +5647,10 @@ export default function StudioPage() {
                 <label className={styles.sliderRow}><span><b>Rotation</b><output>{Math.round(selected.stageRotation)}°</output></span><input data-testid="studio-transform-rotation" type="range" min="-180" max="180" step="1" value={selected.stageRotation} onChange={(event) => updateAsset(selected.id, { stageRotation: Number(event.target.value) })} /></label>
                 <div className={styles.rotateButtons}><button onClick={() => updateAsset(selected.id, { stageRotation: Math.max(-180, selected.stageRotation - 90) })}><RotateCcw size={14} /> -90°</button><button onClick={() => updateAsset(selected.id, { stageRotation: Math.min(180, selected.stageRotation + 90) })}><RotateCw size={14} /> +90°</button></div>
               </div>
+              <section className={styles.effectSection} style={{ marginTop: 14 }}>
+                <span className={styles.sectionLabel}>COMPOSITE</span>
+                <CompositeControls opacity={selected.opacity} blend={selected.blendMode} crop={selected.crop} transition={selected.transition} hasPrevious={!!selectedPrevious} maxTransition={Math.max(0.1, Math.min(5, clipDuration(selected), selectedPrevious ? clipDuration(selectedPrevious) : 5))} onChange={applyCompositePatch} />
+              </section>
               <div className={styles.metaList}><span>Dimensions <b>{selected.width} × {selected.height}</b></span><span>Aspect <b>{(selected.width / selected.height).toFixed(2)}:1</b></span></div>
             </>}
           </>}
@@ -5529,6 +5723,12 @@ export default function StudioPage() {
                 : undefined;
               const x = dragPosition?.x ?? asset.stageX;
               const y = dragPosition?.y ?? asset.stageY;
+              const transition = stageTransitions.get(asset.id);
+              const mediaStyle: CSSProperties = {
+                opacity: (asset.opacity ?? 1) * (transition?.alpha ?? 1),
+                clipPath: transition?.wipe ? wipeClipPath(transition.wipe.type, transition.wipe.progress) : cropClipPath(asset.crop),
+                ...(fxKeyed(asset.adjustments.fx) ? { background: 'transparent' } : {}),
+              };
               return <div
                 key={asset.id}
                 data-testid={isSelected ? 'studio-stage-element' : `studio-stage-layer-${asset.id}`}
@@ -5547,6 +5747,8 @@ export default function StudioPage() {
                   width: previewSize ? `${previewSize.width}px` : undefined,
                   height: previewSize ? `${previewSize.height}px` : undefined,
                   zIndex: asset.visualTrack * 10_000 + index,
+                  mixBlendMode: blendMode(asset.blendMode).css as CSSProperties['mixBlendMode'],
+                  ...(fxKeyed(asset.adjustments.fx) || (asset.opacity ?? 1) < 1 || asset.crop ? { boxShadow: isSelected ? '0 0 0 1px #a898ff' : 'none' } : {}),
                 }}
                 role="button"
                 tabIndex={isSelected ? 0 : -1}
@@ -5597,13 +5799,13 @@ export default function StudioPage() {
                       setEditingTextID(asset.id);
                       event.currentTarget.focus();
                     }}
-                  /> : <canvas ref={canvasRef} className={styles.previewCanvas} />}
+                  /> : <canvas ref={canvasRef} className={styles.previewCanvas} style={mediaStyle} />}
                   <i className={`${styles.stageHandle} ${styles.stageHandleNW}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleNE}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleSW}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
                   <i className={`${styles.stageHandle} ${styles.stageHandleSE}`} onPointerDown={(event) => beginStageTransform(event, asset, 'scale')} />
                   <i className={styles.stageRotateHandle} title="Drag to rotate · hold Shift to snap" onPointerDown={(event) => beginStageTransform(event, asset, 'rotate')}><RotateCw size={10} /></i>
-                </> : <PassiveStageMedia asset={asset} playhead={playhead} playing={playing} />}
+                </> : <PassiveStageMedia asset={asset} playhead={playhead} playing={playing} lut={asset.adjustments.lutID ? luts[asset.adjustments.lutID] : null} mediaStyle={mediaStyle} />}
               </div>;
             })}
             {!stageVisualAssets.length && <button data-testid="studio-empty" className={styles.dropPrompt} onClick={() => fileInputRef.current?.click()}><span><Upload size={26} /></span><b>Drop media to begin</b><small>Video, image, audio, WebM, MP4, WAV, PNG</small><em>Browse files</em></button>}
@@ -5636,6 +5838,7 @@ export default function StudioPage() {
                 <span className={styles.sectionLabel}>TRANSFORM</span>
                 <label className={styles.sliderRow}><span><b>Scale</b><output>{Math.round(selected.stageScale * 100)}%</output></span><input data-testid="studio-properties-scale" type="range" min="0.1" max="4" step="0.01" value={selected.stageScale} onChange={(event) => applyToSelection((asset) => (asset.kind === 'audio' ? null : { stageScale: Number(event.target.value) }), 'scale')} /></label>
                 <label className={styles.sliderRow}><span><b>Rotation</b><output>{Math.round(selected.stageRotation)}°</output></span><input data-testid="studio-properties-rotation" type="range" min="-180" max="180" step="1" value={selected.stageRotation} onChange={(event) => applyToSelection((asset) => (asset.kind === 'audio' ? null : { stageRotation: Number(event.target.value) }), 'rotation')} /></label>
+                <CompositeControls compact opacity={selected.opacity} blend={selected.blendMode} hasPrevious={false} maxTransition={1} onChange={applyCompositePatch} />
                 <button data-testid="studio-properties-fit" className={styles.settingCard} onClick={() => applyToSelection((asset) => (asset.kind === 'audio' ? null : { stageX: 0, stageY: 0, stageScale: 1, stageRotation: 0 }), 'fit')}><Maximize size={17} /><span><b>Fit &amp; center</b><small>Reset position, scale, rotation</small></span></button>
               </section>
               <section className={styles.propSection}>
