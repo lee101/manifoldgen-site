@@ -48,7 +48,9 @@ Work cap: Cycles spp = min(preset, 7e9 / (w·h·frames)) on OptiX (5.5e9 CUDA, C
 | strength | 0.3–2 | 1 |
 | bond | 0–3 (bond strength multiplier; 0 = loose pieces) | 1 |
 
-Uploaded models: normalized to 3.6 m, verts welded, decimated to 30k faces, voxel proxy for inside tests when non-manifold, original materials/UVs kept on outer faces, interior material on cut faces.
+Uploaded models: long horizontal axis turned to X (camera sees the broad side, 3/4 front), normalized to 3.6 m, verts welded, decimated to 20k faces, voxel proxy for inside tests when non-manifold, original materials/UVs kept on outer faces, `material` (default concrete) on cut faces; glass/ice also convert the exterior to tinted transmissive (texture kept as tint). Bond adjacency falls back to cut-plane contact when caps can't be filled (open/shell meshes).
+
+Ball: radius 0.25–0.5 m from subject size, mass 0.4× subject mass, 13 m/s; wide subjects are hit on the broad face at an angle away from camera; bonds within ~0.3×size of the impact are weakened to 3% so the ball always punches through, far bonds keep full strength (sections topple as blocks).
 
 **exploded_view**
 
@@ -99,7 +101,7 @@ Standard 1280x720, 96 frames (4 s), RTX 3090 Ti **shared with other GPU services
 
 | demo | setup | render s | total s | spp | .blend MB |
 |---|---|---|---|---|---|
-| destruction-1 | brick tower, ball, studio (70 pcs, 327 bonds) | 64.8 | 71.8 | 32 | 0.53 |
+| destruction-1 | brick tower, ball punches through, studio (70 pcs, 324 bonds) | 65.2 | 72.0 | 32 | 0.53 |
 | destruction-2 | marble statue, explosion, slowmo, dark | 64.5 | 70.3 | 32 | 0.72 |
 | exploded_view-1 | demo camera, explode_assemble | 47.0 | 48.4 | 32 | 0.22 |
 | exploded_view-2 | DamagedHelmet, 48 loose parts | 57.1 | 60.7 | 32 | 3.61 |
@@ -109,6 +111,8 @@ Standard 1280x720, 96 frames (4 s), RTX 3090 Ti **shared with other GPU services
 | scene-2 | text + primitives, 3-key moving camera | 38.5 | 41.1 | 32 | 0.19 |
 
 Worst case measured: destruction high 1080p, 8 s (192 f), 160 pieces, slowmo, dust/debris 2: 22 spp, render 274 s, total 306 s on the shared 3090 Ti (budget since lowered to 7e9 → 17 spp, ≈ 240 s). Standard 720p 4 s ≈ 0.5–0.7 s/frame Cycles, 0.2 s/frame EEVEE. Draft 2 s runs: 6–19 s each (`test_recipes.sh`). Physics/fracture/bake are < 5 s; render dominates.
+
+Uploaded-model draft runs (960x540, 3 s, 72 f, shared 3090 Ti): sneaker glass ball 34 s total (fracture 9.5 s), Duck concrete ball 27 s, tall figure marble ball 26 s, sneaker wood explosion 35 s, sneaker quake 27 s, tall figure ice slice 16 s.
 
 ## Tests
 

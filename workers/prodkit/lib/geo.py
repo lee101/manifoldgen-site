@@ -207,6 +207,7 @@ def fracture(bm0, pts, inner_index, min_verts=4):
         bm = bm0.copy()
         nb = bm.faces.layers.int["nb"]
         rmax = max((v.co - c).length for v in bm.verts)
+        planes = {}
         for (o, j, d) in kd.find_n(c, len(pts)):
             if j == i:
                 continue
@@ -217,6 +218,7 @@ def fracture(bm0, pts, inner_index, min_verts=4):
             r = bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=mid, plane_no=nrm, clear_outer=True)
             edges = [e for e in r["geom_cut"] if isinstance(e, bmesh.types.BMEdge)]
             if edges:
+                planes[j] = (mid, nrm)
                 try:
                     f = bmesh.ops.triangle_fill(bm, use_beauty=True, use_dissolve=False, edges=edges, normal=nrm)
                     for face in f["geom"]:
@@ -237,11 +239,19 @@ def fracture(bm0, pts, inner_index, min_verts=4):
         for fc in bm.faces:
             if fc[nb]:
                 adj[fc[nb] - 1] = adj.get(fc[nb] - 1, 0.0) + fc.calc_area()
+        for j, (mid, nrm) in planes.items():
+            if j in adj:
+                continue
+            on = [v.co for v in bm.verts if abs((v.co - mid).dot(nrm)) < 1e-4]
+            if len(on) >= 3:
+                lo = Vector(map(min, *on)) if len(on) > 1 else on[0]
+                hi = Vector(map(max, *on))
+                adj[j] = 0.15 * (hi - lo).length_squared
         cells.append((i, bm, adj))
     return cells
 
 
-def bonds(objs, adjs, K, coll, min_area=1e-3):
+def bonds(objs, adjs, K, coll, min_area=1e-3, weak=None):
     made = []
     for i, oa in objs.items():
         for j, area in adjs.get(i, {}).items():
@@ -252,7 +262,11 @@ def bonds(objs, adjs, K, coll, min_area=1e-3):
             coll.objects.link(e)
             e.location = (oa.location + ob.location) / 2
             e.empty_display_size = 0.05
-            made.append((e, oa, ob, K * area))
+            th = K * area
+            if weak:
+                d = min(1.0, (e.location - weak[0]).length / weak[1])
+                th *= weak[2] + (1 - weak[2]) * d * d * (3 - 2 * d)
+            made.append((e, oa, ob, th))
     if not made:
         return 0
     for e, oa, ob, th in made:

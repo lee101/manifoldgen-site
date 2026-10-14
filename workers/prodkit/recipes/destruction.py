@@ -96,6 +96,24 @@ def builtin(kind, text):
     return bm
 
 
+def glassify(m, kind):
+    if not m or not m.node_tree:
+        return
+    bs = next((n for n in m.node_tree.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled"), None)
+    if not bs:
+        return
+    b = mats.NB(m.node_tree, clear=False)
+    inp = bs.inputs["Base Color"]
+    src = inp.links[0].from_socket if inp.is_linked else tuple(inp.default_value[:3])
+    tint = (0.85, 0.95, 1.0) if kind == "ice" else (0.92, 0.97, 0.95)
+    b.set(inp, b.mix(0.55, src, tint))
+    for k, v in (("Transmission Weight", 0.92 if kind == "glass" else 0.8), ("Roughness", 0.04 if kind == "glass" else 0.18),
+                 ("IOR", 1.45 if kind == "glass" else 1.31), ("Metallic", 0.0), ("Alpha", 1.0)):
+        if bs.inputs[k].is_linked:
+            m.node_tree.links.remove(bs.inputs[k].links[0])
+        bs.inputs[k].default_value = v
+
+
 def time_curve(frames, fps, hit, slowmo):
     ts = [1.0] * (frames + 2)
     if slowmo:
@@ -131,7 +149,7 @@ def run(ctx):
     rnd = random.Random(ctx.seed)
     models = ctx.model_paths()
     subject = p.e("subject", "tower", SUBJECTS)
-    material = p.e("material", DEFAULT_MAT[subject], MATERIALS)
+    material = p.e("material", "concrete" if models else DEFAULT_MAT[subject], MATERIALS)
     pieces = p.i("pieces", 70, 12, 160)
     impact = p.e("impact", "ball", IMPACTS)
     slowmo = p.b("slowmo", False)
@@ -151,9 +169,15 @@ def run(ctx):
     if models:
         objs = geo.import_model(models[0], ctx.blog)
         ob = geo.join(objs, "Subject")
+        lo0, hi0 = geo.bounds([ob])
+        if hi0.y - lo0.y > (hi0.x - lo0.x) * 1.05:
+            ob.data.transform(Matrix.Rotation(math.radians(90), 4, "Z"))
         geo.normalize([ob], 3.6)
-        geo.decimate(ob, 30000)
+        geo.decimate(ob, 20000)
         src_mats = [m for m in ob.data.materials if m] or [outer()]
+        if material in ("glass", "ice"):
+            for m in src_mats:
+                glassify(m, material)
         if not ob.data.materials:
             ob.data.materials.append(src_mats[0])
         bm0 = mesh_to_bm(ob.data)
@@ -178,12 +202,13 @@ def run(ctx):
     ctr = (lo + hi) / 2
     hit = max(int(0.5 * fps), int(frames * (0.2 if not slowmo else 0.24)))
     ts, T = time_curve(frames, fps, hit, slowmo)
-    bdir = Vector((1, 0, 0))
+    wide = hi.x - lo.x >= 1.3 * (hi.y - lo.y)
+    bdir = Vector((0.55, 0.85, 0)).normalized() if wide else Vector((1, 0, 0))
     if impact == "ball":
-        hz = lo.z + H * (0.42 if subject != "wall" else 0.5)
+        hz = lo.z + H * (0.42 if H >= 0.6 * S else 0.5)
         hp = Vector((ctr.x, ctr.y, hz))
-        for k in range(200):
-            q = Vector((lo.x + (hi.x - lo.x) * k / 200, ctr.y, hz))
+        for k in range(240):
+            q = Vector((ctr.x, ctr.y, hz)) + bdir * S * (k / 240 - 0.5) * 1.2
             if inside(q):
                 hp = q
                 break
@@ -302,13 +327,16 @@ def run(ctx):
     if impact != "explosion":
         K = 9000 * STRENGTH[material] * {"ball": 1.0, "quake": 0.3, "slice": 1.6}[impact] * p.f("bond", 1.0, 0.0, 3.0)
         if K > 0:
-            nb = geo.bonds(by_seed, adjs, K, collection("Bonds"))
+            weak = None
+            if impact == "ball":
+                weak = (hp, max(0.3 * S, 1.2 * min(0.5, max(0.25, 0.1 * S + 0.04 * H)) * 2), 0.03)
+            nb = geo.bonds(by_seed, adjs, K, collection("Bonds"), weak=weak)
     ctx.stats["bonds"] = nb
     ctx.stats["concave"] = sum(1 for o, _ in chunks if o.get("concave"))
     ball = None
     extra = []
     if impact == "ball":
-        r = min(0.5, max(0.2, 0.1 * H, 0.06 * S))
+        r = min(0.5, max(0.25, 0.1 * S + 0.04 * H))
         bm = bmesh.new()
         bmesh.ops.create_uvsphere(bm, u_segments=48, v_segments=24, radius=r)
         me = bpy.data.meshes.new("Ball")
@@ -318,7 +346,7 @@ def run(ctx):
             pl.use_smooth = True
         ball = link(bpy.data.objects.new("Ball", me))
         me.materials.append(mats.iron())
-        speed = 12.0 * power
+        speed = 13.0 * power
         contact = hp - bdir * (r * 0.98)
         for f in range(1, release + 2):
             ball.location = contact - bdir * speed * (T[hit] - T[f])
@@ -328,7 +356,7 @@ def run(ctx):
         bpy.ops.rigidbody.object_add(type="ACTIVE")
         brb = ball.rigid_body
         brb.collision_shape = "SPHERE"
-        brb.mass = min(7800 * 4 / 3 * math.pi * r ** 3 * 0.8, 0.3 * sum(m for _, m in chunks))
+        brb.mass = 0.4 * sum(m for _, m in chunks)
         brb.friction, brb.restitution = 0.4, 0.1
         brb.kinematic = True
         kf(brb, "kinematic", release, "CONSTANT")
@@ -366,7 +394,7 @@ def run(ctx):
             ob.scale = (s, s, s)
             jitter = Vector((rnd.gauss(0, 1), rnd.gauss(0, 1), rnd.gauss(0, 1))) * S * 0.04
             if impact == "ball":
-                ob.location = hp + jitter + Vector((0.05 * S, 0, 0))
+                ob.location = hp + jitter + bdir * 0.05 * S
                 v = (bdir * rnd.uniform(4, 9) + Vector((0, rnd.gauss(0, 2.5), rnd.uniform(0.5, 4.5)))) * power
             elif impact == "explosion":
                 ob.location = hp + jitter
@@ -436,7 +464,9 @@ def run(ctx):
     fhi.z = max(fhi.z, hi.z + 0.12 * H)
     flo.z = 0
     if impact == "ball":
-        flo.x = min(flo.x, hp.x - 2.2 * r)
+        bs = hp - bdir * 2.2 * r
+        flo = Vector(map(min, flo, bs))
+        fhi = Vector(map(max, fhi, bs))
     if impact == "explosion":
         flo = Vector(map(min, flo, lo - Vector((0.45 * S, 0.45 * S, 0))))
         fhi = Vector(map(max, fhi, hi + Vector((0.45 * S, 0.45 * S, 0.35 * S))))
@@ -446,7 +476,7 @@ def run(ctx):
     if material in ("glass", "ice"):
         dust_amt *= 0.35
     if dust_amt > 0:
-        nb = int({"ball": 70, "explosion": 150, "quake": 30, "slice": 14}[impact] * dust_amt)
+        nb = int({"ball": 70, "explosion": 100, "quake": 30, "slice": 14}[impact] * dust_amt)
         for k in range(nb):
             if impact == "ball":
                 pos = hp + Vector((rnd.gauss(0, 1), rnd.gauss(0, 1), rnd.gauss(0, 1))) * S * 0.04
@@ -469,7 +499,7 @@ def run(ctx):
             dpts.append({"pos": pos, "vel": vel * power, "t0": rnd.uniform(0, 0.12 if impact != "quake" else 1.4),
                          "life": rnd.uniform(1.6, 3.2) * big, "size": S * rnd.uniform(0.035, 0.08) * big,
                          "drag": rnd.uniform(1.8, 3.2), "rise": rnd.uniform(0.03, 0.25)})
-        cap = int(520 * dust_amt)
+        cap = len(dpts) if material in ("glass", "ice") else int(520 * dust_amt)
         for ob, m in chunks:
             tr = tracks[ob.name]
             hz = max(ob.dimensions) * 0.5
