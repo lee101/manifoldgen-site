@@ -120,7 +120,7 @@ func mcpProductionTools() []mcpProductionTool {
 			Properties: map[string]interface{}{
 				"image_url": map[string]string{"type": "string"},
 				"mode":      mcpEnum("color", "poster", "bw", "lineart"),
-				"colors":    mcpNumber(2, 8, "Color precision bits (fewer = flatter)."),
+				"colors":    mcpNumber(2, 32, "Palette size = number of color layers (default 12)."),
 				"detail":    mcpNumber(0, 1, "Higher keeps smaller shapes."),
 				"corners":   mcpNumber(0, 180, "Corner threshold in degrees."),
 				"smooth":    mcpEnum("spline", "polygon", "pixel"),

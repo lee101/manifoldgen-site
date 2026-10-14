@@ -100,7 +100,7 @@ func TestLayerProdkitSVG(t *testing.T) {
 
 func TestProdkitVtracerArgsClamp(t *testing.T) {
 	args := strings.Join(prodkitVtracerArgs(map[string]interface{}{"colors": 99.0, "detail": -3.0, "mode": "poster", "smooth": "rm -rf"}, "in.png", "out.svg"), " ")
-	for _, want := range []string{"--color_precision 8", "--filter_speckle 16", "--mode spline", "--gradient_step 32"} {
+	for _, want := range []string{"--color_precision 8", "--filter_speckle 16", "--mode spline", "--hierarchical cutout"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("args %q missing %q", args, want)
 		}
@@ -125,12 +125,12 @@ func TestTraceProdkitImageWithVtracer(t *testing.T) {
 	if out, err := exec.Command(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120", "-frames:v", "1", src).CombinedOutput(); err != nil {
 		t.Fatalf("ffmpeg: %v %s", err, out)
 	}
-	svg, err := traceProdkitImage(context.Background(), map[string]interface{}{"mode": "poster", "colors": 4.0}, src, dir)
+	svg, palette, err := traceProdkitImagePalette(context.Background(), map[string]interface{}{"mode": "poster", "colors": 6.0}, src, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	layered, stats, err := layerProdkitSVG(svg, true)
-	if err != nil || stats["layers"].(int) < 3 {
+	layered, stats, err := layerProdkitSVG(svg, true, palette...)
+	if err != nil || stats["layers"].(int) < 3 || stats["colors"].(int) > 6 {
 		t.Fatalf("layers=%v err=%v", stats, err)
 	}
 	_ = os.WriteFile(filepath.Join(dir, "out.svg"), layered, 0o644)
