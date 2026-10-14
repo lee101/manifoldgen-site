@@ -1,0 +1,54 @@
+//go:build prodkitlive
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"testing"
+
+	"github.com/joho/godotenv"
+)
+
+func TestProdkitLive(t *testing.T) {
+	_ = godotenv.Load("../.env")
+	initServices()
+	initUploads()
+	ctx := context.Background()
+	job := &VideoJob{ID: "live-test", UserID: "prodkit-live"}
+	stage := func(s string) { t.Log("stage:", s) }
+	out := map[string]interface{}{}
+	if image := os.Getenv("PRODKIT_LIVE_IMAGE"); image != "" {
+		req := ServiceUsageRequest{Service: prodkitImageTo3D, ImageURL: image}
+		result, cost, err := runProdkitImageTo3D(ctx, job, req, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		out["image_to_3d"], out["image_to_3d_cost"] = result, cost
+	}
+	if video := os.Getenv("PRODKIT_LIVE_VIDEO"); video != "" {
+		req := ServiceUsageRequest{Service: prodkitShotCleanup, VideoURL: video, Prompt: os.Getenv("PRODKIT_LIVE_PROMPT"), Duration: 30}
+		if err := normalizeProdkitRequest(&req); err != nil {
+			t.Fatal(err)
+		}
+		result, seconds, cost, err := runProdkitShotCleanup(ctx, job, req, t.TempDir(), stage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out["cleanup"], out["cleanup_seconds"], out["cleanup_cost"] = result, seconds, cost
+	}
+	if image := os.Getenv("PRODKIT_LIVE_VECTOR"); image != "" {
+		req := ServiceUsageRequest{Service: prodkitVectorize, ImageURL: image, Params: json.RawMessage(os.Getenv("PRODKIT_LIVE_VECTOR_PARAMS"))}
+		if len(req.Params) == 0 {
+			req.Params = nil
+		}
+		result, _, err := runProdkitVectorize(ctx, job, req, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		out["vectorize"] = result
+	}
+	encoded, _ := json.MarshalIndent(out, "", "  ")
+	t.Logf("%s", encoded)
+}

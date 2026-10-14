@@ -77,18 +77,22 @@ func TestProdkitPricing(t *testing.T) {
 
 func TestLayerProdkitSVG(t *testing.T) {
 	svg := []byte(`<?xml version="1.0"?><svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="4" height="4"><path d="M0 0" fill="#FF0000" transform="translate(0,0)"/><path d="M1 1" fill="#00ff00"/><path d="M2 2" fill="#ff0000"/></svg>`)
-	out, stats, err := layerProdkitSVG(svg)
+	out, stats, err := layerProdkitSVG(svg, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stats["layers"] != 2 || stats["paths"] != 3 {
 		t.Fatalf("stats = %#v", stats)
 	}
+	ordered, orderedStats, _ := layerProdkitSVG(svg, false)
+	if orderedStats["layers"] != 3 || strings.Index(string(ordered), "M1 1") > strings.Index(string(ordered), "M2 2") {
+		t.Fatalf("paint order not preserved: %s", ordered)
+	}
 	if !strings.Contains(string(out), `data-color="#ff0000"`) || strings.Count(string(out), "<g ") != 2 {
 		t.Fatalf("layered svg = %s", out)
 	}
 	for _, bad := range []string{`<svg><script>alert(1)</script></svg>`, `<svg><path onload="x" d="M0 0"/></svg>`, `<svg><a href="javascript:x"/></svg>`} {
-		if _, _, err := layerProdkitSVG([]byte(bad)); err == nil {
+		if _, _, err := layerProdkitSVG([]byte(bad), true); err == nil {
 			t.Errorf("accepted unsafe svg %s", bad)
 		}
 	}
@@ -125,7 +129,7 @@ func TestTraceProdkitImageWithVtracer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	layered, stats, err := layerProdkitSVG(svg)
+	layered, stats, err := layerProdkitSVG(svg, true)
 	if err != nil || stats["layers"].(int) < 3 {
 		t.Fatalf("layers=%v err=%v", stats, err)
 	}
@@ -146,6 +150,10 @@ func TestMCPProductionRequestBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	if requestedServiceName(req.Service) != prodkitDestruction || req.ImageURL != "https://x/a.png" || !strings.Contains(string(req.Params), `"pieces":60`) {
+		t.Fatalf("request = %s", body)
+	}
+	body, _, _ = mcpProductionRequestBody(tool, json.RawMessage(`{"duration":3.5}`))
+	if err := json.Unmarshal(body, &req); err != nil || req.Duration != 0 || !strings.Contains(string(req.Params), `"duration":3.5`) {
 		t.Fatalf("request = %s", body)
 	}
 	if _, _, err := mcpProductionRequestBody(tool, json.RawMessage(`{"wallet_address":"x"}`)); err == nil {
