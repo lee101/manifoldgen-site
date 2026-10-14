@@ -362,6 +362,12 @@ export class StudioRenderer {
 
   draw(source: TexImageSource, adjustments: StudioAdjustments, seed = 0, options: StudioDrawOptions = {}) {
     const { gl } = this;
+    const layers = activeFx(adjustments.fx);
+    let target: WebGLFramebuffer | null = null;
+    if (layers.length) {
+      this.fx ||= new StudioFxPipeline(gl);
+      target = this.fx.begin(this.canvas.width, this.canvas.height);
+    }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
@@ -401,13 +407,7 @@ export class StudioRenderer {
     gl.uniform1f(this.uniforms.seed, seed);
     gl.uniform1f(this.uniforms.fxaa, options.fxaa ? 1 : 0);
     this.bindGrade(adjustments, options.lut);
-    const layers = activeFx(adjustments.fx);
-    if (layers.length) {
-      this.fx ||= new StudioFxPipeline(gl);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.fx.begin(this.canvas.width, this.canvas.height));
-    } else {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     if (layers.length && this.fx) {
       this.fx.run(layers, { time: options.time ?? seed / 24, stateKey: options.stateKey || 'default' });

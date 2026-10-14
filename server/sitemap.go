@@ -56,7 +56,7 @@ var staticSitemapPages = []string{
 	"/tools/style-transfer", "/tools/h3-image-editor", "/tools/character-animator",
 	"/tools/video-background-remover", "/tools/video-dramatizer", "/tools/video-remake", "/tools/character-swap", "/tools/character-swap-exact", "/tools/character-swap-lora", "/tools/character-recast", "/tools/orbit-video", "/tools/anime-pose-control", "/tools/anime-scene-control", "/tools/anime-depth-control", "/tools/anime-sketch-control", "/tools/reference-video", "/tools/trailer-agent",
 	"/tools/canny-video", "/tools/depth-video", "/tools/hed-video", "/tools/mlsd-video", "/tools/pose-video", "/tools/video-inpainting",
-	"/tools/cinematic-cameras", "/tools/relight", "/tools/smart-resize", "/tools/image-background-remover", "/tools/inpaint",
+	"/tools/cinematic-cameras", "/tools/relight", "/tools/smart-resize", "/tools/color-grade", "/tools/shader-fx", "/tools/image-background-remover", "/tools/inpaint",
 	"/tools/image-upscale", "/tools/outpaint", "/tools/moodboard",
 	"/tools/nano-banana", "/tools/grok-imagine", "/tools/flux-2", "/tools/gpt-image",
 	"/tool/animate-video", "/tool/image-editor", "/tool/anima",

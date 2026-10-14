@@ -129,14 +129,14 @@ export class StudioFxPipeline {
       const definition = FX_BY_TYPE[layer.type];
       const target = 1 - source;
       const fx = this.program(layer.type);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets[target].framebuffer);
-      gl.viewport(0, 0, this.width, this.height);
-      gl.useProgram(fx.program);
       let history: { entry: HistoryEntry; fresh: boolean } | null = null;
       if (definition.history) {
         gl.activeTexture(gl.TEXTURE1);
         history = this.historyFor(`${options.stateKey}:${layer.id}`, options.time);
       }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets[target].framebuffer);
+      gl.viewport(0, 0, this.width, this.height);
+      gl.useProgram(fx.program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.targets[source].texture);
       gl.uniform1i(fx.image, 0);

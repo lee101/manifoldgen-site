@@ -100,7 +100,7 @@ import { h3Dimensions, loopAnchorURL, type H3Aspect, type H3Size } from '../../l
 import { VIDEO_GENERATORS } from '../../lib/video-generators';
 import { curvesActive, samplePixels, type PixelSample, type StudioLUT } from '../../lib/studio-grade';
 import { activeFx, fxAnimated, fxKeyed, type StudioFxLayer } from '../../lib/studio-fx/registry';
-import { blendMode, clipWindow, cropClipPath, previousAdjacent, transitionState, wipeClipPath, wipeRect, type StudioBlendMode, type StudioCrop, type StudioTransition } from '../../lib/studio-composite';
+import { blendMode, clipWindow, compositeClipPath, previousAdjacent, transitionState, wipeRect, type StudioBlendMode, type StudioCrop, type StudioTransition } from '../../lib/studio-composite';
 import { GradeControls } from '../../components/studio/grade-controls';
 import { CompositeControls, type CompositePatch } from '../../components/studio/composite-controls';
 import { FxStack } from '../../components/studio/fx-stack';
@@ -2976,16 +2976,17 @@ export default function StudioPage() {
     // a gap. Past its trim end the rVFC loop pins it and the clock carries on.
     const stageVideo = videoRef.current;
     if (stageVideo && selected?.kind === 'video') {
-      const active = playhead >= selected.timelineStart && playhead < clipEnd(selected);
+      const span = clipWindow(selected, assets);
+      const active = playhead >= span.start && playhead < span.end;
       if (!playing || !active) {
         if (!stageVideo.paused) stageVideo.pause();
-      } else if (stageVideo.currentTime < selected.trimEnd - 0.03) {
-        const sourceTime = selected.trimStart + Math.max(0, Math.min(clipDuration(selected), playhead - selected.timelineStart));
+      } else if (stageVideo.currentTime < Math.min(selected.duration, selected.trimEnd + span.handleOut) - 0.03) {
+        const sourceTime = stageSourceTime(selected, playhead);
         if (Math.abs(stageVideo.currentTime - sourceTime) > 0.3) stageVideo.currentTime = sourceTime;
         if (stageVideo.paused) void stageVideo.play().catch(() => undefined);
       }
     }
-  }, [playing, playhead, timelineAudioAssets, selected]);
+  }, [assets, playing, playhead, timelineAudioAssets, selected]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -2993,10 +2994,11 @@ export default function StudioPage() {
     let videoFrame = 0;
     let animationFrame = 0;
     let lastUIUpdate = 0;
+    const stopAt = Math.min(selected.duration, selected.trimEnd + clipWindow(selected, assetsRef.current).handleOut);
     const processDecodedFrame = (now: number) => {
-      if (video.currentTime >= selected.trimEnd) {
+      if (video.currentTime >= stopAt) {
         video.pause();
-        video.currentTime = selected.trimEnd;
+        video.currentTime = stopAt;
       } else if (now - lastUIUpdate >= 66) {
         // Keep diagnostics/UI work near 15 Hz while WebGL follows every
         // decoded frame. The shared timeline clock owns playhead movement.
@@ -5241,14 +5243,14 @@ export default function StudioPage() {
           compositor.save();
           compositor.globalAlpha = Math.max(0, Math.min(1, (asset.opacity ?? 1) * transition.alpha));
           compositor.globalCompositeOperation = blendMode(asset.blendMode).canvas;
-          if (transition.wipe) {
-            const rect = wipeRect(transition.wipe.type, transition.wipe.progress, width, height);
-            compositor.beginPath();
-            compositor.rect(rect.x, rect.y, rect.width, rect.height);
-            compositor.clip();
-          }
           compositor.translate(width * (0.5 + asset.stageX), height * (0.5 + asset.stageY));
           compositor.rotate(asset.stageRotation * Math.PI / 180);
+          if (transition.wipe) {
+            const rect = wipeRect(transition.wipe.type, transition.wipe.progress, drawWidth, drawHeight);
+            compositor.beginPath();
+            compositor.rect(rect.x - drawWidth / 2, rect.y - drawHeight / 2, rect.width, rect.height);
+            compositor.clip();
+          }
           const sourceWidth = raster.width * (1 - crop.left - crop.right);
           const sourceHeight = raster.height * (1 - crop.top - crop.bottom);
           if (sourceWidth >= 1 && sourceHeight >= 1) {
@@ -5724,9 +5726,11 @@ export default function StudioPage() {
               const x = dragPosition?.x ?? asset.stageX;
               const y = dragPosition?.y ?? asset.stageY;
               const transition = stageTransitions.get(asset.id);
+              const span = clipWindow(asset, assets);
+              const hiddenByTransition = !transition && playhead >= span.start && playhead < span.end;
               const mediaStyle: CSSProperties = {
-                opacity: (asset.opacity ?? 1) * (transition?.alpha ?? 1),
-                clipPath: transition?.wipe ? wipeClipPath(transition.wipe.type, transition.wipe.progress) : cropClipPath(asset.crop),
+                opacity: (asset.opacity ?? 1) * (transition?.alpha ?? (hiddenByTransition ? 0 : 1)),
+                clipPath: compositeClipPath(asset.crop, transition?.wipe),
                 ...(fxKeyed(asset.adjustments.fx) ? { background: 'transparent' } : {}),
               };
               return <div
@@ -5776,6 +5780,8 @@ export default function StudioPage() {
                     autoFocus={editingTextID === asset.id}
                     aria-label="Edit text on canvas"
                     style={{
+                      ...mediaStyle,
+                      background: undefined,
                       color: textDraft.color,
                       fontFamily: studioFontStack(textDraft.fontFamily),
                       fontSize: `${Math.max(12, textDraft.fontSize * (previewSize?.width || 1920) / 1920)}px`,

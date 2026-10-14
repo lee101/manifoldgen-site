@@ -111,12 +111,19 @@ export function wipeRect(type: StudioTransitionType, progress: number, width: nu
   return { x: 0, y: 0, width: width * progress, height };
 }
 
-export function wipeClipPath(type: StudioTransitionType, progress: number) {
-  const hidden = `${((1 - progress) * 100).toFixed(2)}%`;
-  if (type === 'wipe-left') return `inset(0 0 0 ${hidden})`;
-  if (type === 'wipe-up') return `inset(${hidden} 0 0 0)`;
-  if (type === 'wipe-down') return `inset(0 0 ${hidden} 0)`;
-  return `inset(0 ${hidden} 0 0)`;
+export function wipeInsets(type: StudioTransitionType, progress: number): StudioCrop {
+  const hidden = 1 - Math.max(0, Math.min(1, progress));
+  if (type === 'wipe-left') return { ...NO_CROP, left: hidden };
+  if (type === 'wipe-up') return { ...NO_CROP, top: hidden };
+  if (type === 'wipe-down') return { ...NO_CROP, bottom: hidden };
+  return { ...NO_CROP, right: hidden };
+}
+
+export function compositeClipPath(crop: StudioCrop | undefined, wipe?: { type: StudioTransitionType; progress: number }) {
+  if (!wipe) return cropClipPath(crop);
+  const reveal = wipeInsets(wipe.type, wipe.progress);
+  const base = crop || NO_CROP;
+  return cropClipPath({ left: Math.max(base.left, reveal.left), top: Math.max(base.top, reveal.top), right: Math.max(base.right, reveal.right), bottom: Math.max(base.bottom, reveal.bottom) }) || 'inset(0 0 0 0)';
 }
 
 export function cropClipPath(crop: StudioCrop | undefined) {
