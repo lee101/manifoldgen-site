@@ -1,8 +1,8 @@
 ---
 slug: hosted-blender-production-tools-mcp
 title: Hosted Blender, vectorizing and video cleanup tools for AI agents (MCP + REST)
-description: ManifoldGen runs headless Blender, a layered SVG tracer, photo-to-3D and an AI video object eraser behind one API key. Agents call them over MCP at manifoldgen.com/api/mcp or REST and get MP4s plus editable .blend, GLB and SVG files, with no local Blender, Illustrator or After Effects install.
-read_when: An agent or developer needs Blender destruction, exploded views, toon shading, scripted 3D scenes, raster-to-vector conversion or video object removal without installing desktop apps, and wants editable outputs and per-job prices.
+description: ManifoldGen runs headless Blender, a layered SVG tracer, photo-to-3D, an AI video object eraser, a footage sorter and a shot compositor behind one API key. Agents call them over MCP at manifoldgen.com/api/mcp or REST and get MP4s plus editable .blend, GLB and SVG files, with no local Blender, Illustrator or After Effects install.
+read_when: An agent or developer needs Blender destruction, exploded views, toon shading, scripted 3D scenes, raster-to-vector conversion, video object removal, footage binning and audio sync, or keyed composites without installing desktop apps, and wants editable outputs and per-job prices.
 ---
 
 ManifoldGen's production tools are hosted versions of the jobs people normally do by hand in Blender, Illustrator and After Effects. Each job runs on ManifoldGen servers and returns finished media plus an editable project file, billed per job from prepaid credits. You are charged only when a job completes.
@@ -18,6 +18,8 @@ ManifoldGen's production tools are hosted versions of the jobs people normally d
 | image_to_3d | image-to-3d | textured GLB | $0.06 ($0.45 high) |
 | vectorize_image | vectorize | SVG with one layer per color | $0.02 ($0.03 AI tracer) |
 | remove_video_objects | shot-cleanup | cleaned MP4 with the original audio | $0.24 per second, up to 30 s |
+| organize_footage | footage-sorter | bins, audio sync offsets, FCPXML 1.10, OTIO, Studio project, contact sheet, JSON report | $0.05 + $0.02 per clip, up to 24 clips |
+| composite_shot | shot-composer | composite MP4, alpha WebM, background, color-match .cube LUT, Studio project | $0.10 + the video background removal per-second rate (AI matte) or + $0.01 per second (chroma key); +$0.04 for a generated background; up to 30 s |
 
 Color grading (.cube LUT export) and shader effects run in the browser at /tools/color-grade and /tools/shader-fx at no per-job charge.
 
@@ -25,7 +27,9 @@ Color grading (.cube LUT export) and shader effects run in the browser at /tools
 
     claude mcp add --transport http manifoldgen https://manifoldgen.com/api/mcp --header "Authorization: Bearer $MANIFOLDGEN_API_KEY"
 
-The server also lists guided workflows through prompts/list: production-bundle, destruction-studio, exploded-view, scene-builder, toon-shader, shot-cleanup, shot-composer, vectorize, image-fixer, color-grade and shader-fx.
+The server also lists guided workflows through prompts/list: production-bundle, destruction-studio, exploded-view, scene-builder, toon-shader, shot-cleanup, shot-composer, footage-sorter, vectorize, image-fixer, color-grade and shader-fx.
+
+The same tools work from the terminal (`npm i -g manifoldgen-cli`, `mg auth login`, `mg generate <service> ... --wait --out dir`) and as agent skills (`npx skills add manifoldgen/skills`).
 
 ## Typical agent flow
 
@@ -52,3 +56,8 @@ blender-scene takes declarative data, not Python, so a scene can be described sa
 - Models: .glb, .obj, .fbx, .stl or .ply, up to 200 MB.
 - Video cleanup: name the object in a short prompt (person, car, logo) for clips up to 30 s. Points on the first frame work for clips up to 4.8 s.
 - Failed jobs are not charged.
+- Footage sorter: up to 24 video or audio clips, 2 GB total; audio sync searches ±60 s and leaves low-confidence clips unsynced.
+
+## Guides
+
+Walkthroughs with real outputs for every tool: https://manifoldgen.com/blog/hosted-production-suite-higgsfield-alternative

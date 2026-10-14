@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight, BookOpen } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Box } from 'lucide-react';
 import { articles } from '../articles';
 
 import type { BlogArticle, BlogBlock, BlogExample } from '../articles';
@@ -61,6 +61,15 @@ function ExampleMedia({ src, poster, aspect, caption, seconds, sound, kind }: { 
       </div>
     );
   }
+  if (kind === 'model' || src.endsWith('.glb')) {
+    return (
+      <a href={src} download className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_50%_40%,rgba(188,178,255,.16),rgba(0,0,0,.4))] p-4 text-center text-sm text-white/70 transition hover:border-white/30 hover:text-white">
+        <Box size={28} className="text-[#bcb2ff]" />
+        <b className="text-white">{src.split('/').pop()}</b>
+        <span className="text-xs text-white/45">{caption || 'Textured GLB'} · download</span>
+      </a>
+    );
+  }
   if (src.endsWith('.webm') || src.endsWith('.mp4')) {
     return (
       <div className={vertical ? 'mx-auto w-full max-w-[300px]' : 'w-full'}>
@@ -74,7 +83,7 @@ function ExampleMedia({ src, poster, aspect, caption, seconds, sound, kind }: { 
   return (
     <figure className={vertical ? 'mx-auto w-full max-w-[300px]' : 'w-full'}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img className="aspect-video w-full rounded-2xl border border-white/10 object-cover" style={vertical ? { aspectRatio: '9 / 16' } : undefined} src={src} alt={caption || 'Generated output'} loading="lazy" />
+      <img className={`aspect-video w-full rounded-2xl border border-white/10 ${src.endsWith('.svg') ? 'bg-white object-contain' : 'object-cover'}`} style={vertical ? { aspectRatio: '9 / 16' } : undefined} src={src} alt={caption || 'Generated output'} loading="lazy" />
       {caption && <figcaption className="mt-2 text-center text-xs text-white/35">{caption}</figcaption>}
     </figure>
   );
@@ -92,7 +101,7 @@ function ExampleBlock({ example }: { example: BlogExample }) {
           </div>
         )}
         <div>
-          <p className="mb-2 text-xs font-semibold tracking-[.14em] text-[#7be7d9]">PROMPT</p>
+          <p className="mb-2 text-xs font-semibold tracking-[.14em] text-[#7be7d9]">{(example.promptLabel || 'Prompt').toUpperCase()}</p>
           <CodeBlock>{example.prompt}</CodeBlock>
         </div>
         <div>
@@ -213,7 +222,7 @@ export default async function BlogArticlePage({ params }: ArticlePageProps) {
         </header>
 
         <div className="mt-10 grid gap-12 lg:grid-cols-[minmax(0,4fr)_minmax(180px,1fr)] lg:gap-16">
-          <div className="max-w-4xl space-y-10 text-[16px] leading-8 text-white/65">
+          <div className="min-w-0 max-w-4xl space-y-10 text-[16px] leading-8 text-white/65">
             {article.blocks.map((block, index) => (
               <BlockRenderer key={index} block={block} />
             ))}
