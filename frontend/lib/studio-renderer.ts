@@ -1,52 +1,22 @@
-export type StudioAdjustments = {
-  exposure: number;
-  brightness: number;
-  contrast: number;
-  highlights: number;
-  shadows: number;
-  shadowHue: number;
-  midtoneHue: number;
-  highlightHue: number;
-  saturation: number;
-  temperature: number;
-  tint: number;
-  fade: number;
-  vignette: number;
-  grain: number;
-  glitchAmount: number;
-  glitchRGB: number;
-  glitchTear: number;
-  glitchBlocks: number;
-  glitchColor: number;
-  glitchScanlines: number;
-  glitchSpeed: number;
-  glitchHue: number;
-};
+import {
+  DEFAULT_ADJUSTMENTS,
+  curveTable,
+  curvesActive,
+  effectiveLGG,
+  type StudioAdjustments,
+  type StudioCurves,
+  type StudioLUT,
+  type StudioNumericAdjustments,
+} from './studio-grade';
+import { activeFx } from './studio-fx/registry';
+import { StudioFxPipeline } from './studio-fx/pipeline';
 
-export const DEFAULT_ADJUSTMENTS: StudioAdjustments = {
-  exposure: 0,
-  brightness: 0,
-  contrast: 0,
-  highlights: 0,
-  shadows: 0,
-  shadowHue: 0,
-  midtoneHue: 0,
-  highlightHue: 0,
-  saturation: 0,
-  temperature: 0,
-  tint: 0,
-  fade: 0,
-  vignette: 0,
-  grain: 0,
-  glitchAmount: 0,
-  glitchRGB: 0,
-  glitchTear: 0,
-  glitchBlocks: 0,
-  glitchColor: 0,
-  glitchScanlines: 0,
-  glitchSpeed: 0.5,
-  glitchHue: 180,
-};
+export { DEFAULT_ADJUSTMENTS };
+export type { StudioAdjustments, StudioNumericAdjustments };
+
+const SCALAR_UNIFORMS = ['exposure', 'brightness', 'contrast', 'highlights', 'shadows', 'shadowHue', 'midtoneHue', 'highlightHue', 'saturation', 'temperature', 'tint', 'fade', 'vignette', 'grain', 'glitchAmount', 'glitchRGB', 'glitchTear', 'glitchBlocks', 'glitchColor', 'glitchScanlines', 'glitchSpeed', 'glitchHue', 'lutIntensity'] as const satisfies readonly (keyof StudioNumericAdjustments)[];
+
+export type StudioDrawOptions = { fxaa?: boolean; time?: number; lut?: StudioLUT | null; stateKey?: string };
 
 const VERTEX = `#version 300 es
 in vec2 a_position;
@@ -85,6 +55,15 @@ uniform float u_glitchSpeed;
 uniform float u_glitchHue;
 uniform float u_seed;
 uniform float u_fxaa;
+uniform vec3 u_lift;
+uniform vec3 u_gamma;
+uniform vec3 u_gain;
+uniform float u_curvesOn;
+uniform sampler2D u_curves;
+uniform float u_lutOn;
+uniform float u_lutSize;
+uniform float u_lutIntensity;
+uniform highp sampler3D u_lut;
 in vec2 v_texCoord;
 out vec4 outColor;
 
@@ -192,6 +171,15 @@ void main() {
   color.b -= u_temperature * 0.09;
   color.g += u_tint * 0.06;
   color = mix(color, vec3(0.5), u_fade * 0.22);
+  color = pow(max(u_gain * (color + u_lift * (1.0 - color)), 0.0), u_gamma);
+  if (u_curvesOn > 0.5) {
+    vec3 curveCoord = clamp(color, 0.0, 1.0) * (255.0 / 256.0) + 0.5 / 256.0;
+    color = vec3(texture(u_curves, vec2(curveCoord.r, 0.5)).r, texture(u_curves, vec2(curveCoord.g, 0.5)).g, texture(u_curves, vec2(curveCoord.b, 0.5)).b);
+  }
+  if (u_lutOn > 0.5) {
+    vec3 lutCoord = clamp(color, 0.0, 1.0) * ((u_lutSize - 1.0) / u_lutSize) + 0.5 / u_lutSize;
+    color = mix(color, texture(u_lut, lutCoord).rgb, u_lutIntensity);
+  }
 
   vec2 uv = v_texCoord - 0.5;
   float edge = smoothstep(0.2, 0.72, length(uv));
@@ -231,6 +219,12 @@ export class StudioRenderer {
   private uniforms: Record<string, WebGLUniformLocation | null>;
   private textureWidth = 0;
   private textureHeight = 0;
+  private vao: WebGLVertexArrayObject | null;
+  private curvesTexture: WebGLTexture;
+  private lutTexture: WebGLTexture;
+  private curvesSource: StudioCurves | null = null;
+  private lutSource: StudioLUT | null = null;
+  private fx: StudioFxPipeline | null = null;
 
   constructor(public readonly canvas: HTMLCanvasElement, options: { preserveDrawingBuffer?: boolean } = {}) {
     const gl = canvas.getContext('webgl2', {
@@ -256,6 +250,7 @@ export class StudioRenderer {
     this.program = program;
 
     const vao = gl.createVertexArray();
+    this.vao = vao;
     gl.bindVertexArray(vao);
     const positionBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
@@ -281,9 +276,70 @@ export class StudioRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.useProgram(program);
 
-    const names = ['exposure', 'brightness', 'contrast', 'highlights', 'shadows', 'shadowHue', 'midtoneHue', 'highlightHue', 'saturation', 'temperature', 'tint', 'fade', 'vignette', 'grain', 'glitchAmount', 'glitchRGB', 'glitchTear', 'glitchBlocks', 'glitchColor', 'glitchScanlines', 'glitchSpeed', 'glitchHue', 'seed', 'fxaa'];
+    const curvesTexture = gl.createTexture();
+    const lutTexture = gl.createTexture();
+    if (!curvesTexture || !lutTexture) throw new Error('Unable to create grading textures');
+    this.curvesTexture = curvesTexture;
+    this.lutTexture = lutTexture;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, curvesTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 2, 1, 0, gl.RGBA, gl.FLOAT, new Float32Array([0, 0, 0, 1, 1, 1, 1, 1]));
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_3D, lutTexture);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGB16F, 2, 2, 2, 0, gl.RGB, gl.FLOAT, new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1]));
+    gl.activeTexture(gl.TEXTURE0);
+
+    const names = [...SCALAR_UNIFORMS, 'seed', 'fxaa', 'lift', 'gamma', 'gain', 'curvesOn', 'lutOn', 'lutSize'];
     this.uniforms = Object.fromEntries(names.map((name) => [name, gl.getUniformLocation(program, `u_${name}`)]));
     this.uniforms.resolution = gl.getUniformLocation(program, 'u_resolution');
+    gl.uniform1i(gl.getUniformLocation(program, 'u_image'), 0);
+    gl.uniform1i(gl.getUniformLocation(program, 'u_curves'), 1);
+    gl.uniform1i(gl.getUniformLocation(program, 'u_lut'), 2);
+  }
+
+  private bindGrade(adjustments: StudioAdjustments, lut: StudioLUT | null | undefined) {
+    const { gl } = this;
+    const curves = curvesActive(adjustments.curves) ? adjustments.curves! : null;
+    if (curves && curves !== this.curvesSource) {
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.curvesTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 256, 1, 0, gl.RGBA, gl.FLOAT, curveTable(curves));
+      this.curvesSource = curves;
+    }
+    const useLUT = !!lut && adjustments.lutIntensity > 0;
+    if (useLUT && lut !== this.lutSource) {
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_3D, this.lutTexture);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGB16F, lut.size, lut.size, lut.size, 0, gl.RGB, gl.FLOAT, lut.data);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+      this.lutSource = lut;
+    }
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.curvesTexture);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_3D, this.lutTexture);
+    gl.activeTexture(gl.TEXTURE0);
+    const { lift, gamma, gain } = effectiveLGG(adjustments);
+    gl.uniform3f(this.uniforms.lift, lift[0], lift[1], lift[2]);
+    gl.uniform3f(this.uniforms.gamma, gamma[0], gamma[1], gamma[2]);
+    gl.uniform3f(this.uniforms.gain, gain[0], gain[1], gain[2]);
+    gl.uniform1f(this.uniforms.curvesOn, curves ? 1 : 0);
+    gl.uniform1f(this.uniforms.lutOn, useLUT ? 1 : 0);
+    gl.uniform1f(this.uniforms.lutSize, useLUT ? lut.size : 2);
+  }
+
+  resetFeedback(stateKey?: string) {
+    this.fx?.resetHistory(stateKey);
   }
 
   diagnostics() {
@@ -304,10 +360,18 @@ export class StudioRenderer {
     if (this.canvas.height !== safeHeight) this.canvas.height = safeHeight;
   }
 
-  draw(source: TexImageSource, adjustments: StudioAdjustments, seed = 0, options: { fxaa?: boolean } = {}) {
+  draw(source: TexImageSource, adjustments: StudioAdjustments, seed = 0, options: StudioDrawOptions = {}) {
     const { gl } = this;
+    const layers = activeFx(adjustments.fx);
+    let target: WebGLFramebuffer | null = null;
+    if (layers.length) {
+      this.fx ||= new StudioFxPipeline(gl);
+      target = this.fx.begin(this.canvas.width, this.canvas.height);
+    }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.program);
+    gl.bindVertexArray(this.vao);
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
     let dimensions: number[];
@@ -337,12 +401,17 @@ export class StudioRenderer {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source);
     }
     gl.uniform2f(this.uniforms.resolution, this.canvas.width, this.canvas.height);
-    (Object.keys(DEFAULT_ADJUSTMENTS) as (keyof StudioAdjustments)[]).forEach((key) => {
-      gl.uniform1f(this.uniforms[key], adjustments[key]);
+    SCALAR_UNIFORMS.forEach((key) => {
+      gl.uniform1f(this.uniforms[key], adjustments[key] ?? DEFAULT_ADJUSTMENTS[key]);
     });
     gl.uniform1f(this.uniforms.seed, seed);
     gl.uniform1f(this.uniforms.fxaa, options.fxaa ? 1 : 0);
+    this.bindGrade(adjustments, options.lut);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
+    if (layers.length && this.fx) {
+      this.fx.run(layers, { time: options.time ?? seed / 24, stateKey: options.stateKey || 'default' });
+    }
   }
 
   /**
@@ -375,7 +444,16 @@ export class StudioRenderer {
   }
 
   destroy() {
+    this.fx?.destroy();
+    this.fx = null;
     this.gl.deleteTexture(this.texture);
+    this.gl.deleteTexture(this.curvesTexture);
+    this.gl.deleteTexture(this.lutTexture);
     this.gl.deleteProgram(this.program);
+  }
+
+  release() {
+    this.destroy();
+    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }

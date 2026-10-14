@@ -1,6 +1,8 @@
-import type { StudioAdjustments } from './studio-renderer';
+import { decodeLUTData, encodeLUTData, normalizeAdjustments, normalizeCurves, storableLUT, type StudioAdjustments, type StudioLUT } from './studio-grade';
+import { normalizeFxLayers } from './studio-fx/registry';
+import { normalizeCrop, normalizeTransition, type StudioBlendMode, type StudioCrop, type StudioTransition } from './studio-composite';
 
-export const STUDIO_PROJECT_VERSION = 5;
+export const STUDIO_PROJECT_VERSION = 6;
 const DB_NAME = 'manifold-studio';
 const DB_VERSION = 1;
 const LAST_PROJECT_KEY = 'mg_studio_project_id';
@@ -36,6 +38,10 @@ export type PortableStudioAsset = {
   stageRotation?: number;
   attribution?: string;
   adjustments: StudioAdjustments;
+  opacity?: number;
+  blendMode?: StudioBlendMode;
+  crop?: StudioCrop;
+  transition?: StudioTransition;
   cloudURL?: string;
   objectKey?: string;
   /** Small AV1/WebM derivative used only for hover/scrub previews in Media. */
@@ -62,6 +68,7 @@ export type PortableStudioDocument = {
     width: number;
     height: number;
   };
+  luts?: Record<string, PortableStudioLUT>;
   /** Master gain for the timeline's A1 track. Older projects default to 1. */
   audioTrackVolume?: number;
   /**
@@ -74,12 +81,89 @@ export type PortableStudioDocument = {
   };
 };
 
+export type PortableStudioLUT = { name: string; size: number; data: string };
+
 export type PortableStudioHistoryState = {
   selectedID: string;
   selectedIDs: string[];
   playhead: number;
   assets: PortableStudioAsset[];
 };
+
+const BLEND_IDS = new Set<StudioBlendMode>(['normal', 'multiply', 'screen', 'overlay', 'add', 'difference']);
+
+export function migrateStudioAsset(asset: PortableStudioAsset): PortableStudioAsset {
+  const adjustments = normalizeAdjustments(asset.adjustments);
+  if (adjustments.curves) adjustments.curves = normalizeCurves(adjustments.curves);
+  const fx = normalizeFxLayers(adjustments.fx);
+  if (fx.length) adjustments.fx = fx;
+  else delete adjustments.fx;
+  const opacity = Number(asset.opacity);
+  const migrated: PortableStudioAsset = {
+    ...asset,
+    adjustments,
+    opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1,
+    blendMode: asset.blendMode && BLEND_IDS.has(asset.blendMode) ? asset.blendMode : 'normal',
+  };
+  const crop = normalizeCrop(asset.crop);
+  if (crop.left || crop.top || crop.right || crop.bottom) migrated.crop = crop;
+  else delete migrated.crop;
+  const transition = normalizeTransition(asset.transition);
+  if (transition) migrated.transition = transition;
+  else delete migrated.transition;
+  return migrated;
+}
+
+export function migrateStudioDocument(document: PortableStudioDocument): PortableStudioDocument {
+  const history = document.history
+    ? {
+      undo: (document.history.undo || []).map((state) => ({ ...state, assets: (state.assets || []).map(migrateStudioAsset) })),
+      redo: (document.history.redo || []).map((state) => ({ ...state, assets: (state.assets || []).map(migrateStudioAsset) })),
+    }
+    : undefined;
+  const luts: Record<string, PortableStudioLUT> = {};
+  for (const [id, lut] of Object.entries(document.luts || {})) {
+    if (lut && typeof lut.data === 'string' && Number.isInteger(lut.size) && lut.size >= 2) luts[id] = { name: String(lut.name || 'LUT'), size: lut.size, data: lut.data };
+  }
+  return {
+    ...document,
+    version: STUDIO_PROJECT_VERSION,
+    assets: (document.assets || []).map(migrateStudioAsset),
+    ...(history ? { history } : {}),
+    luts,
+  };
+}
+
+const encodedLUTCache = new WeakMap<StudioLUT, PortableStudioLUT>();
+
+export function encodeStudioLUTs(luts: Record<string, StudioLUT>, assets: { adjustments: StudioAdjustments }[]) {
+  const wanted = new Set(assets.map((asset) => asset.adjustments.lutID).filter((id): id is string => !!id));
+  const encoded: Record<string, PortableStudioLUT> = {};
+  for (const id of wanted) {
+    const lut = luts[id];
+    if (!lut) continue;
+    let portable = encodedLUTCache.get(lut);
+    if (!portable) {
+      const stored = storableLUT(lut);
+      portable = { name: stored.name, size: stored.size, data: encodeLUTData(stored.data) };
+      encodedLUTCache.set(lut, portable);
+    }
+    encoded[id] = portable;
+  }
+  return encoded;
+}
+
+export function decodeStudioLUTs(luts: Record<string, PortableStudioLUT> | undefined) {
+  const decoded: Record<string, StudioLUT> = {};
+  for (const [id, lut] of Object.entries(luts || {})) {
+    try {
+      decoded[id] = { id, name: lut.name, size: lut.size, data: decodeLUTData(lut.data, lut.size) };
+    } catch {
+      continue;
+    }
+  }
+  return decoded;
+}
 
 export type LocalStudioProject = {
   id: string;
