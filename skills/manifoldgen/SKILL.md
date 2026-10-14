@@ -81,6 +81,8 @@ Update names here only; the workflow skills defer to this table. Prices are base
 | shot-cleanup | `video_background_removal` | `generate_media` | `video_url` | - | alpha video | per s |
 | image-fixer | `image-edit`, `remove-background`, `relight`, `upscale-image`, `extend-image`, `smart-resize` | `generate_media` | `image_url` (+ `mask_url`, `prompt`) | - | PNG | per image |
 | shot-composer | Studio + `video`, `reference-video`, `music`, `sfx` | `generate_media` | clips, stills, audio | - | Studio project, MP4 | varies |
+| timeline-edit | `timeline-render` (`mg render edit.json`) | `render_timeline` | `params.document` (PortableStudioDocument v6, `get_studio_schema`) or `params.project_id` | `format` mp4/webm, `quality`, `resolution`, `fps` 1-60, `name` | `video_url`, `poster_url`, `studio_url` | $0.01/s (<=1080p), $0.02/s above, $0.05 min |
+| timeline-edit | `POST /api/studio/projects/import` (`mg studio open edit.json`) | `create_studio_project` | `document`, `name` | - | `project_id`, `studio_url` | free |
 | color-grade | client tool `/tools/color-grade` | none | image/video | - | `.cube` LUT | free |
 | shader-fx | client tool `/tools/shader-fx` | none | image/video | - | `.cube` LUT, rendered video | free |
 | footage-sorter | coming soon | none | - | - | - | - |

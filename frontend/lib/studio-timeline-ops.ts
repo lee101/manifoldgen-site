@@ -72,3 +72,34 @@ export function fitZoom(duration: number, viewportWidth: number) {
   const zoom = (viewportWidth * 0.94) / (duration * BASE_PIXELS_PER_SECOND);
   return Math.max(MIN_TIMELINE_ZOOM, Math.min(MAX_TIMELINE_ZOOM, Number(zoom.toFixed(3))));
 }
+
+export const MAX_VISUAL_TRACKS = 12;
+
+type StackClip = TimelineClip & { visualTrack: number };
+
+export function visualClipsOverlap(left: StackClip, right: StackClip) {
+  return left.kind !== 'audio' && right.kind !== 'audio'
+    && left.timelineStart < end(right) - 0.0001
+    && right.timelineStart < end(left) - 0.0001;
+}
+
+// A visual lane may contain many sequential clips, but never two clips that
+// occupy the same time. Stable asset order keeps older material below newer
+// overlays, while pinned IDs let an explicit layer command take precedence.
+export function stackOverlappingVisuals<T extends StackClip>(items: T[], pinnedIDs = new Set<string>()): T[] {
+  const visuals = items.map((asset, index) => ({ asset, index })).filter(({ asset }) => asset.kind !== 'audio');
+  visuals.sort((left, right) => (
+    left.asset.visualTrack - right.asset.visualTrack
+    || Number(pinnedIDs.has(right.asset.id)) - Number(pinnedIDs.has(left.asset.id))
+    || left.index - right.index
+  ));
+  const lanes: T[][] = Array.from({ length: MAX_VISUAL_TRACKS }, () => []);
+  const assigned = new Map<string, number>();
+  for (const { asset } of visuals) {
+    let track = Math.max(0, Math.min(MAX_VISUAL_TRACKS - 1, Math.floor(asset.visualTrack)));
+    while (track < MAX_VISUAL_TRACKS - 1 && lanes[track].some((other) => visualClipsOverlap(asset, other))) track += 1;
+    assigned.set(asset.id, track);
+    lanes[track].push(asset);
+  }
+  return items.map((asset) => asset.kind === 'audio' ? asset : { ...asset, visualTrack: assigned.get(asset.id) ?? asset.visualTrack });
+}

@@ -75,6 +75,7 @@ var servicePricesUSD = map[string]float64{
 	prodkitShotCleanup:         prodkitEraserUSDSec * 5,
 	prodkitFootageSorter:       prodkitFootageBaseUSD,
 	prodkitShotComposer:        prodkitComposerBaseUSD,
+	prodkitTimeline:            timelineMinUSD,
 }
 
 var zimageDefaultSteps = 8
@@ -491,6 +492,7 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "shot-cleanup", Internal: prodkitShotCleanup},
 	{Public: "footage-sorter", Internal: prodkitFootageSorter},
 	{Public: "shot-composer", Internal: prodkitShotComposer},
+	{Public: "timeline-render", Internal: prodkitTimeline},
 }
 
 func requestedServiceName(service string) string {
