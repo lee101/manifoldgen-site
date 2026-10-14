@@ -619,7 +619,7 @@ func prodkitDir() string {
 }
 
 func prodkitCommandEnv(workDir string) []string {
-	env := []string{"HOME=" + workDir, "TMPDIR=" + workDir, "PATH=/usr/local/bin:/usr/bin:/bin", "FFMPEG_BIN=" + ffmpegBinary()}
+	env := []string{"HOME=" + workDir, "TMPDIR=" + workDir, "PATH=/usr/local/bin:/usr/bin:/bin", "FFMPEG_BIN=" + ffmpegBinary(), "PRODKIT_FFMPEG=" + ffmpegBinary()}
 	for _, key := range []string{"LD_LIBRARY_PATH", "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "PRODKIT_ENGINE"} {
 		if value := os.Getenv(key); value != "" {
 			env = append(env, key+"="+value)
@@ -706,18 +706,26 @@ func runProdkitBlender(ctx context.Context, job *VideoJob, req ServiceUsageReque
 		}
 		renderCtx, cancel := context.WithTimeout(ctx, 12*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(renderCtx, prodkitBlenderBinary(), "-b", "--factory-startup", "-noaudio", "-P", filepath.Join(prodkitDir(), "run_blender.py"), "--", argsPath)
-		cmd.Dir = workDir
-		cmd.Env = prodkitCommandEnv(workDir)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-		started := time.Now()
-		output, runErr := cmd.CombinedOutput()
-		log.Printf("[prodkit] job=%s recipe=%s blender %.1fs", job.ID, recipe, time.Since(started).Seconds())
-		var manifest prodkitManifest
-		manifestBytes, readErr := os.ReadFile(filepath.Join(outDir, "manifest.json"))
-		if readErr == nil {
-			_ = json.Unmarshal(manifestBytes, &manifest)
+		runBlender := func(extraEnv ...string) ([]byte, error, prodkitManifest) {
+			_ = os.Remove(filepath.Join(outDir, "manifest.json"))
+			cmd := exec.CommandContext(renderCtx, prodkitBlenderBinary(), "-b", "--factory-startup", "-noaudio", "-P", filepath.Join(prodkitDir(), "run_blender.py"), "--", argsPath)
+			cmd.Dir = workDir
+			cmd.Env = append(prodkitCommandEnv(workDir), extraEnv...)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+			started := time.Now()
+			output, runErr := cmd.CombinedOutput()
+			log.Printf("[prodkit] job=%s recipe=%s blender %.1fs", job.ID, recipe, time.Since(started).Seconds())
+			var manifest prodkitManifest
+			if manifestBytes, err := os.ReadFile(filepath.Join(outDir, "manifest.json")); err == nil {
+				_ = json.Unmarshal(manifestBytes, &manifest)
+			}
+			return output, runErr, manifest
+		}
+		output, runErr, manifest := runBlender()
+		if recipe == "toon_shader" && !manifest.OK && renderCtx.Err() == nil && !prodkitBadInput(runErr) {
+			log.Printf("[prodkit] job=%s toon EEVEE failed, retrying with Cycles: %s", job.ID, tailOutput(output))
+			output, runErr, manifest = runBlender("PRODKIT_ENGINE=CYCLES")
 		}
 		if runErr != nil || !manifest.OK {
 			log.Printf("[prodkit] job=%s blender error: %v %s", job.ID, runErr, tailOutput(output))
@@ -800,6 +808,11 @@ func runProdkitImageTo3D(ctx context.Context, job *VideoJob, req ServiceUsageReq
 		return nil, 0, err
 	}
 	return map[string]interface{}{"glb_url": publicURL, "image_url": req.ImageURL}, cost, nil
+}
+
+func prodkitBadInput(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 2
 }
 
 func prodkitVtracerBinary() string {

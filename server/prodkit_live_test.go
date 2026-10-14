@@ -49,6 +49,21 @@ func TestProdkitLive(t *testing.T) {
 		}
 		out["vectorize"] = result
 	}
+	if service := os.Getenv("PRODKIT_LIVE_BLENDER"); service != "" {
+		req := ServiceUsageRequest{Service: service, ImageURL: os.Getenv("PRODKIT_LIVE_BLENDER_IMAGE"), Params: json.RawMessage(os.Getenv("PRODKIT_LIVE_BLENDER_PARAMS"))}
+		if len(req.Params) == 0 {
+			req.Params = nil
+		}
+		if err := normalizeProdkitRequest(&req); err != nil {
+			t.Fatal(err)
+		}
+		tool, _ := prodkitToolFor(service)
+		result, cost, err := runProdkitBlender(ctx, job, req, tool, t.TempDir(), stage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out["blender"], out["blender_cost"] = result, cost
+	}
 	encoded, _ := json.MarshalIndent(out, "", "  ")
 	t.Logf("%s", encoded)
 }
