@@ -695,10 +695,12 @@ func runProdkitBlender(ctx context.Context, job *VideoJob, req ServiceUsageReque
 			return nil, 0, err
 		}
 		providerUSD += cost
-		sourceModelURL = glbURL
 		path := filepath.Join(workDir, "input.glb")
 		if err := prodkitDownload(ctx, glbURL, path, prodkitMaxModel); err != nil {
 			return nil, 0, err
+		}
+		if hosted, err := uploadProdkitFile(ctx, path, job.UserID, "model/gltf-binary"); err == nil {
+			sourceModelURL = hosted
 		}
 		inputs["model_path"] = path
 	}
