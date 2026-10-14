@@ -74,7 +74,8 @@ describe('production request building', () => {
     expect(apiBody(body)).toEqual({ service: 'destruction-studio', image_url: 'https://x/a.png', params: { pieces: 60, duration: 6 } });
     expect(mcpArguments(body)).toEqual({ image_url: 'https://x/a.png', pieces: 60, duration: 6 });
     const code = snippets(body, 'blender_destruction');
-    expect(code.cli).toBe(`manifoldgen generate destruction-studio --params '{"image_url":"https://x/a.png","pieces":60,"duration":6}'`);
+    expect(code.cli).toBe(`manifoldgen generate destruction-studio --image 'https://x/a.png' --params '{"pieces":60,"duration":6}' --wait --out .`);
+    expect(mcp).toContain('"colors":    mcpNumber(2, 32,');
     expect(code.curl).toContain('https://manifoldgen.com/api/service');
     for (const tool of PRODUCTION_TOOLS) expect(mcp).toContain(`Name: "${tool.mcp}"`);
   });

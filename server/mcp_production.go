@@ -120,7 +120,7 @@ func mcpProductionTools() []mcpProductionTool {
 			Properties: map[string]interface{}{
 				"image_url": map[string]string{"type": "string"},
 				"mode":      mcpEnum("color", "poster", "bw", "lineart"),
-				"colors":    mcpNumber(2, 8, "Color precision bits (fewer = flatter)."),
+				"colors":    mcpNumber(2, 32, "Palette size = number of color layers (default 12)."),
 				"detail":    mcpNumber(0, 1, "Higher keeps smaller shapes."),
 				"corners":   mcpNumber(0, 180, "Corner threshold in degrees."),
 				"smooth":    mcpEnum("spline", "polygon", "pixel"),
@@ -136,7 +136,7 @@ func mcpProductionTools() []mcpProductionTool {
 				"prompt":     map[string]string{"type": "string", "description": "Short noun naming what to remove."},
 				"points":     map[string]interface{}{"type": "array", "maxItems": 12, "items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"x": map[string]string{"type": "number"}, "y": map[string]string{"type": "number"}, "type": mcpEnum("positive", "negative")}}},
 				"keep_audio": map[string]string{"type": "boolean"},
-				"duration":   mcpNumber(1, 30, "Seconds to process from the start (defaults to the whole clip up to 30 s)."),
+				"duration":   map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 30, "description": "Seconds to process from the start (defaults to the whole clip up to 30 s)."},
 			},
 			Required: []string{"video_url"},
 		},
@@ -393,7 +393,7 @@ func mcpProductionRequestBody(tool mcpProductionTool, arguments json.RawMessage)
 		switch {
 		case key == "wait_seconds":
 			_ = json.Unmarshal(value, &wait)
-		case mcpTopLevelFields[key] && !(key == "duration" && tool.Service != "shot-cleanup"):
+		case mcpTopLevelFields[key] && !(key == "duration" && tool.Name != "remove_video_objects"):
 			request[key] = value
 		default:
 			params[key] = value

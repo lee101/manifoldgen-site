@@ -356,6 +356,9 @@ func runFalQueuedJobWithin(ctx context.Context, model string, payload map[string
 	if strings.TrimSpace(falAPIKey) == "" {
 		return nil, fmt.Errorf("FAL_KEY is not configured")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	submitBody, status, err := callFalQueue(http.MethodPost, falQueueBaseURL+"/"+model, payload)
 	if err != nil {
 		return nil, err
@@ -363,6 +366,7 @@ func runFalQueuedJobWithin(ctx context.Context, model string, payload map[string
 	var queued struct {
 		StatusURL   string `json:"status_url"`
 		ResponseURL string `json:"response_url"`
+		CancelURL   string `json:"cancel_url"`
 	}
 	if jsonErr := json.Unmarshal(submitBody, &queued); jsonErr != nil || queued.StatusURL == "" || queued.ResponseURL == "" {
 		if status < 400 && bytes.Contains(submitBody, []byte(`"image`)) {
@@ -372,9 +376,15 @@ func runFalQueuedJobWithin(ctx context.Context, model string, payload map[string
 	}
 	statusEndpoint := strings.TrimRight(queued.StatusURL, "/") + "?logs=0"
 	deadline := time.Now().Add(timeout)
+	cancelProvider := func() {
+		if queued.CancelURL != "" {
+			_, _, _ = callFalQueue(http.MethodPut, queued.CancelURL, nil)
+		}
+	}
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
+			cancelProvider()
 			return nil, ctx.Err()
 		case <-time.After(2 * time.Second):
 		}
@@ -401,6 +411,7 @@ func runFalQueuedJobWithin(ctx context.Context, model string, payload map[string
 			return nil, fmt.Errorf("fal job failed: %s", truncateString(message, 300))
 		}
 	}
+	cancelProvider()
 	return nil, fmt.Errorf("timed out waiting for fal job")
 }
 

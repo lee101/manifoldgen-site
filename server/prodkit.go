@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"log"
 	"math"
@@ -42,6 +43,9 @@ const (
 	prodkitEraserUSDSec = 0.24
 	prodkitEraserMaxSec = 30.0
 	prodkitEraserChunk  = 4.8
+	prodkitEraserFade   = 0.3
+
+	prodkitGPUUSDPerSecond = 0.0003
 )
 
 type prodkitTool struct {
@@ -355,8 +359,20 @@ type prodkitStored struct {
 }
 
 type prodkitEnvelope struct {
-	Prodkit prodkitStored `json:"_prodkit"`
-	Stage   string        `json:"stage,omitempty"`
+	Prodkit  prodkitStored `json:"_prodkit"`
+	Attempts int           `json:"_attempts,omitempty"`
+	Stage    string        `json:"stage,omitempty"`
+}
+
+func prodkitUsesPaidProvider(req ServiceUsageRequest) bool {
+	tool, _ := prodkitToolFor(req.Service)
+	switch tool.Engine {
+	case "fal3d", "eraser":
+		return true
+	case "vector":
+		return prodkitString(prodkitParams(req), "engine") == "ai"
+	}
+	return prodkitNeeds3D(req)
 }
 
 func handleProdkitService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, user *User) {
@@ -450,6 +466,11 @@ func processProdkitJob(job *VideoJob) {
 	}
 	req := envelope.Prodkit.Request
 	tool, _ := prodkitToolFor(req.Service)
+	if envelope.Attempts > 0 && (prodkitUsesPaidProvider(req) || envelope.Attempts > 1) {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "the job was interrupted by a server restart; you were not charged")
+		return
+	}
+	envelope.Attempts++
 	setStage := func(stage string) {
 		envelope.Stage = stage
 		payload, _ := json.Marshal(envelope)
@@ -506,6 +527,7 @@ func processProdkitJob(job *VideoJob) {
 		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, prodkitPublicError(err))
 		return
 	}
+	providerUSD = math.Max(providerUSD, 0.001)
 	cutePrice := getCUTEPriceUSD()
 	if cutePrice <= 0 || chargedUSD <= 0 {
 		_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "credit pricing unavailable; retry status")
@@ -674,6 +696,9 @@ func runProdkitBlender(ctx context.Context, job *VideoJob, req ServiceUsageReque
 	recipe := strings.TrimPrefix(req.Service, "prodkit_")
 	if recipe == "toon_shader" || recipe == "exploded_view" || recipe == "destruction" || recipe == "scene" {
 		params := prodkitParams(req)
+		if _, set := params["duration"]; !set && req.Duration > 0 {
+			params["duration"] = req.Duration
+		}
 		args, _ := json.Marshal(map[string]interface{}{"recipe": recipe, "out": outDir, "params": params, "inputs": inputs})
 		argsPath := filepath.Join(workDir, "args.json")
 		if err := os.WriteFile(argsPath, args, 0o600); err != nil {
@@ -733,6 +758,7 @@ func runProdkitBlender(ctx context.Context, job *VideoJob, req ServiceUsageReque
 		if len(manifest.Stats) > 0 {
 			result["stats"] = manifest.Stats
 		}
+		providerUSD += manifest.RenderSeconds * prodkitGPUUSDPerSecond
 		return result, providerUSD, nil
 	}
 	return nil, 0, fmt.Errorf("unknown recipe")
@@ -790,6 +816,7 @@ func runProdkitVectorize(ctx context.Context, job *VideoJob, req ServiceUsageReq
 	params := prodkitParams(req)
 	providerUSD := 0.0
 	var svg []byte
+	var palette []string
 	if prodkitString(params, "engine") == "ai" {
 		body, err := runFalQueuedJobWithin(ctx, "fal-ai/recraft/vectorize", map[string]interface{}{"image_url": req.ImageURL}, 2*time.Minute)
 		if err != nil {
@@ -812,13 +839,13 @@ func runProdkitVectorize(ctx context.Context, job *VideoJob, req ServiceUsageReq
 		if err := prodkitDownload(ctx, req.ImageURL, raw, prodkitMaxImage); err != nil {
 			return nil, 0, prodkitUserError{err.Error()}
 		}
-		traced, err := traceProdkitImage(ctx, params, raw, workDir)
+		traced, colors, err := traceProdkitImagePalette(ctx, params, raw, workDir)
 		if err != nil {
 			return nil, 0, err
 		}
-		svg = traced
+		svg, palette = traced, colors
 	}
-	layered, stats, err := layerProdkitSVG(svg)
+	layered, stats, err := layerProdkitSVG(svg, prodkitString(params, "engine") != "ai", palette...)
 	if err != nil {
 		return nil, 0, prodkitUserError{err.Error()}
 	}
@@ -838,21 +865,31 @@ func runProdkitVectorize(ctx context.Context, job *VideoJob, req ServiceUsageReq
 }
 
 func traceProdkitImage(ctx context.Context, params map[string]interface{}, raw, workDir string) ([]byte, error) {
+	svg, _, err := traceProdkitImagePalette(ctx, params, raw, workDir)
+	return svg, err
+}
+
+func traceProdkitImagePalette(ctx context.Context, params map[string]interface{}, raw, workDir string) ([]byte, []string, error) {
 	if prodkitVtracerBinary() == "" {
-		return nil, fmt.Errorf("vtracer is not installed")
+		return nil, nil, fmt.Errorf("vtracer is not installed")
 	}
 	release, err := acquireProdkitSlot(ctx, "local")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer release()
 	input := filepath.Join(workDir, "source.png")
 	maxSide := 2048
+	filter := fmt.Sprintf("scale='min(%d,iw)':'min(%d,ih)':force_original_aspect_ratio=decrease", maxSide, maxSide)
+	if mode := prodkitString(params, "mode"); mode != "bw" && mode != "lineart" {
+		colors := int(prodkitNumber(params, "colors", 12, 2, 32))
+		filter += fmt.Sprintf(",smartblur=lr=1.5:ls=-0.6,split[a][b];[a]palettegen=max_colors=%d:reserve_transparent=0:stats_mode=full[p];[b][p]paletteuse=dither=none", colors)
+	}
 	convert := exec.CommandContext(ctx, ffmpegBinary(), "-v", "error", "-y", "-i", raw, "-frames:v", "1",
-		"-vf", fmt.Sprintf("scale='min(%d,iw)':'min(%d,ih)':force_original_aspect_ratio=decrease", maxSide, maxSide), input)
+		"-filter_complex", filter, input)
 	if output, err := convert.CombinedOutput(); err != nil {
 		log.Printf("[prodkit] vectorize decode: %v %s", err, tailOutput(output))
-		return nil, prodkitUserError{"that file is not a readable image"}
+		return nil, nil, prodkitUserError{"that file is not a readable image"}
 	}
 	output := filepath.Join(workDir, "out.svg")
 	args := prodkitVtracerArgs(params, input, output)
@@ -862,15 +899,18 @@ func traceProdkitImage(ctx context.Context, params map[string]interface{}, raw, 
 	cmd.Env = prodkitCommandEnv(workDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("[prodkit] vtracer: %v %s", err, tailOutput(out))
-		return nil, prodkitUserError{"tracing failed; try fewer colors or less detail"}
+		return nil, nil, prodkitUserError{"tracing failed; try fewer colors or less detail"}
 	}
-	return os.ReadFile(output)
+	svg, err := os.ReadFile(output)
+	if err != nil {
+		return nil, nil, err
+	}
+	return svg, prodkitImagePalette(input, 32), nil
 }
 
 func prodkitVtracerArgs(params map[string]interface{}, input, output string) []string {
 	args := []string{"--input", input, "--output", output}
 	mode := prodkitString(params, "mode")
-	colors := int(prodkitNumber(params, "colors", 6, 2, 8))
 	detail := prodkitNumber(params, "detail", 0.5, 0, 1)
 	corners := prodkitNumber(params, "corners", 60, 0, 180)
 	smooth := prodkitString(params, "smooth")
@@ -878,12 +918,7 @@ func prodkitVtracerArgs(params map[string]interface{}, input, output string) []s
 	case "bw", "lineart":
 		args = append(args, "--colormode", "bw")
 	default:
-		args = append(args, "--colormode", "color", "--hierarchical", "stacked", "--color_precision", strconv.Itoa(colors))
-		if mode == "poster" {
-			args = append(args, "--gradient_step", "32")
-		} else {
-			args = append(args, "--gradient_step", "16")
-		}
+		args = append(args, "--colormode", "color", "--hierarchical", "cutout", "--color_precision", "8", "--gradient_step", "0")
 	}
 	curve := "spline"
 	if smooth == "polygon" || smooth == "pixel" {
@@ -901,7 +936,70 @@ var (
 	svgUnsafePattern = regexp.MustCompile(`(?i)<script|<foreignobject|\son[a-z]+\s*=|javascript:|<iframe|<use\b[^>]*href\s*=\s*["']https?:`)
 )
 
-func layerProdkitSVG(svg []byte) ([]byte, map[string]interface{}, error) {
+func prodkitImagePalette(path string, limit int) []string {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	img, err := png.Decode(file)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	bounds := img.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			hex := fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8)
+			if !seen[hex] {
+				seen[hex] = true
+				out = append(out, hex)
+				if len(out) > limit {
+					return nil
+				}
+			}
+		}
+	}
+	return out
+}
+
+func prodkitHexRGB(hex string) (int, int, int, bool) {
+	hex = strings.TrimPrefix(hex, "#")
+	if len(hex) == 3 {
+		hex = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
+	}
+	if len(hex) < 6 {
+		return 0, 0, 0, false
+	}
+	value, err := strconv.ParseUint(hex[:6], 16, 32)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return int(value >> 16 & 255), int(value >> 8 & 255), int(value & 255), true
+}
+
+func prodkitNearestColor(color string, palette []string) string {
+	r, g, b, ok := prodkitHexRGB(color)
+	if !ok || len(palette) == 0 {
+		return color
+	}
+	best, bestDist := color, math.MaxInt
+	for _, candidate := range palette {
+		pr, pg, pb, ok := prodkitHexRGB(candidate)
+		if !ok {
+			continue
+		}
+		dist := (r-pr)*(r-pr)*2 + (g-pg)*(g-pg)*4 + (b-pb)*(b-pb)*3
+		if dist < bestDist {
+			best, bestDist = candidate, dist
+		}
+	}
+	return best
+}
+
+func layerProdkitSVG(svg []byte, regroup bool, palette ...string) ([]byte, map[string]interface{}, error) {
 	if len(svg) == 0 {
 		return nil, nil, fmt.Errorf("tracing produced an empty SVG")
 	}
@@ -913,37 +1011,61 @@ func layerProdkitSVG(svg []byte) ([]byte, map[string]interface{}, error) {
 	if header == nil || len(paths) == 0 {
 		return svg, map[string]interface{}{"paths": len(paths), "layers": 0}, nil
 	}
-	order := []string{}
-	groups := map[string][][]byte{}
+	type layer struct {
+		color string
+		paths [][]byte
+	}
+	layers := []*layer{}
+	byColor := map[string]*layer{}
+	counts := map[string]int{}
 	for _, path := range paths {
 		color := "#000000"
 		if match := svgFillPattern.FindSubmatch(path); match != nil {
 			color = strings.ToLower(string(match[1]))
 		}
-		if _, seen := groups[color]; !seen {
-			order = append(order, color)
+		if len(palette) > 0 {
+			color = prodkitNearestColor(color, palette)
+			path = svgFillPattern.ReplaceAll(path, []byte(`fill="`+color+`"`))
 		}
-		groups[color] = append(groups[color], path)
+		counts[color]++
+		current := byColor[color]
+		if !regroup && (len(layers) == 0 || layers[len(layers)-1].color != color) {
+			current = nil
+		}
+		if current == nil {
+			current = &layer{color: color}
+			layers = append(layers, current)
+			byColor[color] = current
+		}
+		current.paths = append(current.paths, path)
 	}
 	var out bytes.Buffer
 	out.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
 	out.Write(header)
 	out.WriteString("\n")
-	for i, color := range order {
-		fmt.Fprintf(&out, `<g id="layer-%02d" data-color="%s" inkscape:groupmode="layer" inkscape:label="%s" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape">`+"\n", i+1, color, color)
-		for _, path := range groups[color] {
+	for i, group := range layers {
+		fmt.Fprintf(&out, `<g id="layer-%02d" data-color="%s" inkscape:groupmode="layer" inkscape:label="%s" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape">`+"\n", i+1, group.color, group.color)
+		for _, path := range group.paths {
 			out.Write(path)
 			out.WriteString("\n")
 		}
 		out.WriteString("</g>\n")
 	}
 	out.WriteString("</svg>\n")
-	palette := append([]string(nil), order...)
-	sort.SliceStable(palette, func(a, b int) bool { return len(groups[palette[a]]) > len(groups[palette[b]]) })
-	if len(palette) > 16 {
-		palette = palette[:16]
+	used := make([]string, 0, len(counts))
+	for color := range counts {
+		used = append(used, color)
 	}
-	return out.Bytes(), map[string]interface{}{"paths": len(paths), "layers": len(order), "palette": palette, "bytes": out.Len()}, nil
+	sort.Slice(used, func(a, b int) bool {
+		if counts[used[a]] != counts[used[b]] {
+			return counts[used[a]] > counts[used[b]]
+		}
+		return used[a] < used[b]
+	})
+	if len(used) > 32 {
+		used = used[:32]
+	}
+	return out.Bytes(), map[string]interface{}{"paths": len(paths), "layers": len(layers), "colors": len(counts), "palette": used, "bytes": out.Len()}, nil
 }
 
 func runProdkitShotCleanup(ctx context.Context, job *VideoJob, req ServiceUsageRequest, workDir string, setStage func(string)) (map[string]interface{}, float64, float64, error) {
@@ -969,9 +1091,14 @@ func runProdkitShotCleanup(ctx context.Context, job *VideoJob, req ServiceUsageR
 	}
 	setStage("preparing")
 	paths := make([]string, chunks)
+	span := seconds / float64(chunks)
 	for i := 0; i < chunks; i++ {
-		start := float64(i) * prodkitEraserChunk
-		length := math.Min(prodkitEraserChunk, seconds-start)
+		start := float64(i) * span
+		length := span
+		if i > 0 {
+			start -= prodkitEraserFade
+			length += prodkitEraserFade
+		}
 		paths[i] = filepath.Join(workDir, fmt.Sprintf("chunk%02d.mp4", i))
 		cmd := exec.CommandContext(ctx, ffmpegBinary(), "-v", "error", "-y", "-ss", fmt.Sprintf("%.3f", start), "-i", source, "-t", fmt.Sprintf("%.3f", length),
 			"-an", "-vf", "scale='min(1920,iw)':-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", paths[i])
@@ -1053,12 +1180,16 @@ func runProdkitShotCleanup(ctx context.Context, job *VideoJob, req ServiceUsageR
 	}
 	filter := ""
 	for i := range cleaned {
-		filter += fmt.Sprintf("[%d:v]setsar=1,fps=%s[v%d];", i, prodkitFPS(probe.FPS), i)
+		filter += fmt.Sprintf("[%d:v]setsar=1,fps=%s,settb=AVTB[v%d];", i, prodkitFPS(probe.FPS), i)
 	}
-	for i := range cleaned {
-		filter += fmt.Sprintf("[v%d]", i)
+	last := "v0"
+	for i := 1; i < len(cleaned); i++ {
+		offset := float64(i)*span - prodkitEraserFade
+		next := fmt.Sprintf("x%d", i)
+		filter += fmt.Sprintf("[%s][v%d]xfade=transition=fade:duration=%.3f:offset=%.3f[%s];", last, i, prodkitEraserFade, offset, next)
+		last = next
 	}
-	filter += fmt.Sprintf("concat=n=%d:v=1:a=0[v]", len(cleaned))
+	filter += fmt.Sprintf("[%s]null[v]", last)
 	args = append(args, "-filter_complex", filter, "-map", "[v]")
 	if audio {
 		args = append(args, "-map", fmt.Sprintf("%d:a:0", len(cleaned)), "-c:a", "aac", "-b:a", "192k", "-shortest")
@@ -1072,7 +1203,7 @@ func runProdkitShotCleanup(ctx context.Context, job *VideoJob, req ServiceUsageR
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	providerUSD := 0.14 * math.Ceil(seconds)
+	providerUSD := 0.14 * float64(chunks) * math.Ceil(span+prodkitEraserFade)
 	return map[string]interface{}{
 		"video_url": videoURL, "source_video_url": req.VideoURL, "duration_seconds": math.Round(seconds*100) / 100,
 		"parts": chunks, "removed": req.Prompt, "width": probe.Width, "height": probe.Height,

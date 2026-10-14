@@ -1,0 +1,25 @@
+{
+  "name": "manifoldgen-cli",
+  "version": "0.1.0",
+  "description": "ManifoldGen CLI for image, video, audio and production tools. Built for terminals and AI agents.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "manifoldgen": "dist/cli.js",
+    "mg": "dist/cli.js"
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=18" },
+  "homepage": "https://manifoldgen.com/api#cli",
+  "keywords": ["manifoldgen", "ai", "video", "image", "cli", "mcp", "agents"],
+  "scripts": {
+    "build": "bun build src/cli.ts --target=node --outfile dist/cli.js --banner '#!/usr/bin/env node' && chmod +x dist/cli.js",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build && bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.0"
+  }
+}

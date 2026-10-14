@@ -22,7 +22,7 @@ export const FOOTER_TOOL_GROUPS: { title: string; links: FooterLink[]; more?: Fo
   },
   {
     title: 'Edit & enhance',
-    links: byHref(['/tools/style-transfer', '/tools/relight', '/tools/smart-resize', '/tools/image-background-remover', '/tools/inpaint', '/tools/outpaint', '/tools/image-upscale', '/tools/moodboard', '/tools/h3-image-editor']),
+    links: byHref(['/tools/style-transfer', '/tools/relight', '/tools/smart-resize', '/tools/color-grade', '/tools/shader-fx', '/tools/image-background-remover', '/tools/inpaint', '/tools/outpaint', '/tools/image-upscale', '/tools/moodboard', '/tools/h3-image-editor']),
   },
   {
     title: 'Motion & audio',

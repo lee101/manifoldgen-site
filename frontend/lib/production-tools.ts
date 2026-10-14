@@ -197,7 +197,7 @@ export const PRODUCTION_TOOLS: readonly ProductionTool[] = [
     kind: 'image', input: 'image',
     controls: [
       { key: 'mode', label: 'Mode', type: 'select', options: [['color', 'Color'], ['poster', 'Poster'], ['bw', 'Black & white'], ['lineart', 'Line art']], default: 'color' },
-      { key: 'colors', label: 'Colors', type: 'range', min: 2, max: 8, step: 1, default: 6, hint: 'Fewer = flatter' },
+      { key: 'colors', label: 'Colors', type: 'range', min: 2, max: 32, step: 1, default: 12, hint: 'One layer per color' },
       { key: 'detail', label: 'Detail', type: 'range', min: 0, max: 1, step: 0.05, default: 0.5 },
       { key: 'engine', label: 'Engine', type: 'select', options: [['trace', 'Tracer · $0.02'], ['ai', 'AI tracer · $0.03']], default: 'trace' },
       { key: 'corners', label: 'Corner threshold', type: 'range', min: 0, max: 180, step: 5, default: 60, unit: '°', advanced: true },
@@ -266,13 +266,26 @@ export function mcpArguments(req: ProductionRequest): Record<string, unknown> {
 
 const shellQuote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
 
+export function cliCommand(req: ProductionRequest): string {
+  const parts = ['manifoldgen generate', req.service];
+  if (req.image_url) parts.push('--image', shellQuote(req.image_url));
+  if (req.model_url) parts.push('--model', shellQuote(req.model_url));
+  if (req.model_urls?.length) parts.push('--models', shellQuote(req.model_urls.join(',')));
+  if (req.video_url) parts.push('--video', shellQuote(req.video_url));
+  if (req.prompt) parts.push('--prompt', shellQuote(req.prompt));
+  if (req.duration) parts.push('--duration', String(req.duration));
+  if (Object.keys(req.params).length) parts.push('--params', shellQuote(JSON.stringify(req.params)));
+  parts.push('--wait --out .');
+  return parts.join(' ');
+}
+
 export function snippets(req: ProductionRequest, mcpTool: string) {
   const body = JSON.stringify(apiBody(req), null, 2);
   const args = JSON.stringify(mcpArguments(req));
   return {
     curl: `curl https://manifoldgen.com/api/service \\\n  -X POST \\\n  -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d ${shellQuote(body)}\n\ncurl https://manifoldgen.com/api/video-jobs/$JOB_ID \\\n  -H "Authorization: Bearer $MANIFOLDGEN_API_KEY"`,
     mcp: `${mcpTool}(${args})`,
-    cli: `manifoldgen generate ${req.service} --params ${shellQuote(args)}`,
+    cli: cliCommand(req),
   };
 }
 
