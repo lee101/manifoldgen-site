@@ -64,6 +64,31 @@ func TestProdkitLive(t *testing.T) {
 		}
 		out["blender"], out["blender_cost"] = result, cost
 	}
+	if raw := os.Getenv("PRODKIT_LIVE_REQ"); raw != "" {
+		var req ServiceUsageRequest
+		if err := json.Unmarshal([]byte(raw), &req); err != nil {
+			t.Fatal(err)
+		}
+		req.Service = requestedServiceName(req.Service)
+		if err := normalizeProdkitRequest(&req); err != nil {
+			t.Fatal(err)
+		}
+		var result map[string]interface{}
+		var cost float64
+		var err error
+		switch req.Service {
+		case prodkitFootageSorter:
+			result, cost, err = runProdkitFootageSorter(ctx, job, req, t.TempDir(), stage)
+		case prodkitShotComposer:
+			result, _, cost, err = runProdkitShotComposer(ctx, job, req, t.TempDir(), stage)
+		default:
+			t.Fatalf("unsupported %s", req.Service)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		out["req"], out["req_cost"] = result, cost
+	}
 	encoded, _ := json.MarshalIndent(out, "", "  ")
 	t.Logf("%s", encoded)
 }
