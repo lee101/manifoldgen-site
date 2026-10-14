@@ -1,27 +1,21 @@
 ---
 name: shot-composer
-description: Plan and assemble a multi-shot sequence (shot list, generated or uploaded clips, stills, music and SFX) into an editable ManifoldGen Studio project and rendered cut. Use for trailers, ads, music videos, social edits, storyboards to animatic, or when the user wants several shots composed into one piece.
+description: Composite a subject from one video onto a new background (image, video or generated plate) with an AI matte or chroma key, color matching, light wrap, shadow and grain, returning the composite MP4 plus editable layers and a Studio project. Use for VFX composites, green-screen replacement, putting a person or product into a new location, or After Effects-style shot compositing.
 ---
 
 # Shot Composer
 
-A workflow over existing services (canonical names: service table in the `manifoldgen` skill): `video`, `reference-video`, `image`, `music`, `sfx`, plus Studio at https://manifoldgen.com/studio for the timeline.
+Service `shot-composer`, MCP `composite_shot` (canonical names: service table in the `manifoldgen` skill). Async job, max 30 s. AI matte: background-removal per-second rate + $0.10; chroma key: $0.10 + $0.01/s; +$0.04 for a generated background. Confirm with `list_services`.
 
 ## Ask first
-- Brief, total duration, aspect ratio, number of shots, style references, existing footage or stills.
-- Audio: generated music (genre, tempo), SFX, voice-over, or the user's track.
-- Delivery: rendered MP4, Studio project for further editing, or both.
+- Subject clip, background (still, video, or a description to generate), green/blue screen or not, placement (`position`, `scale`), look (`match_color`, `light_wrap`, `grain`, `shadow`), keep audio.
 
 ## Run
-1. Write a shot list (shot #, duration, framing, action, prompt). Price it: `mg pricing video` x shots (+ music). Get approval for the total.
-2. Generate shots once each, in parallel, keep job IDs:
 ```bash
-mg generate video --prompt "<shot 1>" --duration 5 --aspect-ratio 16:9 --json > out/shot1.json
-mg job <id> --wait --out out/shots
+mg generate shot-composer --video subject.mp4 --image plate.jpg --params '{"position":"bottom","scale":0.85,"light_wrap":0.4,"grain":0.25}' --wait --out out/comp
 ```
-Consistent characters/products: `reference-video` with `--ref-image hero.png`. Stills to animate: `--image still.png`.
-3. Score: `mg generate music --prompt "<mood, bpm>" --duration <total> --wait --out out/audio`; SFX with `sfx`.
-4. Assemble in Studio: open https://manifoldgen.com/studio, import the files from `out/` in shot order, trim to the shot list, add audio, export. Clean or matte shots with `shot-cleanup`; grade with `color-grade`.
+Green screen: add `"key":"chroma","key_color":"green"` (cheaper, no AI). Generated plate: `--prompt "misty glacier valley at sunrise"`.
+MCP: `composite_shot {"video_url":"...","image_url":"...","position":"bottom","wait_seconds":300}`.
 
 ## Deliver
-- The Studio project (editable timeline), each shot file, the audio stems and the shot list. Note per-shot job IDs so any shot can be regenerated without redoing the rest.
+- `video_url` composite, `fg_alpha_url` (transparent WebM layer), `background_url`, `lut_url` (the color match as .cube) and the Studio project so layers stay editable; refine there with grade, keys and blend modes. For multi-shot sequences, assemble finished shots with the `timeline-edit` skill.
