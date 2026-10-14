@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ArrowLeft, Check, Clock3, Code2, KeyRound, Sparkles, WalletCards } from 'lucide-react';
+import { ArrowLeft, Bot, Check, Clock3, Code2, KeyRound, Sparkles, Terminal, WalletCards } from 'lucide-react';
 import { CopyMarkdownButton } from './copy-markdown-button';
 import { PricingTable } from './pricing-table';
 
@@ -131,9 +131,24 @@ const createVoice = `curl https://manifoldgen.com/api/voice/generate \
     "sample_rate": 24000
   }'`;
 
+const cliSetup = `npm i -g manifoldgen-cli
+mg auth login
+npx skills add manifoldgen/skills`;
+
+const cliExamples = `mg services
+mg generate video --prompt "rain on a glass roof" --duration 5 --wait --out clips
+mg generate vectorize --image logo.png --wait --out vector
+mg job <job_id> --wait --json`;
+
+const mcpSetup = `claude mcp add --transport http manifoldgen https://manifoldgen.com/api/mcp \\
+  --header "Authorization: Bearer $MANIFOLDGEN_API_KEY"`;
+
 const llmMarkdown = `# ManifoldGen API integration
 
 Use \`Authorization: Bearer $MANIFOLDGEN_API_KEY\` on every protected request. Never expose the key in browser code.
+
+## CLI and agents
+\`npm i -g manifoldgen-cli\`, \`mg auth login\` (browser approval; \`--no-browser\` for remote shells), then \`mg generate <service> --prompt ... [--image file|url] [--param k=v] --wait --out dir --json\`. Check cost with \`mg pricing <service>\` or \`--dry-run\`. Agent skills: \`npx skills add manifoldgen/skills\`. MCP: \`https://manifoldgen.com/api/mcp\` with the same bearer key; \`mg mcp config\` prints Claude Code, Codex and Cursor snippets.
 
 ## Generate video
 POST \`https://manifoldgen.com/api/service\` with JSON: \`{"service":"video","prompt":"...","aspect_ratio":"16:9","size":"native","duration":5,"num_steps":20,"include_audio":true,"output_format":"webm-av1"}\`. This returns HTTP 202 with \`result.job_id\` and \`result.status_url\`. Poll \`GET https://manifoldgen.com/api/video-jobs/{job_id}\` every 2–5 seconds until \`status\` is \`completed\`.
@@ -201,6 +216,7 @@ export default function ApiDocsPage() {
         <aside className="hidden lg:block">
           <nav className="sticky top-24 space-y-1 text-sm text-white/55">
             <a href="#quickstart" className="block py-1.5 hover:text-white">Quickstart</a>
+            <a href="#cli" className="block py-1.5 hover:text-white">CLI &amp; agents</a>
             <a href="#video" className="block py-1.5 hover:text-white">Generate video</a>
             <a href="#jobs" className="block py-1.5 hover:text-white">Poll a job</a>
             <a href="#images" className="block py-1.5 hover:text-white">Generate images</a>
@@ -248,6 +264,31 @@ export default function ApiDocsPage() {
               Send your key as <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">Authorization: Bearer …</code>.
               Keep it on your server; never ship it in public browser code.
             </p>
+          </section>
+
+          <section id="cli" className="scroll-mt-28 border-t border-white/10 py-10">
+            <h2 className="font-display text-2xl font-700">CLI &amp; agents</h2>
+            <p className="mb-5 mt-3 leading-7 text-white/55">
+              One install for terminals, Claude Code, Codex and Cursor. Login approves this computer in the browser; no key copying.
+            </p>
+            <CodeBlock>{cliSetup}</CodeBlock>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                <Terminal size={18} className="text-[var(--color-accent-2)]" />
+                <h3 className="mt-3 text-sm font-semibold">mg CLI</h3>
+                <p className="mt-1 text-sm leading-6 text-white/50">Uploads local files, polls jobs, downloads outputs. <code>--json</code> on every command.</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                <Bot size={18} className="text-[var(--color-accent-2)]" />
+                <h3 className="mt-3 text-sm font-semibold">Agent skills</h3>
+                <p className="mt-1 text-sm leading-6 text-white/50">Destruction, exploded view, toon shader, Blender scenes, vectorize, shot cleanup, color grade and more.</p>
+              </div>
+            </div>
+            <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">Examples</h3>
+            <CodeBlock>{cliExamples}</CodeBlock>
+            <h3 className="mb-3 mt-7 text-sm font-semibold text-white/80">MCP</h3>
+            <CodeBlock>{mcpSetup}</CodeBlock>
+            <p className="mt-4 text-sm leading-6 text-white/45">Run <code>mg mcp config</code> for Codex and Cursor snippets. Check prices with <code>mg pricing</code> before generating.</p>
           </section>
 
           <section id="video" className="scroll-mt-28 border-t border-white/10 py-10">
