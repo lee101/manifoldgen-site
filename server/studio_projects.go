@@ -131,7 +131,7 @@ func validateStudioAssetPresign(input studioAssetPresignInput) (studioAssetPresi
 		return input, fmt.Errorf("invalid filename")
 	}
 	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
-	if !(strings.HasPrefix(input.ContentType, "video/") || strings.HasPrefix(input.ContentType, "image/") || strings.HasPrefix(input.ContentType, "audio/")) {
+	if !(strings.HasPrefix(input.ContentType, "video/") || strings.HasPrefix(input.ContentType, "image/") || strings.HasPrefix(input.ContentType, "audio/") || strings.HasPrefix(input.ContentType, "model/")) {
 		return input, fmt.Errorf("unsupported media type")
 	}
 	if input.Size <= 0 || input.Size > 20<<30 {

@@ -66,6 +66,13 @@ var servicePricesUSD = map[string]float64{
 	"lofi_loop":                0.12, // per looping video: cover still + motion + visualizer + loop mux
 	"reference_video":          3.72, // 15 s Seedance 2.0 Mini 720p with a 15 s reference video, 1.5x
 	"character_swap_video":     6.24, // 30 s source at 768P: $0.16 per source second plus one GPT Image 2 frame
+	prodkitDestruction:         0.40,
+	prodkitExploded:            0.40,
+	prodkitToon:                0.30,
+	prodkitScene:               0.30,
+	prodkitImageTo3D:           0.06,
+	prodkitVectorize:           0.02,
+	prodkitShotCleanup:         prodkitEraserUSDSec * 5,
 }
 
 var zimageDefaultSteps = 8
@@ -259,6 +266,9 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 	usdPrice, ok := servicePricesUSD[req.Service]
 	if !ok {
 		return 0
+	}
+	if isProdkitService(req.Service) {
+		return prodkitPriceUSD(req)
 	}
 	if req.Service == "zimage" {
 		usdPrice = zimageUnitPriceUSD(req, usdPrice)
@@ -470,6 +480,13 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "lofi_loop", Internal: "lofi_loop"},
 	{Public: "character_swap_video", Internal: "character_swap_video"},
 	{Public: "reference-video", Internal: "reference_video"},
+	{Public: "destruction-studio", Internal: prodkitDestruction},
+	{Public: "exploded-view", Internal: prodkitExploded},
+	{Public: "toon-shader", Internal: prodkitToon},
+	{Public: "blender-scene", Internal: prodkitScene},
+	{Public: "image-to-3d", Internal: prodkitImageTo3D},
+	{Public: "vectorize", Internal: prodkitVectorize},
+	{Public: "shot-cleanup", Internal: prodkitShotCleanup},
 }
 
 func requestedServiceName(service string) string {
@@ -540,6 +557,9 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"lofi_loop":                "per looping video (cover still, motion, visualizer, loop mux); add music at the track rate",
 		"reference_video":          "Seedance 2.0 reference-to-video: Mini $0.23/s output + $0.14/s reference video at 720p ($0.11 + $0.07 at 480p); Pro $0.46 + $0.27 at 720p, $1.02 + $0.61 at 1080p",
 		"character_swap_video":     "per second of source video ($0.20/s at 768P, $0.36/s at 2K), plus $0.30 per detected shot after the first for per-shot reference frames, plus one GPT Image 2 frame when no image_url is supplied; kind=recast (H3 Max recast from reference photos, 5-30 s) is $0.66/s at 768P and $0.75/s at 1080P with no image fee; kind=lora is $0.15/s at 480p ($0.13/s fast tier, 4x at 768p) plus a small character-image fee when no image_url is supplied",
+	}
+	for service, unit := range prodkitPricingUnits() {
+		units[service] = unit
 	}
 	pricing := make([]ServicePricing, 0, len(publicServiceAliases))
 	for _, alias := range publicServiceAliases {
@@ -693,6 +713,10 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 	if req.Service == lofiLoopService {
 		handleLofiLoopService(ctx, req, user)
+		return
+	}
+	if isProdkitService(req.Service) {
+		handleProdkitService(ctx, req, user)
 		return
 	}
 	if req.Service == "video_restyle" {

@@ -72,19 +72,29 @@ func handleMCPWithExecutor(ctx *fasthttp.RequestCtx, execute mcpToolExecutor) {
 		writeMCPResult(ctx, request.ID, map[string]interface{}{
 			"protocolVersion": mcpProtocolVersion,
 			"capabilities": map[string]interface{}{
-				"tools": map[string]bool{"listChanged": false},
+				"tools":   map[string]bool{"listChanged": false},
+				"prompts": map[string]bool{"listChanged": false},
 			},
 			"serverInfo": map[string]string{
 				"name":    "manifoldgen",
 				"title":   "ManifoldGen",
 				"version": "1.0.0",
 			},
-			"instructions": "Search public ManifoldGen media without a key. Pricing, generation, and job tools use the current API; generation and private jobs require Authorization: Bearer with a ManifoldGen API key and may spend account credits.",
+			"instructions": "Search public ManifoldGen media without a key. Pricing, generation, production (hosted Blender, vectorize, video cleanup) and job tools use the current API; generation and private jobs require Authorization: Bearer with a ManifoldGen API key and may spend account credits. Upload local files with create_upload, poll with wait_for_job, and see prompts/list for guided production workflows.",
 		})
 	case "ping":
 		writeMCPResult(ctx, request.ID, map[string]interface{}{})
 	case "tools/list":
-		writeMCPResult(ctx, request.ID, map[string]interface{}{"tools": manifoldMCPTools()})
+		writeMCPResult(ctx, request.ID, map[string]interface{}{"tools": append(manifoldMCPTools(), mcpProductionToolDefs()...)})
+	case "prompts/list":
+		writeMCPResult(ctx, request.ID, map[string]interface{}{"prompts": mcpPromptList()})
+	case "prompts/get":
+		prompt, ok := mcpPromptGet(request.Params)
+		if !ok {
+			writeMCPError(ctx, request.ID, -32602, "unknown prompt", http.StatusOK)
+			return
+		}
+		writeMCPResult(ctx, request.ID, prompt)
 	case "tools/call":
 		var params mcpToolCallParams
 		if err := json.Unmarshal(request.Params, &params); err != nil || strings.TrimSpace(params.Name) == "" {
@@ -179,9 +189,21 @@ func manifoldMCPTools() []map[string]interface{} {
 	}
 }
 
+func mcpServiceNames() []string {
+	names := []string{"music", "sfx"}
+	seen := map[string]bool{"music": true, "sfx": true}
+	for _, alias := range publicServiceAliases {
+		if !seen[alias.Public] {
+			seen[alias.Public] = true
+			names = append(names, alias.Public)
+		}
+	}
+	return names
+}
+
 func manifoldGenerateSchema() map[string]interface{} {
 	properties := map[string]interface{}{
-		"service": map[string]interface{}{"type": "string", "enum": []string{"image", "video", "audio", "music", "sfx", "video_restyle", "character_animation", "video_background_removal"}},
+		"service": map[string]interface{}{"type": "string", "enum": mcpServiceNames(), "description": "Public service name; list_services shows prices and params."},
 		"model": map[string]interface{}{
 			"type": "string", "description": "Model or workflow. Use wan-animate-2 with animation_mode move or replace.",
 		},
@@ -228,6 +250,10 @@ func manifoldGenerateSchema() map[string]interface{} {
 		"reference_image_urls": map[string]interface{}{"type": "array", "items": map[string]string{"type": "string"}},
 		"reference_video_urls": map[string]interface{}{"type": "array", "items": map[string]string{"type": "string"}},
 		"reference_audio_urls": map[string]interface{}{"type": "array", "items": map[string]string{"type": "string"}},
+		"target_sizes":         map[string]interface{}{"type": "array", "items": map[string]string{"type": "string"}, "description": "smart-resize WIDTHxHEIGHT targets."},
+		"model_url":            map[string]string{"type": "string", "description": "3D model URL for production tools."},
+		"model_urls":           map[string]interface{}{"type": "array", "items": map[string]string{"type": "string"}},
+		"params":               map[string]interface{}{"type": "object", "description": "Production tool parameters (see list_services)."},
 	}
 	return map[string]interface{}{
 		"type":                 "object",
@@ -321,6 +347,9 @@ func executeMCPTool(parent *fasthttp.RequestCtx, name string, arguments json.Raw
 			return map[string]interface{}{"error": "kind must be video or audio"}, http.StatusBadRequest
 		}
 	default:
+		if response, status, ok := executeMCPProductionTool(parent, name, arguments); ok {
+			return response, status
+		}
 		return map[string]interface{}{"error": "unknown tool: " + name}, http.StatusNotFound
 	}
 

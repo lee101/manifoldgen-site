@@ -57,8 +57,8 @@ func TestMCPToolsListIncludesGenerationAnnotations(t *testing.T) {
 	if err := json.Unmarshal(ctx.Response.Body(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Result.Tools) != 5 {
-		t.Fatalf("tool count = %d, want 5", len(response.Result.Tools))
+	if len(response.Result.Tools) != 5+len(mcpProductionToolDefs()) {
+		t.Fatalf("tool count = %d", len(response.Result.Tools))
 	}
 	for _, tool := range response.Result.Tools {
 		if tool.Name == "generate_media" {

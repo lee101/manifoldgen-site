@@ -863,6 +863,10 @@ func processVideoJob(jobID string) {
 		processLofiLoopJob(job)
 		return
 	}
+	if isProdkitService(job.Service) {
+		processProdkitJob(job)
+		return
+	}
 	if job.Service == dramatizeServiceName {
 		processVideoDramatizeJob(job)
 		return

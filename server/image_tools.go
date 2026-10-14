@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -348,6 +349,10 @@ func proxyFalUpscaleImage(req ServiceUsageRequest) ([]byte, error) {
 var falQueueBaseURL = "https://queue.fal.run"
 
 func runFalQueuedJob(model string, payload map[string]interface{}) ([]byte, error) {
+	return runFalQueuedJobWithin(context.Background(), model, payload, 150*time.Second)
+}
+
+func runFalQueuedJobWithin(ctx context.Context, model string, payload map[string]interface{}, timeout time.Duration) ([]byte, error) {
 	if strings.TrimSpace(falAPIKey) == "" {
 		return nil, fmt.Errorf("FAL_KEY is not configured")
 	}
@@ -366,9 +371,13 @@ func runFalQueuedJob(model string, payload map[string]interface{}) ([]byte, erro
 		return nil, fmt.Errorf("fal queue returned no tracking URLs")
 	}
 	statusEndpoint := strings.TrimRight(queued.StatusURL, "/") + "?logs=0"
-	deadline := time.Now().Add(150 * time.Second)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 		stateBody, _, err := callFalQueue(http.MethodGet, statusEndpoint, nil)
 		if err != nil {
 			return nil, err
