@@ -262,8 +262,8 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
 
   function finish(done: JobResult, apiKey: string) {
     setResult(done);
-    setResultImage(image?.url ? (imagePreview || image.url) : '');
-    setResultVideo(videoPreview || video?.url || '');
+    setResultImage(image?.url || '');
+    setResultVideo(video?.url || '');
     setPhase('done'); setStage('');
     void refreshUser(apiKey).then((fresh) => { if (fresh && alive.current) { setUser(fresh); saveUser(fresh); } }).catch(() => {});
   }
@@ -285,10 +285,11 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
       const statusURL = `/api/video-jobs/${encodeURIComponent(queued.job_id)}`;
       for (let attempt = 0; attempt < 1000 && alive.current; attempt += 1) {
         await sleep(attempt < 10 ? 1500 : 3000);
-        const poll = await fetch(statusURL, { headers: { Authorization: `Bearer ${current.api_key}` } });
+        const poll = await fetch(statusURL, { headers: { Authorization: `Bearer ${current.api_key}` } }).catch(() => null);
+        if (!poll) continue;
         const payload = await poll.json().catch(() => ({})) as { job?: { status?: string; error?: string; result?: JobResult } };
         const job = payload.job;
-        if (!job) { if (poll.status >= 500 || poll.status === 0) continue; throw new Error(errorFields(payload).message || 'Could not read the job status'); }
+        if (!job) { if (poll.status >= 500) continue; throw new Error(errorFields(payload).message || 'Could not read the job status'); }
         if (job.status === 'completed') { finish({ ...(job.result || {}), job_id: queued.job_id }, current.api_key); return; }
         if (job.status === 'payment_required') throw new Error(job.error || 'Top up to release the result');
         if (job.status === 'failed' || job.status === 'cancelled' || job.status === 'timed_out') throw new Error(job.error || 'The job failed; you were not charged');
