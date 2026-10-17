@@ -23,7 +23,9 @@ import {
   KeyRound,
   Library,
   Loader2,
+  Gauge,
   Maximize,
+  Rewind,
   Menu,
   Mic2,
   Minus,
@@ -95,6 +97,7 @@ import {
 } from '../../lib/studio-projects';
 import { MEDIA_DRAG_TYPE, decodeMediaDrag, encodeMediaDrag, galleryProxyURL as galleryImportURL, isStreamingPlaceholder, mediaKindFromURL, streamingPlaceholder, type DraggedMedia } from '../../lib/studio-media-drag';
 import { FILMSTRIP_FRAME_HEIGHT, FILMSTRIP_FRAME_WIDTH, dropFilmstrip, ensureFilmstrip, filmstripFrame, filmstripFrameIndex, filmstripGrid, filmstripTiles, subscribeFilmstrip } from '../../lib/studio-filmstrip';
+import { RETIME_SPEED_PRESETS, parseSpeed, retimeBlocker, retimedDuration, speedLabel, type RetimeOptions } from '../../lib/studio-retime';
 import { MAX_TIMELINE_ZOOM, MIN_TIMELINE_ZOOM, adjacentEdge, fitZoom, rippleRemove } from '../../lib/studio-timeline-ops';
 import { h3Dimensions, loopAnchorURL, type H3Aspect, type H3Size } from '../../lib/h3-loop';
 import { VIDEO_GENERATORS } from '../../lib/video-generators';
@@ -1872,6 +1875,10 @@ export default function StudioPage() {
   const [extendDuration, setExtendDuration] = useState(6);
   const [upscaleOpen, setUpscaleOpen] = useState(false);
   const [upscaleScale, setUpscaleScale] = useState<2 | 4>(2);
+  const [retimeTarget, setRetimeTarget] = useState('');
+  const [retimeSpeed, setRetimeSpeed] = useState('-1');
+  const [retimeStabilize, setRetimeStabilize] = useState(false);
+  const [retimeSmooth, setRetimeSmooth] = useState(false);
   const [restyleOpen, setRestyleOpen] = useState(false);
   const [restyleSourceID, setRestyleSourceID] = useState('');
   const [restyleModel, setRestyleModel] = useState<'wan-2.2' | 'h3-reference' | 'wan-animate-2'>('wan-2.2');
@@ -4712,6 +4719,55 @@ export default function StudioPage() {
     }
   }
 
+  function openRetime(asset: StudioAsset, preset?: { speed?: number; stabilize?: boolean }) {
+    setRetimeSpeed(String(preset?.speed ?? 1));
+    setRetimeStabilize(preset?.stabilize ?? false);
+    setRetimeSmooth(false);
+    setRetimeTarget(asset.id);
+  }
+
+  async function retimeClip(target: StudioAsset, options: RetimeOptions) {
+    if (!user || target.kind === 'image') return;
+    const label = [options.speed !== 1 ? speedLabel(options.speed) : '', options.stabilize ? 'Stabilize' : ''].filter(Boolean).join(' + ');
+    const activityID = startBackgroundActivity(`Retiming ${label}`);
+    setError(''); setNotice(`Retiming ${label}…`);
+    try {
+      const sourceURL = target.cloudURL || await uploadPublic(target.file);
+      const started = await parseJSONResponse<{ id: string }>(await fetch('/api/studio/retime', {
+        method: 'POST', headers: authHeaders(user.api_key),
+        body: JSON.stringify({ url: sourceURL, kind: target.kind, start: target.trimStart, end: target.trimEnd, speed: options.speed, stabilize: options.stabilize, smooth: options.smooth }),
+      }), 'Could not start retime');
+      for (let attempts = 0; attempts < 600; attempts += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        const poll = await parseJSONResponse<{ status: string; url?: string; error?: string }>(await fetch(`/api/studio/retime?id=${encodeURIComponent(started.id)}`, { headers: authHeaders(user.api_key, false) }), 'Retime status failed');
+        if (poll.status === 'failed') throw new Error(poll.error || 'Retime failed');
+        if (poll.status !== 'ready' || !poll.url) continue;
+        updateBackgroundActivity(activityID, 'Applying retimed clip');
+        const download = await fetchWithRetry(poll.url);
+        if (!download.ok) throw new Error('Could not download the retimed clip');
+        const blob = await download.blob();
+        const extension = target.kind === 'audio' ? 'm4a' : 'mp4';
+        const tag = [options.speed < 0 ? 'rev' : '', options.speed !== 1 ? `${Math.abs(options.speed)}x` : '', options.stabilize ? 'stab' : ''].filter(Boolean).join('-');
+        const file = new File([blob], `${target.name.replace(/\.[^.]+$/, '')}-${tag}.${extension}`, { type: blob.type || (target.kind === 'audio' ? 'audio/mp4' : 'video/mp4') });
+        const metadata = await readDimensions(file, target.kind);
+        const mediaID = uid();
+        rememberEdit();
+        setAssets((current) => stackOverlappingVisuals(current.map((item) => item.id === target.id ? {
+          ...item, ...metadata, mediaID, name: file.name, file, url: URL.createObjectURL(file),
+          trimStart: 0, trimEnd: metadata.duration, cloudURL: undefined, objectKey: undefined, previewURL: undefined, previewStatus: undefined,
+        } : item)));
+        if (projectID) void cacheLocalStudioFiles(projectID, new Map([[mediaID, file]])).catch(() => undefined);
+        setNotice(`${label} applied. Undo restores the original`);
+        return;
+      }
+      throw new Error('Retime is taking longer than expected');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Retime failed');
+    } finally {
+      finishBackgroundActivity(activityID);
+    }
+  }
+
   async function searchAudioCatalog() {
     setAudioSearching(true); setError('');
     try {
@@ -5694,6 +5750,7 @@ export default function StudioPage() {
             <div className={styles.aiStack}>
               <button className={styles.aiCard} disabled={selected?.kind !== 'image'} onClick={() => void removeBackground()}><span className={styles.aiIcon}><ImageIcon size={19} /></span><span><b>Remove background</b><small>WebP · 1 credit</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-upscale-open" className={styles.aiCard} disabled={!canOpenUpscale} onClick={() => setUpscaleOpen(true)}><span className={styles.aiIcon}><Maximize size={19} /></span><span><b>Upscale video</b><small>{selected?.kind === 'video' && !canOpenUpscale ? 'Use a clip under 60s' : 'Real-ESRGAN · 2× or 4×'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
+              <button data-testid="studio-retime-open" className={styles.aiCard} disabled={!selected || selected.kind === 'image'} onClick={() => selected && selected.kind !== 'image' && openRetime(selected)}><span className={styles.aiIcon}><Gauge size={19} /></span><span><b>Speed, reverse, stabilize</b><small>Free · −1× reverses</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-restyle-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openRestyle(selected)}><span className={styles.aiIcon}><WandSparkles size={19} /></span><span><b>Restyle video</b><small>Keep motion · change look</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-animation-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openAnimationTransfer(selected)}><span className={styles.aiIcon}><Clapperboard size={19} /></span><span><b>Animation Transfer</b><small>Drive a character from this clip</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button className={styles.aiCard} disabled={!canExtendSelected} onClick={() => setExtendOpen(true)}><span className={styles.aiIcon}><Sparkles size={19} /></span><span><b>Extend video</b><small>{selected?.kind === 'video' && !canExtendSelected ? 'Use a 2–15s clip' : 'Grok · MP4'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
@@ -6050,6 +6107,26 @@ export default function StudioPage() {
         <button data-testid="studio-upscale-submit" className={styles.modalPrimary} disabled={!canUpscaleSelected} onClick={() => void upscaleVideo()}><Maximize size={16} /> Upscale {upscaleScale}×</button>
       </Modal>}
 
+      {retimeTarget && (() => {
+        const target = assets.find((item) => item.id === retimeTarget);
+        if (!target || target.kind === 'image') return null;
+        const parsed = parseSpeed(retimeSpeed);
+        const options: RetimeOptions = { speed: parsed ?? 1, stabilize: target.kind === 'video' && retimeStabilize, smooth: target.kind === 'video' && retimeSmooth && Math.abs(parsed ?? 1) < 1 };
+        const blocker = parsed === null ? 'Enter a speed from 0.1× to 8× (negative reverses)' : retimeBlocker(options, clipDuration(target), target.kind);
+        return <Modal title="Speed, reverse & stabilize" onClose={() => setRetimeTarget('')}>
+          <div className={styles.durationChoices} data-testid="studio-retime-presets">
+            {RETIME_SPEED_PRESETS.map((preset) => <button key={preset} className={parsed === preset ? styles.durationActive : ''} onClick={() => setRetimeSpeed(String(preset))}>{preset < 0 ? '−1×' : `${preset}×`}</button>)}
+          </div>
+          <label className={styles.field}><span>Speed ({parsed !== null ? `${speedLabel(parsed)} · ${retimedDuration(clipDuration(target), parsed).toFixed(1)}s result` : 'invalid'})</span><input data-testid="studio-retime-speed" type="text" inputMode="decimal" value={retimeSpeed} onChange={(event) => setRetimeSpeed(event.target.value)} /></label>
+          {target.kind === 'video' && <div className={styles.generateToggles}>
+            <label><input data-testid="studio-retime-stabilize" type="checkbox" checked={retimeStabilize} onChange={(event) => setRetimeStabilize(event.target.checked)} /><span><b>Stabilize</b><small>Two-pass motion smoothing with a slight auto crop</small></span></label>
+            <label className={Math.abs(parsed ?? 1) >= 1 ? styles.generateToggleDisabled : ''}><input data-testid="studio-retime-smooth" type="checkbox" disabled={Math.abs(parsed ?? 1) >= 1} checked={retimeSmooth && Math.abs(parsed ?? 1) < 1} onChange={(event) => setRetimeSmooth(event.target.checked)} /><span><b>Smooth slow motion</b><small>Optical-flow frame interpolation for speeds under 1×</small></span></label>
+          </div>}
+          <p className={styles.billingNote}>{blocker || 'Renders a new clip at the same place on the timeline. Free, and Undo restores the original.'}</p>
+          <button data-testid="studio-retime-submit" className={styles.modalPrimary} disabled={!!blocker} onClick={() => { setRetimeTarget(''); void retimeClip(target, options); }}><Gauge size={16} /> Apply</button>
+        </Modal>;
+      })()}
+
       {restyleOpen && <Modal title={restyleModel === 'wan-animate-2' ? 'Animation Transfer' : 'Restyle video'} onClose={() => setRestyleOpen(false)}>
         <div className={styles.restyleModes} role="tablist" aria-label="Video transformation mode">
           <button role="tab" aria-selected={restyleModel === 'wan-2.2'} className={restyleModel === 'wan-2.2' ? styles.durationActive : ''} onClick={() => { setRestyleModel('wan-2.2'); setRestyleResolution('720p'); setRestyleAspect('auto'); }}>Transform</button>
@@ -6168,6 +6245,9 @@ export default function StudioPage() {
             {asset.kind !== 'audio' && <button data-testid="studio-context-layer-front" onClick={() => { moveSelectionBetweenLayers(1, true); setContextMenu(null); }}><ChevronsUp size={15} /><span><b>Move to front</b><small>Top layer</small></span><kbd>{commandKeyLabel}{isMacOS ? '⇧' : '+Shift+'}]</kbd></button>}
             {asset.kind !== 'audio' && <button data-testid="studio-context-layer-back-edge" onClick={() => { moveSelectionBetweenLayers(-1, true); setContextMenu(null); }}><ChevronsDown size={15} /><span><b>Move to back</b><small>V1</small></span><kbd>{commandKeyLabel}{isMacOS ? '⇧' : '+Shift+'}[</kbd></button>}
             {asset.kind !== 'audio' && <button data-testid="studio-context-split" onClick={() => { splitAtPlayhead(); setContextMenu(null); }}><Scissors size={15} /><span><b>Split at playhead</b><small>Cut the clip into two</small></span><kbd>S</kbd></button>}
+            {asset.kind !== 'image' && <button data-testid="studio-context-reverse" onClick={() => { setContextMenu(null); void retimeClip(asset, { speed: -1, stabilize: false, smooth: false }); }}><Rewind size={15} /><span><b>Reverse clip</b><small>Play it backwards · audio too</small></span></button>}
+            {asset.kind !== 'image' && <button data-testid="studio-context-speed" onClick={() => { setContextMenu(null); openRetime(asset); }}><Gauge size={15} /><span><b>Speed…</b><small>0.1× to 8× · negative speed reverses</small></span></button>}
+            {asset.kind === 'video' && <button data-testid="studio-context-stabilize" onClick={() => { setContextMenu(null); void retimeClip(asset, { speed: 1, stabilize: true, smooth: false }); }}><Maximize size={15} /><span><b>Stabilize</b><small>Remove camera shake · slight auto crop</small></span></button>}
             <button onClick={() => { duplicateSelected(); setContextMenu(null); }}><Copy size={15} /><span><b>Duplicate clip</b><small>Add a copy to the timeline</small></span><kbd>{commandKeyLabel}D</kbd></button>
             <button className={styles.contextMenuDanger} onClick={() => { removeSelected(); setContextMenu(null); }}><Trash2 size={15} /><span><b>Delete clip</b><small>Undo restores it</small></span><kbd>Del</kbd></button>
           </> : contextMenu.remoteMedia ? <>

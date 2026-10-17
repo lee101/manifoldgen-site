@@ -376,6 +376,45 @@ type prodkitEnvelope struct {
 	Stage    string        `json:"stage,omitempty"`
 }
 
+// prodkitReservations tracks credits promised to in-flight paid-provider jobs.
+// Settlement happens after the provider bill is incurred, so without this a
+// user holding one job's worth of credits could queue many in parallel.
+var prodkitReservations = struct {
+	sync.Mutex
+	jobs map[string]prodkitReservation
+}{jobs: map[string]prodkitReservation{}}
+
+type prodkitReservation struct {
+	userID  string
+	credits float64
+	expires time.Time
+}
+
+func prodkitReserve(jobID, userID string, credits, balance float64) bool {
+	prodkitReservations.Lock()
+	defer prodkitReservations.Unlock()
+	now := time.Now()
+	held := 0.0
+	for id, r := range prodkitReservations.jobs {
+		if now.After(r.expires) {
+			delete(prodkitReservations.jobs, id)
+		} else if r.userID == userID {
+			held += r.credits
+		}
+	}
+	if balance+1e-9 < held+credits {
+		return false
+	}
+	prodkitReservations.jobs[jobID] = prodkitReservation{userID, credits, now.Add(45 * time.Minute)}
+	return true
+}
+
+func prodkitRelease(jobID string) {
+	prodkitReservations.Lock()
+	delete(prodkitReservations.jobs, jobID)
+	prodkitReservations.Unlock()
+}
+
 func prodkitUsesPaidProvider(req ServiceUsageRequest) bool {
 	tool, _ := prodkitToolFor(req.Service)
 	switch tool.Engine {
@@ -414,13 +453,20 @@ func handleProdkitService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		return
 	}
 	req.WalletAddress = ""
+	paid := prodkitUsesPaidProvider(req) && !user.UnlimitedAPI
 	job, err := dbConn.CreateVideoJobForService(user.ID, "pipeline:prodkit", req.Service, prodkitJobPrompt(req, tool))
 	if err != nil {
 		jsonError(ctx, http.StatusInternalServerError, "failed to create job")
 		return
 	}
+	if paid && !prodkitReserve(job.ID, user.ID, credits, user.Credits) {
+		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "not enough credits for your jobs already in progress; you were not charged")
+		jsonError(ctx, http.StatusPaymentRequired, "insufficient credits for jobs already in progress; wait for them to finish or top up")
+		return
+	}
 	stored, _ := json.Marshal(prodkitEnvelope{Prodkit: prodkitStored{Request: req}, Stage: "queued"})
 	if err := dbConn.UpdateVideoJob(job.ID, "queued", stored, ""); err != nil {
+		prodkitRelease(job.ID)
 		jsonError(ctx, http.StatusInternalServerError, "failed to persist job")
 		return
 	}
@@ -479,6 +525,7 @@ func processProdkitJob(job *VideoJob) {
 		return
 	}
 	req := envelope.Prodkit.Request
+	defer prodkitRelease(job.ID)
 	tool, _ := prodkitToolFor(req.Service)
 	if envelope.Attempts > 0 && (prodkitUsesPaidProvider(req) || envelope.Attempts > 1) {
 		_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "the job was interrupted by a server restart; you were not charged")

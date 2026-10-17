@@ -564,8 +564,8 @@
 .progress i { display: block; height: 100%; background: #9c8cf4; transition: width .15s ease; }
 .field { display: grid; gap: 7px; margin-bottom: 12px; }
 .field > span { color: #d0d5dd; font-size: 12px; font-weight: 700; }
-.field textarea, .field select, .field input[type='number'] { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid #30343c; border-radius: 9px; background: #0d0f12; color: white; padding: 10px; outline: none; }
-.field textarea:focus, .field select:focus, .field input[type='number']:focus { border-color: #796be0; box-shadow: 0 0 0 2px rgba(121,107,224,.15); }
+.field textarea, .field select, .field input[type='number'], .field input[type='text'] { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid #30343c; border-radius: 9px; background: #0d0f12; color: white; padding: 10px; outline: none; }
+.field textarea:focus, .field select:focus, .field input[type='number']:focus, .field input[type='text']:focus { border-color: #796be0; box-shadow: 0 0 0 2px rgba(121,107,224,.15); }
 .field input[type='range'] { width: 100%; accent-color: #9c8cf4; }
 .generateHint { margin: -4px 0 13px; color: #afb6c1; font-size: 11px; line-height: 1.45; }
 .generateSettings { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 14px; }
