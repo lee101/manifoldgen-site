@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Deep Glitch v2: depth / normal / edge / detector CRT glitch, directed by intensity.
+"""Deep Glitch v3: depth / normal / edge / instance-segmentation CRT glitch, directed by intensity.
 
-Per frame: Depth Anything V2 -> depth, normals, edges, depth-blob "detections".
-A seeded Director pre-plans the whole edit: shots (looks + glitch transitions),
-patches (a detected bounding box / silhouette / strip / depth slice that looks
-through to a different look), global glitch bursts and subject-analysis insets.
-Timing is perlin noise + sine "energy" waves, snapped to audio onsets, so cuts
-land on the beat. --intensity 0..10 scales everything (0 = untouched video,
-~5 = stylish, 9 = high-energy rap-video chaos, 10 = max).
+Per frame: Depth Anything V2 Small (depth, normals, edges) + RT-DETR-v2 (real object labels) whose
+boxes prompt SAM2 (instance masks) -- all Apache-2.0, fp16, torch.compile'd. A seeded Director
+pre-plans the whole edit: shots (looks + glitch transitions), patches (a detected object's box or
+SAM2 silhouette / strip / depth slice looking through to a different look), global glitch bursts
+(threshold split, pixel stretch, pixel sort, solarize, colour stretch, per-channel RGB glitch, zoom
+and whip blur, strobe ...) and subject-analysis insets. Timing is perlin noise + sine "energy"
+waves, snapped to audio onsets, so cuts land on the beat. --intensity 0..10 scales everything
+(0 = untouched video, ~5 = stylish, 9 = high-energy rap-video chaos, 10 = max).
 
   python glitch.py in.mp4 out.mp4 --start 4 --seconds 16 --intensity 9
+  --profile prints per-stage GPU ms; --vision-every N / --no-sam trade mask freshness for speed.
 """
 import argparse
 import math
@@ -24,37 +26,17 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-DEV = "cuda" if torch.cuda.is_available() else "cpu"
+from core import *  # noqa: F401,F403  noise + tensor helpers
+from core import DEV
+import fx
+from vision import Instances
 MODEL = "depth-anything/Depth-Anything-V2-Small-hf"
 GREEN = (60, 255, 140)  # BGR
 AMBER = (60, 220, 255)
 FONT = cv2.FONT_HERSHEY_DUPLEX
 
-LABELS = {"depth": "DEPTH MAP", "topo": "TOPO ISO", "edge": "EDGE/NRM", "normal": "NORMAL MAP", "thermal": "THERMAL", "xray": "X-RAY", "toon": "TOON BAND", "pixel": "MOSAIC", "mash": "FUSION", "raw": "RAW"}
+LABELS = {"depth": "DEPTH MAP", "topo": "TOPO ISO", "edge": "EDGE/NRM", "normal": "NORMAL MAP", "thermal": "THERMAL", "xray": "X-RAY", "toon": "TOON BAND", "pixel": "MOSAIC", "mash": "FUSION", "raw": "RAW", "split": "THRESH SPLIT", "stretch": "PX STRETCH", "sort": "PX SORT", "solar": "SOLARIZE", "cstretch": "CHROMA STRETCH", "seg": "SAM2 SEG", "cutout": "SUBJECT CUT"}
 BORDERS = [(0.3, 1.0, 0.7), (1.0, 0.25, 0.75), (1.0, 0.85, 0.25), (0.35, 0.8, 1.0)]
-
-
-# ---------------------------------------------------------------- noise / time
-def _h(i, seed):
-    x = math.sin(i * 127.1 + seed * 311.7) * 43758.5453
-    return x - math.floor(x)
-
-
-def pn(x, seed=0):
-    """1D value noise 0..1."""
-    i = math.floor(x)
-    f = x - i
-    u = f * f * (3 - 2 * f)
-    return _h(i, seed) * (1 - u) + _h(i + 1, seed) * u
-
-
-def fbm(x, seed=0):
-    return 0.6 * pn(x, seed) + 0.3 * pn(x * 2.1 + 7, seed + 1) + 0.1 * pn(x * 4.3 + 13, seed + 2)
-
-
-def energy(t, seed):
-    """Slow build/drop envelope: perlin plus a ~6.5s sine, 0.1..1.4."""
-    return min(1.4, max(0.1, 0.35 + 0.9 * fbm(t * 0.18, seed) + 0.25 * math.sin(2 * math.pi * t / 6.5 + seed)))
 
 
 # ---------------------------------------------------------------- audio
@@ -118,92 +100,27 @@ class Audio:
         return min(near, key=lambda o: abs(o - t)) if near else None
 
 
-# ---------------------------------------------------------------- tensor helpers
-def luma(x):
-    return (0.2126 * x[0] + 0.7152 * x[1] + 0.0722 * x[2])[None]
-
-
-def sobel(g):
-    k = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=g.dtype, device=g.device)
-    g = F.pad(g[None], (1, 1, 1, 1), mode="replicate")
-    return F.conv2d(g, k[None, None])[0], F.conv2d(g, k.t()[None, None])[0]
-
-
-def blur(x, k):
-    return F.avg_pool2d(F.pad(x[None], (k // 2,) * 4, mode="replicate"), k, 1)[0]
-
-
-PAL = {
-    "ice": [[0.01, 0.0, 0.08], [0.05, 0.1, 0.7], [0.0, 0.8, 1.0], [0.3, 1.0, 0.6], [1.0, 1.0, 0.75]],
-    "fire": [[0.0, 0.0, 0.04], [0.35, 0.0, 0.45], [0.9, 0.1, 0.2], [1.0, 0.6, 0.0], [1.0, 1.0, 0.7]],
-}
-
-
-def palette(v, name="ice"):
-    stops = torch.tensor(PAL[name], device=v.device)
-    p = v.clamp(0, 1)[0] * (len(stops) - 1)
-    i = p.floor().long().clamp(0, len(stops) - 2)
-    f = (p - i)[..., None]
-    return (stops[i] * (1 - f) + stops[i + 1] * f).permute(2, 0, 1)
-
-
-def warp(x, dx, dy):
-    """Sample x (CxHxW) at uv + (dx, dy) (uv units); dx/dy are 1xHxW or scalars."""
-    _, h, w = x.shape
-    ys, xs = torch.meshgrid(torch.linspace(-1, 1, h, device=x.device), torch.linspace(-1, 1, w, device=x.device), indexing="ij")
-    gx = xs + (dx[0] if torch.is_tensor(dx) else dx) * 2
-    gy = ys + (dy[0] if torch.is_tensor(dy) else dy) * 2
-    return F.grid_sample(x[None], torch.stack([gx, gy], -1)[None], mode="bilinear", padding_mode="reflection", align_corners=True)[0]
-
-
-def rgb_split(x, amount, angle=0.0):
-    if amount <= 1e-5:
-        return x
-    c, s = math.cos(angle), math.sin(angle)
-    return torch.stack([warp(x[i : i + 1], amount * c * k, amount * s * k)[0] for i, k in enumerate((-1.0, 0.0, 1.0))])
-
-
-def bands(h, gen, n_lo, n_hi, strength, device):
-    out = torch.zeros(h, device=device)
-    y = 0
-    while y < h:
-        size = int(torch.randint(max(2, h // n_hi), max(3, h // n_lo), (1,), generator=gen))
-        if torch.rand(1, generator=gen).item() < 0.55:
-            out[y : y + size] = (torch.rand(1, generator=gen).item() - 0.5) * 2 * strength
-        y += size
-    return out
-
-
-def hash_cells(h, w, cell, gen, device):
-    gh, gw = math.ceil(h / cell), math.ceil(w / cell)
-    r = torch.rand(gh, gw, generator=gen).to(device)
-    return F.interpolate(r[None, None], size=(gh * cell, gw * cell), mode="nearest")[0, :, :h, :w]
-
-
-def strips(coord, count, gen):
-    """Random value per strip along a 1xHxW coordinate grid in 0..1."""
-    r = torch.rand(count, generator=gen).to(coord.device)
-    return r[(coord * (count - 0.001)).long().clamp(0, count - 1)[0]][None]
-
-
 # ---------------------------------------------------------------- analysis
 class Analyzer:
-    def __init__(self):
+    def __init__(self, compile=False):
         from transformers import AutoModelForDepthEstimation
 
         self.model = AutoModelForDepthEstimation.from_pretrained(MODEL).to(DEV).half().eval()
+        if compile:
+            self.model = torch.compile(self.model)
+        self.depth_half = None
         self.lo = self.hi = self.prev_depth = None
         self.tracks = []
         self._next = 0
         self.mean = torch.tensor([0.485, 0.456, 0.406], device=DEV).view(1, 3, 1, 1)
         self.std = torch.tensor([0.229, 0.224, 0.225], device=DEV).view(1, 3, 1, 1)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def depth(self, frame):
         _, h, w = frame.shape
         x = F.interpolate(frame[None], size=(518 * 9 // 16 // 14 * 14, 518 * 16 // 9 // 14 * 14), mode="bilinear", align_corners=False)
         d = self.model(pixel_values=((x - self.mean) / self.std).half()).predicted_depth[None].float()
-        d = F.interpolate(d, size=(h, w), mode="bilinear", align_corners=False)[0]
+        d = F.interpolate(d, size=(h // 2, w // 2), mode="bilinear", align_corners=False)[0]  # post-process at half res
         lo, hi = torch.quantile(d.flatten()[::97], torch.tensor([0.02, 0.98], device=DEV))
         self.lo = lo if self.lo is None else self.lo * 0.9 + lo * 0.1
         self.hi = hi if self.hi is None else self.hi * 0.9 + hi * 0.1
@@ -212,14 +129,16 @@ class Analyzer:
         cdf = hist.cumsum(0) / hist.sum()
         d = 0.45 * d + 0.55 * cdf[(d * 255).long().clamp(0, 255)]  # equalise: flat scenes still span the palette
         d = d if self.prev_depth is None else 0.55 * d + 0.45 * self.prev_depth
-        self.prev_depth = d
-        return d  # 1 = near
+        self.prev_depth = self.depth_half = d
+        return F.interpolate(d[None], size=(h, w), mode="bilinear", align_corners=False)[0]  # 1 = near
 
-    @staticmethod
-    def normals(d, frame):
-        gx, gy = sobel(blur(d, 5))
-        bx, by = sobel(blur(luma(frame), 3))
+    def normals(self, d, frame):
+        """Surface normals at half res (from half-res depth + luma bump), upsampled."""
+        h, w = frame.shape[1:]
+        gx, gy = sobel(blur(self.depth_half, 5))
+        bx, by = sobel(blur(luma(F.avg_pool2d(frame[None], 2)[0]), 3))
         n = torch.cat([-(gx * 22.0 + bx * 1.6), -(gy * 22.0 + by * 1.6), torch.ones_like(gx)])
+        n = F.interpolate((n / n.norm(dim=0, keepdim=True))[None], size=(h, w), mode="bilinear", align_corners=False)[0]
         return n / n.norm(dim=0, keepdim=True)
 
     @staticmethod
@@ -280,11 +199,11 @@ class Analyzer:
 def look_pool(k):
     pool = ["raw", "edge", "depth"]
     if k > 0.2:
-        pool += ["toon", "topo", "normal"]
-    if k > 0.45:
-        pool += ["mash", "xray", "thermal"]
-    if k > 0.7:
-        pool += ["pixel"]
+        pool += ["toon", "topo", "normal", "split"]
+    if k > 0.4:
+        pool += ["mash", "xray", "thermal", "seg", "cutout", "cstretch"]
+    if k > 0.6:
+        pool += ["stretch", "sort", "solar", "pixel"]
     return pool
 
 
@@ -296,7 +215,7 @@ def plan(intensity, seconds, fps, audio, seed):
 
     shots, t, last = [], 0.0, None
     while t < seconds - 1e-6:
-        mean = (4.2 - 3.7 * k**0.85) / (0.6 + 0.8 * energy(t, seed))
+        mean = (4.2 - 3.95 * k**0.8) / (0.6 + 0.8 * energy(t, seed))
         end = min(seconds, t + max(0.3, mean * rng.uniform(0.55, 1.45)))
         if k > 0.3:
             snap = audio.nearest(end, 0.18)
@@ -306,14 +225,14 @@ def plan(intensity, seconds, fps, audio, seed):
         if not shots and k < 0.9:
             look = "raw"
         cut = rng.random() < 0.15 + 0.45 * k
-        kind = "cut" if cut else rng.choice(["depthwipe", "tear", "blocks", "scanwipe", "edgeflash", "iris", "slices", "vnoise"])
+        kind = "cut" if cut else rng.choice(["depthwipe", "tear", "blocks", "scanwipe", "edgeflash", "iris", "slices", "vnoise", "whip", "zoomcut", "strobe"])
         td = 0.0 if cut else min((end - t) * 0.8, rng.uniform(0.1, 0.5) * (1.25 - 0.6 * k))
         shots.append(NS(start=t, end=end, look=look, kind=kind, td=td))
         last, t = look, end
 
-    patch_looks = ["depth", "topo", "edge"] + (["normal", "toon", "thermal", "xray"] if k > 0.25 else []) + (["pixel", "mash"] if k > 0.6 else [])
-    patches, maxc, rate0 = [], 1 + round(7 * k), 0.12 + 3.4 * k**1.3
-    shapes = ["bbox"] * 3 + ["slab"] * 3 + ["strip"] * 2 + ["vstrip", "subject", "subject", "depthslice", "depthslice", "circle"] + (["cells"] * 2 if k > 0.4 else [])
+    patch_looks = ["depth", "topo", "edge"] + (["normal", "toon", "thermal", "xray", "split"] if k > 0.25 else []) + (["seg", "cstretch", "solar", "stretch", "sort", "pixel", "mash"] if k > 0.5 else [])
+    patches, maxc, rate0 = [], 1 + round(9 * k), 0.12 + 4.8 * k**1.3
+    shapes = ["bbox"] * 3 + ["slab"] * 3 + ["strip"] * 2 + ["vstrip", "subject", "subject", "inst", "inst", "inst", "depthslice", "depthslice", "circle"] + (["cells"] * 2 if k > 0.4 else [])
     if k > 0.02:
         for f in range(nframes):
             t = f / fps
@@ -333,9 +252,9 @@ def plan(intensity, seconds, fps, audio, seed):
                 patches.append(NS(t0=t, t1=t + life, shape=shape, look=rng.choice(patch_looks), rect=(x0, y0, x0 + w_, y0 + h_), zoom=rng.choice([1.0, 1.0, 1.25, 1.6]), glitchy=rng.random() < 0.3, freq=rng.uniform(4, 14), seed=rng.randint(0, 999), color=rng.choice(BORDERS), rank=rng.choice([0, 0, 1, 2]), invert=rng.random() < 0.3))
 
     bursts = []
-    kinds = ["tear", "blocks", "wave", "noisewarp", "punch", "invert", "hold", "pixel", "echo", "rgbblast", "vroll", "slices"]
-    heavy = {"hold", "pixel", "invert", "vroll", "slices", "blocks"}
-    rate1 = 0.1 + 2.6 * k**1.5
+    kinds = ["tear", "blocks", "wave", "noisewarp", "punch", "invert", "hold", "pixel", "echo", "rgbblast", "vroll", "slices", "split", "stretch", "sort", "chan", "cstretch", "solar", "zoomblur", "whip", "strobe", "swap"]
+    heavy = {"hold", "pixel", "invert", "vroll", "slices", "blocks", "sort", "strobe", "solar", "swap"}
+    rate1 = 0.1 + 3.8 * k**1.5
 
     def add_burst(t, amp=None, kind=None):
         kind = kind or rng.choice(kinds if k > 0.75 else [x for x in kinds if x not in heavy])
@@ -348,10 +267,10 @@ def plan(intensity, seconds, fps, audio, seed):
                 add_burst(t)
         for o, s in zip(audio.onsets, audio.strength):
             if o < seconds and rng.random() < 0.25 + 0.5 * k:
-                add_burst(o, amp=0.4 + 0.6 * s, kind=rng.choice(["punch", "rgbblast", "tear", "echo"] + (["blocks", "invert"] if k > 0.75 else [])))
+                add_burst(o, amp=0.4 + 0.6 * s, kind=rng.choice(["punch", "rgbblast", "tear", "echo", "chan", "zoomblur", "whip"] + (["blocks", "invert", "strobe", "split", "stretch"] if k > 0.75 else [])))
         for s in shots[:-1]:
             if s.kind == "cut":
-                add_burst(s.end, amp=0.9, kind=rng.choice(["punch", "rgbblast", "tear"]))
+                add_burst(s.end, amp=0.9, kind=rng.choice(["punch", "rgbblast", "tear", "zoomblur", "whip", "chan"]))
 
     analyses, t = [], rng.uniform(0.4, 1.6)
     if k > 0.12:
@@ -443,10 +362,12 @@ def look_mash(f, ctx, t):
 
 # ---------------------------------------------------------------- the deck
 class Deck:
-    def __init__(self, w, h, fps, intensity, director, audio, seed):
+    def __init__(self, w, h, fps, intensity, director, audio, seed, vision_every=2, use_sam=True, profile=False, compile=False):
         self.w, self.h, self.fps, self.I, self.k, self.dir, self.audio, self.seed = w, h, fps, intensity, intensity / 10.0, director, audio, seed
-        self.amp = self.k * 1.15
-        self.analyzer = Analyzer()
+        self.amp = self.k * 1.25
+        self.analyzer = Analyzer(compile=compile)
+        self.inst = Instances(DEV, every=vision_every, use_sam=use_sam, compile=compile)
+        self.tracks, self.n, self.profile, self.prof, self._tick, self._hud = [], 0, profile, {}, None, None
         ys, xs = torch.meshgrid(torch.linspace(0, 1, h, device=DEV), torch.linspace(0, 1, w, device=DEV), indexing="ij")
         self.X, self.Y = xs[None], ys[None]
         self.ring = deque(maxlen=12)
@@ -454,8 +375,28 @@ class Deck:
     def L(self, name):
         if name not in self.cache:
             f, c, t = self.frame, self.ctx, self.t
-            self.cache[name] = {"raw": lambda: f, "edge": lambda: look_edge(f, c), "normal": lambda: look_normal(f, c), "depth": lambda: look_depth(f, c, t), "topo": lambda: look_topo(f, c, t), "toon": lambda: look_toon(f, c, t), "thermal": lambda: look_thermal(f, c), "xray": lambda: look_xray(f, c), "pixel": lambda: look_pixel(f, c), "mash": lambda: look_mash(f, c, t)}[name]()
+            self.cache[name] = {"raw": lambda: f, "edge": lambda: look_edge(f, c), "normal": lambda: look_normal(f, c), "depth": lambda: look_depth(f, c, t), "topo": lambda: look_topo(f, c, t), "toon": lambda: look_toon(f, c, t), "thermal": lambda: look_thermal(f, c), "xray": lambda: look_xray(f, c), "pixel": lambda: look_pixel(f, c), "mash": lambda: look_mash(f, c, t),
+                "split": lambda: fx.split_threshold(f, c, t, self.seed), "stretch": lambda: fx.look_stretch(f, c, t, self.seed), "sort": lambda: fx.look_sort(f, c, t, self.seed), "solar": lambda: fx.look_solar(f, c, t, self.seed), "cstretch": lambda: fx.look_cstretch(f, c, t, self.seed),
+                "seg": lambda: fx.look_seg(f, c, t, self.tracks), "cutout": lambda: fx.look_cutout(f, c, t, self.tracks, self.L("topo"))}[name]()
         return self.cache[name]
+
+    def tick(self, name):
+        """Per-stage GPU timing (only with --profile)."""
+        if not self.profile:
+            return
+        import time
+
+        torch.cuda.synchronize()
+        now = time.perf_counter()
+        if name and self._tick is not None and self.n >= 10:  # skip compile / cudnn warmup frames
+            self.prof[name] = self.prof.get(name, 0.0) + now - self._tick
+        self._tick = now
+
+    def subject_center(self):
+        if self.tracks:
+            x1, y1, x2, y2 = self.tracks[0]["box"]
+            return (x1 + x2) / 2 / self.w, (y1 + y2) / 2 / self.h
+        return 0.5, 0.5
 
     def shot_at(self, t):
         shots = self.dir.shots
@@ -514,6 +455,15 @@ class Deck:
             front = p * 1.35 - 0.15 + edge
             mask = (X < front).float()
             return rgb_split(a * (1 - mask) + b * mask + torch.exp(-((X - front).abs() * 40)) * 0.9 * glow_col(0.3, 0.9, 1.0), 0.012 * peak, 0.0)
+        if kind in ("whip", "zoomcut", "strobe"):
+            mix = a if p < 0.5 else b
+            if kind == "whip":
+                ang = 0.0 if pn(t, self.seed) > 0.4 else math.pi / 2
+                return rgb_split(fx.whip_blur(mix, ang, 0.35 * peak + 0.01), 0.02 * peak, ang)
+            if kind == "zoomcut":
+                cx, cy = self.subject_center()
+                return rgb_split(fx.zoom_blur(mix, cx, cy, 0.55 * peak + 0.01), 0.015 * peak, 0.0)
+            return fx.strobe(mix, self.n, peak)
         e = self.ctx["edges"][0]  # edgeflash: zoom punch through the edge map at the midpoint
         flash = (e.expand(3, -1, -1) * glow_col(0.6, 1.0, 0.9) * 1.6).clamp(0, 1)
         f = math.exp(-abs(p - 0.5) * 9)
@@ -548,8 +498,13 @@ class Deck:
             return m, (int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h))
         d = self.ctx["depth"]
         if shape == "subject":
-            m = ((d - (0.55 + 0.15 * math.sin(t * 3 + p.seed)) + 0.04) / 0.08).clamp(0, 1)
+            m = tracks[min(p.rank, len(tracks) - 1)]["mask"] if tracks else ((d - (0.55 + 0.15 * math.sin(t * 3 + p.seed)) + 0.04) / 0.08).clamp(0, 1)
             return (1 - m if p.invert else m), None
+        if shape == "inst":
+            if not tracks:
+                return None
+            m = tracks[p.rank % len(tracks)]["mask"]
+            return (1 - m if p.invert and p.rank == 0 else m), None
         if shape == "depthslice":
             return ((d - (0.5 + 0.42 * math.sin(2 * math.pi * t * 0.5 + p.seed))).abs() < 0.11).float(), None
         if shape == "circle":
@@ -618,6 +573,22 @@ class Deck:
             return rgb_split(out, 0.035 * e, (b.seed % 628) / 100)
         if kind == "vroll":
             return warp(out, 0.0, torch.full_like(X, (u * 0.6 + 0.1) * e))
+        if kind in ("split", "stretch", "sort", "cstretch", "solar"):
+            look = {"split": lambda x: fx.split_threshold(x, self.ctx, t, b.seed), "stretch": lambda x: fx.look_stretch(x, self.ctx, t, b.seed), "sort": lambda x: fx.look_sort(x, self.ctx, t, b.seed), "cstretch": lambda x: fx.look_cstretch(x, self.ctx, t, b.seed), "solar": lambda x: fx.look_solar(x, self.ctx, t, b.seed)}[kind]
+            mix = min(1.0, e * 1.6)
+            return out * (1 - mix) + look(out) * mix
+        if kind == "chan":
+            return fx.chan_glitch(out, gen, e, t)
+        if kind == "zoomblur":
+            cx, cy = self.subject_center()
+            return fx.zoom_blur(out, cx, cy, 0.35 * e)
+        if kind == "whip":
+            return fx.whip_blur(out, (b.seed % 2) * math.pi / 2, 0.25 * e)
+        if kind == "strobe":
+            return fx.strobe(out, self.n, e)
+        if kind == "swap":
+            mask = (strips(Y, 24, gen) < 0.5).float() * min(1.0, e * 1.5)
+            return fx.channel_swap(out, mask, [(1, 2, 0), (2, 0, 1), (2, 1, 0)][b.seed % 3])
         return warp(out, 0.0, (strips(X, 16, gen) - 0.5) * 0.25 * e)  # slices: vertical strips with different y shifts
 
     # ---- subject analysis inset
@@ -635,6 +606,8 @@ class Deck:
         ph = int(min(max(pw * (y2 - y1) / (x2 - x1), pw * 0.6), pw * 1.3))
         pan = F.interpolate(self.L(look)[:, y1:y2, x1:x2][None], size=(ph, pw), mode="bilinear", align_corners=False)[0]
         pan = pan * (0.82 + 0.18 * torch.cos(torch.arange(ph, device=DEV).float() * math.pi * 2 / 3))[None, :, None]
+        cut = F.interpolate(tr["mask"][:, y1:y2, x1:x2][None], size=(ph, pw), mode="bilinear", align_corners=False)[0]
+        pan = pan * cut + 0.04 * (1 - cut)  # SAM2 cut-out of the subject on black
         right = (x2 + 34 + pw) < self.w - 20
         px = x2 + 34 if right else max(20, x1 - 34 - pw)
         py = int(min(max(y1, 90), self.h - ph - 40))
@@ -653,7 +626,7 @@ class Deck:
                 cv2.line(img, (cx, cy), (cx + sx * cl, cy), GREEN, th)
                 cv2.line(img, (cx, cy), (cx, cy + sy * cl), GREEN, th)
             cv2.rectangle(img, (x1, y1), (x2, y2), GREEN, 1)
-            label = ("SUBJECT" if i == 0 else "OBJ") + f"_{tr['id']:02d} {0.82 + 0.15 * math.sin(tr['id'] + t * 1.7):.2f}"
+            label = f"{'SUBJECT ' if i == 0 else ''}{tr['label'].upper()} #{tr['id']:02d} {tr['score']:.2f}"
             (tw, tht), _ = cv2.getTextSize(label, FONT, 0.55, 1)
             cv2.rectangle(img, (x1, y1 - tht - 14), (x1 + tw + 12, y1 - 2), GREEN, -1)
             cv2.putText(img, label, (x1 + 6, y1 - 8), FONT, 0.55, (0, 20, 0), 1, cv2.LINE_AA)
@@ -691,7 +664,7 @@ class Deck:
         if int(t * 2) % 2 == 0:
             cv2.circle(img, (w - 120, 38), 7, (60, 60, 255), -1)
             cv2.putText(img, "REC", (w - 105, 44), FONT, 0.55, (60, 60, 255), 1, cv2.LINE_AA)
-        return (img * (0.45 + 0.55 * self.k)).astype(np.uint8)
+        return img
 
     # ---- CRT
     def crt(self, x, t, strength, gen):
@@ -717,13 +690,23 @@ class Deck:
     # ---- one frame
     def render(self, n, frame):
         t = n / self.fps
-        self.t, self.frame, self.cache = t, frame, {}
+        self.t, self.frame, self.cache, self.n = t, frame, {}, n
+        self.tick(None)
         if self.I <= 0:
             return frame
         depth = self.analyzer.depth(frame)
         self.ctx = {"depth": depth, "normal": self.analyzer.normals(depth, frame)}
         self.ctx["edges"] = self.analyzer.edges(frame, depth)
-        tracks = self.analyzer.detect(depth, self.w, self.h)
+        self.tick("depth+normals+edges")
+        tracks = self.inst.step(frame, depth, n)
+        if not tracks:  # nothing detected: fall back to depth blobs so the HUD never goes empty
+            tracks = []
+            for blob in self.analyzer.detect(depth, self.w, self.h):
+                x1, y1, x2, y2 = blob["box"]
+                m = ((self.X > x1 / self.w) & (self.X < x2 / self.w) & (self.Y > y1 / self.h) & (self.Y < y2 / self.h)).float()
+                tracks.append({**blob, "label": "object", "score": 0.5 + 0.4 * blob["depth"], "mask": m})
+        self.tracks = tracks
+        self.tick("detect+sam2")
         spots = self.analyzer.hotspots(self.ctx["edges"][0], self.w, self.h)
         gen = torch.Generator().manual_seed(n // 2 * 7919 + 13 + self.seed)
         beat, lvl, amp = self.audio.beat(t), self.audio.level(t), self.amp
@@ -743,6 +726,7 @@ class Deck:
         for an in self.dir.analyses:
             if an.t0 <= t < an.t1:
                 out, analysis = self.apply_analysis(out, an, t, tracks)
+        self.tick("looks+patches+bursts")
         self.ring.append(out)
 
         # always-on perlin / sine / beat modulation: punch zoom, shake, breathing wave, rgb split, flash
@@ -755,10 +739,19 @@ class Deck:
         out = rgb_split(out, amp * (0.001 + 0.011 * beat + 0.004 * fbm(t * 3, 9)), t * 1.3 + fbm(t, 2) * 6)
         out = (out * (1 + 0.14 * beat * amp)).clamp(0, 1)
 
-        hud = torch.from_numpy(self.draw_hud(tracks, spots, rects, analysis, t, n, mode)).to(DEV).permute(2, 0, 1).float()[[2, 1, 0]] / 255
-        out = (out + hud * (hud.max(0, keepdim=True)[0] > 0).float()).clamp(0, 1)
+        self.tick("modulation")
+        if self.k > 0.3:
+            for tr in tracks[:2]:
+                out = out + fx.mask_border(tr["mask"], (0.3, 1.0, 0.6)) * 0.55
+        if n % 2 == 0 or self._hud is None:  # HUD refreshes at half rate: reads as a terminal, halves the CPU drawing
+            raw = torch.from_numpy(self.draw_hud(tracks, spots, rects, analysis, t, n, mode)).to(DEV).permute(2, 0, 1).float()[[2, 1, 0]] / 255
+            self._hud = raw * (0.45 + 0.55 * self.k)
+        out = (out + self._hud * (self._hud.max(0, keepdim=True)[0] > 0).float()).clamp(0, 1)
         strength = min(1.0, (0.15 + 0.85 * self.k) * (0.85 + 0.3 * fbm(t * 0.6, 4)) + (0.25 if ia != ib else 0.0))
-        return self.crt(out, t, strength, gen)
+        self.tick("hud")
+        out = self.crt(out, t, strength, gen)
+        self.tick("crt")
+        return out
 
 
 # ---------------------------------------------------------------- main
@@ -774,22 +767,31 @@ def main():
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--stills", default="", help="comma separated seconds to dump as PNG next to dst")
+    ap.add_argument("--vision-every", type=int, default=2, help="run RT-DETR + SAM2 every N frames (masks are held in between)")
+    ap.add_argument("--no-sam", action="store_true", help="boxes only, skip SAM2 masks (fastest)")
+    ap.add_argument("--no-compile", action="store_true", help="skip torch.compile (faster start, ~2x slower per frame)")
+    ap.add_argument("--profile", action="store_true", help="print per-stage GPU timings")
     a = ap.parse_args()
+    torch.backends.cudnn.benchmark = True
     a.intensity = max(0.0, min(10.0, a.intensity))
     w, h, fps = a.width, a.height, a.fps
     audio = Audio(a.src, a.start, a.seconds, fps, a.seed)
     print(f"audio: {len(audio.onsets)} onsets{' (synthetic)' if audio.synthetic else ''}", file=sys.stderr)
     director = plan(a.intensity, a.seconds, fps, audio, a.seed)
     print(f"plan: {len(director.shots)} shots, {len(director.patches)} patches, {len(director.bursts)} bursts, {len(director.analyses)} analyses", file=sys.stderr)
-    reader = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", str(a.start), "-t", str(a.seconds), "-i", a.src, "-vf", f"scale={w}:{h},fps={fps}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    reader = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", str(a.start), "-t", str(a.seconds), "-i", a.src, "-vf", f"scale={w}:{h},fps={fps}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     writer = subprocess.Popen(
         ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", str(fps), "-i", "-", "-ss", str(a.start), "-t", str(a.seconds), "-i", a.src, "-map", "0:v", "-map", "1:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", a.dst],
         stdin=subprocess.PIPE,
     )
     stills = {int(float(s) * fps) for s in a.stills.split(",") if s}
-    deck = Deck(w, h, fps, a.intensity, director, audio, a.seed)
+    deck = Deck(w, h, fps, a.intensity, director, audio, a.seed, vision_every=a.vision_every, use_sam=not a.no_sam, profile=a.profile, compile=not a.no_compile)
+    import time
+
+    started = steady = time.perf_counter()
     size, n = w * h * 3, 0
-    while True:
+    total = int(round(a.seconds * fps))
+    while n < total:
         buf = reader.stdout.read(size)
         if len(buf) < size:
             break
@@ -798,14 +800,29 @@ def main():
         rgb = (out.permute(1, 2, 0) * 255).byte().cpu().numpy()
         if n in stills:
             cv2.imwrite(a.dst.rsplit(".", 1)[0] + f"_{n / fps:05.2f}.png", rgb[:, :, ::-1])
-        writer.stdin.write(rgb.tobytes())
+        try:
+            writer.stdin.write(rgb.tobytes())
+        except BrokenPipeError:  # writer already hit -t; the reader can emit one frame past it
+            break
         n += 1
+        if n == 10:
+            steady = time.perf_counter()
         if n % 60 == 0:
             print(f"{n} frames  {n / fps:5.1f}s", file=sys.stderr, flush=True)
-    writer.stdin.close()
+    try:
+        writer.stdin.close()
+    except BrokenPipeError:
+        pass
     writer.wait()
+    reader.stdout.close()  # the reader may hold a frame past -t; do not wait on a full pipe
+    reader.terminate()
     reader.wait()
-    print(f"done: {n} frames -> {a.dst}")
+    elapsed = time.perf_counter() - started
+    steady_fps = (n - 10) / (time.perf_counter() - steady) if n > 10 else 0.0
+    print(f"done: {n} frames -> {a.dst}  ({n / elapsed:.1f} fps overall, {steady_fps:.1f} fps steady, {elapsed:.1f}s)")
+    if a.profile and n:
+        for name, secs in deck.prof.items():
+            print(f"  {name:28s} {secs / n * 1000:6.1f} ms/frame", file=sys.stderr)
 
 
 if __name__ == "__main__":
