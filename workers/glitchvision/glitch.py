@@ -14,6 +14,7 @@ waves, snapped to audio onsets, so cuts land on the beat. --intensity 0..10 scal
   --profile prints per-stage GPU ms; --vision-every N / --no-sam trade mask freshness for speed.
 """
 import argparse
+import bisect
 import math
 import random
 import subprocess
@@ -41,7 +42,11 @@ BORDERS = [(0.3, 1.0, 0.7), (1.0, 0.25, 0.75), (1.0, 0.85, 0.25), (0.35, 0.8, 1.
 
 # ---------------------------------------------------------------- audio
 class Audio:
-    """Loudness + onset envelope per video frame; falls back to a jittered tempo when silent."""
+    """Per-frame loudness, bass / mid / high envelopes and onsets (all, kicks, hats).
+
+    Falls back to a jittered tempo (kicks and hats alternating) when the source is silent."""
+
+    BANDS = {"bass": (30, 150), "mid": (150, 2000), "high": (2000, 9000)}
 
     def __init__(self, src, start, seconds, fps, seed):
         sr = 22050
@@ -49,54 +54,87 @@ class Audio:
         sig = np.frombuffer(raw, np.float32)
         hop = sr / fps
         n = int(len(sig) / hop)
-        self.fps, self.onsets, self.strength = fps, [], []
+        self.fps, self.onsets, self.strength, self.kicks, self.hats = fps, [], [], [], []
+        size = int(seconds * fps) + 2
         if n < 10 or float(np.abs(sig).max()) < 2e-3:
             rng = random.Random(seed)
-            t = rng.uniform(0.2, 0.5)
+            t, i = rng.uniform(0.2, 0.5), 0
+            self.env = {b: np.zeros(size) for b in self.BANDS}
             while t < seconds:
                 self.onsets.append(t)
                 self.strength.append(rng.uniform(0.4, 1.0))
+                (self.kicks if i % 2 == 0 else self.hats).append(t)
+                for b in ("bass", "mid") if i % 2 == 0 else ("high",):
+                    idx = np.arange(size) / fps - t
+                    self.env[b] = np.maximum(self.env[b], np.where(idx >= 0, np.exp(-idx / 0.15), 0))
                 t += rng.uniform(0.28, 0.62)
-            self.lvl = np.full(int(seconds * fps) + 2, 0.5)
+                i += 1
+            self.lvl = np.full(size, 0.5)
             self.synthetic = True
             return
         self.synthetic = False
-        win = np.hanning(1024)
-        mags = []
+        win = np.hanning(2048)
+        lin = []
         for i in range(n):
             c = int(i * hop + hop / 2)
-            seg = sig[max(0, c - 512) : c + 512]
-            seg = np.pad(seg, (0, 1024 - len(seg)))
-            mags.append(np.abs(np.fft.rfft(seg * win)))
-        mags = np.log1p(np.array(mags) * 8)
-        flux = np.maximum(0, np.diff(mags, axis=0, prepend=mags[:1])).sum(1)
+            seg = sig[max(0, c - 1024) : c + 1024]
+            seg = np.pad(seg, (0, 2048 - len(seg)))
+            lin.append(np.abs(np.fft.rfft(seg * win)))
+        lin = np.array(lin)
+        mags = np.log1p(lin * 8)
+        freqs = np.fft.rfftfreq(2048, 1 / sr)
+        sel = {b: (freqs >= lo) & (freqs < hi) for b, (lo, hi) in self.BANDS.items()}
         rms = np.sqrt(np.array([np.mean(sig[int(i * hop) : int((i + 1) * hop)] ** 2) for i in range(n)]))
         self.lvl = np.clip(np.convolve(rms / (np.percentile(rms, 95) + 1e-6), np.ones(4) / 4, "same"), 0, 1.3)
-        k = int(fps)
-        last = -1.0
-        for i in range(1, n - 1):
-            lo, hi = max(0, i - k), min(n, i + k)
+        self.env = {}
+        for b, m in sel.items():
+            e = np.log1p(lin[:, m].sum(1) * 4)
+            e = np.clip((e - np.percentile(e, 10)) / (np.percentile(e, 95) - np.percentile(e, 10) + 1e-6), 0, 1.3)
+            out, v = np.zeros(n), 0.0
+            for i, x in enumerate(e):  # fast attack, slower release: reads as a punch that decays
+                v = x if x > v else v + (x - v) * 0.22
+                out[i] = v
+            self.env[b] = out
+        self.onsets, self.strength = self._peaks(np.maximum(0, np.diff(mags, axis=0, prepend=mags[:1])).sum(1), 0.16, True)
+        self.kicks = self._peaks(np.maximum(0, np.diff(mags[:, sel["bass"]], axis=0, prepend=mags[:1, sel["bass"]])).sum(1), 0.2)
+        self.hats = self._peaks(np.maximum(0, np.diff(mags[:, sel["high"]], axis=0, prepend=mags[:1, sel["high"]])).sum(1), 0.1)
+
+    def _peaks(self, flux, gap, strengths=False):
+        k, last, times, st = int(self.fps), -1.0, [], []
+        floor = 0.3 * np.percentile(flux, 99)  # ignore leakage from other bands
+        for i in range(1, len(flux) - 1):
+            lo, hi = max(0, i - k), min(len(flux), i + k)
             thr = flux[lo:hi].mean() + 0.9 * flux[lo:hi].std()
-            if flux[i] > thr and flux[i] >= flux[i - 1] and flux[i] >= flux[i + 1] and i / fps - last > 0.16:
-                self.onsets.append(i / fps)
-                self.strength.append(float(min(1.0, (flux[i] - thr) / (flux[lo:hi].std() + 1e-6) / 2 + 0.4)))
-                last = i / fps
+            if flux[i] > thr and flux[i] > floor and flux[i] >= flux[i - 1] and flux[i] >= flux[i + 1] and i / self.fps - last > gap:
+                times.append(i / self.fps)
+                st.append(float(min(1.0, (flux[i] - thr) / (flux[lo:hi].std() + 1e-6) / 2 + 0.4)))
+                last = i / self.fps
+        return (times, st) if strengths else times
 
     def level(self, t):
         i = int(t * self.fps)
         return float(self.lvl[min(max(i, 0), len(self.lvl) - 1)])
 
-    def beat(self, t):
-        best = None
-        for o in self.onsets:
-            if o <= t:
-                best = o
-            else:
-                break
-        return 0.0 if best is None else math.exp(-(t - best) / 0.13)
+    def band(self, t, name):
+        e = self.env[name]
+        return float(e[min(max(int(t * self.fps), 0), len(e) - 1)])
 
-    def nearest(self, t, window):
-        near = [o for o in self.onsets if abs(o - t) <= window]
+    @staticmethod
+    def _decay(times, t, tau):
+        i = bisect.bisect_right(times, t) - 1
+        return 0.0 if i < 0 else math.exp(-(t - times[i]) / tau)
+
+    def beat(self, t):
+        return self._decay(self.onsets, t, 0.13)
+
+    def kick(self, t):
+        return self._decay(self.kicks, t, 0.16)
+
+    def hat(self, t):
+        return self._decay(self.hats, t, 0.07)
+
+    def nearest(self, t, window, times=None):
+        near = [o for o in (self.onsets if times is None else times) if abs(o - t) <= window]
         return min(near, key=lambda o: abs(o - t)) if near else None
 
 
@@ -207,7 +245,7 @@ def look_pool(k):
     return pool
 
 
-def plan(intensity, seconds, fps, audio, seed):
+def plan(intensity, seconds, fps, audio, seed, react=0.0):
     rng = random.Random(seed)
     k = intensity / 10.0
     nframes = int(seconds * fps)
@@ -218,7 +256,7 @@ def plan(intensity, seconds, fps, audio, seed):
         mean = (4.2 - 3.95 * k**0.8) / (0.6 + 0.8 * energy(t, seed))
         end = min(seconds, t + max(0.3, mean * rng.uniform(0.55, 1.45)))
         if k > 0.3:
-            snap = audio.nearest(end, 0.18)
+            snap = audio.nearest(end, 0.18 + 0.1 * react, audio.kicks if react > 0.3 and audio.kicks else None)
             if snap and snap - t > 0.25:
                 end = min(seconds, snap)
         look = rng.choice([x for x in pool if x != last] or pool)
@@ -237,7 +275,7 @@ def plan(intensity, seconds, fps, audio, seed):
         for f in range(nframes):
             t = f / fps
             active = sum(1 for p in patches if p.t0 <= t < p.t1)
-            prob = rate0 * energy(t, seed + 5) / fps * (1 + 3 * audio.beat(t))
+            prob = rate0 * energy(t, seed + 5) / fps * (1 + 3 * audio.beat(t) + 4 * react * audio.band(t, "bass"))
             if active < maxc and rng.random() < prob:
                 shape = rng.choice(shapes)
                 life = rng.uniform(0.4, 1.5) if shape == "bbox" else rng.uniform(0.12, 0.9) * (1.3 - 0.6 * k)
@@ -268,6 +306,13 @@ def plan(intensity, seconds, fps, audio, seed):
         for o, s in zip(audio.onsets, audio.strength):
             if o < seconds and rng.random() < 0.25 + 0.5 * k:
                 add_burst(o, amp=0.4 + 0.6 * s, kind=rng.choice(["punch", "rgbblast", "tear", "echo", "chan", "zoomblur", "whip"] + (["blocks", "invert", "strobe", "split", "stretch"] if k > 0.75 else [])))
+        if react > 0:  # audio-reactive: kicks punch, hats tick
+            for o in audio.kicks:
+                if o < seconds and rng.random() < 0.15 + 0.8 * react:
+                    add_burst(o, amp=0.6 + 0.4 * audio.band(o, "bass"), kind=rng.choice(["punch", "zoomblur", "rgbblast"] + (["echo", "whip", "invert"] if k > 0.6 else [])))
+            for o in audio.hats:
+                if o < seconds and rng.random() < 0.1 + 0.5 * react:
+                    add_burst(o, amp=0.4 + 0.5 * audio.band(o, "high"), kind=rng.choice(["tear", "chan", "wave"]))
         for s in shots[:-1]:
             if s.kind == "cut":
                 add_burst(s.end, amp=0.9, kind=rng.choice(["punch", "rgbblast", "tear", "zoomblur", "whip", "chan"]))
@@ -362,7 +407,8 @@ def look_mash(f, ctx, t):
 
 # ---------------------------------------------------------------- the deck
 class Deck:
-    def __init__(self, w, h, fps, intensity, director, audio, seed, vision_every=2, use_sam=True, profile=False, compile=False):
+    def __init__(self, w, h, fps, intensity, director, audio, seed, vision_every=2, use_sam=True, profile=False, compile=False, react=0.0):
+        self.react = react
         self.w, self.h, self.fps, self.I, self.k, self.dir, self.audio, self.seed = w, h, fps, intensity, intensity / 10.0, director, audio, seed
         self.amp = self.k * 1.25
         self.analyzer = Analyzer(compile=compile)
@@ -540,6 +586,9 @@ class Deck:
     def apply_burst(self, b, out, t):
         u = (t - b.t0) / max(1e-3, b.dur)
         e = (math.sin(math.pi * u) ** 0.7) * b.amp * (0.5 + 0.6 * self.amp)
+        if self.react:  # loud passages hit harder, quiet ones calm down
+            a = self.audio
+            e *= (1 - self.react) + self.react * (0.3 + 1.4 * max(a.band(t, "bass"), 0.8 * a.band(t, "mid")))
         gen = torch.Generator().manual_seed(b.seed + int(t * 15))
         h, w, X, Y = self.h, self.w, self.X, self.Y
         kind = b.kind
@@ -710,6 +759,12 @@ class Deck:
         spots = self.analyzer.hotspots(self.ctx["edges"][0], self.w, self.h)
         gen = torch.Generator().manual_seed(n // 2 * 7919 + 13 + self.seed)
         beat, lvl, amp = self.audio.beat(t), self.audio.level(t), self.amp
+        r = self.react
+        bass, mid, high = (self.audio.band(t, b) for b in ("bass", "mid", "high"))
+        kick, hat = self.audio.kick(t), self.audio.hat(t)
+        if r:  # blend the generic onset pulse with the kick-driven one
+            beat = beat * (1 - r) + r * max(kick, 0.6 * bass)
+            lvl = lvl * (1 - r) + r * (0.3 * bass + 0.7 * mid)
 
         ia, ib, p = self.shot_at(t)
         sa, sb = self.dir.shots[ia], self.dir.shots[ib]
@@ -718,9 +773,10 @@ class Deck:
             out = self.transition(sa.kind, out, self.L(sb.look), p, gen)
         mode = sb.look if p > 0.5 else sa.look
 
-        out, rects = self.apply_patches(out, t, tracks)
+        quiet = r > 0.4 and max(bass, mid, high) < 0.1  # reactive: silence = no patches or bursts, just the base look
+        out, rects = self.apply_patches(out, t, tracks) if not quiet else (out, [])
         active = sorted((b for b in self.dir.bursts if b.t0 <= t < b.t0 + b.dur), key=lambda b: -b.amp)[:2]  # stacking more reads as noise
-        for b in active:
+        for b in [] if quiet else active:
             out = self.apply_burst(b, out, t)
         analysis = None
         for an in self.dir.analyses:
@@ -737,6 +793,12 @@ class Deck:
         wave = amp * 0.0035 * (0.3 + lvl)
         out = warp(out, (self.X - 0.5) * z + dx + wave * torch.sin(2 * math.pi * (self.Y * 3 + t * 0.7)), (self.Y - 0.5) * z + dy)
         out = rgb_split(out, amp * (0.001 + 0.011 * beat + 0.004 * fbm(t * 3, 9)), t * 1.3 + fbm(t, 2) * 6)
+        if r and hat > 0.15:  # hats: thin horizontal tick tears
+            out = rgb_split(out, 0.012 * hat * r * amp, 0.0)
+            out = warp(out, bands(self.h, gen, 8, 60, 0.035 * hat * r * amp, DEV)[None, :, None].expand(1, self.h, self.w), 0.0)
+        if r > 0.3 and kick > 0.5:  # kicks: hue slam + edge flash
+            out = fx.hue_rotate(out, r * 0.12 * kick * (1 if n // 6 % 2 else -1))
+            out = out + self.L("edge") * (kick - 0.4) * r * 0.8
         out = (out * (1 + 0.14 * beat * amp)).clamp(0, 1)
 
         self.tick("modulation")
@@ -747,7 +809,7 @@ class Deck:
             raw = torch.from_numpy(self.draw_hud(tracks, spots, rects, analysis, t, n, mode)).to(DEV).permute(2, 0, 1).float()[[2, 1, 0]] / 255
             self._hud = raw * (0.45 + 0.55 * self.k)
         out = (out + self._hud * (self._hud.max(0, keepdim=True)[0] > 0).float()).clamp(0, 1)
-        strength = min(1.0, (0.15 + 0.85 * self.k) * (0.85 + 0.3 * fbm(t * 0.6, 4)) + (0.25 if ia != ib else 0.0))
+        strength = min(1.0, (0.15 + 0.85 * self.k) * (0.85 + 0.3 * fbm(t * 0.6, 4)) + (0.25 if ia != ib else 0.0) + 0.3 * r * high)
         self.tick("hud")
         out = self.crt(out, t, strength, gen)
         self.tick("crt")
@@ -770,22 +832,27 @@ def main():
     ap.add_argument("--vision-every", type=int, default=2, help="run RT-DETR + SAM2 every N frames (masks are held in between)")
     ap.add_argument("--no-sam", action="store_true", help="boxes only, skip SAM2 masks (fastest)")
     ap.add_argument("--no-compile", action="store_true", help="skip torch.compile (faster start, ~2x slower per frame)")
+    ap.add_argument("--reactive", type=float, default=7, help="audio reactivity 0 (onset timing only) .. 10 (bass/mid/high drive zoom, shake, flashes, tears, burst strength)")
+    ap.add_argument("--audio", default="", help="drive the effect from this track instead of the video's own audio (also used as the output audio)")
+    ap.add_argument("--audio-start", type=float, default=None, help="offset into --audio (default: --start)")
     ap.add_argument("--profile", action="store_true", help="print per-stage GPU timings")
     a = ap.parse_args()
     torch.backends.cudnn.benchmark = True
     a.intensity = max(0.0, min(10.0, a.intensity))
     w, h, fps = a.width, a.height, a.fps
-    audio = Audio(a.src, a.start, a.seconds, fps, a.seed)
-    print(f"audio: {len(audio.onsets)} onsets{' (synthetic)' if audio.synthetic else ''}", file=sys.stderr)
-    director = plan(a.intensity, a.seconds, fps, audio, a.seed)
+    a.reactive = max(0.0, min(10.0, a.reactive))
+    track, track_start = (a.audio or a.src), (a.start if a.audio_start is None else a.audio_start)
+    audio = Audio(track, track_start, a.seconds, fps, a.seed)
+    print(f"audio: {len(audio.onsets)} onsets, {len(audio.kicks)} kicks, {len(audio.hats)} hats{' (synthetic)' if audio.synthetic else ''}", file=sys.stderr)
+    director = plan(a.intensity, a.seconds, fps, audio, a.seed, a.reactive / 10)
     print(f"plan: {len(director.shots)} shots, {len(director.patches)} patches, {len(director.bursts)} bursts, {len(director.analyses)} analyses", file=sys.stderr)
     reader = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", str(a.start), "-t", str(a.seconds), "-i", a.src, "-vf", f"scale={w}:{h},fps={fps}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     writer = subprocess.Popen(
-        ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", str(fps), "-i", "-", "-ss", str(a.start), "-t", str(a.seconds), "-i", a.src, "-map", "0:v", "-map", "1:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", a.dst],
+        ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", str(fps), "-i", "-", "-ss", str(track_start), "-t", str(a.seconds), "-i", track, "-map", "0:v", "-map", "1:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", a.dst],
         stdin=subprocess.PIPE,
     )
     stills = {int(float(s) * fps) for s in a.stills.split(",") if s}
-    deck = Deck(w, h, fps, a.intensity, director, audio, a.seed, vision_every=a.vision_every, use_sam=not a.no_sam, profile=a.profile, compile=not a.no_compile)
+    deck = Deck(w, h, fps, a.intensity, director, audio, a.seed, vision_every=a.vision_every, use_sam=not a.no_sam, profile=a.profile, compile=not a.no_compile, react=a.reactive / 10)
     import time
 
     started = steady = time.perf_counter()
