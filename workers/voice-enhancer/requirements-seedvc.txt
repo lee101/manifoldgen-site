@@ -1,0 +1,13 @@
+# Seed-VC venv layered on the system site-packages (reuses torch 2.10); pins from seed-vc requirements.txt.
+transformers==4.46.3
+numpy==1.26.4
+scipy==1.13.1
+librosa==0.10.2
+munch==4.0.0
+einops==0.8.0
+descript-audio-codec==1.0.0
+pydub==0.25.1
+hydra-core==1.3.2
+pyyaml
+huggingface-hub>=0.28.1,<1.0
+accelerate

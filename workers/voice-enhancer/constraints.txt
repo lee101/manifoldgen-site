@@ -1,0 +1,5 @@
+# Keep the yue-cog base exactly as validated: YuE2 runs in this interpreter too.
+torch==2.10.0
+torchaudio==2.10.0
+numpy==2.2.6
+transformers==4.57.6

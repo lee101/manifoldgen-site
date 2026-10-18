@@ -64,7 +64,10 @@ type dramatizeRequest struct {
 	VideoModel           string  `json:"video_model,omitempty"`
 	MusicPrompt          string  `json:"music_prompt,omitempty"`
 	Lyrics               string  `json:"lyrics,omitempty"`
-	Sketch               bool    `json:"sketch,omitempty"`
+	// SoundtrackURL is a finished song (e.g. from the lyric music generator) that
+	// replaces the generated score; the lyric-video path.
+	SoundtrackURL string `json:"soundtrack_url,omitempty"`
+	Sketch        bool   `json:"sketch,omitempty"`
 }
 
 // dramatizeStep is one entry in the user-visible agent timeline.
@@ -318,6 +321,7 @@ func handleVideoDramatizeService(ctx *fasthttp.RequestCtx, req ServiceUsageReque
 		VideoModel:           strings.TrimSpace(req.Model),
 		MusicPrompt:          strings.TrimSpace(req.MusicPrompt),
 		Lyrics:               strings.TrimSpace(req.Lyrics),
+		SoundtrackURL:        strings.TrimSpace(req.SoundtrackURL),
 		Sketch:               req.Sketch,
 	}
 	if input.Mode == "trailer-sketch" {

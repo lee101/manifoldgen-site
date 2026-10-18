@@ -1,0 +1,15 @@
+# Installed over the yue-cog image's system Python (see constraints.txt).
+faster-whisper==1.2.1
+audio-separator[gpu]==0.47.0
+pedalboard==0.9.26
+pyloudnorm==0.2.0
+beat-this==1.1.0
+audiobox-aesthetics==0.0.4
+jiwer==4.0.0
+soundfile
+soxr
+audioread==3.1.0
+standard-aifc==3.13.0
+standard-sunau==3.13.0
+rotary-embedding-torch==0.6.5
+runpod==1.7.9

@@ -261,6 +261,13 @@ type ServiceUsageRequest struct {
 	ImageBackend string `json:"image_backend,omitempty"`
 	// Quality "hq" asks the RA2 lane for the 30-step base-model tier instead of the 6-step turbo default; priced at 2x.
 	Quality string `json:"quality,omitempty"`
+	// voice_enhancer / lyric_music: tracks to deliver (voice, studio, produce),
+	// consent for the voice-conversion track, and price-only requests.
+	Tracks       []string `json:"tracks,omitempty"`
+	VoiceConsent bool     `json:"voice_consent,omitempty"`
+	QuoteOnly    bool     `json:"quote_only,omitempty"`
+	// SoundtrackURL hands the trailer agent a finished song (lyric music video).
+	SoundtrackURL string `json:"soundtrack_url,omitempty"`
 	// chronos2 fields
 	Values           []float64 `json:"values,omitempty"`
 	PredictionLength int       `json:"prediction_length,omitempty"`

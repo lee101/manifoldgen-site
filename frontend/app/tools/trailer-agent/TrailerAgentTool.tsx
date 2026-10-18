@@ -36,6 +36,19 @@ export default function TrailerAgentTool({ example = '' }: { example?: string })
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [result, setResult] = useState<JobResult | null>(null);
+  // Arriving from the lyric music generator: use that song as the soundtrack.
+  const [soundtrack, setSoundtrack] = useState('');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const song = params.get('soundtrack') || '';
+    if (song.startsWith('https://')) {
+      setSoundtrack(song);
+      if (params.get('lyrics')) setLyrics(params.get('lyrics') || '');
+      if (params.get('brief')) setBrief(params.get('brief') || '');
+      setMusic('');
+    }
+  }, []);
 
   useEffect(() => {
     const stored = loadStoredUser();
@@ -60,6 +73,7 @@ export default function TrailerAgentTool({ example = '' }: { example?: string })
             consistent_characters: consistentCharacters, consistency_passes: consistentCharacters ? consistencyPasses : 0,
             num_images: maxShots, duration: 5, image_backend: sketch ? 'zimage' : 'gpt-image-2',
             music_prompt: music.trim(), lyrics: lyrics.trim(), prompt_expansion_mode: 'grok-4.6',
+            ...(soundtrack ? { soundtrack_url: soundtrack } : {}),
           }),
         }),
         'Could not start the trailer agent',
@@ -126,10 +140,14 @@ export default function TrailerAgentTool({ example = '' }: { example?: string })
           <span>Character bible</span>
           <textarea value={characterBible} maxLength={12000} rows={8} onChange={(event) => setCharacterBible(event.target.value)} />
         </label>}
-        <label className={styles.field}>
+        {soundtrack ? <label className={styles.field} data-testid="trailer-soundtrack">
+          <span>Soundtrack · your song</span>
+          <audio controls preload="none" src={soundtrack} />
+          <button type="button" onClick={() => setSoundtrack('')}>Compose a new score instead</button>
+        </label> : <label className={styles.field}>
           <span>Score prompt</span>
           <textarea value={music} maxLength={2000} rows={3} onChange={(event) => setMusic(event.target.value)} />
-        </label>
+        </label>}
         <div className={styles.options}>
           <label><span>Shots</span><select value={maxShots} onChange={(event) => setMaxShots(Number(event.target.value))}><option value={6}>6</option><option value={8}>8</option><option value={10}>10</option><option value={12}>12</option></select></label>
           {consistentCharacters && <label><span>Identity repair passes</span><select value={consistencyPasses} onChange={(event) => setConsistencyPasses(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label>}

@@ -855,6 +855,10 @@ func processVideoJob(jobID string) {
 		processMusic3Job(job)
 		return
 	}
+	if job.Service == voiceEnhancerService || job.Service == lyricMusicService {
+		processVoiceEnhancerJob(job)
+		return
+	}
 	if job.Service == "music_video" {
 		processMusicVideoJob(job)
 		return

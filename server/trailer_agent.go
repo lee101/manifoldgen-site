@@ -48,6 +48,10 @@ func normalizeTrailerRequest(req *dramatizeRequest) error {
 	if req.Prompt == "" {
 		return fmt.Errorf("a trailer brief is required")
 	}
+	req.SoundtrackURL = strings.TrimSpace(req.SoundtrackURL)
+	if req.SoundtrackURL != "" && !strings.HasPrefix(req.SoundtrackURL, "https://"+r2PublicHost+"/") {
+		return fmt.Errorf("soundtrack_url must be a song generated on ManifoldGen")
+	}
 	if len(req.Prompt) > 8000 {
 		return fmt.Errorf("the brief must be 8000 characters or fewer")
 	}
@@ -130,7 +134,9 @@ func trailerEstimate(req dramatizeRequest) RemakeEstimate {
 		for i := range dummy {
 			dummy[i].Seconds = req.Seconds
 		}
-		musicUSD = music3PublicPriceUSD(trailerMusicDuration(dummy))
+		if req.SoundtrackURL == "" {
+			musicUSD = music3PublicPriceUSD(trailerMusicDuration(dummy))
+		}
 	}
 	speechUSD := 0.0
 	if !req.Sketch {
@@ -319,7 +325,7 @@ func trailerRenderedUSD(state *dramatizeJobState) float64 {
 			total += clip
 		}
 	}
-	if strings.TrimSpace(state.AudioURL) != "" {
+	if strings.TrimSpace(state.AudioURL) != "" && req.SoundtrackURL == "" {
 		total += music3PublicPriceUSD(trailerMusicDuration(planShotsFromResults(state.Shots)))
 	}
 	total += state.SpeechUSD
@@ -441,7 +447,14 @@ func runTrailerAgent(ctx context.Context, job *VideoJob, user *User, state *dram
 		musicPrompt = musicPrompt + "\n\n" + req.Lyrics
 	}
 	musicPath := ""
-	if url, musicErr := studioGenerateMusic(musicPrompt, trailerMusicDuration(planShotsFromResults(rendered))); musicErr == nil {
+	if req.SoundtrackURL != "" {
+		state.AudioURL = req.SoundtrackURL
+		musicPath = filepath.Join(workDir, "score.audio")
+		if downloadToFile(ctx, req.SoundtrackURL, musicPath) != nil {
+			musicPath = ""
+		}
+		state.finish(job.ID, started, "using the supplied song")
+	} else if url, musicErr := studioGenerateMusic(musicPrompt, trailerMusicDuration(planShotsFromResults(rendered))); musicErr == nil {
 		state.AudioURL = url
 		musicPath = filepath.Join(workDir, "score.audio")
 		if downloadToFile(ctx, url, musicPath) != nil {
