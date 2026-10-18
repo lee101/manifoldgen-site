@@ -1,0 +1,22 @@
+{
+  "image": "ghcr.io/lee101/voice-enhancer:cu128-20261019-r2",
+  "dockerStartCmd": ["python", "-u", "/src/ve/handler.py"],
+  "env": ["TG_API_KEY", "OPENPATHS_API_KEY", "OPENPATHS_BASE_URL", "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"],
+  "containerDiskInGb": 60,
+  "workersMin": 0,
+  "idleTimeout": 20,
+  "executionTimeoutMs": 2400000,
+  "flashboot": true,
+  "scalerType": "REQUEST_COUNT",
+  "scalerValue": 1,
+  "endpoints": [
+    {
+      "id": "r9yobxj9g09awg",
+      "templateId": "hgoxzmurug",
+      "name": "manifold-voice-enhancer",
+      "workersMax": 1,
+      "gpuTypeIds": ["NVIDIA GeForce RTX 4090"]
+    }
+  ],
+  "notes": "Voice enhancer + lyric music lane (server VOICE_ENHANCER_RUNPOD_ENDPOINT_ID). All weights baked into the 27.7 GB image (YuE2-3B/Vae pinned, whisper large-v3, RoFormer vocals+denoise, beat_this, audiobox-aesthetics, Seed-VC v1 SVC). First pull on a fresh host queued 740 s; a 60 s lite lyric job then executed in 201 s. Created with workers/voice-enhancer/scripts/runpod_deploy.py. See workers/voice-enhancer/README.md."
+}
