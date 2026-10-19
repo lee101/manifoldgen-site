@@ -399,6 +399,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStudioUpscaleVideo(ctx)
 	case path == "/api/studio/retime" && (method == "POST" || method == "GET"):
 		handleStudioRetime(ctx)
+	case path == "/api/captions/transcribe" && method == "POST":
+		handleCaptionsTranscribe(ctx)
 	case path == "/api/studio/audio-search" && method == "GET":
 		handleStudioAudioSearch(ctx)
 	case path == "/api/voice/models" && method == "GET":
