@@ -72,13 +72,14 @@ class SwapRuntime:
                 self.proc.kill()
 
     def generate(self, *, prompt, source_video, character_images, steps=graph.DEFAULT_STEPS, seed=None, megapixels=0.4,
-                 turbo=False, lora_strength=1.0, easycache=None, sol=False, grid="hold"):
+                 turbo=False, lora_strength=1.0, easycache=None, sol=False, grid="hold",
+                 swap_lora=graph.SWAP_LORA, sampler="res_multistep", scheduler="simple"):
         prompt = str(prompt).strip()
         if not prompt:
             raise ValueError("prompt is required")
         if not 1 <= len(character_images) <= 3:
             raise ValueError("between one and three character images are required")
-        if turbo:
+        if turbo is True:
             steps = graph.TURBO_STEPS
         if not 2 <= int(steps) <= 50:
             raise ValueError("steps must be between 2 and 50")
@@ -87,7 +88,8 @@ class SwapRuntime:
         seconds = min(src_seconds, graph.MAX_SECONDS)
         if seconds < graph.MIN_SECONDS:
             raise ValueError(f"source video must be at least {graph.MIN_SECONDS:g} seconds")
-        source_frames = min(graph.count_frames(source_video), int(graph.MAX_SECONDS * graph.FPS))
+        # The source is resampled to 24 fps, so the grid is sized on 24 fps frames (a 30 fps clip would otherwise gain padding).
+        source_frames = min(round(src_seconds * graph.FPS), int(graph.MAX_SECONDS * graph.FPS))
         frames = graph.grid_frames(source_frames, grid)
         ref_frames = frames if grid != "ceil" else source_frames
         width, height = graph.swap_dimensions(src_w, src_h, megapixels)
@@ -105,6 +107,7 @@ class SwapRuntime:
             workflow = graph.build_swap_graph(
                 prompt=prompt, width=width, height=height, frames=frames, steps=int(steps), seed=seed, video_name=clip_name,
                 image_names=names, turbo=turbo, lora_strength=lora_strength, prefix=f"swap-{tag}", easycache=easycache, sol=sol,
+                swap_lora=swap_lora, sampler=sampler, scheduler=scheduler,
             )
             with self.lock:
                 pid = http("/prompt", {"prompt": workflow})["prompt_id"]
@@ -124,7 +127,7 @@ class SwapRuntime:
             path = OUT_DIR / files[0].get("subfolder", "") / files[0]["filename"]
             return path, {
                 "generation_seconds": round(time.monotonic() - started, 2), "width": width, "height": height, "frames": frames, "source_frames": source_frames, "grid": grid,
-                "steps": int(steps), "seed": seed, "turbo": bool(turbo), "source_seconds": round(seconds, 3),
+                "steps": int(steps), "seed": seed, "turbo": turbo, "swap_lora": swap_lora, "sampler": sampler, "scheduler": scheduler, "source_seconds": round(seconds, 3),
                 "megapixels": megapixels, "easycache": easycache, "sol": sol,
             }
         finally:

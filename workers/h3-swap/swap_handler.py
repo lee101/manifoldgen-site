@@ -21,6 +21,10 @@ _runtime = None
 _moderation = None
 
 
+def _turbo(value):
+    return value if isinstance(value, str) and value else bool(value)
+
+
 def runtime():
     global _runtime
     if _runtime is None:
@@ -72,7 +76,8 @@ def handler(event):
         easycache = values.get("easycache")
         output, metrics = runtime().generate(
             prompt=prompt, source_video=source, character_images=images, steps=int(values.get("steps", 20)),
-            seed=values.get("seed"), megapixels=float(values.get("megapixels", 0.4)), turbo=bool(values.get("turbo", False)),
+            seed=values.get("seed"), megapixels=float(values.get("megapixels", 0.4)), turbo=_turbo(values.get("turbo", False)),
+            sampler=str(values.get("sampler", "res_multistep")), scheduler=str(values.get("scheduler", "simple")),
             lora_strength=float(values.get("lora_strength", 1.0)),
             easycache=tuple(float(x) for x in easycache) if easycache else None, sol=bool(values.get("sol", False)),
         )

@@ -34,3 +34,22 @@ once invented a third person (the original performer) in the middle of the clip.
 
 One pass with a single reference image holding all characters replaces everyone left to right; a single-character
 reference with a turbo run invented a third person, so the image always carries every replacement.
+
+## V1.5 and Turbo variants (H100, 5 s clip, 832x480, seed 7, 2 characters in one reference image)
+
+The worker now defaults to `h3_character_swap_v1.5.safetensors` (strength 1.0, sha256 8f2c3c3e...) and accepts
+`turbo` as a key (`ref2v4`, `ref2v8`, `fl2v4`, `fl2v8`; `true` still means `ref2v4` at 4 steps) plus `sampler` / `scheduler`.
+The extra Turbo LoRAs come from `lightx2v/Minimax-h3-Turbo` (pinned revision, sha256 in `swap_weights.py`).
+
+| setting | wall s | note |
+| --- | --- | --- |
+| 20 steps + EasyCache 0.12 | 129 | reference quality |
+| ref2v4 (v0.1), 4 steps | 58 | previous fast tier |
+| ref2v8 (v1.0 768p), 8 / 6 / 4 steps, er_sde + normal | 86 / 72 / 57 | all visually match the 20-step run; 6 steps is the pick |
+| fl2v8, 6 steps / fl2v4 v1.2, 4 steps | 72 / 58 | similar, no better than ref2v8 |
+| ref2v8, 6 steps, 1088x608 (0.66 MP) | 119 | much sharper faces; best quality per second |
+| ref2v8, 6 steps, 1344x768 (0.98 MP) | 199 | background drifted from orange to brown, not used |
+
+Long generations straddling a hard cut in the source drift (background colour, ghosting at a crossfade). Cut the source at
+scene changes (ffmpeg `select='gt(scene,0.12)'`) and generate each shot on its own; hard-cut the results.
+The 17n+5 grid is now sized on 24 fps frames: a 30 fps 5 s clip used to get 158 frames (1.5 s of held padding), now 124.

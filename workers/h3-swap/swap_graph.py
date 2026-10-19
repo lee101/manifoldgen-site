@@ -10,8 +10,16 @@ REF2VA_MODEL = "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 TEXT_ENCODER = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 VIDEO_VAE = "minimax_h3_video_vae_fp16.safetensors"
 AUDIO_VAE = "minimax_h3_audio_vae_fp32.safetensors"
-SWAP_LORA = "h3_character_swap_pro4500_1000.safetensors"
-TURBO_LORA = "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+SWAP_LORA = "h3_character_swap_v1.5.safetensors"
+SWAP_LORA_V1 = "h3_character_swap_pro4500_1000.safetensors"
+# Turbo LoRAs stack on the swap LoRA at strength 1.0; native_steps is the step count each was distilled for.
+TURBOS = {
+    "ref2v4": ("minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors", 4),
+    "ref2v8": ("minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors", 8),
+    "fl2v4": ("minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors", 4),
+    "fl2v8": ("minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors", 8),
+}
+TURBO_LORA = TURBOS["ref2v4"][0]
 MAX_SECONDS = 15.0
 MIN_SECONDS = 0.2
 TURBO_STEPS = 4
@@ -72,10 +80,14 @@ def normalize_source(src, dst, width, height, frames):
 
 
 def build_swap_graph(*, prompt, width, height, frames, steps, seed, video_name, image_names, turbo=False,
-                     lora_strength=1.0, ref_image_size="match", prefix="swap", easycache=None, sol=False):
+                     lora_strength=1.0, ref_image_size="match", prefix="swap", easycache=None, sol=False,
+                     swap_lora=SWAP_LORA, sampler="res_multistep", scheduler="simple"):
     if not image_names:
         raise ValueError("at least one character image is required")
-    if turbo and int(steps) != TURBO_STEPS:
+    turbo_key = "ref2v4" if turbo is True else (turbo or None)
+    if turbo_key is not None and turbo_key not in TURBOS:
+        raise ValueError(f"unknown turbo {turbo_key!r}")
+    if turbo is True and int(steps) != TURBO_STEPS:
         raise ValueError(f"turbo requires exactly {TURBO_STEPS} steps")
     graph = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": REF2VA_MODEL, "weight_dtype": "default"}},
@@ -84,11 +96,11 @@ def build_swap_graph(*, prompt, width, height, frames, steps, seed, video_name, 
         "4": {"class_type": "VAELoader", "inputs": {"vae_name": AUDIO_VAE}},
         "20": {"class_type": "LoadVideo", "inputs": {"file": video_name}},
         "21": {"class_type": "GetVideoComponents", "inputs": {"video": ["20", 0]}},
-        "22": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": SWAP_LORA, "strength_model": float(lora_strength)}},
+        "22": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": swap_lora, "strength_model": float(lora_strength)}},
     }
     model = ["22", 0]
-    if turbo:
-        graph["23"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": model, "lora_name": TURBO_LORA, "strength_model": 1.0}}
+    if turbo_key:
+        graph["23"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": model, "lora_name": TURBOS[turbo_key][0], "strength_model": 1.0}}
         model = ["23", 0]
     if sol:
         graph["24"] = {"class_type": "SolAttnPatch", "inputs": {
@@ -113,8 +125,8 @@ def build_swap_graph(*, prompt, width, height, frames, steps, seed, video_name, 
     graph.update({
         "6": {"class_type": "BasicGuider", "inputs": {"model": model, "conditioning": ["5", 0]}},
         "7": {"class_type": "RandomNoise", "inputs": {"noise_seed": int(seed)}},
-        "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "res_multistep"}},
-        "9": {"class_type": "BasicScheduler", "inputs": {"model": model, "scheduler": "simple", "steps": int(steps), "denoise": 1.0}},
+        "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": sampler}},
+        "9": {"class_type": "BasicScheduler", "inputs": {"model": model, "scheduler": scheduler, "steps": int(steps), "denoise": 1.0}},
         "10": {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": ["7", 0], "guider": ["6", 0], "sampler": ["8", 0], "sigmas": ["9", 0], "latent_image": ["5", 1]}},
         "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
         "13": {"class_type": "CreateVideo", "inputs": {"images": ["11", 0], "fps": float(FPS)}},

@@ -10,11 +10,18 @@ from pathlib import Path
 
 BASE = os.environ.get("SWAP_MODELS_BASE", "https://appstatic.app.nz/models/Comfy-Org/MiniMax-H3").rstrip("/")
 LORA_BASE = os.environ.get("SWAP_LORA_BASE", "https://manifoldgenstatic.manifoldgen.com/models/h3-character-swap").rstrip("/")
-HF_LORA = "https://huggingface.co/akatz-ai/MiniMax-H3-Character-Swap-LoRA/resolve/62407e0cc8089c363abd9ce4b0b27662abb237af/h3_character_swap_pro4500_1000.safetensors"
-LORA_NAME = "h3_character_swap_pro4500_1000.safetensors"
-LORA_SIZE = 155_110_320
-LORA_SHA = "4b2a3f420ae804c0aa3422761ff84dbd1bf52eef6900ffab6d2e66df63cb4e79"
+HF_LORA = "https://huggingface.co/akatz-ai/MiniMax-H3-Character-Swap-LoRA/resolve/d06323b7c8e70e97cdab48b78a1e05f786c8cba9/h3_character_swap_v1.5.safetensors"
+LORA_NAME = "h3_character_swap_v1.5.safetensors"
+LORA_SIZE = 155_110_792
+LORA_SHA = "8f2c3c3eba161df8d0c6099598b4730f641f5ce01e04cd16d2427cff8a35218f"
 TURBO_NAME = "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+# Extra Turbo LoRAs (Apache-2.0, lightx2v/Minimax-h3-Turbo), fetched on top of the base set.
+LIGHTX_REVISION = "a29e57d195f80ead07c89f89e55ecf2911e893c5"
+LIGHTX_FILES = {
+    "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors": "6a56f41ab4229c9dd845b9501bbd475ee57e112d846cf2e819d534a1ae928c5a",
+    "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors": "c8168ebc17bbacc4296103dda2fec1ba85b24392fa08cf2bfbcef0cff0dc3cc8",
+    "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors": "08cfe946033af7d27719b964b6e0a0e50c32138daabbd6ce4137e23df6bf9980",
+}
 BASE_FILES = (
     "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
     "vae/minimax_h3_video_vae_fp16.safetensors",
@@ -82,6 +89,9 @@ def plan():
     for path, (size, digest) in MIRROR_FILES.items():
         entries.append({"path": path, "size": size, "sha256": digest, "url": f"{LORA_BASE}/{path}",
                         "fallback": f"https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/{HF_REVISION}/{path}"})
+    for name, digest in LIGHTX_FILES.items():
+        hf = f"https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/{LIGHTX_REVISION}/{name}"
+        entries.append({"path": f"loras/{name}", "size": 1_956_193_000, "sha256": digest, "url": hf})
     return entries
 
 
