@@ -245,7 +245,7 @@ def look_pool(k):
     return pool
 
 
-def plan(intensity, seconds, fps, audio, seed, react=0.0):
+def plan(intensity, seconds, fps, audio, seed, react=0.0, back=0.0):
     rng = random.Random(seed)
     k = intensity / 10.0
     nframes = int(seconds * fps)
@@ -323,7 +323,33 @@ def plan(intensity, seconds, fps, audio, seed, react=0.0):
             dur = rng.uniform(0.9, 2.2)
             analyses.append(NS(t0=t, t1=min(seconds, t + dur), looks=rng.sample(["depth", "topo", "edge", "normal", "thermal", "xray", "toon"], 4), target=None))
             t += dur + rng.uniform(1.0, 4.5) / (0.3 + (0.04 + 0.4 * k) * 6 * energy(t, seed + 3))
-    return NS(shots=shots, patches=patches, bursts=bursts, analyses=analyses)
+    return NS(shots=shots, patches=patches, bursts=bursts, analyses=analyses, backs=plan_back(back, seconds, audio, seed, react))
+
+
+def plan_back(back, seconds, audio, seed, react=0.0):
+    """Glitch-back segments where the original shows through: whole frame ("full") or only parts of it ("part").
+
+    back 0..1. Coverage ~ 0.75 * back^1.1 of the timeline; low values are mostly partial reveals, high values mostly full."""
+    if back <= 0.01:
+        return []
+    rng = random.Random(seed + 4242)
+    cov = 0.75 * back**1.1
+    marks = sorted(set(list(audio.kicks) + list(audio.onsets)))
+
+    def snap(x):  # land segment edges on the beat when one is near
+        near = [m for m in marks if abs(m - x) < 0.2]
+        return min(near, key=lambda m: abs(m - x)) if near else x
+
+    segs, t = [], rng.uniform(0.3, 1.5) * (1.2 - back)
+    while t < seconds:
+        length = rng.uniform(0.35, 1.2) * (0.6 + 1.4 * back)
+        gap = length * (1 - cov) / cov * rng.uniform(0.6, 1.4)
+        t0, t1 = snap(t), min(seconds, snap(t + length))
+        if t1 - t0 > 0.15:
+            full = rng.random() < 0.2 + 0.6 * back
+            segs.append(NS(t0=t0, t1=t1, mode="full" if full else "part", shape=rng.choice(["bands", "subject", "bg", "depth", "blocks", "circle"]), seed=rng.randint(0, 999), snapped=t0 in marks, strength=1.0 if full else rng.uniform(0.7, 1.0)))
+        t = t1 + gap
+    return segs
 
 
 # ---------------------------------------------------------------- looks
@@ -716,6 +742,33 @@ class Deck:
         return img
 
     # ---- CRT
+    def back_mask(self, t):
+        """Original-footage weight for this frame: float 1 = all original, or a (1,H,W) tensor, or None when nothing shows through."""
+        for s in self.dir.backs:
+            if not (s.t0 <= t < s.t1):
+                continue
+            ramp = 0.03 if s.snapped else 0.12  # hard cut on a beat, soft fade otherwise
+            edge = min(1.0, (t - s.t0) / ramp, (s.t1 - t) / 0.1) * s.strength
+            if s.mode == "full":
+                return edge
+            d, w, h = self.ctx["depth"], self.w, self.h
+            tr = self.tracks
+            if s.shape == "subject" and tr:
+                m = tr[0]["mask"]
+            elif s.shape == "bg" and tr:
+                m = 1 - tr[0]["mask"]
+            elif s.shape == "depth":
+                m = ((d - (0.5 + 0.4 * math.sin(2 * math.pi * t * 0.4 + s.seed))).abs() < 0.2).float()
+            elif s.shape == "blocks":
+                m = (hash_cells(h, w, 16 + s.seed % 30, torch.Generator().manual_seed(s.seed * 17 + int(t * 6)), DEV) < 0.55).float()
+            elif s.shape == "circle":
+                cx, cy = 0.5 + 0.5 * (pn(t * 0.7, s.seed) - 0.5), 0.5 + 0.4 * (pn(t * 0.7, s.seed + 3) - 0.5)
+                m = (torch.hypot((self.X - cx) * w / h, self.Y - cy) < 0.3 + 0.12 * math.sin(t * 3 + s.seed)).float()
+            else:  # bands: horizontal slabs that scroll
+                m = (torch.sin(2 * math.pi * (self.Y * (3 + s.seed % 4) + t * 0.6 + s.seed)) > -0.1).float()
+            return m * edge
+        return None
+
     def crt(self, x, t, strength, gen):
         if strength <= 0.01:
             return x
@@ -813,6 +866,9 @@ class Deck:
         self.tick("hud")
         out = self.crt(out, t, strength, gen)
         self.tick("crt")
+        bm = self.back_mask(t)
+        if bm is not None:  # glitch-back: lerp toward the untouched source
+            out = out + (frame - out) * bm
         return out
 
 
@@ -833,6 +889,7 @@ def main():
     ap.add_argument("--no-sam", action="store_true", help="boxes only, skip SAM2 masks (fastest)")
     ap.add_argument("--no-compile", action="store_true", help="skip torch.compile (faster start, ~2x slower per frame)")
     ap.add_argument("--reactive", type=float, default=7, help="audio reactivity 0 (onset timing only) .. 10 (bass/mid/high drive zoom, shake, flashes, tears, burst strength)")
+    ap.add_argument("--glitchback", type=float, default=2.5, help="bring the original back: 0 (never) .. 10 (mostly original, glitch in bursts); default 2.5 ~ the classic look; segments snap to the beat")
     ap.add_argument("--audio", default="", help="drive the effect from this track instead of the video's own audio (also used as the output audio)")
     ap.add_argument("--audio-start", type=float, default=None, help="offset into --audio (default: --start)")
     ap.add_argument("--profile", action="store_true", help="print per-stage GPU timings")
@@ -844,8 +901,8 @@ def main():
     track, track_start = (a.audio or a.src), (a.start if a.audio_start is None else a.audio_start)
     audio = Audio(track, track_start, a.seconds, fps, a.seed)
     print(f"audio: {len(audio.onsets)} onsets, {len(audio.kicks)} kicks, {len(audio.hats)} hats{' (synthetic)' if audio.synthetic else ''}", file=sys.stderr)
-    director = plan(a.intensity, a.seconds, fps, audio, a.seed, a.reactive / 10)
-    print(f"plan: {len(director.shots)} shots, {len(director.patches)} patches, {len(director.bursts)} bursts, {len(director.analyses)} analyses", file=sys.stderr)
+    director = plan(a.intensity, a.seconds, fps, audio, a.seed, a.reactive / 10, max(0.0, min(10.0, a.glitchback)) / 10)
+    print(f"plan: {len(director.shots)} shots, {len(director.patches)} patches, {len(director.bursts)} bursts, {len(director.analyses)} analyses, {len(director.backs)} glitch-backs ({sum(s.t1 - s.t0 for s in director.backs) / a.seconds:.0%} of time)", file=sys.stderr)
     reader = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", str(a.start), "-t", str(a.seconds), "-i", a.src, "-vf", f"scale={w}:{h},fps={fps}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     writer = subprocess.Popen(
         ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", str(fps), "-i", "-", "-ss", str(track_start), "-t", str(a.seconds), "-i", track, "-map", "0:v", "-map", "1:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", a.dst],
