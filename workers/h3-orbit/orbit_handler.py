@@ -21,7 +21,6 @@ _moderation = None
 def runtime():
     global _runtime
     if _runtime is None:
-        orbit_weights.ensure_weights()
         _runtime = OrbitRuntime()
     return _runtime
 
