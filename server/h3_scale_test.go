@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -139,5 +140,57 @@ func TestH3RunpodJobsBusyUsesJobStatus(t *testing.T) {
 	}
 	if h3RunpodJobsBusy("ep", nil) {
 		t.Fatal("no tracked jobs reported busy")
+	}
+}
+
+func TestSubmitScaledSkipsConfigGETWhileFresh(t *testing.T) {
+	var gets, updates, runs int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/endpoints/fresh":
+			atomic.AddInt32(&gets, 1)
+			fmt.Fprint(w, `{"workersMax":0}`)
+		case r.URL.Path == "/endpoints/fresh/update":
+			atomic.AddInt32(&updates, 1)
+			fmt.Fprint(w, `{}`)
+		case r.URL.Path == "/fresh/run":
+			atomic.AddInt32(&runs, 1)
+			fmt.Fprint(w, `{"id":"j1","status":"IN_QUEUE"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+	t.Setenv("H3_RUNPOD_API_KEY", "test")
+	t.Setenv("H3_RUNPOD_CONTROL_URL", upstream.URL)
+	t.Setenv("H3_RUNPOD_BASE_URL", upstream.URL)
+	t.Setenv("RUNPOD_SPEND_CAP_FILE", t.TempDir()+"/none.json")
+	h3KnownWorkersMax = sync.Map{}
+	route := h3WorkerRoute{Variant: h3NormalVariant, RunpodEndpointID: "fresh"}
+	for i := 0; i < 3; i++ {
+		var queued h3RunpodQueuedJob
+		if _, err := submitScaledH3RunpodJob(route, map[string]interface{}{}, &queued); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if g, u, r := atomic.LoadInt32(&gets), atomic.LoadInt32(&updates), atomic.LoadInt32(&runs); g != 1 || u != 1 || r != 3 {
+		t.Fatalf("gets=%d updates=%d runs=%d, want 1/1/3", g, u, r)
+	}
+	if err := h3SetWorkersMax("fresh", 0); err != nil {
+		t.Fatal(err)
+	}
+	var queued h3RunpodQueuedJob
+	if _, err := submitScaledH3RunpodJob(route, map[string]interface{}{}, &queued); err != nil {
+		t.Fatal(err)
+	}
+	if g, u := atomic.LoadInt32(&gets), atomic.LoadInt32(&updates); g != 1 || u != 3 {
+		t.Fatalf("after scale-to-zero gets=%d updates=%d, want 1/3 (reactivation without GET)", g, u)
+	}
+}
+
+func TestH3MeanCosine(t *testing.T) {
+	got := h3MeanCosine([]float32{1, 0}, [][]float32{{1, 0}, {0, 1}})
+	if got < 0.49 || got > 0.51 {
+		t.Fatalf("mean cosine = %v", got)
 	}
 }
