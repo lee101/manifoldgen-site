@@ -118,6 +118,7 @@ def run(raw: dict) -> dict:
     import lyrics_tts
     import soundfile as sf
     request = normalize(raw)
+    enhance.warm_yue_cache()
     started = time.time()
     work = Path(tempfile.mkdtemp(prefix="ve-job-"))
     try:

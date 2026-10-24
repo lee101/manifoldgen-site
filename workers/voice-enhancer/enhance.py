@@ -33,6 +33,29 @@ SR = 48000
 YUE_PYTHON = os.getenv("YUE_PYTHON", "/vfast/data/code/yue-cog/.venv/bin/python")
 
 
+_WARM = None
+
+
+def warm_yue_cache():
+    """Hash the YuE checkpoints in the background (cached on disk) while STT/separation run on the critical path."""
+    global _WARM
+    if _WARM is not None or not os.path.exists(YUE_PYTHON):
+        return
+    try:
+        _WARM = subprocess.Popen([YUE_PYTHON, str(HERE / "yue_render.py"), "--warm-hashes"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=lambda: os.nice(10))
+    except OSError:
+        _WARM = False
+
+
+def _join_warm():
+    if _WARM:
+        try:
+            _WARM.wait(timeout=300)
+        except subprocess.TimeoutExpired:
+            _WARM.kill()
+
+
 def log(*args):
     print(f"[{time.strftime('%H:%M:%S')}]", *args, file=sys.stderr, flush=True)
 
@@ -94,6 +117,7 @@ def yue(lyric_text: str, style: str, out: Path, seeds: list[int], tokens: int, a
     todo = [s for s in seeds if not (out / f"seed{s}" / "audio.flac").exists()]
     if todo:
         cmd[cmd.index("--seeds") + 1] = ",".join(map(str, todo))
+        _join_warm()
         log("yue", "seeds", todo, f"vocal {vocal_seconds:.0f}s" if vocal_seconds else "")
         subprocess.run(cmd, check=True)
     return [out / f"seed{s}" / "audio.flac" for s in seeds]
