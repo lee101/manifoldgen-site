@@ -4,6 +4,7 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, "/src")
@@ -58,6 +59,23 @@ def download_video(url):
     return Path(filename)
 
 
+def fetch_inputs(video_url, image_urls):
+    """Source video and character images downloaded concurrently (the video dominates; images hide behind it)."""
+    with ThreadPoolExecutor(1 + len(image_urls)) as pool:
+        futures = [pool.submit(download_video, video_url), *(pool.submit(_download_image, url) for url in image_urls)]
+        results, error = [], None
+        for future in futures:
+            try:
+                results.append(future.result())
+            except BaseException as exc:
+                error = error or exc
+    if error is not None:
+        for path in results:
+            Path(path).unlink(missing_ok=True)
+        raise error
+    return results[0], results[1:]
+
+
 def handler(event):
     values = event.get("input") or {}
     prompt = str(values.get("prompt", ""))
@@ -71,8 +89,7 @@ def handler(event):
     images = []
     try:
         started = time.monotonic()
-        source = download_video(str(values.get("video_url", "")))
-        images = [_download_image(url) for url in urls]
+        source, images = fetch_inputs(str(values.get("video_url", "")), urls)
         easycache = values.get("easycache")
         output, metrics = runtime().generate(
             prompt=prompt, source_video=source, character_images=images, steps=int(values.get("steps", 20)),
