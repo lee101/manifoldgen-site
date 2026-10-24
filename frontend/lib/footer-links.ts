@@ -39,11 +39,13 @@ export const FOOTER_VIDEO_MODEL_LINKS: FooterLink[] = [
   { href: '/tools/ra2v', label: 'RA2V' },
   { href: '/tools/h3-max', label: 'H3 Max' },
   { href: '/tools/h3-max-image', label: 'H3 Max Image' },
+  { href: '/tools/flux-3-max-video', label: 'FLUX 3 Max Video' },
 ];
 
 export const FOOTER_BLOG_LINKS: FooterLink[] = [
   { href: '/blog/seedance-vs-kling-vs-veo', label: 'Seedance vs Kling vs Veo' },
   { href: '/blog/best-ai-video-generators-tested-2026', label: 'Best AI video generators, tested' },
+  { href: '/blog/how-to-use-kling-4', label: 'How to use Kling 4' },
   { href: '/blog/how-to-use-kling-3', label: 'How to use Kling 3' },
   { href: '/blog/how-to-use-veo-3-1', label: 'How to use Veo 3.1' },
   { href: '/blog/how-to-use-seedance-2-5', label: 'How to use Seedance 2.5' },

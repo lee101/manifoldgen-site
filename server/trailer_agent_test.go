@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"math"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -256,5 +257,38 @@ func TestTrailerEstimateSketchesAreCheaper(t *testing.T) {
 	}
 	if !strings.Contains(prod.Settlement, "completion") {
 		t.Fatal(prod.Settlement)
+	}
+}
+
+func TestTrailerSplitDataURL(t *testing.T) {
+	for _, tc := range []struct{ in, mime, raw string }{
+		{"data:image/webp;base64,AAAA", "image/webp", "AAAA"},
+		{"data:image/jpeg;base64,BBBB", "image/jpeg", "BBBB"},
+	} {
+		mime, raw, ok := trailerSplitDataURL(tc.in)
+		if !ok || mime != tc.mime || raw != tc.raw {
+			t.Fatalf("%s -> %q %q %v", tc.in, mime, raw, ok)
+		}
+	}
+	if _, _, ok := trailerSplitDataURL("https://example.com/a.png"); ok {
+		t.Fatal("non data URL accepted")
+	}
+}
+
+func TestTrailerResizeStillWebp(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "wide.png")
+	if out, err := exec.Command("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=1600x900", "-frames:v", "1", src).CombinedOutput(); err != nil {
+		t.Fatalf("src: %v %s", err, out)
+	}
+	dest := filepath.Join(dir, "out.webp")
+	if err := trailerResizeStill(context.Background(), src, dest); err != nil {
+		t.Skipf("ffmpeg without libwebp: %v", err)
+	}
+	if info, err := os.Stat(dest); err != nil || info.Size() == 0 {
+		t.Fatalf("webp missing: %v", err)
 	}
 }

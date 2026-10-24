@@ -41,6 +41,7 @@ export function VideoGeneratorWorkspace({ generator, apiOnly = false }: { genera
   const defaultPrompt = generator.example?.prompt || 'A cinematic tracking shot through a rain-soaked night market, natural motion, rich reflections';
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [imageURL, setImageURL] = useState(generator.example?.imageURL || '');
+  const [sourceVideoURL, setSourceVideoURL] = useState('');
   const [duration, setDuration] = useState(generator.durations[0]);
   const [aspectRatio, setAspectRatio] = useState(generator.aspectRatios[0]);
   const [resolution, setResolution] = useState(generator.resolutions[0]);
@@ -55,15 +56,16 @@ export function VideoGeneratorWorkspace({ generator, apiOnly = false }: { genera
   useEffect(() => {
     setPrompt(generator.example?.prompt || 'A cinematic tracking shot through a rain-soaked night market, natural motion, rich reflections');
     setImageURL(generator.example?.imageURL || '');
+    setSourceVideoURL('');
     setStatus(generator.example ? 'Example output' : '');
     setOutputURL(generator.example?.outputURL || '');
     setError('');
   }, [generator]);
 
   const request = useMemo(() => generatorRequest(generator, {
-    prompt, imageURL, duration, aspectRatio, resolution, includeAudio,
+    prompt, imageURL, videoURL: sourceVideoURL, duration, aspectRatio, resolution, includeAudio,
     seed: seed.trim() ? Number(seed) : undefined,
-  }), [aspectRatio, duration, generator, imageURL, includeAudio, prompt, resolution, seed]);
+  }), [aspectRatio, duration, generator, imageURL, includeAudio, prompt, resolution, seed, sourceVideoURL]);
   const curl = `curl https://manifoldgen.com/api/service \\\n+  -X POST \\\n+  -H "Authorization: Bearer $MANIFOLDGEN_API_KEY" \\\n+  -H "Content-Type: application/json" \\\n+  -d '${JSON.stringify(request, null, 2)}'`;
   const displayCurl = curl.replace(/\n\+/g, '\n');
 
@@ -74,7 +76,9 @@ export function VideoGeneratorWorkspace({ generator, apiOnly = false }: { genera
       return;
     }
     if (!prompt.trim()) { setError('Add a prompt first.'); return; }
-    if (generator.mode !== 'text' && !imageURL.trim()) { setError('Add a public HTTPS image URL for this generator.'); return; }
+    if (generator.mode === 'edit') {
+      if (!sourceVideoURL.trim()) { setError('Add a public HTTPS video URL to edit.'); return; }
+    } else if (generator.mode !== 'text' && !imageURL.trim()) { setError('Add a public HTTPS image URL for this generator.'); return; }
     stopped.current = false;
     setBusy(true); setError(''); setOutputURL(''); setStatus('Queueing generation…');
     try {
@@ -125,7 +129,14 @@ export function VideoGeneratorWorkspace({ generator, apiOnly = false }: { genera
           </div>
           <label className="block text-sm font-semibold text-white/75">Describe the shot</label>
           <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} className="mt-2 w-full resize-none rounded-2xl border border-white/15 bg-[#171b27] p-4 text-sm leading-6 outline-none transition focus:border-white/35" />
-          {generator.mode !== 'text' && (
+          {generator.mode === 'edit' && (
+            <div className="mt-5">
+              <label htmlFor={`${generator.slug}-source-video`} className="block text-sm font-semibold text-white/75">Source video URL</label>
+              <input id={`${generator.slug}-source-video`} value={sourceVideoURL} onChange={(event) => setSourceVideoURL(event.target.value)} placeholder="https://…/clip.mp4" className="mt-2 w-full rounded-xl border border-white/15 bg-[#171b27] px-4 py-3 text-sm outline-none focus:border-white/35" />
+              <p className="mt-2 text-xs leading-5 text-white/50">Public HTTPS URL, 3-30 seconds. Refer to it as @Video1 in the prompt.</p>
+            </div>
+          )}
+          {generator.mode !== 'text' && generator.mode !== 'edit' && (
             <div className="mt-5">
               <label htmlFor={`${generator.slug}-source-image`} className="block text-sm font-semibold text-white/75">{generator.mode === 'reference' ? 'Reference image URL' : 'Starting image URL'}</label>
               <input id={`${generator.slug}-source-image`} value={imageURL} onChange={(event) => setImageURL(event.target.value)} placeholder="https://…/image.webp" className="mt-2 w-full rounded-xl border border-white/15 bg-[#171b27] px-4 py-3 text-sm outline-none focus:border-white/35" />

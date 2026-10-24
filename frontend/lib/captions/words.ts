@@ -218,6 +218,15 @@ export function toVTT(pages: CaptionPage[], words: CaptionWord[]) {
   return `WEBVTT\n\n${pages.map((page) => `${formatTime(page.start, false)} --> ${formatTime(Math.max(page.end, page.start + 0.2), false)}\n${page.words.map((w) => words[w].text).join(' ')}\n`).join('\n')}`;
 }
 
+/** SRT carrying the original line and its translation on two lines (original first). */
+export function toBilingualSRT(pages: CaptionPage[], words: CaptionWord[], lines: string[]) {
+  return pages.map((page, i) => {
+    const first = page.words.map((w) => words[w].text).join(' ');
+    const second = (lines[i] || '').trim();
+    return `${i + 1}\n${formatTime(page.start, true)} --> ${formatTime(Math.max(page.end, page.start + 0.2), true)}\n${second && second !== first ? `${first}\n${second}` : first}\n`;
+  }).join('\n');
+}
+
 function parseClock(value: string) {
   const match = value.trim().match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})(?:[.,](\d{1,3}))?$/);
   if (!match) return NaN;

@@ -1,7 +1,9 @@
 package main
 
-// Cheap trailer reviewer: Gemini Flash on stills capped at 800px on the long side.
-// Notes can repair identity; they do not rewrite the user's story.
+// Cheap trailer reviewer: stills capped at 800px on the long side and re-encoded
+// as webp (jpeg when ffmpeg has no libwebp), judged by DeepSeek vision at max
+// reasoning effort with Gemini Flash as the fallback. Notes can repair identity;
+// they do not rewrite the user's story.
 
 import (
 	"bytes"
@@ -30,7 +32,13 @@ func trailerResizeStill(ctx context.Context, src, dest string) error {
 		return err
 	}
 	filter := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", trailerReviewMaxSide, trailerReviewMaxSide)
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-v", "error", "-i", src, "-vf", filter, "-q:v", "5", dest)
+	args := []string{"-y", "-v", "error", "-i", src, "-vf", filter}
+	if strings.EqualFold(filepath.Ext(dest), ".webp") {
+		args = append(args, "-c:v", "libwebp", "-quality", "80")
+	} else {
+		args = append(args, "-q:v", "5")
+	}
+	cmd := exec.CommandContext(ctx, "ffmpeg", append(args, dest)...)
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("resize review still: %w: %s", err, tailOutput(combined))
 	}
@@ -42,29 +50,101 @@ func trailerStillDataURL(ctx context.Context, workDir, name, sourceURL string) (
 	if err := downloadToFile(ctx, sourceURL, raw); err != nil {
 		return "", err
 	}
-	jpg := filepath.Join(workDir, name+"-800.jpg")
-	if err := trailerResizeStill(ctx, raw, jpg); err != nil {
-		return "", err
+	dest, mime := filepath.Join(workDir, name+"-800.webp"), "image/webp"
+	if err := trailerResizeStill(ctx, raw, dest); err != nil {
+		dest, mime = filepath.Join(workDir, name+"-800.jpg"), "image/jpeg"
+		if err := trailerResizeStill(ctx, raw, dest); err != nil {
+			return "", err
+		}
 	}
-	blob, err := os.ReadFile(jpg)
+	blob, err := os.ReadFile(dest)
 	if err != nil || len(blob) == 0 {
 		return "", fmt.Errorf("review still empty")
 	}
-	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(blob), nil
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(blob), nil
+}
+
+// trailerSplitDataURL returns the mime type and base64 payload of a data URL.
+func trailerSplitDataURL(image string) (mime, raw string, ok bool) {
+	head, raw, found := strings.Cut(image, ";base64,")
+	if !found || !strings.HasPrefix(head, "data:image/") {
+		return "", "", false
+	}
+	return strings.TrimPrefix(head, "data:"), raw, true
+}
+
+// callTrailerDeepSeekJSON asks DeepSeek vision for a JSON verdict. Disabled
+// when DEEPSEEK_API_KEY is unset or TRAILER_REVIEW_PROVIDER=gemini.
+func callTrailerDeepSeekJSON(ctx context.Context, prompt string, images []string) ([]byte, error) {
+	key := strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
+	if key == "" || strings.EqualFold(getEnv("TRAILER_REVIEW_PROVIDER", ""), "gemini") {
+		return nil, fmt.Errorf("deepseek reviewer disabled")
+	}
+	content := []map[string]interface{}{{"type": "text", "text": prompt}}
+	for _, image := range images {
+		if _, _, ok := trailerSplitDataURL(image); ok {
+			content = append(content, map[string]interface{}{"type": "image_url", "image_url": map[string]string{"url": image}})
+		}
+	}
+	payload := map[string]interface{}{
+		"model":            getEnv("TRAILER_REVIEW_DEEPSEEK_MODEL", "deepseek-flash"),
+		"temperature":      0.2,
+		"max_tokens":       4000,
+		"reasoning_effort": getEnv("TRAILER_REVIEW_DEEPSEEK_EFFORT", "max"),
+		"response_format":  map[string]string{"type": "json_object"},
+		"messages":         []map[string]interface{}{{"role": "user", "content": content}},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	base := strings.TrimRight(getEnv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := dramatizePlannerClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	blob, err := readLimited(resp.Body, 1<<20)
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("deepseek review returned %d: %s", resp.StatusCode, tailOutput(blob))
+	}
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(blob, &parsed) != nil || len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
+		return nil, fmt.Errorf("deepseek review returned no text")
+	}
+	return []byte(extractJSONObject(parsed.Choices[0].Message.Content)), nil
 }
 
 func callTrailerFlashJSON(ctx context.Context, prompt string, images []string) ([]byte, error) {
+	if out, err := callTrailerDeepSeekJSON(ctx, prompt, images); err == nil {
+		return out, nil
+	}
 	key := dramatizeGeminiKey()
 	if key == "" {
 		return nil, fmt.Errorf("GEMINI_API_KEY is not set")
 	}
 	parts := []map[string]interface{}{{"text": prompt}}
 	for _, image := range images {
-		raw := strings.TrimPrefix(image, "data:image/jpeg;base64,")
-		if raw == image {
+		mime, raw, ok := trailerSplitDataURL(image)
+		if !ok {
 			continue
 		}
-		parts = append(parts, map[string]interface{}{"inline_data": map[string]string{"mime_type": "image/jpeg", "data": raw}})
+		parts = append(parts, map[string]interface{}{"inline_data": map[string]string{"mime_type": mime, "data": raw}})
 	}
 	payload := map[string]interface{}{
 		"contents":         []map[string]interface{}{{"role": "user", "parts": parts}},

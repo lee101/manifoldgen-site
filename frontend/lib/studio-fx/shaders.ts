@@ -105,6 +105,39 @@ vec4 effect(vec2 uv) {
   if (axis != 0.0) offset.y = sin(uv.x * u_p[1] * TAU + t * 1.13) * u_p[0];
   return src(mirrorUV(uv + offset));
 }`,
+  surprise: `
+vec4 effect(vec2 uv) {
+  float k = u_p[0] * exp(-4.0 * fract(u_time * u_p[3]));
+  vec2 c = vec2(u_p[1], u_p[2]);
+  vec2 q = c + (uv - c) / (1.0 + 0.07 * k);
+  float sp = 0.006 * k;
+  vec3 col = vec3(src(q + vec2(sp, 0.0)).r, src(q).g, src(q - vec2(sp, 0.0)).b);
+  float l = luma(col);
+  col = mix(vec3(l), col, 1.0 - 0.35 * min(k, 1.0));
+  col = (col - 0.5) * (1.0 + 0.32 * min(k, 1.5)) + 0.5;
+  vec2 d = (uv - c) * vec2(aspect(), 1.0);
+  float a = atan(d.y, d.x);
+  float n = hash(vec2(floor((a / TAU + 0.5) * 70.0), floor(u_time * 12.0)));
+  float line = step(0.6, n) * smoothstep(0.2, 0.45, length(d)) * min(k, 1.0) * 0.75;
+  return vec4(mix(col, vec3(1.0), line), 1.0);
+}`,
+  speedLines: `
+vec4 effect(vec2 uv) {
+  vec2 d = (uv - vec2(u_p[3], u_p[4])) * vec2(aspect(), 1.0);
+  float a = atan(d.y, d.x);
+  float tick = floor(u_time * 12.0);
+  float n = hash(vec2(floor((a / TAU + 0.5) * u_p[0]), tick));
+  float w = 0.5 + 0.5 * hash(vec2(floor((a / TAU + 0.5) * u_p[0] * 0.5), tick + 7.0));
+  float line = step(0.55, n) * smoothstep(u_p[1], u_p[1] + 0.25, length(d)) * w;
+  return vec4(mix(src(uv).rgb, vec3(1.0), line * u_p[2]), 1.0);
+}`,
+  lineBoil: `
+vec4 effect(vec2 uv) {
+  float tick = floor(u_time * u_p[2]);
+  vec2 p = uv * vec2(aspect(), 1.0) * u_p[1];
+  vec2 d = vec2(noise(p + tick * 3.1), noise(p + vec2(19.7, tick * 1.7))) - 0.5;
+  return src(mirrorUV(uv + d * u_p[0] * 2.0));
+}`,
   noiseWarp: `
 vec4 effect(vec2 uv) {
   float t = u_time * u_p[2];

@@ -1,4 +1,4 @@
-export type VideoGeneratorMode = 'text' | 'image' | 'reference';
+export type VideoGeneratorMode = 'text' | 'image' | 'reference' | 'edit';
 
 export type VideoGeneratorExample = {
   prompt: string;
@@ -202,6 +202,34 @@ export const VIDEO_GENERATORS: VideoGenerator[] = [
     guide: { slug: 'how-to-use-kling-26-image', title: 'How to Use Kling 2.6' },
   },
   {
+    slug: 'kling-4', model: 'kling-4.0-text-to-video', name: 'Kling 4.0', shortName: 'Kling 4', family: 'Kling', mode: 'text',
+    description: 'Kling 4.0 text-to-video: cinematic clips from 3 to 30 seconds at 720p or 1080p with per-shot prompting.',
+    strengths: ['Up to 30s clips', '1080p output', 'Per-shot prompts'], durations: [5, 10, 15, 20, 30],
+    aspectRatios: ['16:9', '9:16', '1:1', '21:9'], resolutions: ['720p', '1080p'], audio: false, price: 'from 87 Manifold credits', accent: '#ff3417',
+    guide: { slug: 'how-to-use-kling-4', title: 'How to Use Kling 4.0' },
+  },
+  {
+    slug: 'kling-4-image', model: 'kling-4.0-image-to-video', name: 'Kling 4.0 Image to Video', shortName: 'Kling 4 Image', family: 'Kling', mode: 'image',
+    description: 'Animate a starting image into a 3 to 30 second Kling 4.0 clip at 720p or 1080p.',
+    strengths: ['Image fidelity', 'Up to 30s clips', '1080p output'], durations: [5, 10, 15, 20, 30],
+    aspectRatios: ['16:9', '9:16', '1:1', '21:9'], resolutions: ['720p', '1080p'], audio: false, price: 'from 87 Manifold credits', accent: '#ff5722',
+    guide: { slug: 'how-to-use-kling-4', title: 'How to Use Kling 4.0' },
+  },
+  {
+    slug: 'kling-4-reference', model: 'kling-4.0-reference-to-video', name: 'Kling 4.0 Reference to Video', shortName: 'Kling 4 Reference', family: 'Kling', mode: 'reference',
+    description: 'Guide Kling 4.0 with reference images and videos so characters, objects, and motion carry into the shot.',
+    strengths: ['Character lock', 'Image and video refs', 'Up to 30s clips'], durations: [5, 10, 15, 20, 30],
+    aspectRatios: ['auto', '16:9', '9:16', '1:1', '21:9'], resolutions: ['720p', '1080p'], audio: false, price: 'from 87 Manifold credits', accent: '#ff8a50',
+    guide: { slug: 'how-to-use-kling-4', title: 'How to Use Kling 4.0' },
+  },
+  {
+    slug: 'kling-4-edit', model: 'kling-4.0-video-edit', name: 'Kling 4.0 Video Edit', shortName: 'Kling 4 Edit', family: 'Kling', mode: 'edit',
+    description: 'Edit an existing 3 to 30 second video with text instructions and optional image references.',
+    strengths: ['Text-driven edits', 'Image references', 'Keeps source motion'], durations: [5, 10, 15, 20, 30],
+    aspectRatios: ['16:9'], resolutions: ['720p', '1080p'], audio: false, price: 'from 104 Manifold credits', accent: '#ffa726',
+    guide: { slug: 'how-to-use-kling-4', title: 'How to Use Kling 4.0' },
+  },
+  {
     slug: 'veo-3-1-fast', model: 'fal-ai/veo3.1/fast/image-to-video', name: 'Veo 3.1 Fast', shortName: 'Veo Fast', family: 'Veo', mode: 'image',
     description: 'Google Veo 3.1 Fast animates a still with realistic motion and native audio at a low rate.',
     strengths: ['Realistic motion', 'Native audio', 'Low cost'], durations: [4, 6, 8],
@@ -252,6 +280,7 @@ export function videoGenerator(slug: string) {
 export function generatorRequest(generator: VideoGenerator, values: {
   prompt: string;
   imageURL?: string;
+  videoURL?: string;
   duration: number;
   aspectRatio: string;
   resolution: string;
@@ -274,6 +303,7 @@ export function generatorRequest(generator: VideoGenerator, values: {
     include_audio: values.includeAudio,
     ...(generator.mode === 'reference' && values.imageURL ? { reference_image_urls: [values.imageURL] } : {}),
     ...(generator.mode === 'image' && values.imageURL ? { image_url: values.imageURL } : {}),
+    ...(generator.mode === 'edit' && values.videoURL ? { video_url: values.videoURL } : {}),
     ...(values.seed !== undefined ? { seed: values.seed } : {}),
   };
 }

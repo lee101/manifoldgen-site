@@ -351,7 +351,7 @@ func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics
 	if cutePrice := getCUTEPriceUSD(); cutePrice > 0 {
 		credits = price / cutePrice
 	}
-	jsonResponse(ctx, http.StatusAccepted, map[string]interface{}{
+	resp := map[string]interface{}{
 		"service": service, "kind": "music", "model": musicPublicModelName, "service_tier": tier,
 		"seed": music3RequestFromJob(job).Seed,
 		"result": map[string]interface{}{
@@ -359,7 +359,13 @@ func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics
 		},
 		"estimated_cost_usd": price, "estimated_credits": credits,
 		"settlement": "charged after successful generation",
-	})
+	}
+	if musicBackendIsYue() {
+		if warning := music3LyricsFitWarning(music3StructureLyrics(lyrics), duration); warning != "" {
+			resp["lyrics_warning"] = warning
+		}
+	}
+	jsonResponse(ctx, http.StatusAccepted, resp)
 }
 
 func music3RequestFromJob(job *VideoJob) music3StoredRequest {

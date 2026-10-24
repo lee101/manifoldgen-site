@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -127,4 +128,32 @@ func music3StructureLyrics(lyrics string) string {
 	}
 	out = append(out, "[Outro]", "(instrumental)")
 	return strings.Join(out, "\n")
+}
+
+const music3SecondsPerLyricLine = 7.5
+
+func music3SungLineCount(lyrics string) int {
+	n := 0
+	for _, line := range strings.Split(lyrics, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if _, rest, ok := music3TagPrefix(trimmed); ok && rest == "" {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// music3LyricsFitWarning flags lyrics that will not fit the requested length;
+// the model stops singing when the duration runs out, dropping the last sections.
+func music3LyricsFitWarning(lyrics string, duration int) string {
+	lines := music3SungLineCount(lyrics)
+	need := int(float64(lines)*music3SecondsPerLyricLine + 10)
+	if lines == 0 || duration <= 0 || need <= duration {
+		return ""
+	}
+	return fmt.Sprintf("%d lyric lines need about %ds; at %ds the final sections will likely be cut. Raise duration to %ds or shorten the lyrics.", lines, need, duration, need)
 }

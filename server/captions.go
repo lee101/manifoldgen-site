@@ -337,3 +337,158 @@ func handleCaptionsTranscribe(ctx *fasthttp.RequestCtx) {
 		"credits_used": captionsCreditsPerChunk, "credits_remain": balance,
 	})
 }
+
+const (
+	captionsTranslateMaxLines = 400
+	captionsTranslateMaxRunes = 12000
+)
+
+type captionsTranslateRequest struct {
+	Language string   `json:"language"`
+	Lines    []string `json:"lines"`
+}
+
+// captionsTranslatePrompt asks for one translation per line, same order, so the
+// second track can be laid out against the existing caption pages.
+func captionsTranslatePrompt(language string) string {
+	return `Translate subtitle lines into ` + language + ` for burned-in video captions.
+Return JSON {"lines":["..."]} with exactly one string per input line, in the same order.
+Rules: never merge, split, drop or reorder lines; keep proper nouns, brand names and interjections; keep the translation natural and short enough for one or two subtitle lines; no notes, no explanations, no line numbers, no quotation marks around the text.`
+}
+
+func callCaptionsTranslate(ctx context.Context, language string, lines []string) ([]string, string, error) {
+	key := dramatizeGeminiKey()
+	if key == "" {
+		return nil, "", fmt.Errorf("GEMINI_API_KEY is not set")
+	}
+	base := strings.TrimRight(getEnv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"), "/")
+	payloadLines, err := json.Marshal(map[string]interface{}{"lines": lines})
+	if err != nil {
+		return nil, "", err
+	}
+	var last error
+	for _, model := range captionsModels() {
+		model = strings.TrimSpace(model)
+		payload := map[string]interface{}{
+			"contents": []map[string]interface{}{{"role": "user", "parts": []map[string]interface{}{
+				{"text": captionsTranslatePrompt(language) + "\n\nInput lines:\n" + string(payloadLines)},
+			}}},
+			"generationConfig": map[string]interface{}{
+				"temperature":      0.1,
+				"responseMimeType": "application/json",
+				"thinkingConfig":   captionsThinking(model),
+			},
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return nil, "", err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/v1beta/models/%s:generateContent", base, model), bytes.NewReader(body))
+		if err != nil {
+			return nil, "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-goog-api-key", key)
+		resp, err := dramatizePlannerClient.Do(req)
+		if err != nil {
+			last = err
+			continue
+		}
+		blob, err := readLimited(resp.Body, 4<<20)
+		resp.Body.Close()
+		if err != nil {
+			last = err
+			continue
+		}
+		if resp.StatusCode >= 300 {
+			last = fmt.Errorf("gemini %s returned %d: %s", model, resp.StatusCode, tailOutput(blob))
+			continue
+		}
+		var parsed struct {
+			Candidates []struct {
+				Content struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"content"`
+			} `json:"candidates"`
+		}
+		if json.Unmarshal(blob, &parsed) != nil {
+			last = fmt.Errorf("parse gemini response")
+			continue
+		}
+		var text strings.Builder
+		for _, candidate := range parsed.Candidates {
+			for _, part := range candidate.Content.Parts {
+				text.WriteString(part.Text)
+			}
+		}
+		var reply struct {
+			Lines []string `json:"lines"`
+		}
+		if json.Unmarshal([]byte(extractJSONObject(text.String())), &reply) != nil || len(reply.Lines) != len(lines) {
+			last = fmt.Errorf("gemini %s returned %d lines for %d inputs", model, len(reply.Lines), len(lines))
+			continue
+		}
+		out := make([]string, len(lines))
+		for i := range lines {
+			out[i] = strings.TrimSpace(reply.Lines[i])
+		}
+		return out, model, nil
+	}
+	if last == nil {
+		last = fmt.Errorf("translation unavailable")
+	}
+	return nil, "", last
+}
+
+func handleCaptionsTranslate(ctx *fasthttp.RequestCtx) {
+	if _, err := studioUser(ctx); err != nil {
+		authRequiredError(ctx, err.Error())
+		return
+	}
+	var request captionsTranslateRequest
+	if err := json.Unmarshal(ctx.PostBody(), &request); err != nil {
+		jsonError(ctx, http.StatusBadRequest, "expected {\"language\":\"French\",\"lines\":[...]}")
+		return
+	}
+	language := strings.TrimSpace(request.Language)
+	if language == "" || len([]rune(language)) > 40 {
+		jsonError(ctx, http.StatusBadRequest, "language is required")
+		return
+	}
+	if len(request.Lines) == 0 || len(request.Lines) > captionsTranslateMaxLines {
+		jsonError(ctx, http.StatusBadRequest, fmt.Sprintf("send between 1 and %d lines", captionsTranslateMaxLines))
+		return
+	}
+	total := 0
+	lines := make([]string, len(request.Lines))
+	for i, line := range request.Lines {
+		line = strings.TrimSpace(line)
+		if runes := []rune(line); len(runes) > 240 {
+			line = string(runes[:240])
+		}
+		total += len([]rune(line))
+		lines[i] = line
+	}
+	if total > captionsTranslateMaxRunes {
+		jsonError(ctx, http.StatusBadRequest, "that many subtitle lines is too much to translate at once")
+		return
+	}
+	select {
+	case captionsSlots <- struct{}{}:
+		defer func() { <-captionsSlots }()
+	default:
+		jsonError(ctx, http.StatusTooManyRequests, "caption translation is busy; try again in a moment")
+		return
+	}
+	work, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	translated, model, err := callCaptionsTranslate(work, language, lines)
+	if err != nil {
+		log.Printf("captions translate failed: %v", err)
+		jsonError(ctx, http.StatusBadGateway, "translation is temporarily unavailable")
+		return
+	}
+	jsonResponse(ctx, http.StatusOK, map[string]interface{}{"lines": translated, "language": language, "model": model})
+}

@@ -401,6 +401,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStudioRetime(ctx)
 	case path == "/api/captions/transcribe" && method == "POST":
 		handleCaptionsTranscribe(ctx)
+	case path == "/api/captions/translate" && method == "POST":
+		handleCaptionsTranslate(ctx)
 	case path == "/api/studio/audio-search" && method == "GET":
 		handleStudioAudioSearch(ctx)
 	case path == "/api/voice/models" && method == "GET":

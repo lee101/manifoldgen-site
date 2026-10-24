@@ -89,6 +89,10 @@ var allowedVideoModels = map[string]bool{
 	"fal-ai/kling-video/v3/standard/image-to-video": true,
 	"fal-ai/kling-video/v2.6/pro/text-to-video":     true,
 	"fal-ai/kling-video/v2.6/pro/image-to-video":    true,
+	"kling-4.0-text-to-video":                       true,
+	"kling-4.0-image-to-video":                      true,
+	"kling-4.0-reference-to-video":                  true,
+	"kling-4.0-video-edit":                          true,
 	"fal-ai/veo3.1":                                 true,
 	"fal-ai/veo3.1/image-to-video":                  true,
 	"fal-ai/veo3.1/fast":                            true,
@@ -106,6 +110,7 @@ var imageRequiredVideoModels = map[string]bool{
 	"fal-ai/kling-video/v3/pro/image-to-video":      true,
 	"fal-ai/kling-video/v3/standard/image-to-video": true,
 	"fal-ai/kling-video/v2.6/pro/image-to-video":    true,
+	"kling-4.0-image-to-video":                      true,
 	"fal-ai/veo3.1/image-to-video":                  true,
 	"fal-ai/veo3.1/fast/image-to-video":             true,
 	"minimax/h3-max/image-to-video":                 true,
@@ -115,6 +120,7 @@ var referenceRequiredVideoModels = map[string]bool{
 	"seedance-2.0-fast-reference-to-video": true,
 	"seedance-2.0-reference-to-video":      true,
 	"seedance-2.5-reference-to-video":      true,
+	"kling-4.0-reference-to-video":         true,
 }
 
 type openPathsVideoResponse struct {
@@ -156,11 +162,19 @@ func proxyOpenPathsVideo(req ServiceUsageRequest) ([]byte, error) {
 	if referenceRequiredVideoModels[model] && len(req.ReferenceImageURLs) == 0 && len(req.ReferenceVideoURLs) == 0 {
 		return nil, fmt.Errorf("%s requires reference_image_urls or reference_video_urls", model)
 	}
+	if isKling4Model(model) {
+		if err := validateKling4Request(model, req); err != nil {
+			return nil, err
+		}
+	}
 	// Keep the studio usable on existing ManifoldGen installs while the OpenPaths
 	// service key is being provisioned. The configured FAL LTX backend supports
 	// both text-to-video and image-to-video; OpenPaths becomes the preferred path
 	// (and unlocks every model above) as soon as OPENPATHS_API_KEY is present.
 	if openPathsAPIKey == "" {
+		if isKling4Model(model) {
+			return nil, fmt.Errorf("%s requires OPENPATHS_API_KEY", model)
+		}
 		return proxyFallbackFalVideo(req)
 	}
 
@@ -171,6 +185,8 @@ func proxyOpenPathsVideo(req ServiceUsageRequest) ([]byte, error) {
 		} else if duration > 15 {
 			duration = 15
 		}
+	} else if isKling4Model(model) {
+		duration = kling4Duration(duration)
 	} else if duration <= 0 || duration > 10 {
 		duration = 5
 	}
@@ -207,7 +223,9 @@ func proxyOpenPathsVideo(req ServiceUsageRequest) ([]byte, error) {
 	if len(req.ReferenceAudioURLs) > 0 {
 		payload["audio_urls"] = req.ReferenceAudioURLs
 	}
-	if req.Resolution != "" {
+	if isKling4Model(model) {
+		payload["resolution"] = kling4Resolution(req.Resolution)
+	} else if req.Resolution != "" {
 		payload["resolution"] = strings.ToLower(strings.TrimSpace(req.Resolution))
 	}
 	if req.NegativePrompt != "" {
@@ -889,6 +907,10 @@ func processVideoJob(jobID string) {
 	}
 	if job.Service == orbitVideoService {
 		processOrbitVideoJob(job)
+		return
+	}
+	if job.Service == flux3MaxVideoService {
+		processFlux3MaxVideoJob(job)
 		return
 	}
 	if job.Service == "character_animation" {
@@ -2295,6 +2317,8 @@ func cancelVideoProvider(job *VideoJob) error {
 		endpoint := strings.TrimRight(falQueueBaseURL, "/") + "/minimax/h3-max/requests/" + url.PathEscape(requestID) + "/cancel"
 		_, _, err := callFalQueue(http.MethodPut, endpoint, nil)
 		return err
+	case strings.HasPrefix(providerID, flux3MaxProviderTag):
+		return cancelFlux3MaxProvider(providerID)
 	case strings.HasPrefix(providerID, "private:"):
 		_, _, err := callAppNZH3(http.MethodPost, "/api/cogs/predictions/"+url.PathEscape(strings.TrimPrefix(providerID, "private:"))+"/cancel", nil)
 		return err

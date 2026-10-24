@@ -33,8 +33,8 @@ export async function exportCaptionedMP4(options: ExportOptions): Promise<Blob> 
   const size = exportSize(options.width, options.height, options.maxSide);
   const codec = (await canEncodeVideo('avc', size)) ? 'avc' : null;
   if (!codec) throw new Error('This browser cannot encode MP4 (H.264). Try Chrome, Edge or Safari.');
-  const { style } = options.doc;
-  await ensureFonts([style.font, style.fontAlt]);
+  const { style, secondary } = options.doc;
+  await ensureFonts(secondary?.enabled ? [style.font, style.fontAlt, secondary.style.font] : [style.font, style.fontAlt]);
 
   const engine = new CaptionEngine(style);
   engine.update(options.doc, options.duration);

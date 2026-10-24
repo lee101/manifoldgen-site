@@ -1,4 +1,4 @@
-import type { AnimIn, CaptionDoc, CaptionPage, CaptionStyle, CaptionWord } from './types';
+import type { AnimIn, CaptionDoc, CaptionPage, CaptionStyle, CaptionWord, SecondaryCaption } from './types';
 import { fontShorthand } from './registry';
 import { buildPages, pageAt, resolveEmphasis } from './words';
 
@@ -73,6 +73,7 @@ export class CaptionEngine {
   style: CaptionStyle;
   pages: CaptionPage[] = [];
   levels: number[] = [];
+  secondary: SecondaryCaption | null = null;
   private duration = 0;
   private offset = 0;
   private layouts = new Map<number, Layout>();
@@ -99,6 +100,7 @@ export class CaptionEngine {
     this.offset = doc.offset;
     this.pages = buildPages(doc.words, doc.grouping, doc.offset, duration);
     this.levels = resolveEmphasis(doc.words, doc.style);
+    this.secondary = doc.secondary ?? null;
     this.styleKey = JSON.stringify(doc.style) + JSON.stringify(doc.grouping);
     this.layouts.clear();
   }
@@ -299,7 +301,83 @@ export class CaptionEngine {
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, w, h);
     }
-    if (page) this.drawPage(ctx, page, w, h, t, stepT);
+    if (page) {
+      this.drawPage(ctx, page, w, h, t, stepT);
+      this.drawSecondary(ctx, page, w, h, t);
+    }
+    ctx.restore();
+  }
+
+  /** Second-language track: one translated line per primary caption page, above or below it. */
+  private drawSecondary(ctx: Ctx, page: CaptionPage, w: number, h: number, t: number) {
+    const sec = this.secondary;
+    if (!sec?.enabled) return;
+    const text = (sec.lines[page.index] || '').replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    const st = sec.style;
+    const px = Math.max(10, (st.size / 100) * h);
+    const font = fontShorthand(st.font, st.weight, st.italic, px);
+    const maxWidth = Math.max(px * 4, st.maxWidth * w);
+    const measure = this.measure.ctx;
+    measure.font = font;
+    if ('letterSpacing' in measure) (measure as Ctx & { letterSpacing: string }).letterSpacing = '0px';
+    const rows: string[] = [];
+    let row = '';
+    for (const word of text.split(' ')) {
+      const next = row ? `${row} ${word}` : word;
+      if (row && measure.measureText(next).width > maxWidth) {
+        rows.push(row);
+        row = word;
+      } else row = next;
+    }
+    if (row) rows.push(row);
+    const lineHeight = px * 1.18;
+    const blockHeight = rows.length * lineHeight;
+    const primary = this.layoutFor(page, w, h);
+    const gap = st.gap * px;
+    let top = primary.cy + primary.height / 2 + gap;
+    if (sec.position === 'above') top = primary.cy - primary.height / 2 - gap - blockHeight;
+    top = Math.max(4, Math.min(h - blockHeight - 4, top));
+    const cx = primary.cx;
+    const alpha = clamp((t - page.show) / 0.12) * clamp((page.hide - t) / 0.12);
+    if (alpha <= 0.003) return;
+    if (st.box > 0) {
+      const widest = rows.reduce((max, value) => Math.max(max, measure.measureText(value).width), 0);
+      const pad = st.boxPad * px;
+      ctx.save();
+      ctx.globalAlpha = clamp(st.box * alpha);
+      ctx.fillStyle = st.boxColor;
+      roundRect(ctx, cx - widest / 2 - pad, top - pad * 0.35, widest + pad * 2, blockHeight + pad * 0.7, st.boxRadius * px);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.save();
+    if ('letterSpacing' in ctx) (ctx as Ctx & { letterSpacing: string }).letterSpacing = '0px';
+    ctx.font = font;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.miterLimit = 2;
+    ctx.globalAlpha = alpha;
+    for (let i = 0; i < rows.length; i += 1) {
+      const y = top + lineHeight * (i + 0.5);
+      if (st.shadowBlur > 0 || st.shadowY) {
+        ctx.save();
+        ctx.shadowColor = st.shadow;
+        ctx.shadowBlur = (st.shadowBlur / 100) * px;
+        ctx.shadowOffsetY = (st.shadowY / 100) * px;
+        ctx.fillStyle = st.shadow;
+        ctx.fillText(rows[i], cx, y);
+        ctx.restore();
+      }
+      if (st.strokeWidth > 0) {
+        ctx.strokeStyle = st.stroke;
+        ctx.lineWidth = st.strokeWidth * px * 0.14;
+        ctx.strokeText(rows[i], cx, y);
+      }
+      ctx.fillStyle = st.fill;
+      ctx.fillText(rows[i], cx, y);
+    }
     ctx.restore();
   }
 

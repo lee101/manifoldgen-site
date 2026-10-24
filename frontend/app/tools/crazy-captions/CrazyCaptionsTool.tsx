@@ -14,11 +14,12 @@ import { ENV_HOP, autoTime, planChunks, snapWordsChunked } from '@/lib/captions/
 import { exportCaptionedMP4, exportSize, type ExportQuality } from '@/lib/captions/export';
 import { FONTS, ensureFonts } from '@/lib/captions/registry';
 import { CaptionEngine } from '@/lib/captions/render';
-import { BASE_STYLE, DEFAULT_PRESET, FX_ON, PRESETS, applyChaos, applyFx, presetStyle, type FxFlags } from '@/lib/captions/styles';
+import { BASE_STYLE, DEFAULT_PRESET, FX_ON, PRESETS, applyChaos, applyFx, defaultSecondary, presetStyle, type FxFlags } from '@/lib/captions/styles';
 import { transcribeAudio } from '@/lib/captions/transcribe';
-import type { CaptionDoc, CaptionStyle, CaptionWord, Emphasis, Grouping } from '@/lib/captions/types';
+import { translateCaptionLines } from '@/lib/captions/translate';
+import type { CaptionDoc, CaptionStyle, CaptionWord, Emphasis, Grouping, SecondaryCaption } from '@/lib/captions/types';
 import {
-  DEFAULT_GROUPING, applyEnergy, buildPages, deleteWord, insertWordAfter, makeWord, mergeWithPrevious, parseSubtitles, realignText, resolveEmphasis, sortWords, splitWordAt, toSRT, toVTT, wordsToText,
+  DEFAULT_GROUPING, applyEnergy, buildPages, deleteWord, insertWordAfter, makeWord, mergeWithPrevious, parseSubtitles, realignText, resolveEmphasis, sortWords, splitWordAt, toBilingualSRT, toSRT, toVTT, wordsToText,
 } from '@/lib/captions/words';
 import { ColorField, Segments, Toggle } from './controls';
 import { StylePanel } from './StylePanel';
@@ -94,6 +95,8 @@ export default function CrazyCaptionsTool() {
   const [audio, setAudio] = useState<DecodedAudio | null>(null);
   const [audioState, setAudioState] = useState<'idle' | 'reading' | 'ready'>('idle');
   const [words, setWordsState] = useState<CaptionWord[]>([]);
+  const [secondary, setSecondary] = useState<SecondaryCaption | null>(null);
+  const [translating, setTranslating] = useState(false);
   const [style, setStyle] = useState<CaptionStyle>(() => presetStyle(DEFAULT_PRESET));
   const [grouping, setGrouping] = useState<Grouping>(DEFAULT_GROUPING);
   const [chaos, setChaos] = useState(1);
@@ -123,7 +126,7 @@ export default function CrazyCaptionsTool() {
   const [replace, setReplace] = useState('');
 
   const effective = useMemo(() => applyFx(applyChaos(style, chaos), fx), [style, chaos, fx]);
-  const doc = useMemo<CaptionDoc>(() => ({ words, style: effective, grouping, offset }), [words, effective, grouping, offset]);
+  const doc = useMemo<CaptionDoc>(() => ({ words, style: effective, grouping, offset, secondary: secondary?.enabled ? secondary : undefined }), [words, effective, grouping, offset, secondary]);
   const levels = useMemo(() => resolveEmphasis(words, effective), [words, effective]);
   const duration = source?.duration || 0;
   const live = useRef({ showCaptions, source });
@@ -192,6 +195,17 @@ export default function CrazyCaptionsTool() {
     });
     return () => { cancelled = true; };
   }, [effective.font, effective.fontAlt, effective.weight, effective.italic, draw]);
+
+  useEffect(() => {
+    if (!secondary?.enabled) return undefined;
+    let cancelled = false;
+    void ensureFonts([secondary.style.font]).then(() => {
+      if (cancelled) return;
+      engineRef.current?.invalidate();
+      draw();
+    });
+    return () => { cancelled = true; };
+  }, [secondary?.enabled, secondary?.style.font, draw]);
 
   useEffect(() => {
     if (!playing) return undefined;
@@ -278,6 +292,7 @@ export default function CrazyCaptionsTool() {
   const resetProject = () => {
     historyRef.current = { past: [], future: [], lastKey: '', at: 0 };
     setWordsState([]);
+    setSecondary(null);
     setSelected(-1);
     setOffset(0);
     setTextMode(false);
@@ -428,6 +443,10 @@ export default function CrazyCaptionsTool() {
         if (data.fx) setFx({ ...FX_ON, ...data.fx });
         if (data.grouping) setGrouping({ ...DEFAULT_GROUPING, ...data.grouping });
         if (typeof data.offset === 'number') setOffset(data.offset);
+        if (data.secondary && typeof data.secondary === 'object') {
+          const base = defaultSecondary(data.style ? { ...BASE_STYLE, ...data.style } : effective, String(data.secondary.language || 'French'));
+          setSecondary({ ...base, ...data.secondary, style: { ...base.style, ...(data.secondary.style || {}) } });
+        }
         say(`Imported ${imported.length} words`);
       } else if (/\.(srt|vtt)$/i.test(file.name) || text.includes('-->')) {
         let imported = parseSubtitles(text);
@@ -459,6 +478,25 @@ export default function CrazyCaptionsTool() {
   const pages = useMemo(() => buildPages(words, grouping, 0, duration), [words, grouping, duration]);
   const baseName = (source?.file.name || 'video').replace(/\.[a-z0-9]+$/i, '').replace(/[^a-z0-9-_]+/gi, '-').slice(0, 60) || 'video';
 
+  const translateSecondary = async () => {
+    if (!secondary || !pages.length) return;
+    const signedIn = ensurePaidAccess('Crazy Captions');
+    if (!signedIn) return;
+    setTranslating(true);
+    setError('');
+    setNotice('');
+    try {
+      const lines = pages.map((page) => page.words.map((index) => words[index]?.text || '').join(' ').trim());
+      const translated = await translateCaptionLines(lines, { apiKey: signedIn.api_key, language: secondary.language });
+      setSecondary({ ...secondary, lines: translated, enabled: true });
+      say(`Translated ${translated.length} caption line${translated.length === 1 ? '' : 's'} into ${secondary.language}`);
+    } catch (reason) {
+      fail(reason, 'Translation failed');
+    } finally {
+      setTranslating(false);
+    }
+  };
+
   const exportVideo = async () => {
     if (!source || busy || !words.length) return;
     const controller = new AbortController();
@@ -486,7 +524,7 @@ export default function CrazyCaptionsTool() {
     }
   };
 
-  const downloadProject = () => saveBlob(new Blob([JSON.stringify({ version: 1, words, style, grouping, fx, offset, duration }, null, 1)], { type: 'application/json' }), `${baseName}-captions.json`);
+  const downloadProject = () => saveBlob(new Blob([JSON.stringify({ version: 2, words, style, grouping, fx, offset, duration, secondary }, null, 1)], { type: 'application/json' }), `${baseName}-captions.json`);
   const outputSize = source ? exportSize(source.width, source.height, resolution) : null;
   const credits = user?.credits;
 
@@ -513,7 +551,7 @@ export default function CrazyCaptionsTool() {
     </header>
     <section className={styles.hero}>
       <h1>Crazy Captions</h1>
-      <p>Word-perfect captions with Gemini, fixed by you, then restyled with loud, glitchy, hi-fi motion type that reacts to the voice. Rendered in your browser to a normal MP4.</p>
+      <p>Word-perfect captions with Gemini, fixed by you, then restyled with loud, glitchy, hi-fi motion type that reacts to the voice. Add a translated second-language track and render both in your browser to a normal MP4.</p>
     </section>
 
     <section className={styles.workspace} data-tab={tab}>
@@ -614,6 +652,28 @@ export default function CrazyCaptionsTool() {
               </label>
             </div>
 
+            <div className={styles.box} data-testid="cc-secondary">
+              <div className={styles.rowBetween}>
+                <b>Second language</b>
+                <Toggle label="Show" checked={!!secondary?.enabled} onChange={(value) => setSecondary((current) => (value ? { ...(current ?? defaultSecondary(effective)), enabled: true } : current ? { ...current, enabled: false } : null))} />
+              </div>
+              {secondary && <>
+                <div className={styles.fieldRow}>
+                  <label>Language<input value={secondary.language} maxLength={40} onChange={(event) => setSecondary({ ...secondary, language: event.target.value })} placeholder="French" /></label>
+                  <button type="button" className={styles.primary} disabled={translating || !pages.length} onClick={() => void translateSecondary()}>
+                    {translating ? <><Loader2 size={13} className={styles.spin} /> Translating…</> : <><Wand2 size={13} /> Translate</>}
+                  </button>
+                </div>
+                <Segments label="Placement" value={secondary.position} options={[{ value: 'above', label: 'Above original' }, { value: 'below', label: 'Below original' }]} onChange={(value) => setSecondary({ ...secondary, position: value as SecondaryCaption['position'] })} />
+                <label className={styles.row}>
+                  <span><b>Second line size</b><output>{secondary.style.size.toFixed(1)}% of height</output></span>
+                  <input type="range" min="2" max="22" step="0.1" value={secondary.style.size} onChange={(event) => setSecondary({ ...secondary, style: { ...secondary.style, size: Number(event.target.value) } })} />
+                </label>
+                <textarea className={styles.hint} rows={Math.min(8, Math.max(3, pages.length))} value={secondary.lines.join('\n')} onChange={(event) => setSecondary({ ...secondary, lines: event.target.value.split('\n') })} placeholder="Translate above, or type one line per caption page" />
+                <p className={styles.fine}>{secondary.lines.filter((line) => line.trim()).length}/{pages.length} lines · one translation per caption page{secondary.lines.length !== pages.length ? ' · re-translate after changing grouping' : ''}. Both tracks are burned into the MP4.</p>
+              </>}
+            </div>
+
             {word && <div className={styles.box} data-testid="cc-inspector">
               <div className={styles.rowBetween}><b>“{word.text}”</b><small>{word.start.toFixed(2)}–{word.end.toFixed(2)} s</small></div>
               <div className={styles.fieldRow}>
@@ -667,6 +727,7 @@ export default function CrazyCaptionsTool() {
             <b>Caption files</b>
             <div className={styles.actions}>
               <button type="button" disabled={!words.length} onClick={() => saveBlob(new Blob([toSRT(pages, words)], { type: 'text/plain' }), `${baseName}.srt`)}><Download size={13} /> SRT</button>
+              {secondary?.enabled && secondary.lines.some((line) => line.trim()) && <button type="button" onClick={() => saveBlob(new Blob([toBilingualSRT(pages, words, secondary.lines)], { type: 'text/plain' }), `${baseName}.bilingual.srt`)}><Download size={13} /> SRT · 2 languages</button>}
               <button type="button" disabled={!words.length} onClick={() => saveBlob(new Blob([toVTT(pages, words)], { type: 'text/vtt' }), `${baseName}.vtt`)}><Download size={13} /> VTT</button>
               <button type="button" disabled={!words.length} onClick={downloadProject}><Download size={13} /> Project JSON</button>
             </div>

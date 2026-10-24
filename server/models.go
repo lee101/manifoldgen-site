@@ -153,6 +153,12 @@ type CryptoCheckoutResponse struct {
 	BuyTokenURL    string  `json:"buy_token_url"`
 }
 
+// Flux3MaxKeyframe pins an image to a frame position (24 fps) of a FLUX 3 Max video.
+type Flux3MaxKeyframe struct {
+	ImageURL   string `json:"image_url"`
+	FrameIndex int    `json:"frame_index"`
+}
+
 // ServiceUsageRequest is the API request for using an AI service
 type ServiceUsageRequest struct {
 	WalletAddress string `json:"wallet_address"`
@@ -180,6 +186,8 @@ type ServiceUsageRequest struct {
 	NegativePrompt      string             `json:"negative_prompt,omitempty"`
 	Resolution          string             `json:"resolution,omitempty"`
 	PromptExpansionMode string             `json:"prompt_expansion_mode,omitempty"`
+	ReasoningLevel      string             `json:"reasoning_level,omitempty"`
+	TimedKeyframes      []Flux3MaxKeyframe `json:"timed_keyframes,omitempty"`
 	Strength            float64            `json:"strength,omitempty"`
 	ControlImages       map[string]string  `json:"control_images,omitempty"`
 	ControlStrengths    map[string]float64 `json:"control_strengths,omitempty"`

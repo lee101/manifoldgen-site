@@ -77,7 +77,7 @@ export function GeneratorCards({ destination = 'tools' }: { destination?: 'tools
               <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.07]" style={{ color: generator.accent }}><Icon size={20} /></span>
               <ArrowRight size={17} className="text-white/40 transition group-hover:translate-x-1 group-hover:text-white/80" />
             </div>
-            <div className="mt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">{generator.family} · {generator.mode === 'text' ? 'Text to video' : generator.mode === 'image' ? 'Image to video' : 'Reference to video'}</div>
+            <div className="mt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">{generator.family} · {generator.mode === 'text' ? 'Text to video' : generator.mode === 'image' ? 'Image to video' : generator.mode === 'edit' ? 'Video edit' : 'Reference to video'}</div>
             <h2 className="mt-2 font-display text-xl font-700">{generator.name}</h2>
             <p className="mt-3 min-h-[72px] text-sm leading-6 text-white/65">{generator.description}</p>
             <div className="mt-5 flex items-center justify-between border-t border-white/15 pt-4 text-xs text-white/50"><span>{generator.price}</span><span>{destination === 'tools' ? 'Open generator' : 'API + tester'}</span></div>

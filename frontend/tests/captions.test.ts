@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { autoTime, chunkIsSilent, encodeWav16, envelope, planChunks, snapWordsToSpeech, speechRegions } from '../lib/captions/dsp';
 import { FX_ON, FX_READABLE, applyFx, fxIsReadable, presetStyle } from '../lib/captions/styles';
 import type { CaptionWord } from '../lib/captions/types';
-import { DEFAULT_GROUPING, applyEnergy, buildPages, deleteWord, makeWord, mergeWithPrevious, moveEdge, pageAt, parseSubtitles, realignText, resolveEmphasis, setWordText, splitWordAt, toSRT, toVTT, wordsToText } from '../lib/captions/words';
+import { DEFAULT_GROUPING, applyEnergy, buildPages, deleteWord, makeWord, mergeWithPrevious, moveEdge, pageAt, parseSubtitles, realignText, resolveEmphasis, setWordText, splitWordAt, toBilingualSRT, toSRT, toVTT, wordsToText } from '../lib/captions/words';
 
 function words(text: string, step = 0.4): CaptionWord[] {
   return text.split(' ').map((t, i) => makeWord(t, i * step, i * step + step * 0.9, 0.5));
@@ -77,6 +77,17 @@ describe('captions words', () => {
     const parsed = parseSubtitles(srt);
     expect(wordsToText(parsed)).toBe('one two three four');
     expect(parseSubtitles(toVTT(pages, list)).length).toBe(4);
+  });
+
+  test('bilingual SRT keeps one translated line per caption page', () => {
+    const list = words('bonjour mon ami', 0.5);
+    const pages = buildPages(list, { ...DEFAULT_GROUPING, mode: 'phrase', maxChars: 40 });
+    const srt = toBilingualSRT(pages, list, ['Hello my friend']);
+    expect(srt).toContain('bonjour mon ami\nHello my friend');
+    expect(srt).toContain('00:00:00,000 -->');
+    const missing = toBilingualSRT(pages, list, ['']);
+    expect(missing).toContain('\nbonjour mon ami\n');
+    expect(missing).not.toContain('\n\n');
   });
 
   test('pages follow grouping modes', () => {

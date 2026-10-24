@@ -66,3 +66,19 @@ func TestMusicDurationAcceptsFiveMinutes(t *testing.T) {
 		t.Fatal("durations past the model's limit should be rejected")
 	}
 }
+
+func TestMusic3LyricsFitWarning(t *testing.T) {
+	long := strings.Repeat("[verse]\nline one\nline two\nline three\nline four\n", 5)
+	if got := music3SungLineCount(long); got != 20 {
+		t.Fatalf("lines = %d", got)
+	}
+	if music3LyricsFitWarning(long, 120) == "" {
+		t.Fatal("expected warning at 120s")
+	}
+	if got := music3LyricsFitWarning(long, 170); got != "" {
+		t.Fatalf("unexpected warning: %s", got)
+	}
+	if music3LyricsFitWarning("", 60) != "" || music3LyricsFitWarning("[Instrumental]", 60) != "" {
+		t.Fatal("no warning for instrumental")
+	}
+}

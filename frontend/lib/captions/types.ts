@@ -114,11 +114,41 @@ export type CaptionStyle = {
   seed: number;
 };
 
+export type SecondaryStyle = {
+  font: FontKey;
+  size: number;
+  weight: number;
+  italic: boolean;
+  caseMode: CaseMode;
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  shadow: string;
+  shadowBlur: number;
+  shadowY: number;
+  box: number;
+  boxColor: string;
+  boxRadius: number;
+  boxPad: number;
+  gap: number;
+  maxWidth: number;
+};
+
+/** A translated subtitle track aligned one line per primary caption page. */
+export type SecondaryCaption = {
+  enabled: boolean;
+  language: string;
+  position: 'above' | 'below';
+  lines: string[];
+  style: SecondaryStyle;
+};
+
 export type CaptionDoc = {
   words: CaptionWord[];
   style: CaptionStyle;
   grouping: Grouping;
   offset: number;
+  secondary?: SecondaryCaption;
 };
 
 export type CaptionPage = {

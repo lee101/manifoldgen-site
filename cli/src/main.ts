@@ -415,6 +415,7 @@ async function generate(ctx: Ctx): Promise<number> {
   await uploadLocal(ctx, body);
   const response = await ctx.api.request('POST', '/api/service', body);
   const id = jobIdOf(response);
+  if (response?.lyrics_warning && !ctx.json) ctx.io.err(`warning: ${response.lyrics_warning}`);
   if (!id) return finish(ctx, service, response, undefined);
   if (ctx.flags.wait !== true && !flagString(ctx.flags, 'out')) {
     emit(

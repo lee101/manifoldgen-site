@@ -58,6 +58,7 @@ import { seedanceKlingVeoComparison } from './content/seedance-vs-kling-vs-veo';
 import { bestAiVideoModelForAnime } from './content/best-ai-video-model-for-anime';
 import { bestAiVideoModelForProductAds } from './content/best-ai-video-model-for-product-ads';
 import { aiVideoApiCostGuide } from './content/ai-video-api-cost-guide-2026';
+import { howToUseKling4 } from './content/how-to-use-kling-4';
 import { howToUseKling3 } from './content/how-to-use-kling-3';
 import { howToUseKling26 } from './content/how-to-use-kling-2-6';
 import { howToUseVeo31 } from './content/how-to-use-veo-3-1';
@@ -74,6 +75,7 @@ export const articles: BlogArticle[] = [
   bestAiVideoModelForAnime,
   bestAiVideoModelForProductAds,
   aiVideoApiCostGuide,
+  howToUseKling4,
   howToUseKling3,
   howToUseKling26,
   howToUseVeo31,

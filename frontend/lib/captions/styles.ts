@@ -1,4 +1,4 @@
-import type { CaptionStyle } from './types';
+import type { CaptionStyle, SecondaryCaption } from './types';
 
 export const BASE_STYLE: CaptionStyle = {
   name: 'Custom',
@@ -135,5 +135,34 @@ export function applyChaos(style: CaptionStyle, chaos: number): CaptionStyle {
     energyScale: up(style.energyScale, 1.6),
     autoEmphasis: Math.min(1, style.autoEmphasis * Math.max(0.15, chaos)),
     emphasisScale: style.emphasisScale.map((value) => 1 + (value - 1) * chaos) as CaptionStyle['emphasisScale'],
+  };
+}
+
+/** A legible second track: one translated line per caption page, white with a dark outline. */
+export function defaultSecondary(primary: CaptionStyle, language = 'French'): SecondaryCaption {
+  return {
+    enabled: true,
+    language,
+    position: 'below',
+    lines: [],
+    style: {
+      font: primary.font,
+      size: Math.max(2.6, Math.round(primary.size * 0.55 * 10) / 10),
+      weight: Math.min(700, primary.weight),
+      italic: false,
+      caseMode: 'none',
+      fill: '#ffffff',
+      stroke: '#000000',
+      strokeWidth: 0.9,
+      shadow: 'rgba(0,0,0,0.85)',
+      shadowBlur: 12,
+      shadowY: 3,
+      box: 0,
+      boxColor: 'rgba(0,0,0,0.55)',
+      boxRadius: 0.25,
+      boxPad: 0.35,
+      gap: 0.45,
+      maxWidth: 0.9,
+    },
   };
 }

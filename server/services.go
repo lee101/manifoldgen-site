@@ -47,6 +47,7 @@ var servicePricesUSD = map[string]float64{
 	"h3_image_edit":            0.46,   // conservative 12-step REF2VA estimate; measured execution is final
 	"video_restyle":            0.48,   // estimated five-second 720p ceiling; async settlement uses the selected backend
 	"orbit_video":              0.50,   // fixed price per 3 s 360 degree orbit clip
+	"flux3_max_video":          0.85,   // five-second 720p clip; priced per second at 720p/1080p
 	"character_animation":      1.00,   // five-second Wan-Animate-2 standard lane; fast/xfast are exact 2x/4x multipliers
 	"video_background_removal": 0.0252, // five-second estimate at the public per-second rate
 	"video_dramatize":          3.00,   // nominal multi-shot agent run; settled from the plan the agent runs
@@ -128,6 +129,9 @@ var videoModelPricesPerSecondUSD = map[string]float64{
 	"fal-ai/kling-video/v3/standard/image-to-video": 0.126,
 	"fal-ai/kling-video/v2.6/pro/text-to-video":     0.14,
 	"fal-ai/kling-video/v2.6/pro/image-to-video":    0.14,
+	"kling-4.0-text-to-video":                       0.235,
+	"kling-4.0-image-to-video":                      0.235,
+	"kling-4.0-reference-to-video":                  0.235,
 	"fal-ai/veo3.1":                                 0.40,
 	"fal-ai/veo3.1/image-to-video":                  0.40,
 	"fal-ai/veo3.1/fast":                            0.15,
@@ -214,6 +218,7 @@ func initServices() {
 		"h3_image_edit":        "H3_IMAGE_EDIT_ESTIMATE_USD",
 		"video_restyle":        "VIDEO_RESTYLE_ESTIMATE_USD",
 		"orbit_video":          "ORBIT_VIDEO_ESTIMATE_USD",
+		"flux3_max_video":      "FLUX3_MAX_VIDEO_ESTIMATE_USD",
 		"flux_image":           "FLUX_IMAGE_PRICE_USD",
 		"nsfw_detect":          "NSFW_DETECT_PRICE_USD",
 		"relight":              "RELIGHT_PRICE_USD",
@@ -279,7 +284,9 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 	}
 	if req.Service == "video_generate" {
 		model := normalizeVideoModel(req.Model)
-		if price, exists := videoModelPricesUSD[model]; exists {
+		if isKling4Model(model) {
+			usdPrice = kling4PriceUSD(req)
+		} else if price, exists := videoModelPricesUSD[model]; exists {
 			usdPrice = price * downstreamVideoPriceMultiplier
 		} else if price, exists := videoModelPricesPerSecondUSD[model]; exists {
 			duration := req.Duration
@@ -470,6 +477,7 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "video_restyle", Internal: "video_restyle"},
 	{Public: "character_animation", Internal: "character_animation"},
 	{Public: "orbit-video", Internal: "orbit_video"},
+	{Public: "flux-3-max-video", Internal: "flux3_max_video"},
 	{Public: "video_background_removal", Internal: "video_background_removal"},
 	{Public: "video-dramatize", Internal: "video_dramatize"},
 	{Public: "safety", Internal: "nsfw_detect"},
@@ -548,6 +556,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"h3_image_edit":            "per REF2VA edit; final price follows measured generation time",
 		"video_restyle":            "estimated default clip; final price follows length and quality",
 		"orbit_video":              "per 3 s 360 degree orbit clip; fixed before dispatch",
+		"flux3_max_video":          "per second of video ($0.17 at 720p, $0.29 at 1080p); fixed before dispatch",
 		"character_animation":      "five-second standard clip; fixed before dispatch (fast 2x, xfast 4x)",
 		"video_background_removal": "per second of source video (30 seconds maximum)",
 		"audio_generation":         "per music track by default; set kind to music or sfx",
@@ -747,6 +756,10 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 	if req.Service == orbitVideoService {
 		handleOrbitVideoService(ctx, req, user)
+		return
+	}
+	if req.Service == flux3MaxVideoService {
+		handleFlux3MaxVideoService(ctx, req, user)
 		return
 	}
 	if req.Service == "character_animation" {
@@ -1686,10 +1699,7 @@ func proxyRA2ImageEdit(req ServiceUsageRequest) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	width, height := req.Width, req.Height
-	if width <= 0 || height <= 0 {
-		width, height = 1024, 1024
-	}
+	width, height := ra2EditSize(source)
 	payload, _ := json.Marshal(map[string]interface{}{
 		"prompt": strings.TrimSpace(req.Prompt), "image_base64": base64.StdEncoding.EncodeToString(source),
 		"size": fmt.Sprintf("%dx%d", width, height), "n": 1,
@@ -1737,6 +1747,19 @@ func proxyRA2ImageEdit(req ServiceUsageRequest) ([]byte, error) {
 		"width": width, "height": height, "format": "webp", "engine": "ra2", "model": "ra2",
 		"prompt": req.Prompt, "charged_usd": ra2ImageEditPriceUSD,
 	})
+}
+
+// ra2EditSize keeps the source aspect at about one megapixel on the lane's 64 px
+// grid. A size that does not match the source makes the editor reframe or crop
+// it; requested studio sizes are generation presets, not the source shape.
+func ra2EditSize(source []byte) (int, int) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(source))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return 1024, 1024
+	}
+	scale := math.Sqrt(1024 * 1024 / float64(cfg.Width*cfg.Height))
+	snap := func(v int) int { return min(max(int(float64(v)*scale/64+0.5)*64, 256), 2048) }
+	return snap(cfg.Width), snap(cfg.Height)
 }
 
 func resultEngine(result []byte) string {

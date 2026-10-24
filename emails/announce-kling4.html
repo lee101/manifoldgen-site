@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kling 4.0 is live on ManifoldGen</title>
+</head>
+<body style="margin:0; padding:0; background-color:#0b1220; font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#0b1220;">
+<tr>
+<td align="center" style="padding:24px 16px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#111827; border:1px solid #1f2937; border-radius:12px; overflow:hidden;">
+
+<tr>
+<td style="background-color:#070b14; border-bottom:1px solid #1e293b; padding:36px 40px 28px; text-align:center;">
+<img src="https://manifoldgenstatic.manifoldgen.com/static/brand/logo-mark.webp" alt="ManifoldGen" width="72" style="display:inline-block; margin-bottom:16px;">
+<h1 style="margin:0; color:#ffffff; font-size:26px; font-weight:700; line-height:1.3;">Kling 4.0 is live</h1>
+<p style="margin:8px 0 0; color:#e0f2fe; font-size:15px; font-weight:400;">Text, image, reference and video edit up to 30 s</p>
+<p style="margin:18px 0 0; font-size:12px; font-weight:600; letter-spacing:.04em; text-transform:uppercase;"><a href="https://manifoldgen.com/" style="color:#7dd3fc; text-decoration:none;">H3 Video</a> &nbsp;&nbsp;&middot;&nbsp;&nbsp; <a href="https://manifoldgen.com/studio" style="color:#cbd5e1; text-decoration:none;">Studio</a> &nbsp;&nbsp;&middot;&nbsp;&nbsp; <a href="https://manifoldgen.com/api" style="color:#cbd5e1; text-decoration:none;">API</a></p>
+</td>
+</tr>
+
+<tr>
+<td style="padding:36px 40px; color:#e5e7eb; font-size:15px; line-height:1.65;">
+
+<p style="margin:0 0 18px;">Kling 4.0 is now in the studio and the API. It makes 3 to 30 second clips at 720p or 1080p, in 16:9, 9:16, 1:1 or 21:9, and comes in four flavours:</p>
+<ul style="margin:0 0 18px; padding-left:20px; color:#cbd5e1;">
+<li style="margin-bottom:8px;"><a href="https://manifoldgen.com/tools/kling-4" style="color:#7dd3fc; text-decoration:none;">Text to video</a>: about 17 credits per second at 720p, 26 at 1080p.</li>
+<li style="margin-bottom:8px;"><a href="https://manifoldgen.com/tools/kling-4-image" style="color:#7dd3fc; text-decoration:none;">Image to video</a>: start from a still, optionally land on an end frame. Same rates.</li>
+<li style="margin-bottom:8px;"><a href="https://manifoldgen.com/tools/kling-4-reference" style="color:#7dd3fc; text-decoration:none;">Reference to video</a>: up to 10 images and 5 videos as @Image1 / @Video1 in the prompt. Same rates, about 21 / 31 credits per second when you add a video reference.</li>
+<li style="margin-bottom:0;"><a href="https://manifoldgen.com/tools/kling-4-edit" style="color:#7dd3fc; text-decoration:none;">Video edit</a>: change a 3 to 30 second clip with a text instruction. About 21 credits per second at 720p, 31 at 1080p.</li>
+</ul>
+<p style="margin:0 0 12px;">From the API, use <code style="background:#0f172a;padding:2px 6px;border-radius:4px;">service":"video_generate"</code> with the model name and poll <code style="background:#0f172a;padding:2px 6px;border-radius:4px;">/api/video-jobs/&#123;id&#125;</code>:</p>
+<pre style="margin:0 0 18px; padding:16px; background:#0f172a; border:1px solid #1e293b; border-radius:10px; color:#e2e8f0; font-size:12px; white-space:pre-wrap;">curl -X POST https://manifoldgen.com/api/service \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"service":"video_generate","model":"kling-4.0-text-to-video","prompt":"A detective on a rainy rooftop looks through a telescope","duration":5,"resolution":"720p"}'</pre>
+<p style="margin:0; color:#94a3b8;">Model names: kling-4.0-text-to-video, kling-4.0-image-to-video, kling-4.0-reference-to-video, kling-4.0-video-edit. <a href="https://manifoldgen.com/blog/how-to-use-kling-4" style="color:#7dd3fc; text-decoration:none;">Read the Kling 4.0 guide</a>.</p>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;">
+<tr>
+<td align="center">
+<a href="https://manifoldgen.com/tools/kling-4" style="display:inline-block; background:linear-gradient(135deg, #0ea5e9, #6366f1); color:#ffffff; text-decoration:none; padding:14px 32px; border-radius:999px; font-size:15px; font-weight:600;">Try Kling 4.0</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+
+<tr>
+<td style="padding:24px 40px; border-top:1px solid #1f2937; text-align:center;">
+<p style="margin:0 0 10px; font-size:12px;">
+<a href="https://manifoldgen.com/" style="color:#94a3b8; text-decoration:none;">Studio</a> &nbsp;&middot;&nbsp;
+<a href="https://manifoldgen.com/account" style="color:#94a3b8; text-decoration:none;">Account</a> &nbsp;&middot;&nbsp;
+<a href="{{.UnsubscribeURL}}" style="color:#94a3b8; text-decoration:none;">Unsubscribe</a>
+</p>
+<p style="margin:0; color:#64748b; font-size:11px;">ManifoldGen · cinematic AI video + gallery</p>
+</td>
+</tr>
+
+</table>
+</td>
+</tr>
+</table>
+</body>
+</html>
