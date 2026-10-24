@@ -294,7 +294,7 @@ func submitLoraRunpod(endpointID string, input map[string]interface{}, queued *h
 	lock := h3EndpointScaleLock(endpointID)
 	lock.Lock()
 	defer lock.Unlock()
-	config, err := h3EndpointConfig(endpointID)
+	current, err := h3CurrentWorkersMax(endpointID)
 	if err != nil {
 		return 0, err
 	}
@@ -302,7 +302,7 @@ func submitLoraRunpod(endpointID string, input map[string]interface{}, queued *h
 	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("H3_SWAP_WORKERS_MAX"))); err == nil && value > 0 {
 		workers = value
 	}
-	if config.WorkersMax != workers {
+	if current != workers {
 		if err := characterAnimationSetWorkersMax(endpointID, "standard", workers); err != nil {
 			return 0, err
 		}
