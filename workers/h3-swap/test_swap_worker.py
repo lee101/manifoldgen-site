@@ -78,3 +78,26 @@ def test_runtime_closes_comfy_when_weights_fail(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         swap_runtime.SwapRuntime()
     assert closed == [1]
+
+
+def test_runtime_preload_builds_once(monkeypatch):
+    handler = stub_handler_deps(monkeypatch, lambda url: None)
+    built, release = [], threading.Event()
+
+    class Fake:
+        def __init__(self):
+            built.append(1)
+            release.wait(5)
+
+    monkeypatch.setattr(handler, "SwapRuntime", Fake)
+    monkeypatch.setattr(handler, "_runtime", None)
+    monkeypatch.setattr(handler, "_preload", None)
+    handler.start_preload()
+    handler.start_preload()
+    out = []
+    thread = threading.Thread(target=lambda: out.append(handler.runtime()))
+    thread.start()
+    release.set()
+    thread.join(5)
+    handler._preload.join(5)
+    assert built == [1] and isinstance(out[0], Fake)

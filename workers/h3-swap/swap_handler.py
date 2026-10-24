@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -19,6 +20,8 @@ from swap_runtime import SwapRuntime
 
 MAX_VIDEO_BYTES = 256 * 1024 * 1024
 _runtime = None
+_runtime_lock = threading.Lock()
+_preload = None
 _moderation = None
 
 
@@ -28,9 +31,23 @@ def _turbo(value):
 
 def runtime():
     global _runtime
-    if _runtime is None:
-        _runtime = SwapRuntime()
-    return _runtime
+    with _runtime_lock:
+        if _runtime is None:
+            _runtime = SwapRuntime()
+        return _runtime
+
+
+def start_preload():
+    """Fetch weights and boot ComfyUI in the background so they overlap job pickup, moderation and downloads."""
+    global _preload
+    if _preload is None:
+        def load():
+            try:
+                runtime()
+            except Exception as error:
+                print(f"runtime preload failed, will retry on first job: {error!r}", flush=True)
+        _preload = threading.Thread(target=load, name="swap-preload", daemon=True)
+        _preload.start()
 
 
 def moderation():
@@ -78,6 +95,7 @@ def fetch_inputs(video_url, image_urls):
 
 def handler(event):
     values = event.get("input") or {}
+    start_preload()
     prompt = str(values.get("prompt", ""))
     gate = moderation().prompt_gate(prompt)
     if gate is not None:
@@ -120,4 +138,5 @@ def handler(event):
 
 
 if __name__ == "__main__":
+    start_preload()
     runpod.serverless.start({"handler": handler})
