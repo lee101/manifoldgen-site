@@ -24,7 +24,49 @@ var (
 	h3ScaleLocks            sync.Map
 	h3ScaleReapers          sync.Map
 	h3ScalePropagationDelay = 5 * time.Second
+	// Last workersMax this process wrote per endpoint. A burst of submissions
+	// skips the control-plane GET while it is fresh; a paused endpoint is still
+	// recovered by the ENDPOINT_PAUSED retry in submitScaledH3RunpodJob.
+	h3KnownWorkersMax sync.Map
+	h3KnownMaxTTL     = 60 * time.Second
 )
+
+type h3KnownMax struct {
+	workersMax int
+	at         time.Time
+}
+
+func h3NoteWorkersMax(endpointID string, workersMax int, err error) error {
+	if err != nil {
+		h3KnownWorkersMax.Delete(endpointID)
+		return err
+	}
+	h3KnownWorkersMax.Store(endpointID, h3KnownMax{workersMax, time.Now()})
+	return nil
+}
+
+// h3CurrentWorkersMax is the endpoint's workersMax: the recent known value, else one control-plane GET.
+func h3CurrentWorkersMax(endpointID string) (int, error) {
+	if current, fresh := h3FreshWorkersMax(endpointID); fresh {
+		return current, nil
+	}
+	config, err := h3EndpointConfig(endpointID)
+	if err != nil {
+		return 0, err
+	}
+	h3KnownWorkersMax.Store(endpointID, h3KnownMax{config.WorkersMax, time.Now()})
+	return config.WorkersMax, nil
+}
+
+func h3FreshWorkersMax(endpointID string) (int, bool) {
+	if value, ok := h3KnownWorkersMax.Load(endpointID); ok {
+		known := value.(h3KnownMax)
+		if time.Since(known.at) < h3KnownMaxTTL {
+			return known.workersMax, true
+		}
+	}
+	return 0, false
+}
 
 type h3ScaleReaperState struct {
 	mu         sync.Mutex
@@ -139,7 +181,7 @@ func h3EndpointIdleSeconds(endpointID string) int {
 }
 
 func h3SetWorkersMax(endpointID string, workersMax int) error {
-	return h3ControlRequest(
+	return h3NoteWorkersMax(endpointID, workersMax, h3ControlRequest(
 		http.MethodPost,
 		h3ControlBase()+"/endpoints/"+url.PathEscape(endpointID)+"/update",
 		map[string]interface{}{
@@ -148,7 +190,7 @@ func h3SetWorkersMax(endpointID string, workersMax int) error {
 			"scalerType": "REQUEST_COUNT", "scalerValue": 1,
 		},
 		nil,
-	)
+	))
 }
 
 func submitScaledH3RunpodJob(route h3WorkerRoute, input map[string]interface{}, queued *h3RunpodQueuedJob) (int, error) {
@@ -156,11 +198,11 @@ func submitScaledH3RunpodJob(route h3WorkerRoute, input map[string]interface{}, 
 	lock.Lock()
 	defer lock.Unlock()
 	desiredMax := h3DesiredWorkersMax(route)
-	config, err := h3EndpointConfig(route.RunpodEndpointID)
+	current, err := h3CurrentWorkersMax(route.RunpodEndpointID)
 	if err != nil {
 		return 0, err
 	}
-	if config.WorkersMax != desiredMax {
+	if current != desiredMax {
 		if err := h3SetWorkersMax(route.RunpodEndpointID, desiredMax); err != nil {
 			return 0, err
 		}

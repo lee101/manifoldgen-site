@@ -5,6 +5,9 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
+
+	"github.com/lee101/gobed"
 )
 
 const (
@@ -51,6 +54,43 @@ func h3ExplicitRouteHint(prompt string) bool {
 	return false
 }
 
+// Anchor texts are constant, so their embeddings are computed once per model
+// instead of twice per anchor on every routing decision.
+var h3AnchorCache struct {
+	sync.Mutex
+	model   *gobed.EmbeddingModel
+	vectors map[string][][]float32
+}
+
+func h3AnchorEmbeddings(model *gobed.EmbeddingModel, name string, anchors []string) ([][]float32, bool) {
+	h3AnchorCache.Lock()
+	defer h3AnchorCache.Unlock()
+	if h3AnchorCache.model != model {
+		h3AnchorCache.model, h3AnchorCache.vectors = model, map[string][][]float32{}
+	}
+	if cached, ok := h3AnchorCache.vectors[name]; ok {
+		return cached, true
+	}
+	vectors := make([][]float32, 0, len(anchors))
+	for _, anchor := range anchors {
+		vector, err := model.Encode(anchor)
+		if err != nil {
+			return nil, false
+		}
+		vectors = append(vectors, vector)
+	}
+	h3AnchorCache.vectors[name] = vectors
+	return vectors, true
+}
+
+func h3MeanCosine(query []float32, anchors [][]float32) float32 {
+	var sum float32
+	for _, anchor := range anchors {
+		sum += gobed.CosineSimilarity(query, anchor)
+	}
+	return sum / float32(len(anchors))
+}
+
 func h3SemanticAdultRoute(prompt string) (adult bool, available bool) {
 	if promptSearch == nil || strings.TrimSpace(prompt) == "" {
 		return false, false
@@ -62,22 +102,16 @@ func h3SemanticAdultRoute(prompt string) (adult bool, available bool) {
 	if !ready || model == nil {
 		return false, false
 	}
-	meanSimilarity := func(anchors []string) (float32, bool) {
-		var sum float32
-		for _, anchor := range anchors {
-			score, err := model.Similarity(prompt, anchor)
-			if err != nil {
-				return 0, false
-			}
-			sum += score
-		}
-		return sum / float32(len(anchors)), true
+	query, err := model.Encode(prompt)
+	if err != nil {
+		return false, false
 	}
-	adultScore, okAdult := meanSimilarity(h3AdultRouteAnchors)
-	generalScore, okGeneral := meanSimilarity(h3GeneralRouteAnchors)
+	adultAnchors, okAdult := h3AnchorEmbeddings(model, "adult", h3AdultRouteAnchors)
+	generalAnchors, okGeneral := h3AnchorEmbeddings(model, "general", h3GeneralRouteAnchors)
 	if !okAdult || !okGeneral {
 		return false, false
 	}
+	adultScore, generalScore := h3MeanCosine(query, adultAnchors), h3MeanCosine(query, generalAnchors)
 	// The margin avoids model churn for prompts that are merely romantic,
 	// artistic, or mention a body without asking for explicit content.
 	return adultScore >= generalScore+0.035, true

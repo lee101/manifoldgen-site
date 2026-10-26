@@ -1,9 +1,11 @@
 import os
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, "/src")
@@ -18,6 +20,8 @@ from swap_runtime import SwapRuntime
 
 MAX_VIDEO_BYTES = 256 * 1024 * 1024
 _runtime = None
+_runtime_lock = threading.Lock()
+_preload = None
 _moderation = None
 
 
@@ -27,9 +31,23 @@ def _turbo(value):
 
 def runtime():
     global _runtime
-    if _runtime is None:
-        _runtime = SwapRuntime()
-    return _runtime
+    with _runtime_lock:
+        if _runtime is None:
+            _runtime = SwapRuntime()
+        return _runtime
+
+
+def start_preload():
+    """Fetch weights and boot ComfyUI in the background so they overlap job pickup, moderation and downloads."""
+    global _preload
+    if _preload is None:
+        def load():
+            try:
+                runtime()
+            except Exception as error:
+                print(f"runtime preload failed, will retry on first job: {error!r}", flush=True)
+        _preload = threading.Thread(target=load, name="swap-preload", daemon=True)
+        _preload.start()
 
 
 def moderation():
@@ -58,8 +76,26 @@ def download_video(url):
     return Path(filename)
 
 
+def fetch_inputs(video_url, image_urls):
+    """Source video and character images downloaded concurrently (the video dominates; images hide behind it)."""
+    with ThreadPoolExecutor(1 + len(image_urls)) as pool:
+        futures = [pool.submit(download_video, video_url), *(pool.submit(_download_image, url) for url in image_urls)]
+        results, error = [], None
+        for future in futures:
+            try:
+                results.append(future.result())
+            except BaseException as exc:
+                error = error or exc
+    if error is not None:
+        for path in results:
+            Path(path).unlink(missing_ok=True)
+        raise error
+    return results[0], results[1:]
+
+
 def handler(event):
     values = event.get("input") or {}
+    start_preload()
     prompt = str(values.get("prompt", ""))
     gate = moderation().prompt_gate(prompt)
     if gate is not None:
@@ -71,8 +107,7 @@ def handler(event):
     images = []
     try:
         started = time.monotonic()
-        source = download_video(str(values.get("video_url", "")))
-        images = [_download_image(url) for url in urls]
+        source, images = fetch_inputs(str(values.get("video_url", "")), urls)
         easycache = values.get("easycache")
         output, metrics = runtime().generate(
             prompt=prompt, source_video=source, character_images=images, steps=int(values.get("steps", 20)),
@@ -103,4 +138,5 @@ def handler(event):
 
 
 if __name__ == "__main__":
+    start_preload()
     runpod.serverless.start({"handler": handler})

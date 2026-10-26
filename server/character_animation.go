@@ -209,7 +209,7 @@ func characterAnimationWorkerInput(req ServiceUsageRequest, uploadURL, publicURL
 
 func characterAnimationSetWorkersMax(endpointID, tier string, workersMax int) error {
 	idleSeconds := int(characterAnimationDrainDelay(tier) / time.Second)
-	return h3ControlRequest(
+	return h3NoteWorkersMax(endpointID, workersMax, h3ControlRequest(
 		http.MethodPost,
 		h3ControlBase()+"/endpoints/"+url.PathEscape(endpointID)+"/update",
 		map[string]interface{}{
@@ -218,7 +218,7 @@ func characterAnimationSetWorkersMax(endpointID, tier string, workersMax int) er
 			"scalerType": "REQUEST_COUNT", "scalerValue": 1,
 		},
 		nil,
-	)
+	))
 }
 
 func submitCharacterAnimationRunpod(endpointID, tier string, input map[string]interface{}, queued *h3RunpodQueuedJob) (int, error) {

@@ -8,6 +8,7 @@ import ipaddress
 import os
 import socket
 import tempfile
+import threading
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -18,6 +19,8 @@ from preprocess import preprocess_video
 from runtime import H3ControlRuntime
 
 _runtime = None
+_runtime_lock = threading.Lock()
+_preload = None
 MAX_VIDEO_BYTES = 256 * 1024 * 1024
 
 
@@ -56,11 +59,25 @@ def _download(url: str, label: str) -> Path:
 
 def _get_runtime():
     global _runtime
-    if _runtime is None:
-        if os.environ.get("MINIMAX_H3_LICENSE_ACCEPTED") != "1":
-            raise RuntimeError("MINIMAX_H3_LICENSE_ACCEPTED=1 is required")
-        _runtime = H3ControlRuntime()
-    return _runtime
+    with _runtime_lock:
+        if _runtime is None:
+            if os.environ.get("MINIMAX_H3_LICENSE_ACCEPTED") != "1":
+                raise RuntimeError("MINIMAX_H3_LICENSE_ACCEPTED=1 is required")
+            _runtime = H3ControlRuntime()
+        return _runtime
+
+
+def _start_preload():
+    """Load weights in the background so they overlap job pickup, downloads and preprocessing."""
+    global _preload
+    if _preload is None:
+        def load():
+            try:
+                _get_runtime()
+            except Exception as error:
+                print(f"runtime preload failed, will retry on first job: {error!r}", flush=True)
+        _preload = threading.Thread(target=load, name="h3-preload", daemon=True)
+        _preload.start()
 
 
 def _upload_output(path: Path, upload_url: str, public_url: str):
@@ -92,6 +109,7 @@ def handler(event):
     if kind not in {"canny", "depth", "hed", "mlsd", "pose", "inpaint"}:
         raise ValueError("invalid control_type")
     source = control = mask = output = None
+    _start_preload()
     try:
         source = _download(str(values.get("video_url", "")), "source")
         if bool(values.get("preprocess", True)) and kind != "inpaint":
@@ -120,4 +138,6 @@ def handler(event):
 
 
 if __name__ == "__main__":
+    if os.environ.get("MINIMAX_H3_LICENSE_ACCEPTED") == "1":
+        _start_preload()
     runpod.serverless.start({"handler": handler})

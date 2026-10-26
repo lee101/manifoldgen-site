@@ -44,16 +44,28 @@ class SwapRuntime:
         self.proc = None
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         IN_DIR.mkdir(parents=True, exist_ok=True)
-        weights.ensure_weights()
-        self.start()
+        # ComfyUI's interpreter/custom-node boot does not read weights; overlap it with the download.
+        self.spawn()
+        try:
+            weights.ensure_weights()
+            self.wait_ready()
+        except BaseException:
+            self.close()
+            raise
 
     def start(self):
+        self.spawn()
+        self.wait_ready()
+
+    def spawn(self):
         self.proc = subprocess.Popen(
             ["python3", "main.py", "--listen", "127.0.0.1", "--port", str(PORT),
              "--output-directory", str(OUT_DIR), "--input-directory", str(IN_DIR), "--disable-auto-launch", *comfy_flags()],
             cwd=COMFY_DIR,
             env={**os.environ, "PYTORCH_CUDA_ALLOC_CONF": os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")},
         )
+
+    def wait_ready(self):
         for _ in range(300):
             if self.proc.poll() is not None:
                 raise RuntimeError("ComfyUI exited during startup")
@@ -114,7 +126,7 @@ class SwapRuntime:
                 pid = http("/prompt", {"prompt": workflow})["prompt_id"]
                 deadline = time.monotonic() + TIMEOUT
                 while True:
-                    time.sleep(0.5)
+                    time.sleep(0.25)
                     history = http("/history/" + pid)
                     if pid in history:
                         entry = history[pid]

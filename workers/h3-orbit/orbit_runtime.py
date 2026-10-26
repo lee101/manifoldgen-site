@@ -40,7 +40,7 @@ class OrbitRuntime(SwapRuntime):
                 pid = http("/prompt", {"prompt": workflow})["prompt_id"]
                 deadline = time.monotonic() + swap_runtime.TIMEOUT
                 while True:
-                    time.sleep(0.5)
+                    time.sleep(0.25)
                     history = http("/history/" + pid)
                     if pid in history:
                         entry = history[pid]

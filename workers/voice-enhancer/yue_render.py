@@ -63,7 +63,30 @@ def fit_plan(abc: str, vocal_seconds: float, outro_bars: int = 4) -> tuple[str, 
                                      "intro_seconds": round(sum(b[2] for b in intro) * bar, 1)}
 
 
+def install_hash_cache():
+    try:
+        # yue-cog image: reuse verified checkpoint digests within a warm worker
+        # instead of re-hashing 7 GB on every render call (~27 s each).
+        import sys
+        sys.path.insert(0, os.getenv("YUE_COG_ROOT", "/src"))
+        from weight_cache import install_verified_hash_cache
+        install_verified_hash_cache()
+    except ImportError:
+        pass
+
+
+def warm_hashes():
+    """Fill the on-disk digest cache so the first real render skips the 7 GB re-hash."""
+    from yue2.storage import model_identity, resolve_model
+    install_hash_cache()
+    for repo, revision in (("m-a-p/YuE2-3B", MODEL_REVISION), ("m-a-p/YuE2-Vae", VAE_REVISION)):
+        model_identity(resolve_model(repo, revision=revision), True)
+
+
 def main():
+    import sys
+    if "--warm-hashes" in sys.argv[1:]:
+        return warm_hashes()
     ap = argparse.ArgumentParser()
     ap.add_argument("--lyrics", required=True)
     ap.add_argument("--style", required=True)
@@ -77,15 +100,7 @@ def main():
     a = ap.parse_args()
     from yue2 import YuE2Pipeline
     from yue2.protocol import GenerationConfig
-    try:
-        # yue-cog image: reuse verified checkpoint digests within a warm worker
-        # instead of re-hashing 7 GB on every render call (~27 s each).
-        import sys
-        sys.path.insert(0, os.getenv("YUE_COG_ROOT", "/src"))
-        from weight_cache import install_verified_hash_cache
-        install_verified_hash_cache()
-    except ImportError:
-        pass
+    install_hash_cache()
     pipe = YuE2Pipeline.from_pretrained("m-a-p/YuE2-3B", revision=MODEL_REVISION, vae_revision=VAE_REVISION,
                                         device="cuda", backend="torch", memory_budget_gib=20, offload_ar=True,
                                         generation_config=GenerationConfig(ode_steps=32), progress=False)
