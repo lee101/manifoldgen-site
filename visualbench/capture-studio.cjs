@@ -126,11 +126,67 @@ async function captureGalleryImage(browser, viewport, device) {
   await page.close();
 }
 
+// Motion FX lives behind the signed-in AI tools panel. Auth, cloud save and the
+// upload endpoints are stubbed so the capture needs only a Studio dev server.
+const motionVideo = path.resolve(__dirname, '../frontend/public/showcase/h3-loop-glass-torus.webm');
+
+async function captureMotionFx(browser, viewport, device) {
+  const apiKey = 'mg_visualbench_key';
+  const user = { id: 'visualbench', email: 'bench@example.com', api_key: apiKey, credits: 10000, credits_usd: 100 };
+  const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
+  await page.addInitScript(({ key, value }) => {
+    localStorage.setItem('mg_api_key', key);
+    localStorage.setItem('mg_user', JSON.stringify(value));
+  }, { key: apiKey, value: user });
+  await page.route('**/api/pricing', (route) => route.fulfill({ status: 200, json: { credit_price_usd: 0.01 } }));
+  await page.route('**/api/auth/session', (route) => route.fulfill({ status: 200, json: { user } }));
+  await page.route('**/api/video-jobs', (route) => route.fulfill({ status: 200, json: { jobs: [] } }));
+  await page.route('**/api/studio/projects', (route) => route.fulfill({ status: 200, json: { projects: [] } }));
+  await page.route('**/api/studio/projects/*', (route) => {
+    if (route.request().method() !== 'PUT') return route.fulfill({ status: 404, json: { error: 'project not found' } });
+    const body = route.request().postDataJSON();
+    const now = new Date().toISOString();
+    return route.fulfill({ status: 200, json: { project: { id: new URL(route.request().url()).pathname.split('/').pop(), name: body.name, document: body.document, revision: 1, created_at: now, updated_at: now } } });
+  });
+  await page.route('**/api/studio/assets/presign', async (route) => {
+    const body = route.request().postDataJSON();
+    await route.fulfill({ status: 200, json: {
+      upload_url: `https://studio-upload.example/${body.project_id}/${body.asset_id}`,
+      public_url: `https://studio-media.example/${body.project_id}/${body.asset_id}/${encodeURIComponent(body.filename)}`,
+      object_key: `gallery/studio/bench/${body.project_id}/${body.asset_id}/${body.filename}`,
+    } });
+  });
+  await page.route('https://studio-upload.example/**', (route) => route.fulfill({ status: 200 }));
+  await page.goto(`${baseURL}/studio`, { waitUntil: 'load' });
+  await page.getByTestId('studio-save-status').waitFor({ state: 'attached', timeout: 60_000 });
+  await page.waitForTimeout(1500);
+  if (device === 'mobile') await page.getByTestId('studio-tool-media').click();
+  await page.locator('input[type=file]').setInputFiles(motionVideo);
+  await page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ }).first().waitFor({ state: 'visible', timeout: 60_000 }).catch(async (error) => {
+    await page.screenshot({ path: path.join(outputDir, `studio-${device}-motion-fx-failed.png`) });
+    throw error;
+  });
+  await page.getByTestId('studio-tool-ai').click();
+  await page.getByTestId('studio-motion-open').waitFor({ state: 'visible' });
+  await page.screenshot({ path: path.join(outputDir, `studio-${device}-motion-fx-panel.png`), fullPage: false });
+  await page.getByTestId('studio-motion-open').click();
+  await page.getByTestId('motion-fx-dialog').waitFor({ state: 'visible' });
+  await page.getByTestId('motion-preset-ki-aura').click();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(outputDir, `studio-${device}-motion-fx-dialog.png`), fullPage: false });
+  await page.close();
+}
+
 (async () => {
   const requestedExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
   const systemChrome = requestedExecutable || (fs.existsSync('/usr/bin/google-chrome') ? '/usr/bin/google-chrome' : undefined);
   const browser = await chromium.launch({ headless: true, ...(systemChrome ? { executablePath: systemChrome } : {}) });
   try {
+    if (process.env.VISUALBENCH_MOTION_ONLY === '1') {
+      await captureMotionFx(browser, { width: 1440, height: 1000 }, 'desktop');
+      await captureMotionFx(browser, { width: 390, height: 844 }, 'mobile');
+      return;
+    }
     await captureLoaderReview(browser);
     if (process.env.VISUALBENCH_LOADER_ONLY === '1') return;
     await captureHomepageGallery(browser, { width: 1440, height: 1000 }, 'desktop');
@@ -139,6 +195,8 @@ async function captureGalleryImage(browser, viewport, device) {
     await captureGalleryImage(browser, { width: 390, height: 844 }, 'mobile');
     await captureTools(browser, { width: 1440, height: 1000 }, 'desktop');
     await captureTools(browser, { width: 390, height: 844 }, 'mobile');
+    await captureMotionFx(browser, { width: 1440, height: 1000 }, 'desktop');
+    await captureMotionFx(browser, { width: 390, height: 844 }, 'mobile');
     if (process.env.VISUALBENCH_GALLERY_ONLY !== '1') {
       for (const mode of ['videos', 'images', 'music']) {
         await capture(browser, { width: 1440, height: 1000 }, 'desktop', mode);

@@ -21,7 +21,7 @@ Develop: `cd cli && bun install && bun test && bun run build`.
 
 ## Agent skills
 
-`skills/<name>/SKILL.md` follows the skills CLI layout (`npx skills add <owner>/<repo>`; publish this folder as its own repo root `skills/`, or install from this repo). `manifoldgen` is the core skill (setup, spend rules, generate, jobs, MCP) and holds the single production-tool table; workflow skills defer to it: `destruction-studio`, `exploded-view`, `scene-builder`, `toon-shader`, `vectorize`, `shot-cleanup`, `image-fixer`, `shot-composer`, `color-grade`, `shader-fx`, `footage-sorter` (coming soon).
+`skills/<name>/SKILL.md` follows the skills CLI layout (`npx skills add <owner>/<repo>`; publish this folder as its own repo root `skills/`, or install from this repo). `manifoldgen` is the core skill (setup, spend rules, generate, jobs, MCP) and holds the single production-tool table; workflow skills defer to it: `destruction-studio`, `exploded-view`, `scene-builder`, `toon-shader`, `vectorize`, `shot-cleanup`, `image-fixer`, `shot-composer`, `motion-fx`, `beat-drop`, `motion-track`, `motion-score`, `color-grade`, `shader-fx`, `footage-sorter` (coming soon). The motion tools run a CPU Python worker (`workers/motiontrack`); see `docs/motion-tools.md`.
 
 ## Configure Claude Code and Cursor
 
