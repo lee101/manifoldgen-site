@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 import swap_graph as graph
+import swap_relay as relay
 import swap_weights as weights
 
 COMFY_DIR = Path(os.environ.get("SWAP_COMFY_DIR", "/opt/ComfyUI"))
@@ -72,7 +73,7 @@ class SwapRuntime:
                 self.proc.kill()
 
     def generate(self, *, prompt, source_video, character_images, steps=graph.DEFAULT_STEPS, seed=None, megapixels=0.4,
-                 turbo=False, lora_strength=1.0, easycache=None, sol=False, grid="hold",
+                 turbo=False, lora_strength=1.0, easycache=None, sol=False, spectrum=False, fbc=None, grid="hold",
                  swap_lora=graph.SWAP_LORA, sampler="res_multistep", scheduler="simple"):
         prompt = str(prompt).strip()
         if not prompt:
@@ -106,7 +107,7 @@ class SwapRuntime:
                 names.append(name)
             workflow = graph.build_swap_graph(
                 prompt=prompt, width=width, height=height, frames=frames, steps=int(steps), seed=seed, video_name=clip_name,
-                image_names=names, turbo=turbo, lora_strength=lora_strength, prefix=f"swap-{tag}", easycache=easycache, sol=sol,
+                image_names=names, turbo=turbo, lora_strength=lora_strength, prefix=f"swap-{tag}", easycache=easycache, sol=sol, spectrum=spectrum, fbc=fbc,
                 swap_lora=swap_lora, sampler=sampler, scheduler=scheduler,
             )
             with self.lock:
@@ -128,9 +129,54 @@ class SwapRuntime:
             return path, {
                 "generation_seconds": round(time.monotonic() - started, 2), "width": width, "height": height, "frames": frames, "source_frames": source_frames, "grid": grid,
                 "steps": int(steps), "seed": seed, "turbo": turbo, "swap_lora": swap_lora, "sampler": sampler, "scheduler": scheduler, "source_seconds": round(seconds, 3),
-                "megapixels": megapixels, "easycache": easycache, "sol": sol,
+                "megapixels": megapixels, "easycache": easycache, "sol": sol, "spectrum": spectrum, "fbc": fbc,
             }
         finally:
             (IN_DIR / clip_name).unlink(missing_ok=True)
             for name in names:
                 (IN_DIR / name).unlink(missing_ok=True)
+
+    def generate_relay(self, *, prompt, subject, source_video, character_image, seed=None, steps=8, window_frames=124, expansion_px=64, resolution="768",
+                       swap_lora=graph.SWAP_LORA, lora_strength=1.0, sam_threshold=0.35, selection="largest", anchor_image=None, blur_scale=None):
+        """Masked swap of ONE selected person (SAM subject text) with the reference character; everything else is kept from the source."""
+        seed = int(seed) if seed is not None else int.from_bytes(os.urandom(6), "big")
+        tag = uuid.uuid4().hex
+        clip_name = f"relay-src-{tag}.mp4"
+        suffix = Path(character_image).suffix.lower() if Path(character_image).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"} else ".png"
+        ref_name = f"relay-ref-{tag}{suffix}"
+        started = time.monotonic()
+        try:
+            shutil.copy(source_video, IN_DIR / clip_name)
+            shutil.copy(character_image, IN_DIR / ref_name)
+            anchor_name = None
+            if anchor_image:
+                anchor_name = f"relay-anchor-{tag}.png"
+                shutil.copy(anchor_image, IN_DIR / anchor_name)
+            workflow = relay.build_relay_graph(prompt=prompt, subject=subject, video_name=clip_name, image_name=ref_name, seed=seed, steps=steps,
+                                               prefix=f"relay-{tag}", swap_lora=swap_lora, lora_strength=lora_strength, window_frames=window_frames,
+                                               expansion_px=expansion_px, resolution=resolution, sam_threshold=sam_threshold, selection=selection,
+                                               anchor_name=anchor_name, blur_scale=blur_scale)
+            with self.lock:
+                pid = http("/prompt", {"prompt": workflow})["prompt_id"]
+                deadline = time.monotonic() + TIMEOUT
+                while True:
+                    time.sleep(0.5)
+                    history = http("/history/" + pid)
+                    if pid in history:
+                        entry = history[pid]
+                        break
+                    if time.monotonic() > deadline:
+                        http("/interrupt", {})
+                        raise TimeoutError("relay swap timed out")
+            if entry["status"]["status_str"] != "success":
+                raise RuntimeError("ComfyUI relay job failed: " + json.dumps(entry["status"])[-1200:])
+            saved = entry["outputs"]["save"]  # the SaveVideo node; other nodes also write previews into the output dir
+            files = [i for key in ("images", "videos", "gifs") for i in saved.get(key, [])]
+            path = OUT_DIR / files[0].get("subfolder", "") / files[0]["filename"]
+            return path, {"generation_seconds": round(time.monotonic() - started, 2), "seed": seed, "steps": steps, "subject": subject, "mode": "relay",
+                          "source_seconds": graph.probe_video(source_video)[2], "swap_lora": swap_lora, "resolution": resolution, "expansion_px": expansion_px}
+        finally:
+            (IN_DIR / clip_name).unlink(missing_ok=True)
+            (IN_DIR / ref_name).unlink(missing_ok=True)
+            if anchor_image:
+                (IN_DIR / f"relay-anchor-{tag}.png").unlink(missing_ok=True)

@@ -1,0 +1,19 @@
+[project]
+name = "fightswap"
+version = "0.1.0"
+description = "Fight-scene character swap kit: shot cutting, cast detection, per-shot reference boards, RunPod swap, voice clone and re-mix"
+requires-python = ">=3.10"
+dependencies = ["numpy", "pillow", "opencv-python-headless", "requests", "filmkit"]
+
+[tool.uv.sources]
+filmkit = { path = "../filmkit", editable = true }
+
+[project.scripts]
+fightswap = "fightswap.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fightswap"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

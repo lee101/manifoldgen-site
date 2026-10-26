@@ -80,7 +80,7 @@ def normalize_source(src, dst, width, height, frames):
 
 
 def build_swap_graph(*, prompt, width, height, frames, steps, seed, video_name, image_names, turbo=False,
-                     lora_strength=1.0, ref_image_size="match", prefix="swap", easycache=None, sol=False,
+                     lora_strength=1.0, ref_image_size="match", prefix="swap", easycache=None, sol=False, spectrum=False, fbc=None,
                      swap_lora=SWAP_LORA, sampler="res_multistep", scheduler="simple"):
     if not image_names:
         raise ValueError("at least one character image is required")
@@ -108,6 +108,15 @@ def build_swap_graph(*, prompt, width, height, frames, steps, seed, video_name, 
             "int8_qk": True, "sink_conditioning": "exact_kv_and_rows", "morton": True, "morton_curve": "2d_frame",
             "int8_pv": True, "verbose": False, "use_tma": False, "dense_blocks": "0,-1"}}
         model = ["24", 0]
+    if spectrum:  # Spectrum feature forecasting (H3 node, defaults): fewer real DiT passes, no EasyCache needed
+        graph["26"] = {"class_type": "SpectrumApplyMiniMaxH3", "inputs": {"model": model, "enabled": True, "blend_weight": 0.5, "degree": 1,
+                                                                          "ridge_lambda": 0.1, "window_size": 2.0, "flex_window": 0.75,
+                                                                          "warmup_steps": 1, "tail_actual_steps": 1, "max_history": 8, "debug": False}}
+        model = ["26", 0]
+    if fbc:  # FirstBlockCache preset name, e.g. "H3 Safe \u2014 0.08 / max 2"
+        graph["27"] = {"class_type": "ApplyMiniMaxH3FirstBlockCache", "inputs": {"model": model, "mode": fbc, "threshold": 0.1, "start_percent": 0.1,
+                                                                                 "end_percent": 0.95, "max_consecutive_hits": 2, "temporal_guard": False}}
+        model = ["27", 0]
     if easycache is not None:
         graph["25"] = {"class_type": "EasyCache", "inputs": {
             "model": model, "reuse_threshold": easycache[0], "start_percent": easycache[1],
