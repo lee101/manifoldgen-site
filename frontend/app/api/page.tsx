@@ -210,7 +210,7 @@ export default function ApiDocsPage() {
           <Link href="/" className="inline-flex items-center gap-2 text-sm text-white/65 hover:text-white">
             <ArrowLeft size={16} /> ManifoldGen
           </Link>
-          <Link href="/account" className="rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold">
+          <Link href="/account" className="rounded-full bg-[var(--color-accent-solid)] px-4 py-2 text-sm font-semibold">
             Get an API key
           </Link>
         </div>
@@ -394,7 +394,7 @@ export default function ApiDocsPage() {
             <p className="mb-5 mt-3 leading-7 text-white/55">Hosted Blender renders, photo to 3D, vectorizing and shot cleanup through <code>POST /api/service</code>. Jobs return 202; poll <code>/api/video-jobs/:id</code> and read <code>job.result.stage</code> while processing. Charged only on success. Also available as MCP tools at <code>/api/mcp</code>. <Link href="/tools/production" className="text-[var(--color-accent-2)]">Production suite</Link></p>
             <CodeBlock>{`{"service":"destruction-studio","params":{"subject":"tower","material":"glass","impact":"ball","pieces":64,"quality":"draft"}}`}</CodeBlock>
             <div className="mt-6 overflow-hidden rounded-2xl border border-white/10 text-sm">
-              <div className="hidden gap-2 border-b border-white/10 bg-white/[0.03] px-4 py-2 text-xs text-white/40 sm:grid sm:grid-cols-[140px_1fr_1fr_130px]"><span>Service</span><span>Inputs</span><span>Outputs</span><span>Price</span></div>
+              <div className="hidden gap-2 border-b border-white/10 bg-white/[0.03] px-4 py-2 text-xs text-white/55 sm:grid sm:grid-cols-[140px_1fr_1fr_130px]"><span>Service</span><span>Inputs</span><span>Outputs</span><span>Price</span></div>
               {PRODUCTION_TOOLS.map((tool) => (
                 <div key={tool.service} className="grid gap-1 border-b border-white/10 px-4 py-3 last:border-0 sm:grid-cols-[140px_1fr_1fr_130px] sm:gap-2">
                   <Link href={`/tools/${tool.slug}`}><code className="text-[var(--color-accent-2)]">{tool.service}</code></Link>

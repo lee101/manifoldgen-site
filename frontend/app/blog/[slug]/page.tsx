@@ -96,7 +96,7 @@ function ExampleBlock({ example }: { example: BlogExample }) {
       <div className="space-y-4 p-5">
         {example.input && (
           <div>
-            <p className="mb-2 text-xs font-semibold tracking-[.14em] text-white/40">INPUT</p>
+            <p className="mb-2 text-xs font-semibold tracking-[.14em] text-white/55">INPUT</p>
             <ExampleMedia {...example.input} />
           </div>
         )}
@@ -105,7 +105,7 @@ function ExampleBlock({ example }: { example: BlogExample }) {
           <CodeBlock>{example.prompt}</CodeBlock>
         </div>
         <div>
-          <p className="mb-2 text-xs font-semibold tracking-[.14em] text-white/40">OUTPUT — GENERATED WITH MANIFOLDGEN</p>
+          <p className="mb-2 text-xs font-semibold tracking-[.14em] text-white/55">OUTPUT — GENERATED WITH MANIFOLDGEN</p>
           <div className="grid gap-4 sm:grid-cols-2">
             {example.media.map((item) => (
               <ExampleMedia key={item.src} {...item} />
@@ -210,7 +210,7 @@ export default async function BlogArticlePage({ params }: ArticlePageProps) {
       <header className="border-b border-white/10 bg-[#07070a]/85">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
           <Link href="/blog" className="inline-flex items-center gap-2 text-sm text-white/60 hover:text-white"><ArrowLeft size={16} /> All notes</Link>
-          <Link href="/studio" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold">Open Studio <ArrowRight size={14} /></Link>
+          <Link href="/studio" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-4 py-2 text-sm font-semibold">Open Studio <ArrowRight size={14} /></Link>
         </div>
       </header>
 
@@ -227,7 +227,7 @@ export default async function BlogArticlePage({ params }: ArticlePageProps) {
               <BlockRenderer key={index} block={block} />
             ))}
           </div>
-          <aside className="hidden border-l border-white/10 pl-6 text-xs leading-6 text-white/40 lg:block">
+          <aside className="hidden border-l border-white/10 pl-6 text-xs leading-6 text-white/55 lg:block">
             <p className="font-semibold tracking-[.14em] text-[#bcb2ff]">READING NOTE</p>
             <p className="mt-3">A practical ManifoldGen field note, with examples and prompts you can run yourself.</p>
             <p className="mt-6">{article.readTime} read</p>

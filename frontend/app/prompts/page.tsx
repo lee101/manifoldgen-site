@@ -41,7 +41,7 @@ export default function PromptToolsIndex() {
       </section>
 
       <section className="mt-14 rounded-3xl border border-white/10 bg-white/[0.03] p-6 md:p-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">The useful version of prompt SEO</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">The useful version of prompt SEO</p>
         <h2 className="mt-3 font-display text-2xl font-700">Every page ends in a working generator</h2>
         <p className="mt-3 max-w-3xl text-sm leading-7 text-white/60">Learn the model’s vocabulary, build the exact prompt, copy it anywhere, or render it immediately. There is no article-to-dashboard scavenger hunt.</p>
       </section>

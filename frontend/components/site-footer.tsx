@@ -51,7 +51,7 @@ const SEO_LINK_GROUPS: { title: string; links: { label: string; href: string }[]
 function FooterColumn({ title, links, more }: { title: string; links: readonly FooterLink[]; more?: FooterLink }) {
   return (
     <nav aria-label={title}>
-      <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">{title}</h3>
+      <h2 className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">{title}</h2>
       <ul className="mt-3 space-y-2 text-sm">
         {links.map((link) => (
           <li key={link.href}>
@@ -122,7 +122,7 @@ export default function SiteFooter() {
         </div>
 
         <div className="mt-12 border-t border-white/10 pt-8">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Explore the library</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">Explore the library</h3>
           <div className="mt-4 flex flex-wrap gap-2">
             {FOOTER_EXPLORE_LINKS.map((link) => (
               <Link

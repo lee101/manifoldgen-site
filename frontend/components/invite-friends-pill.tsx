@@ -11,7 +11,6 @@ export default function InviteFriendsPill() {
     <Link
       href="/invite"
       className="group fixed bottom-4 right-4 z-40 flex items-center gap-3 rounded-2xl border border-[#cab3f3]/30 bg-[#171321]/92 px-4 py-3 text-white shadow-[0_16px_50px_rgba(0,0,0,.4)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-[#cab3f3]/60 sm:bottom-6 sm:right-6"
-      aria-label="Invite friends and earn generation credits"
     >
       <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#b99aef]/15 text-[#d8c4fb]"><Gift size={18} /></span>
       <span className="grid leading-tight">

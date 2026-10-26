@@ -53,7 +53,7 @@ export function GeneratorCards({ destination = 'tools' }: { destination?: 'tools
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {destination === 'tools' && <Link href="/tool/image-editor" className="group relative overflow-hidden rounded-3xl border border-white/15 bg-white/[0.045] p-6 transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-white/[0.07]">
         <div className="absolute inset-x-0 top-0 h-px opacity-80" style={{ background: 'linear-gradient(90deg, transparent, #75d5d0, transparent)' }} />
-        <div className="flex items-start justify-between"><span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.07] text-[#75d5d0]"><MousePointer2 size={20} /></span><ArrowRight size={17} className="text-white/40 transition group-hover:translate-x-1 group-hover:text-white/80" /></div>
+        <div className="flex items-start justify-between"><span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.07] text-[#75d5d0]"><MousePointer2 size={20} /></span><ArrowRight size={17} className="text-white/55 transition group-hover:translate-x-1 group-hover:text-white/80" /></div>
         <div className="mt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">SAM2 · BIREFNET · INPAINTING</div>
         <h2 className="mt-2 font-display text-xl font-700">AI Image Editor</h2>
         <p className="mt-3 min-h-[72px] text-sm leading-6 text-white/65">Split an image into layers, select an object precisely, and regenerate only that selected area.</p>
@@ -61,7 +61,7 @@ export function GeneratorCards({ destination = 'tools' }: { destination?: 'tools
       </Link>}
       {destination === 'tools' && <Link href="/tool/animate-video" className="group relative overflow-hidden rounded-3xl border border-white/15 bg-white/[0.045] p-6 transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-white/[0.07]">
         <div className="absolute inset-x-0 top-0 h-px opacity-80" style={{ background: 'linear-gradient(90deg, transparent, #9c8cff, transparent)' }} />
-        <div className="flex items-start justify-between"><span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.07] text-[#9c8cff]"><Layers3 size={20} /></span><ArrowRight size={17} className="text-white/40 transition group-hover:translate-x-1 group-hover:text-white/80" /></div>
+        <div className="flex items-start justify-between"><span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.07] text-[#9c8cff]"><Layers3 size={20} /></span><ArrowRight size={17} className="text-white/55 transition group-hover:translate-x-1 group-hover:text-white/80" /></div>
         <div className="mt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">WAN · ANIMATION TRANSFER</div>
         <h2 className="mt-2 font-display text-xl font-700">Animation Transfer</h2>
         <p className="mt-3 min-h-[72px] text-sm leading-6 text-white/65">Drive a reference character with the body motion, expression, timing, and optional audio from a video.</p>
@@ -75,7 +75,7 @@ export function GeneratorCards({ destination = 'tools' }: { destination?: 'tools
             <div className="absolute inset-x-0 top-0 h-px opacity-80" style={{ background: `linear-gradient(90deg, transparent, ${generator.accent}, transparent)` }} />
             <div className="flex items-start justify-between">
               <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.07]" style={{ color: generator.accent }}><Icon size={20} /></span>
-              <ArrowRight size={17} className="text-white/40 transition group-hover:translate-x-1 group-hover:text-white/80" />
+              <ArrowRight size={17} className="text-white/55 transition group-hover:translate-x-1 group-hover:text-white/80" />
             </div>
             <div className="mt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">{generator.family} · {generator.mode === 'text' ? 'Text to video' : generator.mode === 'image' ? 'Image to video' : generator.mode === 'edit' ? 'Video edit' : 'Reference to video'}</div>
             <h2 className="mt-2 font-display text-xl font-700">{generator.name}</h2>

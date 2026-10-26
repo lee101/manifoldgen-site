@@ -191,7 +191,7 @@ export function MediaContextMenu({
                   <span className="min-w-0">
                     <b className="block truncate font-semibold">{item.label}</b>
                     {item.detail && !group.row && (
-                      <small className="block truncate text-[10px] font-normal leading-tight text-white/40">{item.detail}</small>
+                      <small className="block truncate text-[10px] font-normal leading-tight text-white/55">{item.detail}</small>
                     )}
                   </span>
                 </button>

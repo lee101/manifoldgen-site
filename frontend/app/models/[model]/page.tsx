@@ -75,7 +75,7 @@ export default async function ModelPage({ params }: { params: Promise<{ model: s
         <section className="mt-14 mx-[calc(50%-50vw)] px-5">
           <div className="flex items-baseline justify-between">
             <h2 className="font-display text-2xl font-700 tracking-tight">Real output generated on ManifoldGen</h2>
-            <span className="text-xs text-white/40">hover for prompts</span>
+            <span className="text-xs text-white/55">hover for prompts</span>
           </div>
           <div className="mt-5">
             <MediaGrid videos={media.videos} images={media.images} />

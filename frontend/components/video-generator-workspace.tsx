@@ -167,17 +167,17 @@ export function VideoGeneratorWorkspace({ generator, apiOnly = false }: { genera
         {!apiOnly && (
           <>
             <div className="mb-5 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/40"><Play size={14} /> Output</div>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/55"><Play size={14} /> Output</div>
               {status && <span className="text-xs text-white/45">{status}</span>}
             </div>
             <div className="flex aspect-video items-center justify-center overflow-hidden rounded-2xl border border-white/15 bg-[#0d1018]">
               {outputURL ? <video data-testid="video-generator-output" src={outputURL} controls playsInline className="h-full w-full object-contain" /> : <div className="max-w-xs p-8 text-center"><Clapperboard className="mx-auto text-white/20" size={36} /><p className="mt-4 text-sm leading-6 text-white/35">Your generated shot will appear here, ready to download or place on the Studio timeline.</p></div>}
             </div>
-            {outputURL && <div className="mt-4 flex flex-wrap gap-3"><Link href={`/studio?video_url=${encodeURIComponent(outputURL)}&name=${encodeURIComponent(`${generator.shortName} generation`)}`} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-accent)] px-4 py-2.5 text-sm font-semibold"><Clapperboard size={16} /> Edit in Studio</Link><VideoDownload url={outputURL} name={`${generator.shortName}-generation`} testId="generator-download" /></div>}
+            {outputURL && <div className="mt-4 flex flex-wrap gap-3"><Link href={`/studio?video_url=${encodeURIComponent(outputURL)}&name=${encodeURIComponent(`${generator.shortName} generation`)}`} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-accent-solid)] px-4 py-2.5 text-sm font-semibold"><Clapperboard size={16} /> Edit in Studio</Link><VideoDownload url={outputURL} name={`${generator.shortName}-generation`} testId="generator-download" /></div>}
           </>
         )}
         <div className={apiOnly ? '' : 'mt-8 border-t border-white/10 pt-7'}>
-          <div className="mb-3 flex items-center justify-between"><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/40"><Code2 size={14} /> API request</div><button onClick={copyCurl} className="inline-flex items-center gap-1.5 text-xs text-white/45 hover:text-white"><Copy size={13} /> Copy</button></div>
+          <div className="mb-3 flex items-center justify-between"><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/55"><Code2 size={14} /> API request</div><button onClick={copyCurl} className="inline-flex items-center gap-1.5 text-xs text-white/45 hover:text-white"><Copy size={13} /> Copy</button></div>
           <pre className="max-h-[430px] overflow-auto rounded-2xl border border-white/15 bg-[#0d1018] p-4 text-xs leading-5 text-white/75"><code>{displayCurl}</code></pre>
           <div className="mt-4 flex items-start gap-2 text-xs leading-5 text-white/55"><Check size={14} className="mt-0.5 shrink-0 text-[var(--color-accent-2)]" /> The API and this tester use the same request. Provider routing stays behind ManifoldGen.</div>
         </div>

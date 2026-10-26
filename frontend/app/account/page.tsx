@@ -501,7 +501,7 @@ export default function AccountPage() {
               type="submit"
               disabled={busy}
               data-testid="account-auth-submit"
-              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-3 font-semibold disabled:opacity-50"
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-4 py-3 font-semibold disabled:opacity-50"
             >
               {busy ? (
                 <Loader2 className="animate-spin" size={16} />
@@ -637,7 +637,7 @@ export default function AccountPage() {
                     </div>
                     {(job.result?.video_url || job.result?.project_url) ? <div className="mt-3 flex flex-wrap gap-2">
                       {job.result.video_url ? <VideoDownload url={job.result.video_url} name="manifoldgen-remake" className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1.5 text-xs" testId={`account-download-${job.job_id}`} /> : null}
-                      {job.result.project_url ? <Link href={job.result.project_url} className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-accent)] px-3 py-1.5 text-xs font-semibold"><Sparkles size={13} /> Open timeline</Link> : null}
+                      {job.result.project_url ? <Link href={job.result.project_url} className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-accent-solid)] px-3 py-1.5 text-xs font-semibold"><Sparkles size={13} /> Open timeline</Link> : null}
                     </div> : null}
                   </article>;
                 })}
@@ -682,7 +682,7 @@ export default function AccountPage() {
                 disabled={busy}
                 data-testid="account-buy-credits"
                 onClick={() => buyCredits('credits')}
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2.5 font-semibold disabled:opacity-50"
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-4 py-2.5 font-semibold disabled:opacity-50"
               >
                 {busy ? <Loader2 className="animate-spin" size={16} /> : <CreditCard size={16} />}
                 Add ${Number(amount) || 0}
@@ -804,7 +804,7 @@ export default function AccountPage() {
                     <div className="mt-6 rounded-2xl border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 p-4 text-center">
                       <p className="font-semibold">Stay with us at 50% off</p>
                       <p className="mt-1 text-sm text-[var(--color-mute)]">We’ll apply half-price billing for your next 3 months. One-time offer.</p>
-                      <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void applyRetentionOffer()} className="mt-4 inline-flex w-full justify-center rounded-full bg-[var(--color-accent)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
+                      <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void applyRetentionOffer()} className="mt-4 inline-flex w-full justify-center rounded-full bg-[var(--color-accent-solid)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
                         {cancellationBusy ? 'Applying…' : 'Accept 50% discount'}
                       </button>
                     </div>
@@ -814,7 +814,7 @@ export default function AccountPage() {
                       <p className="font-semibold">Not the right time?</p>
                       <p className="text-sm text-[var(--color-mute)]">Your credits never expire. Pause billing for a month or move to a smaller plan.</p>
                       {cancelOptions.can_pause ? (
-                        <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void pauseSubscription()} className="inline-flex w-full justify-center rounded-full bg-[var(--color-accent)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50">Pause for 1 month</button>
+                        <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void pauseSubscription()} className="inline-flex w-full justify-center rounded-full bg-[var(--color-accent-solid)] px-4 py-2.5 text-sm font-semibold disabled:opacity-50">Pause for 1 month</button>
                       ) : null}
                       {cancelOptions.can_downgrade ? (
                         <button type="button" disabled={!cancellationReason || cancellationBusy} onClick={() => void downgradeSubscription()} className="inline-flex w-full justify-center rounded-full border border-white/20 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">Switch to Maker · $29/mo</button>

@@ -104,7 +104,7 @@ export default async function GuidePage({ params }: GuidePageProps) {
       <header className="border-b border-white/10 bg-[#07070a]/85">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
           <Link href="/blog/guides" className="inline-flex items-center gap-2 text-sm text-white/60 hover:text-white"><ArrowLeft size={16} /> All guides</Link>
-          <Link href="/studio" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold">Open Studio <ArrowRight size={14} /></Link>
+          <Link href="/studio" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-4 py-2 text-sm font-semibold">Open Studio <ArrowRight size={14} /></Link>
         </div>
       </header>
 
@@ -130,11 +130,11 @@ export default async function GuidePage({ params }: GuidePageProps) {
         </div>
 
         <section className="mt-16" aria-labelledby="related-heading">
-          <h2 id="related-heading" className="text-xs font-semibold tracking-[.15em] text-white/40">KEEP READING</h2>
+          <h2 id="related-heading" className="text-xs font-semibold tracking-[.15em] text-white/55">KEEP READING</h2>
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             {related.map((entry) => (
               <Link key={entry.slug} href={`/blog/guides/${entry.slug}`} className="group rounded-2xl border border-white/10 bg-white/[.025] p-5 transition hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[.05]">
-                <div className="text-xs text-white/40">{entry.category} · {entry.readTime}</div>
+                <div className="text-xs text-white/55">{entry.category} · {entry.readTime}</div>
                 <h3 className="mt-3 font-display text-lg font-700 leading-snug text-white/90 group-hover:text-white">{entry.title}</h3>
               </Link>
             ))}

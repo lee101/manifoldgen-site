@@ -115,7 +115,7 @@ export default function PromptBuilder({ tool }: { tool: PromptTool }) {
 
       <div className="border-t border-white/10 bg-black/25 p-5 md:p-7">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/40">Generated prompt</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/55">Generated prompt</p>
           <span className="text-xs text-white/30">{output.length} characters</span>
         </div>
         <p className="mt-3 rounded-2xl border border-white/10 bg-black/45 p-5 font-mono text-[13px] leading-7 text-white/78" aria-live="polite">{output}</p>

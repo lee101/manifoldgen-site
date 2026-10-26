@@ -215,12 +215,12 @@ export default function BulkImageTool() {
             ))}</div></div>
           </div>
           <div className={styles.stacked}>
-            <div className={styles.stackGroup}><label>Aspect</label><select value={aspect} onChange={(event) => setAspect(event.target.value as typeof aspect)}>{ASPECTS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></div>
-            <div className={styles.stackGroup}><label>Quality</label><select value={quality} disabled={engine !== 'omniserve'} onChange={(event) => setQuality(event.target.value as Quality)}>
+            <div className={styles.stackGroup}><label>Aspect</label><select aria-label="Aspect" value={aspect} onChange={(event) => setAspect(event.target.value as typeof aspect)}>{ASPECTS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></div>
+            <div className={styles.stackGroup}><label>Quality</label><select aria-label="Quality" value={quality} disabled={engine !== 'omniserve'} onChange={(event) => setQuality(event.target.value as Quality)}>
               <option value="turbo">Fast · 6-step turbo</option>
               <option value="hq">Max quality · 30-step base (2x)</option>
             </select></div>
-            <div className={styles.stackGroup}><label>Variants per prompt</label><input type="number" min={1} max={12} value={count} onChange={(event) => setCount(Math.min(12, Math.max(1, Number(event.target.value) || 1)))} /></div>
+            <div className={styles.stackGroup}><label>Variants per prompt</label><input aria-label="Variants per prompt" type="number" min={1} max={12} value={count} onChange={(event) => setCount(Math.min(12, Math.max(1, Number(event.target.value) || 1)))} /></div>
           </div>
         </div>
 

@@ -23,7 +23,7 @@ export default function GuidesPage() {
             <Link href="/blog" className="hover:text-white">Blog</Link>
             <Link href="/account" className="hover:text-white">Account</Link>
           </nav>
-          <Link href="/studio" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-white">
+          <Link href="/studio" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-4 py-2 text-sm font-semibold text-white">
             Open Studio <ArrowRight size={14} />
           </Link>
         </div>
@@ -46,7 +46,7 @@ export default function GuidesPage() {
           return (
             <section key={section.id} className="mt-16" aria-labelledby={`section-${section.id}`}>
               <div className="border-b border-white/10 pb-4">
-                <p className="text-xs font-semibold tracking-[.15em] text-white/40">{section.blurb.toUpperCase()}</p>
+                <p className="text-xs font-semibold tracking-[.15em] text-white/55">{section.blurb.toUpperCase()}</p>
                 <h2 id={`section-${section.id}`} className="mt-2 font-display text-3xl font-700">{section.title}</h2>
               </div>
               <div className="mt-7 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -56,7 +56,7 @@ export default function GuidesPage() {
                     href={`/blog/guides/${guide.slug}`}
                     className="group flex flex-col rounded-2xl border border-white/10 bg-white/[.025] p-6 transition hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[.05]"
                   >
-                    <div className="flex items-center justify-between text-xs text-white/40"><span>{guide.category}</span><span>{guide.readTime}</span></div>
+                    <div className="flex items-center justify-between text-xs text-white/55"><span>{guide.category}</span><span>{guide.readTime}</span></div>
                     <h3 className="mt-6 font-display text-xl font-700 leading-snug tracking-tight text-white/90 group-hover:text-white">{guide.title}</h3>
                     <p className="mt-3 flex-1 text-sm leading-6 text-white/50">{guide.excerpt}</p>
                     <span className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-[#bcb2ff]">Read guide <ArrowRight size={14} /></span>

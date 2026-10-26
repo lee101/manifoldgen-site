@@ -23,7 +23,7 @@ export default function InvitePage() {
       <InviteDashboard />
 
       <section className="mt-12 flex flex-col items-start justify-between gap-5 rounded-3xl border border-white/10 bg-white/[0.03] p-6 sm:flex-row sm:items-center">
-        <div><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.15em] text-white/40"><Sparkles size={13} /> Need something worth sharing?</p><h2 className="mt-2 font-display text-xl font-700">Build a prompt, render it, then send the result.</h2></div>
+        <div><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.15em] text-white/55"><Sparkles size={13} /> Need something worth sharing?</p><h2 className="mt-2 font-display text-xl font-700">Build a prompt, render it, then send the result.</h2></div>
         <Link href="/prompts" className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-black hover:bg-white/85">Open free prompt tools</Link>
       </section>
     </PageShell>

@@ -28,7 +28,7 @@ function ArticleCard({ article }: { article: (typeof articles)[number] }) {
         <img src={article.ogImage} alt="" loading="lazy" className="h-full w-full object-cover opacity-90 transition group-hover:opacity-100" />
       </div>
       <div className="p-6">
-        <div className="flex items-center justify-between text-xs text-white/40"><span>{article.category}</span><span>{new Date(`${article.date}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</span></div>
+        <div className="flex items-center justify-between text-xs text-white/55"><span>{article.category}</span><span>{new Date(`${article.date}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</span></div>
         <h3 className="mt-4 font-display text-xl font-700 leading-snug tracking-tight text-white/90 group-hover:text-white">{article.title}</h3>
         <p className="mt-3 text-sm leading-6 text-white/50">{article.excerpt}</p>
         <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[#bcb2ff]">Read guide <ArrowRight size={14} /></span>
@@ -54,7 +54,7 @@ export default function BlogPage() {
             <Link href="/api" className="hover:text-white">API</Link>
             <Link href="/blog/guides" className="text-[#bcb2ff] hover:text-white">Guides</Link>
           </nav>
-          <Link href="/studio" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-white">
+          <Link href="/studio" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-4 py-2 text-sm font-semibold text-white">
             Open Studio <ArrowRight size={14} />
           </Link>
         </div>
@@ -72,7 +72,7 @@ export default function BlogPage() {
         </section>
 
         <section className="mt-16 grid overflow-hidden rounded-3xl border border-white/10 bg-white/[.035] lg:grid-cols-[1.05fr_.95fr]" aria-labelledby="featured-heading">
-          <Link href={`/blog/${featured.slug}`} className="relative block min-h-[280px] overflow-hidden bg-black lg:min-h-full">
+          <Link href={`/blog/${featured.slug}`} aria-label={featured.title} className="relative block min-h-[280px] overflow-hidden bg-black lg:min-h-full">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={featured.ogImage} alt="" className="absolute inset-0 h-full w-full object-cover opacity-80" />
             <div className="absolute inset-0 bg-gradient-to-t from-[#07070a]/90 via-transparent to-transparent" />
@@ -129,7 +129,7 @@ export default function BlogPage() {
 
         <section className="mt-16" aria-labelledby="latest-heading">
           <div className="flex items-end justify-between gap-4 border-b border-white/10 pb-4">
-            <div><p className="text-xs font-semibold tracking-[.15em] text-white/40">ALL GUIDES</p><h2 id="latest-heading" className="mt-2 font-display text-3xl font-700">Prompt it, generate it, ship it</h2></div>
+            <div><p className="text-xs font-semibold tracking-[.15em] text-white/55">ALL GUIDES</p><h2 id="latest-heading" className="mt-2 font-display text-3xl font-700">Prompt it, generate it, ship it</h2></div>
             <span className="hidden text-sm text-white/35 sm:block">Real prompts · Real outputs</span>
           </div>
           <div className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-3">

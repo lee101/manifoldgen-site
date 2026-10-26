@@ -51,7 +51,7 @@ export default function BenchCompare({ slug, a, b }: { slug: string; a: BenchMod
           output you get, side by side.
         </p>
         <p className="mt-4 inline-block rounded-full border border-white/15 bg-white/[.05] px-4 py-1.5 text-sm font-semibold">
-          Verdict: {overall} <span className="text-white/40">({aWins}–{bWins} across {CATEGORIES.length} categories)</span>
+          Verdict: {overall} <span className="text-white/55">({aWins}–{bWins} across {CATEGORIES.length} categories)</span>
         </p>
       </section>
 
@@ -59,7 +59,7 @@ export default function BenchCompare({ slug, a, b }: { slug: string; a: BenchMod
         <div className="overflow-x-auto rounded-3xl border border-white/10 bg-white/[.03]">
           <table className="w-full min-w-[560px] text-left text-sm">
             <thead>
-              <tr className="border-b border-white/10 text-xs tracking-[.12em] text-white/40">
+              <tr className="border-b border-white/10 text-xs tracking-[.12em] text-white/55">
                 <th className="px-6 py-4 font-semibold">CATEGORY</th>
                 <th className="px-6 py-4 font-semibold" style={{ color: a.accent }}>{a.name}</th>
                 <th className="px-6 py-4 font-semibold" style={{ color: b.accent }}>{b.name}</th>
@@ -94,11 +94,11 @@ export default function BenchCompare({ slug, a, b }: { slug: string; a: BenchMod
             <PromptBlock prompt={category.prompt} />
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <p className="text-xs tracking-[.12em] text-white/40">RANK #{category.ranking.indexOf(a.key) + 1} OVERALL</p>
+                <p className="text-xs tracking-[.12em] text-white/55">RANK #{category.ranking.indexOf(a.key) + 1} OVERALL</p>
                 <ClipCard categoryKey={category.key} modelKey={a.key} model={a} rank={category.ranking.indexOf(a.key) < category.ranking.indexOf(b.key) ? 1 : undefined} />
               </div>
               <div className="space-y-2">
-                <p className="text-xs tracking-[.12em] text-white/40">RANK #{category.ranking.indexOf(b.key) + 1} OVERALL</p>
+                <p className="text-xs tracking-[.12em] text-white/55">RANK #{category.ranking.indexOf(b.key) + 1} OVERALL</p>
                 <ClipCard categoryKey={category.key} modelKey={b.key} model={b} rank={category.ranking.indexOf(b.key) < category.ranking.indexOf(a.key) ? 1 : undefined} />
               </div>
             </div>

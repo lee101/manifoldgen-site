@@ -52,7 +52,7 @@ export default function AnimeStylesPage() {
           <Link href="/blog" className="inline-flex items-center gap-2 text-sm text-white/60 hover:text-white">
             <ArrowLeft size={16} /> All notes
           </Link>
-          <Link href="/tools/make-image" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold">
+          <Link href="/tools/make-image" className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-4 py-2 text-sm font-semibold">
             Bulk generate <ArrowRight size={14} />
           </Link>
         </div>

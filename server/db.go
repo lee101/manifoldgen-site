@@ -1053,6 +1053,14 @@ func (db *DB) StreamCompletedVideoPrompts(nsfw bool, cb func(jobID, prompt, vide
 }
 
 func extractVideoURLFromResultJSON(raw string) string {
+	u := extractRawVideoURLFromResultJSON(raw)
+	if len(u) > 2048 || strings.HasPrefix(u, "data:") {
+		return ""
+	}
+	return u
+}
+
+func extractRawVideoURLFromResultJSON(raw string) string {
 	if raw == "" || raw == "null" {
 		return ""
 	}

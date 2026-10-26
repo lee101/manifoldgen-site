@@ -60,7 +60,7 @@ function FileDrop({ kind, file, onFile }: { kind: 'image' | 'video'; file: File 
       <span className={`relative z-10 m-auto flex max-w-56 flex-col items-center p-6 text-center ${preview ? 'rounded-2xl bg-black/70 opacity-0 backdrop-blur transition group-hover:opacity-100' : ''}`}>
         {isImage ? <ImageIcon size={25} className="text-[#ff9c72]" /> : <Film size={25} className="text-[#8c7cff]" />}
         <b className="mt-3 text-sm">{file ? 'Replace file' : isImage ? 'Choose subject image' : 'Choose driving video'}</b>
-        <small className="mt-2 leading-5 text-white/40">{file?.name || (isImage ? 'A clear, full-body character works best' : 'Motion, expression, timing, and audio transfer')}</small>
+        <small className="mt-2 leading-5 text-white/55">{file?.name || (isImage ? 'A clear, full-body character works best' : 'Motion, expression, timing, and audio transfer')}</small>
       </span>
     </button>
   );
@@ -152,7 +152,7 @@ export function AnimationTransferWorkspace() {
           <label className="text-xs font-semibold text-white/55">SOURCE LENGTH FOR ESTIMATE<select data-testid="animate-duration" value={duration} onChange={(event) => setDuration(Number(event.target.value))} className="mt-2 w-full rounded-xl border border-white/15 bg-[#171b27] px-3 py-3 text-sm text-white">{[3, 5, 10, 15].map((value) => <option key={value} value={value}>{value} seconds</option>)}</select></label>
           <label className="text-xs font-semibold text-white/55">SEED<input value={seed} onChange={(event) => setSeed(event.target.value.replace(/[^0-9]/g, ''))} placeholder="Random" inputMode="numeric" className="mt-2 w-full rounded-xl border border-white/15 bg-[#171b27] px-3 py-3 text-sm text-white outline-none" /></label>
         </div>
-        <div className="mt-5 flex items-center justify-between rounded-xl border border-white/10 bg-white/[.025] px-4 py-3"><span><b className="block text-sm">Estimated price</b><small className="text-white/40">24 fps estimate · final charge follows source frames</small></span><strong data-testid="animate-estimate" className="text-right text-lg">~{estimateCredits} credits<small className="block text-xs font-normal text-white/35">${estimateUSD.toFixed(2)}</small></strong></div>
+        <div className="mt-5 flex items-center justify-between rounded-xl border border-white/10 bg-white/[.025] px-4 py-3"><span><b className="block text-sm">Estimated price</b><small className="text-white/55">24 fps estimate · final charge follows source frames</small></span><strong data-testid="animate-estimate" className="text-right text-lg">~{estimateCredits} credits<small className="block text-xs font-normal text-white/35">${estimateUSD.toFixed(2)}</small></strong></div>
         <button data-testid="animate-submit" onClick={() => void generate()} disabled={busy} className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white px-5 py-3.5 text-sm font-bold text-black transition hover:bg-white/90 disabled:opacity-55">{busy ? <Loader2 className="animate-spin" size={17} /> : <WandSparkles size={17} />}{busy ? status || 'Animating…' : mode === 'replace' ? 'Replace performer' : 'Move image'}</button>
         {error && <div role="alert" className="mt-4 rounded-xl border border-red-300/15 bg-red-400/[.06] p-3 text-sm text-red-100/75">{error} {error.startsWith('Sign in') && <Link href="/account" className="underline">Open account</Link>}</div>}
       </section>

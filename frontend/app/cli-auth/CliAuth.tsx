@@ -82,7 +82,7 @@ export default function CliAuth() {
           <>
             <h1 className="font-display text-2xl font-700">Sign in to connect the CLI</h1>
             <p className="mt-2 text-sm leading-6 text-white/55">You will come back here to approve this computer.</p>
-            <Link href={signInHref} className="mt-6 flex w-full items-center justify-center rounded-full bg-[var(--color-accent)] px-5 py-3 text-sm font-semibold" data-testid="cli-auth-signin">
+            <Link href={signInHref} className="mt-6 flex w-full items-center justify-center rounded-full bg-[var(--color-accent-solid)] px-5 py-3 text-sm font-semibold" data-testid="cli-auth-signin">
               Sign in or create an account
             </Link>
           </>
@@ -104,11 +104,11 @@ export default function CliAuth() {
                 Cancel
               </button>
               {request?.paste ? (
-                <button type="button" onClick={() => setStep('paste')} className="flex-1 rounded-full bg-[var(--color-accent)] px-5 py-3 text-sm font-semibold" data-testid="cli-auth-approve">
+                <button type="button" onClick={() => setStep('paste')} className="flex-1 rounded-full bg-[var(--color-accent-solid)] px-5 py-3 text-sm font-semibold" data-testid="cli-auth-approve">
                   Authorize
                 </button>
               ) : (
-                <button type="button" onClick={send} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-5 py-3 text-sm font-semibold" disabled={step === 'sending'} data-testid="cli-auth-approve">
+                <button type="button" onClick={send} className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-5 py-3 text-sm font-semibold" disabled={step === 'sending'} data-testid="cli-auth-approve">
                   {step === 'sending' && <Loader2 size={15} className="animate-spin" />} Authorize
                 </button>
               )}
@@ -122,7 +122,7 @@ export default function CliAuth() {
             <p className="mt-2 text-sm leading-6 text-white/55">Treat it like a password. Rotate it anytime on Account.</p>
             <div className="mt-5 flex gap-2">
               <input readOnly value={user?.api_key || ''} onFocus={(e) => e.currentTarget.select()} className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 font-mono text-xs text-white" aria-label="API key" />
-              <button type="button" onClick={copyKey} className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--color-accent)] px-3.5 text-sm font-semibold">
+              <button type="button" onClick={copyKey} className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--color-accent-solid)] px-3.5 text-sm font-semibold">
                 {copied ? <Check size={15} /> : <Copy size={15} />} {copied ? 'Copied' : 'Copy'}
               </button>
             </div>

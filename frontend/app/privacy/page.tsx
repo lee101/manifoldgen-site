@@ -77,7 +77,7 @@ export default function PrivacyPage() {
               <ul className="mt-4 space-y-3">
                 {section.body.map((line) => (
                   <li key={line} className="flex gap-3 text-[15px] leading-7 text-white/70">
-                    <span className="mt-[11px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
+                    <span className="mt-[11px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent-solid)]" />
                     <span>{line}</span>
                   </li>
                 ))}

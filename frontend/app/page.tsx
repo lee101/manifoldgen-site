@@ -46,6 +46,7 @@ import {
 } from '../lib/auth';
 import { friendlyError, parseJSONResponse } from '../lib/http';
 import { ManifoldLoader } from '../components/manifold-loader';
+import LazyPreviewVideo from '../components/lazy-preview-video';
 import { ContextMenuItem, MediaContextMenu, copyImageToClipboard, copyText, createLongPressRegistry, downloadMedia } from '../components/media-action-sheet';
 import {
   h3Dimensions,
@@ -286,6 +287,7 @@ export default function HomePage() {
   const [frameDropIndex, setFrameDropIndex] = useState<number | null>(null);
   const pendingAssetFilesRef = useRef<File[]>([]);
   const heroVideoRef = useRef<HTMLVideoElement>(null);
+  const [heroVideoReady, setHeroVideoReady] = useState(false);
   const assetInputRef = useRef<HTMLInputElement>(null);
   const searchMoreRef = useRef<HTMLDivElement>(null);
   const galleryMoreRef = useRef<HTMLDivElement>(null);
@@ -1088,6 +1090,19 @@ export default function HomePage() {
     iosVideo.webkitEnterFullscreen?.();
   }
 
+  // Start the hero clip after load so its download does not compete with the
+  // scripts and fonts needed for first paint; the poster covers the gap.
+  useEffect(() => {
+    let timer: number | undefined;
+    const start = () => { timer = window.setTimeout(() => setHeroVideoReady(true), 200); };
+    if (document.readyState === 'complete') start();
+    else window.addEventListener('load', start, { once: true });
+    return () => {
+      window.removeEventListener('load', start);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, []);
+
   const [logoOk, setLogoOk] = useState(true);
   const logoSrc = '/brand/logo-nobg.webp';
 
@@ -1184,7 +1199,7 @@ export default function HomePage() {
             data-testid="home-hero-video"
             key={resultUrl}
             className="hero-motion absolute inset-0 h-full w-full object-cover"
-            src={resultUrl}
+            src={heroVideoReady || job?.result_url ? resultUrl : undefined}
             poster={heroImage}
             autoPlay
             muted={heroMuted}
@@ -1296,7 +1311,7 @@ export default function HomePage() {
                   type="button"
                   data-testid="home-sign-up"
                   onClick={() => openAuth('signup')}
-                  className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-white"
+                  className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-4 py-2 text-sm font-semibold text-white"
                 >
                   <UserPlus size={16} />
                   Sign up
@@ -1338,7 +1353,7 @@ export default function HomePage() {
                         <span>Steering frames</span>
                         <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] tracking-normal text-white/50">{imageFrames.length}</span>
                       </div>
-                      <p className="mt-1 text-[11px] text-white/40">{imageFrames.length > 1 ? `${transitionCount} locked transition${transitionCount === 1 ? '' : 's'} · ${duration}s each` : 'Frame 1 anchors the shot'}</p>
+                      <p className="mt-1 text-[11px] text-white/55">{imageFrames.length > 1 ? `${transitionCount} locked transition${transitionCount === 1 ? '' : 's'} · ${duration}s each` : 'Frame 1 anchors the shot'}</p>
                     </div>
                     <button type="button" onClick={() => setFramesOpen(true)} className="shrink-0 rounded-full px-2.5 py-1.5 text-[11px] font-medium text-white/55 transition hover:bg-white/10 hover:text-white">
                       Manage frames
@@ -1403,6 +1418,7 @@ export default function HomePage() {
               />
               <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
                 <select
+                  aria-label="Aspect ratio"
                   value={aspect}
                   onChange={(e) => setAspect(e.target.value as Aspect)}
                   className="rounded-full bg-white/5 px-3 py-1.5 text-sm"
@@ -1414,6 +1430,7 @@ export default function HomePage() {
                   ))}
                 </select>
                 <select
+                  aria-label="Size"
                   value={size}
                   onChange={(e) => setSize(e.target.value as Size)}
                   className="rounded-full bg-white/5 px-3 py-1.5 text-sm"
@@ -1450,7 +1467,7 @@ export default function HomePage() {
                   onClick={() => setLoopMode((enabled) => !enabled)}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
                     loopMode
-                      ? 'bg-[var(--color-accent)] text-white'
+                      ? 'bg-[var(--color-accent-solid)] text-white'
                       : 'bg-white/5 text-[var(--color-mute)] hover:text-white'
                   }`}
                   title={imageFrames.length > 1 ? 'Loops use one matching start/end frame' : 'Generate a looping video'}
@@ -1490,7 +1507,7 @@ export default function HomePage() {
                   onClick={() => setUpscaleMode((enabled) => !enabled)}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition ${
                     upscaleMode
-                      ? 'bg-[var(--color-accent)] text-white'
+                      ? 'bg-[var(--color-accent-solid)] text-white'
                       : 'bg-white/5 text-[var(--color-mute)] hover:text-white'
                   }`}
                   title="Post-upscale the finished video with Real-ESRGAN"
@@ -1505,7 +1522,7 @@ export default function HomePage() {
                       data-testid="home-duration-control"
                       onClick={() => setSettingsOpen(true)}
                       className="group inline-flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5 text-sm text-[var(--color-mute)] transition hover:bg-white/10 hover:text-white"
-                      aria-label={`Video duration ${duration} seconds per transition. Change duration`}
+                      aria-label={`${imageFrames.length > 2 ? `${duration}s × ${transitionCount}` : `${duration}s`} video duration. Change duration`}
                     >
                       <Clock3 size={14} className="text-white/50 transition group-hover:text-[var(--color-accent-2)]" />
                       <span>{imageFrames.length > 2 ? `${duration}s × ${transitionCount}` : `${duration}s`}</span>
@@ -1526,7 +1543,7 @@ export default function HomePage() {
                     type="button"
                     disabled={!prompt.trim()}
                     onClick={() => void generate()}
-                    className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
                   >
                     <Sparkles size={16} />
                     {user ? (generationMode === 'images' ? 'Generate 4 images' : musicVideoMode ? 'Generate music video' : imageFrames.length > 2 ? `Generate ${transitionCount} transitions` : 'Generate video') : 'Sign up to generate'}
@@ -1564,8 +1581,8 @@ export default function HomePage() {
           </div>
         </div>
         <div className="reel-scroll flex snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-2 md:px-6">
-          {musicVideos.map((hit, index) => <button key={hit.job_id} type="button" onClick={() => playVideo(hit)} className="group relative aspect-video h-[48vw] max-h-[420px] min-h-[220px] shrink-0 snap-start overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left sm:h-[32vw] lg:h-[24vw]" aria-label="Play music video">
-            {hit.video_url && <video src={hit.video_url} muted loop playsInline preload={index < 2 ? 'metadata' : 'none'} className="h-full w-full object-cover transition duration-700 group-hover:scale-[1.03]" onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)} onMouseLeave={(event) => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} />}
+          {musicVideos.map((hit) => <button key={hit.job_id} type="button" onClick={() => playVideo(hit)} className="group relative aspect-video h-[48vw] max-h-[420px] min-h-[220px] shrink-0 snap-start overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left sm:h-[32vw] lg:h-[24vw]" aria-label={`Play music video: ${hit.prompt}`}>
+            {hit.video_url && <LazyPreviewVideo src={hit.video_url} muted loop playsInline className="h-full w-full object-cover transition duration-700 group-hover:scale-[1.03]" onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)} onMouseLeave={(event) => { event.currentTarget.pause(); event.currentTarget.currentTime = 0; }} />}
             <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-md"><Music2 size={13} /> Music video</span>
             <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/70 to-transparent p-4 pt-14 text-sm leading-snug text-white md:text-base">{hit.prompt}</span>
           </button>)}
@@ -1628,7 +1645,7 @@ export default function HomePage() {
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-accent-2)]">Mixed media search</p>
                 <h2 className="mt-1 font-display text-xl tracking-wide text-white">Results for “{activeSearchQ}”</h2>
               </div>
-              <span className="text-xs text-white/40">{mixedSearchHits.length} images + videos</span>
+              <span className="text-xs text-white/55">{mixedSearchHits.length} images + videos</span>
             </div>
             {mixedSearchHits.length === 0 ? (
               <p className="py-10 text-sm text-[var(--color-mute)]">No matching images or videos yet. Try a broader visual description.</p>
@@ -1687,7 +1704,7 @@ export default function HomePage() {
             <p className="text-sm text-[var(--color-mute)]">Images + videos</p>
           </div>
           {galleryFeed.length > 0 ? (
-            <span className="text-xs text-white/40">{galleryFeed.length}</span>
+            <span className="text-xs text-white/55">{galleryFeed.length}</span>
           ) : null}
         </div>
         {galleryFeed.length === 0 ? (
@@ -1756,7 +1773,7 @@ export default function HomePage() {
                         <div className="rounded-xl border border-white/10 bg-[#0a0a10]/95 p-2.5 shadow-2xl">
                           <p className="line-clamp-3 text-xs leading-snug text-white/85">{item.prompt}</p>
                           <div className="mt-2 grid grid-cols-2 gap-2">
-                            <button type="button" onClick={() => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: img.image_url || img.thumb_url }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
+                            <button type="button" onClick={() => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: img.image_url || img.thumb_url }); }} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-3 py-2 text-xs font-semibold text-white shadow-lg"><Sparkles size={14} />Generate video</button>
                             <button type="button" onClick={() => useGalleryImageAsStartFrame(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><ImageIcon size={13} />Use as start frame</button>
                             <button type="button" onClick={() => promptForSimilar(img.prompt)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Sparkles size={13} />Prompt for similar</button>
                             <button type="button" onClick={() => openGalleryImageInStudio(img)} className="inline-flex items-center justify-center gap-1 rounded-full bg-black/75 px-2 py-2 text-xs font-medium text-white backdrop-blur hover:bg-black"><Clapperboard size={13} />Open in editor</button>
@@ -1829,7 +1846,7 @@ export default function HomePage() {
                 </div>
                 <div className="shrink-0 text-right">
                   <div className="font-display text-3xl font-700 text-white">{duration}<span className="ml-1 text-base font-normal text-white/45">sec</span></div>
-                  <div className="text-xs text-white/40">~${estimatedSequenceUSD.toFixed(2)}</div>
+                  <div className="text-xs text-white/55">~${estimatedSequenceUSD.toFixed(2)}</div>
                 </div>
               </div>
               <input
@@ -1852,7 +1869,7 @@ export default function HomePage() {
                     disabled={musicVideoMode}
                     onClick={() => setDuration(seconds)}
                     aria-pressed={duration === seconds}
-                    className={`rounded-xl px-2 py-2 text-xs font-medium transition ${duration === seconds ? 'bg-[var(--color-accent)] text-white' : 'bg-white/5 text-white/55 hover:bg-white/10 hover:text-white'}`}
+                    className={`rounded-xl px-2 py-2 text-xs font-medium transition ${duration === seconds ? 'bg-[var(--color-accent-solid)] text-white' : 'bg-white/5 text-white/55 hover:bg-white/10 hover:text-white'}`}
                   >{seconds}s</button>
                 ))}
               </div>
@@ -2011,13 +2028,13 @@ export default function HomePage() {
               ) : (
                 <button type="button" onClick={() => assetInputRef.current?.click()} className="flex min-h-48 w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[.02] text-center text-sm text-white/50 transition hover:border-white/30 hover:bg-white/[.05] hover:text-white">
                   <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white/10"><ImageIcon size={22} /></span>
-                  <span><b className="block text-white/80">Drop your first frame here</b><small className="mt-1 block text-white/40">or paste an image into the prompt</small></span>
+                  <span><b className="block text-white/80">Drop your first frame here</b><small className="mt-1 block text-white/55">or paste an image into the prompt</small></span>
                 </button>
               )}
             </div>
             <div className="flex flex-col gap-3 border-t border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6">
-              <p className="text-xs leading-5 text-white/40">Every adjacent pair becomes a {duration}s transition. Each segment stops on its next frame; the final segment ends on frame {imageFrames.length}.</p>
-              <button type="button" onClick={() => setFramesOpen(false)} className="rounded-full bg-[var(--color-accent)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110">Done</button>
+              <p className="text-xs leading-5 text-white/55">Every adjacent pair becomes a {duration}s transition. Each segment stops on its next frame; the final segment ends on frame {imageFrames.length}.</p>
+              <button type="button" onClick={() => setFramesOpen(false)} className="rounded-full bg-[var(--color-accent-solid)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110">Done</button>
             </div>
           </div>
         </div>
@@ -2093,7 +2110,7 @@ export default function HomePage() {
                       >
                         <div className="flex items-center justify-between gap-3">
                           <span className="font-semibold">Creator · $14.99/month</span>
-                          <span className="rounded-full bg-[var(--color-accent)] px-2.5 py-1 text-xs font-semibold">Recommended</span>
+                          <span className="rounded-full bg-[var(--color-accent-solid)] px-2.5 py-1 text-xs font-semibold">Recommended</span>
                         </div>
                         <div className="mt-1 text-sm text-white/60">Unlimited images + $25 video credits/month</div>
                       </button>
@@ -2125,7 +2142,7 @@ export default function HomePage() {
                         <div className="mt-1 text-sm text-white/60">Two months free on a year of Pro</div>
                       </button>
                       <div className="pt-1">
-                        <div className="mb-2 text-xs font-medium uppercase tracking-wider text-white/40">Or buy credits</div>
+                        <div className="mb-2 text-xs font-medium uppercase tracking-wider text-white/55">Or buy credits</div>
                         <div className="grid grid-cols-3 gap-2">
                           {[10, 25, 50].map((amount) => (
                             <button
@@ -2212,7 +2229,7 @@ export default function HomePage() {
                     type="submit"
                     disabled={busy}
                     data-testid="home-auth-submit"
-                    className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-3.5 font-semibold disabled:opacity-50"
+                    className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-accent-solid)] px-4 py-3.5 font-semibold disabled:opacity-50"
                   >
                     {busy ? (
                       <Loader2 className="animate-spin" size={16} />

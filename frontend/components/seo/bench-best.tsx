@@ -45,7 +45,7 @@ export default function BenchBest({ category }: { category: BenchCategory }) {
         </div>
 
         <div className="pt-4">
-          <p className="mb-3 text-xs font-semibold tracking-[.14em] text-white/40">THE REST OF THE FIELD — SAME PROMPT</p>
+          <p className="mb-3 text-xs font-semibold tracking-[.14em] text-white/55">THE REST OF THE FIELD — SAME PROMPT</p>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {rest.map((model) => (
               <ClipCard
@@ -62,7 +62,7 @@ export default function BenchBest({ category }: { category: BenchCategory }) {
         <div className="overflow-x-auto rounded-3xl border border-white/10 bg-white/[.03]">
           <table className="w-full min-w-[560px] text-left text-sm">
             <thead>
-              <tr className="border-b border-white/10 text-xs tracking-[.12em] text-white/40">
+              <tr className="border-b border-white/10 text-xs tracking-[.12em] text-white/55">
                 <th className="px-6 py-4 font-semibold">RANK</th>
                 <th className="px-6 py-4 font-semibold">MODEL</th>
                 <th className="px-6 py-4 font-semibold">WHY IT PLACED HERE</th>

@@ -83,7 +83,7 @@ export default async function PromptToolPage({ params }: { params: Promise<{ slu
           </div>
         </div>
         <aside className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.15em] text-white/40">What improves the result</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.15em] text-white/55">What improves the result</p>
           <ul className="mt-5 space-y-4">
             {tool.tips.map((tip) => <li key={tip} className="flex gap-3 text-sm leading-6 text-white/68"><Check size={16} className="mt-1 shrink-0 text-[#7be7d9]" />{tip}</li>)}
           </ul>

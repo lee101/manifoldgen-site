@@ -48,7 +48,7 @@ export default function LeaderboardPage() {
         <div className="overflow-x-auto rounded-3xl border border-white/10 bg-white/[.03]">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead>
-              <tr className="border-b border-white/10 text-xs tracking-[.12em] text-white/40">
+              <tr className="border-b border-white/10 text-xs tracking-[.12em] text-white/55">
                 <th className="px-6 py-4 font-semibold">RANK · MODEL</th>
                 <th className="px-6 py-4 font-semibold">SCORE</th>
                 <th className="px-6 py-4 font-semibold">MEDIAN GENERATION TIME*</th>

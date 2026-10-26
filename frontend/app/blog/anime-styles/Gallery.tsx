@@ -94,7 +94,7 @@ export default function StyleGallery() {
             />
           </label>
         </div>
-        <p className="mt-3 text-xs text-white/40">
+        <p className="mt-3 text-xs text-white/55">
           Showing {visible.length} of {filtered.length} — every image is the same subject ({'aesthetic elf woman'}) with only the style modifier changed.
         </p>
       </div>
@@ -161,7 +161,7 @@ export default function StyleGallery() {
               />
               <div className="flex min-w-0 flex-col justify-between gap-4 sm:w-72">
                 <div>
-                  <div className="flex items-center justify-between text-xs text-white/40">
+                  <div className="flex items-center justify-between text-xs text-white/55">
                     <span>{current.cat}</span>
                     <span>
                       {(open ?? 0) + 1} / {filtered.length}
@@ -169,7 +169,7 @@ export default function StyleGallery() {
                   </div>
                   <h3 className="mt-2 font-display text-xl font-700 leading-snug tracking-tight text-white">{current.name}</h3>
                   <div className="mt-4 rounded-xl border border-white/10 bg-black/40 p-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-white/40">Prompt</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-white/55">Prompt</p>
                     <p className="mt-2 break-words font-mono text-[13px] leading-6 text-white/75">{current.prompt}</p>
                   </div>
                   <button
