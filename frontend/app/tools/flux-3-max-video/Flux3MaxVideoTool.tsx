@@ -37,7 +37,7 @@ const EXAMPLE_BASE = 'https://manifoldgenstatic.manifoldgen.com/static/tools/flu
 export const EXAMPLES: Record<Mode, { title: string; inputs: string[]; output: string; poster: string; summary: string }> = {
   text: { title: 'Text to video', inputs: [], output: `${EXAMPLE_BASE}/text-output.mp4`, poster: `${EXAMPLE_BASE}/text-poster.jpg`, summary: '720p · 5 s · prompt only' },
   image: { title: 'Image to video', inputs: [`${EXAMPLE_BASE}/image-input.jpg`], output: `${EXAMPLE_BASE}/image-output.mp4`, poster: `${EXAMPLE_BASE}/image-poster.jpg`, summary: '720p · 5 s · start frame' },
-  keyframes: { title: 'Keyframes to video', inputs: [`${EXAMPLE_BASE}/keyframes-input-1.jpg`, `${EXAMPLE_BASE}/keyframes-input-2.jpg`], output: `${EXAMPLE_BASE}/keyframes-output.mp4`, poster: `${EXAMPLE_BASE}/keyframes-poster.jpg`, summary: '720p · 5 s · frames 0 and 120' },
+  keyframes: { title: 'Keyframes to video', inputs: [`${EXAMPLE_BASE}/keyframes-input-1.jpg`, `${EXAMPLE_BASE}/keyframes-input-2.jpg`], output: `${EXAMPLE_BASE}/keyframes-output.webm`, poster: `${EXAMPLE_BASE}/keyframes-poster.jpg`, summary: '720p · 5 s · frames 0 and 120' },
 };
 
 function FrameSlot({ label, hint, url, disabled, testId, apiKey, onChange, onError }: {

@@ -15,7 +15,7 @@ type JobPayload = { job?: { status?: string; error?: string; result?: { video_ur
 
 const SAMPLE_BASE = 'https://manifoldgenstatic.manifoldgen.com/static/tools/orbit-video';
 export const SAMPLE_IMAGE = `${SAMPLE_BASE}/witch-input.png`;
-export const SAMPLE_OUTPUT = `${SAMPLE_BASE}/witch-orbit.mp4`;
+export const SAMPLE_OUTPUT = `${SAMPLE_BASE}/witch-orbit.webm`;
 export const PRICE_USD = 0.50;
 export const ORBIT_PROMPT = 'One frozen instant. Only the camera moves. In a continuous 360 orbit. Preserve every person and object in exactly the same world position, orientation, shape and pose throughout the shot. Airborne objects remain suspended at the captured height and angle: no wobbling, shaking, spinning, drifting, falling or continued action. Keep faces, hands, clothing, liquids and the background motionless while retaining their natural appearance. Camera parallax is the only source of apparent movement. No cuts, zoom, morphing or added objects.';
 

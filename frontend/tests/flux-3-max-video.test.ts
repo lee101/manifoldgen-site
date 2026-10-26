@@ -40,7 +40,7 @@ describe('flux 3 max video tool', () => {
     expect(read('app/tools/flux-3-max-video/page.tsx').toLowerCase()).not.toContain('promo');
   });
   test('links real example inputs and outputs on the bucket', () => {
-    for (const file of ['text-output.mp4', 'image-input.jpg', 'image-output.mp4', 'keyframes-input-1.jpg', 'keyframes-input-2.jpg', 'keyframes-output.mp4']) {
+    for (const file of ['text-output.mp4', 'image-input.jpg', 'image-output.mp4', 'keyframes-input-1.jpg', 'keyframes-input-2.jpg', 'keyframes-output.webm']) {
       expect(tool).toContain(`${file}`);
     }
     expect(tool).toContain('manifoldgenstatic.manifoldgen.com/static/tools/flux-3-max-video');
