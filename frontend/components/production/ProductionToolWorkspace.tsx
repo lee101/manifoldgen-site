@@ -1,5 +1,6 @@
 'use client';
 
+import { downloadVideo, videoExtension } from '../../lib/video-export';
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
@@ -553,7 +554,9 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
             {result.palette.map((color) => <span key={color} className={styles.paletteChip}><i style={{ background: color }} />{color}</span>)}
           </div>}
           <div className={styles.actions}>
-            {downloads.filter(([, url]) => url).map(([label, url, name]) => <a key={label} className={styles.action} href={url} download={`manifoldgen-${tool.slug}-${name}`} target="_blank" rel="noreferrer"><Download size={13} /> {label}</a>)}
+            {downloads.filter(([, url]) => url).map(([label, url, name]) => label.endsWith('MP4') && videoExtension(url!) !== 'mp4'
+              ? <button key={label} type="button" className={styles.action} onClick={() => void downloadVideo(url!, `manifoldgen-${tool.slug}-${name}`, 'mp4').catch(() => window.open(url, '_blank', 'noopener'))}><Download size={13} /> {label} (converted on your device)</button>
+              : <a key={label} className={styles.action} href={url} download={`manifoldgen-${tool.slug}-${name}`} target="_blank" rel="noreferrer"><Download size={13} /> {label}</a>)}
             {result.video_url && <Link className={`${styles.action} ${styles.actionPrimary}`} href={`/studio?video_url=${encodeURIComponent(result.video_url)}&name=${encodeURIComponent(tool.name)}`}><Clapperboard size={13} /> Open in Studio</Link>}
             {chain.map(([href, label]) => <Link key={label} className={styles.action} href={href}><Sparkles size={13} /> {label}</Link>)}
             {tool.service === 'image-to-3d' && reusableModel && sendTargets.map(([slugTarget, label]) => <Link key={slugTarget} className={styles.action} href={`/tools/${slugTarget}?model_url=${encodeURIComponent(reusableModel)}`}><Box size={13} /> Use in {label}</Link>)}

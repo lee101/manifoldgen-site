@@ -1,3 +1,5 @@
+import { deviceTier, exportCaps } from './device-budget';
+
 export type VideoExportFormat = 'original' | 'mp4';
 
 export function videoExtension(url: string): string {
@@ -35,7 +37,21 @@ export async function convertVideoToMp4(source: Blob, onProgress?: (fraction: nu
   const audio = (await canEncodeAudio('aac')) ? { codec: 'aac' as const } : (await canEncodeAudio('opus')) ? { codec: 'opus' as const } : { discard: true };
   const input = new Input({ source: new BlobSource(source), formats: ALL_FORMATS });
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
-  const conversion = await Conversion.init({ input, output, video: { codec: 'avc', bitrate: 8_000_000 }, audio, showWarnings: false });
+  // Hardware H.264 when exposed; otherwise phones and low-memory machines
+  // downscale so software encoding keeps moving.
+  const track = await input.getPrimaryVideoTrack();
+  const sourceWidth = track?.displayWidth || 1920;
+  const sourceHeight = track?.displayHeight || 1080;
+  const caps = exportCaps(deviceTier());
+  const hardware = await canEncodeVideo('avc', { width: sourceWidth, height: sourceHeight, hardwareAcceleration: 'prefer-hardware' });
+  const limit = hardware ? caps.hardware : caps.software;
+  const scale = Math.min(1, limit.width / sourceWidth, limit.height / sourceHeight, Math.max(limit.width, limit.height) / Math.max(sourceWidth, sourceHeight));
+  const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
+  const sizing = scale < 1 ? { width: even(sourceWidth * scale), height: even(sourceHeight * scale), fit: 'fill' as const } : {};
+  const conversion = await Conversion.init({
+    input, output, audio, showWarnings: false,
+    video: { codec: 'avc', bitrate: 8_000_000, hardwareAcceleration: hardware ? 'prefer-hardware' : 'no-preference', ...sizing },
+  });
   if (!conversion.isValid) throw new Error('This video cannot be converted to MP4 in the browser. Download the WebM instead.');
   conversion.onProgress = (fraction) => onProgress?.(Math.min(1, fraction));
   await conversion.execute();
