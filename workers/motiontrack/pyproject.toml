@@ -1,0 +1,29 @@
+[project]
+name = "motiontrack"
+version = "0.1.0"
+description = "Pose tracking, motion signals and track-driven video FX"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "scipy",
+  "opencv-python-headless",
+  "onnxruntime",
+  "rtmlib",
+  "pillow>=12.3.0",
+]
+
+[project.scripts]
+motiontrack = "motiontrack.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.setuptools]
+packages = ["motiontrack"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
