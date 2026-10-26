@@ -25,7 +25,18 @@ if [[ -n "${PRE_PUSH_REFS_FILE:-}" && -s "$PRE_PUSH_REFS_FILE" ]]; then
   done < "$PRE_PUSH_REFS_FILE"
 fi
 
-if (( browser_needed )); then
+skip_browser="${MANIFOLDGEN_SKIP_HOOK_E2E:-0}"
+if [[ "$skip_browser" != "0" && "$skip_browser" != "1" ]]; then
+  echo "MANIFOLDGEN_SKIP_HOOK_E2E must be 0 or 1." >&2
+  exit 2
+fi
+if [[ "$(git config --bool hooks.manifoldgen.skipE2E 2>/dev/null || true)" == "true" ]]; then
+  skip_browser=1
+fi
+
+if (( skip_browser )); then
+  echo "Skipping pre-push browser suite; fast checks still passed."
+elif (( browser_needed )); then
   (cd "$root/frontend" && bun run test:e2e:hook)
 else
   echo "Skipping Chromium: pushed range has no frontend or browser-gate changes."
