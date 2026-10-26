@@ -1,3 +1,4 @@
+import { deviceTier, exportCaps } from './device-budget';
 import {
   ALL_FORMATS,
   AudioSample,
@@ -233,14 +234,16 @@ export async function renderStudioVideo(job: StudioExportJob) {
     const format = exportFormatDetails(settings.format);
     const codec = format.codec;
     const sourceCanvas = job.canvas;
-    const requestedSize = exportSize(sourceCanvas.width, sourceCanvas.height, settings.resolution);
+    const caps = exportCaps(deviceTier());
+    const fullSize = exportSize(sourceCanvas.width, sourceCanvas.height, settings.resolution);
+    const requestedSize = job.softwareMaxSize ? fullSize : fitWithin(fullSize.width, fullSize.height, caps.hardware.width, caps.hardware.height);
     const qualityLevel = settings.quality === 'draft' ? 'medium' : settings.quality === 'high' ? 'very-high' : 'high';
     const requestedQuality = new Quality(qualityLevel);
     const hardwareSupported = await canEncodeVideo(codec, { ...requestedSize, quality: requestedQuality, hardwareAcceleration: 'prefer-hardware' });
     // Software WebCodecs at 2K can be slower than 0.1x realtime. Keep full
     // 2K/4K when a hardware encoder is exposed and use a 1080p safety path
     // otherwise, so export never wedges a laptop for minutes per second.
-    const softwareMax = job.softwareMaxSize || { width: 1920, height: 1080 };
+    const softwareMax = job.softwareMaxSize || caps.software;
     const softwareSafeSize = fitWithin(requestedSize.width, requestedSize.height, softwareMax.width, softwareMax.height);
     const { width, height } = hardwareSupported ? requestedSize : softwareSafeSize;
     const quality = hardwareSupported ? requestedQuality : new Quality(settings.quality === 'high' ? 'high' : qualityLevel);

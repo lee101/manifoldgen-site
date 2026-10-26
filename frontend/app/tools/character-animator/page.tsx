@@ -8,7 +8,7 @@ import styles from './page.module.css';
 import VideoDownload from '../../../components/video-download';
 
 const DANCE_SAMPLE = 'https://manifoldgenstatic.manifoldgen.com/gallery/videos/temple-chiffon-spin.webm';
-const REAL_OUTPUT = 'https://manifoldgenstatic.manifoldgen.com/gallery/videos/wan_animate_cartographer_standard_5s_20260816.mp4';
+const REAL_OUTPUT = 'https://manifoldgenstatic.manifoldgen.com/gallery/videos/wan_animate_cartographer_standard_5s_20260816.webm';
 
 type Phase = 'idle' | 'uploading' | 'queued' | 'processing' | 'done' | 'error';
 type ServiceTier = 'standard' | 'fast' | 'xfast';

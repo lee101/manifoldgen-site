@@ -68,7 +68,7 @@ func TestStudioSchemaMatchesGoTypes(t *testing.T) {
 	if len(studioSchema.NumericAdjust) != 35 || !studioSchema.AdjustmentKeys["fx"] || !studioSchema.AdjustmentKeys["lutID"] {
 		t.Fatalf("adjustments = %v", sortedKeys(studioSchema.AdjustmentKeys))
 	}
-	if len(studioSchema.FxTypes) != 18 || len(studioSchema.Transitions) != 6 || len(studioSchema.BlendModes) != 6 || len(studioSchema.Fonts) != 15 {
+	if len(studioSchema.FxTypes) != 21 || len(studioSchema.Transitions) != 6 || len(studioSchema.BlendModes) != 6 || len(studioSchema.Fonts) != 15 {
 		t.Fatalf("enums fx=%d transitions=%d blend=%d fonts=%d", len(studioSchema.FxTypes), len(studioSchema.Transitions), len(studioSchema.BlendModes), len(studioSchema.Fonts))
 	}
 	if _, err := parseTimelineDocument(schemaExample(t), timelineMaxDocBytes); err != nil {

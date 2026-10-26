@@ -1,7 +1,7 @@
 import type { BlogArticle } from '../articles';
 
 const D = 'https://manifoldgenstatic.manifoldgen.com/static/tools/production/shader-fx';
-const SRC = 'https://manifoldgenstatic.manifoldgen.com/gallery/2176d271-9e3/videos/935072f9-bdc2-4191-a8c9-ceae98e682f4.mp4';
+const SRC = 'https://manifoldgenstatic.manifoldgen.com/gallery/2176d271-9e3/videos/935072f9-bdc2-4191-a8c9-ceae98e682f4.webm';
 
 export const shaderEffectsTouchdesignerAlternative: BlogArticle = {
   slug: 'shader-effects-touchdesigner-alternative',

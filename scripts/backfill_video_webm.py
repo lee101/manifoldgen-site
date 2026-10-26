@@ -63,6 +63,7 @@ def main() -> None:
     parser.add_argument('--database-url', default=os.getenv('DATABASE_URL'))
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--workers', type=int, default=2)
+    parser.add_argument('--url', action='append', default=[], help='extra hosted MP4 (not tied to a job) to convert next to the original')
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
 
@@ -76,6 +77,7 @@ def main() -> None:
     conn.commit()
     if args.limit:
         rows = rows[:args.limit]
+    rows += [('url:' + u, u) for u in args.url]
     kinds = {'data': sum(1 for _, u in rows if u.startswith('data:')), 'mp4': sum(1 for _, u in rows if u.startswith('https://')), 'other': 0}
     kinds['other'] = len(rows) - kinds['data'] - kinds['mp4']
     print(f'{len(rows)} rows need webm: {kinds}', flush=True)
@@ -90,8 +92,9 @@ def main() -> None:
 
     def work(row: tuple[str, str]) -> tuple[str, str, str, int, int] | None:
         job_id, url = row
-        src = tmp / f'{job_id}.src'
-        dst = tmp / f'{job_id}.webm'
+        stem = job_id.replace('/', '_').replace(':', '_')
+        src = tmp / f'{stem}.src'
+        dst = tmp / f'{stem}.webm'
         try:
             if url.startswith('data:'):
                 header, _, payload = url.partition(',')
@@ -132,6 +135,9 @@ def main() -> None:
             if result is None:
                 continue
             job_id, old, new, original_size, size = result
+            if job_id.startswith('url:'):
+                print(f'{old}: {original_size / 1048576:.1f} MiB -> {size / 1048576:.1f} MiB {new}', flush=True)
+                continue
             with conn.cursor() as cur:
                 cur.execute("UPDATE video_jobs SET result_json = replace(result_json::text, %s, %s)::jsonb WHERE id = %s",
                             (old.replace('\\', '\\\\').replace('"', '\\"'), new, job_id))

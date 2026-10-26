@@ -109,7 +109,7 @@ type JobPayload = { job?: { status?: string; error?: string; result?: JobResult 
 type VideoRef = { url: string; duration: number };
 type AudioRef = { url: string; fromVideo: boolean };
 
-const SAMPLE_OUTPUT = 'https://manifoldgenstatic.manifoldgen.com/static/tools/reference-video/rapvid-optimus-seedance.mp4';
+const SAMPLE_OUTPUT = 'https://manifoldgenstatic.manifoldgen.com/static/tools/reference-video/rapvid-optimus-seedance.webm';
 const EXAMPLE_IMAGE = 'https://manifoldgenstatic.manifoldgen.com/static/tools/reference-video/optimus-reference.jpg';
 const EXAMPLE_VIDEO = 'https://manifoldgenstatic.manifoldgen.com/static/tools/character-swap/rapvid-source.mp4';
 const EXAMPLE_PROMPT = 'Recreate @Video1 shot for shot. The shirtless man on the left becomes a tech entrepreneur in his fifties: short dark swept-back hair, clean-shaven, black blazer over a black t-shirt. The man on the right becomes the white-and-black humanoid robot from @Image1: glossy black faceless visor, white and black body panels, mechanical hands, no human face. Keep every dance move, gesture, mouth movement, camera cut, framing and timing of @Video1 exactly, the vivid orange studio wall and the hanging silver microphone. The man sings @Audio1 with accurate lip sync. Photorealistic music video, sharp.';

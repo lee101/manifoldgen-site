@@ -49,7 +49,7 @@ describe('character swap lane prop', () => {
     expect(tool).toContain('Performers to replace');
     expect(tool).toContain('data-testid="swap-characters"');
     expect(tool).toContain('$0.24 per second per performer at 720P, $0.18 at 580P');
-    expect(tool).toContain('rapvid-elon-optimus-exact.mp4');
+    expect(tool).toContain('rapvid-elon-optimus-exact.webm');
     expect(tool).toContain('Frame-exact: same dance, same cuts, same room');
   });
 
@@ -95,7 +95,7 @@ describe('character swap lane prop', () => {
     expect(tool).toContain('Swap the characters. Keep the scene.');
     expect(tool).toContain("['480p', '768p']");
     expect(tool).toContain('data-testid="swap-tier"');
-    expect(tool).toContain('rapvid-elon-optimus-lora.mp4');
+    expect(tool).toContain('rapvid-elon-optimus-lora.webm');
     expect(tool).toContain('Swapping clip ${done}/${total} with H3 + swap LoRA');
     expect(tool).toContain('per source second at');
     expect(tool).toContain('href="/tools/character-swap-lora"');
@@ -142,7 +142,7 @@ describe('character swap page registrations', () => {
     expect(catalog.indexOf('/tools/character-swap-exact')).toBeGreaterThan(catalog.indexOf("href: '/tools/character-swap'"));
     expect(catalog).toContain('Exact Motion Character Swap');
     expect(catalog).toContain('FRAME-EXACT SWAP');
-    expect(catalog).toContain('rapvid-elon-optimus-exact.mp4');
+    expect(catalog).toContain('rapvid-elon-optimus-exact.webm');
     expect(catalog).toContain('Wan 2.2 Animate per performer');
   });
 

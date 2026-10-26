@@ -27,7 +27,7 @@ export const h3ControlVideoStyleTransfer: BlogArticle = {
         },
         media: [{
           kind: 'video',
-          src: 'https://manifoldgenstatic.manifoldgen.com/gallery/control-video/pose-forest-witch-v12.mp4',
+          src: 'https://manifoldgenstatic.manifoldgen.com/gallery/control-video/pose-forest-witch-v12.webm',
           aspect: '16:9',
           seconds: 2.3,
           caption: 'Forest witch output — generated on the production H3 control worker',

@@ -123,7 +123,7 @@
                     "type": "object", "required": ["type"],
                     "properties": {
                       "id": { "type": "string" },
-                      "type": { "type": "string", "enum": ["feedback", "kaleidoscope", "mirror", "pixelate", "chromatic", "rgbShift", "bloom", "edges", "posterize", "halftone", "noiseWarp", "wave", "lightLeak", "crt", "vhs", "datamosh", "lumaKey", "chromaKey"] },
+                      "type": { "type": "string", "enum": ["feedback", "kaleidoscope", "mirror", "pixelate", "chromatic", "rgbShift", "bloom", "edges", "posterize", "halftone", "noiseWarp", "wave", "lightLeak", "crt", "vhs", "datamosh", "lumaKey", "chromaKey", "surprise", "speedLines", "lineBoil"] },
                       "enabled": { "type": "boolean" },
                       "params": { "type": "object", "description": "Numeric shader params plus mix 0..1; unknown keys are dropped." }
                     }
