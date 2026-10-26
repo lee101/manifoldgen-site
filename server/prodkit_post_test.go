@@ -136,7 +136,7 @@ func prodkitTestClips() []*prodkitClip {
 func TestProdkitTimelineFormats(t *testing.T) {
 	clips := prodkitTestClips()
 	bins := prodkitBuildBins([]*prodkitClip{{Index: 0, Role: "a-roll", Kind: "video", Caption: "kitchen interview"}})
-	tl := prodkitTimeline{Num: 1001, Den: 30000, Width: 1920, Height: 1080, Name: "Test & <cut>"}
+	tl := prodkitFootageTimeline{Num: 1001, Den: 30000, Width: 1920, Height: 1080, Name: "Test & <cut>"}
 	body, err := buildProdkitFCPXML(clips, bins, tl)
 	if err != nil {
 		t.Fatal(err)

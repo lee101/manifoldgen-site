@@ -172,6 +172,19 @@ func mcpProductionTools() []mcpProductionTool {
 			},
 			Required: []string{"video_url"},
 		},
+		{
+			Name: "render_timeline", Title: "Render a Studio timeline to video", Service: "timeline-render",
+			Description: "Render a PortableStudioDocument (call get_studio_schema first) or a saved Studio project with the exact Studio export pipeline: trims, layers, transforms, crops, blend modes, transitions, grades, LUTs, shader FX, title cards and audio mix. Returns video_url, poster_url and studio_url (an editable copy in ManifoldGen Studio). $0.01 per output second up to 1080p, $0.02 above, $0.05 minimum, charged on success.",
+			Properties: map[string]interface{}{
+				"document":   map[string]interface{}{"type": "object", "description": "PortableStudioDocument v6; see get_studio_schema."},
+				"project_id": map[string]string{"type": "string", "description": "Render one of your saved Studio projects instead of document."},
+				"name":       map[string]string{"type": "string", "description": "Name for the saved Studio project."},
+				"format":     mcpEnum("mp4", "webm"),
+				"quality":    mcpEnum("draft", "balanced", "high"),
+				"resolution": mcpEnum("source", "2160p", "1440p", "1080p", "720p"),
+				"fps":        map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 60, "default": 30},
+			},
+		},
 	}
 }
 
@@ -215,6 +228,25 @@ func mcpProductionToolDefs() []map[string]interface{} {
 				"required": []string{"job_id"}, "additionalProperties": false,
 			},
 			"annotations": readOnly,
+		},
+		{
+			"name": "get_studio_schema", "title": "Get the Studio timeline schema",
+			"description": "Return the PortableStudioDocument v6 JSON schema, limits and a worked example (title card, two clips with a crossfade, music bed, LUT grade) for render_timeline and create_studio_project.",
+			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false},
+			"annotations": readOnly,
+		},
+		{
+			"name": "create_studio_project", "title": "Open a timeline in ManifoldGen Studio",
+			"description": "Save a PortableStudioDocument as a Studio project the user can keep editing in the browser. Media is copied to ManifoldGen storage and probed for duration and size. Free; returns project_id and studio_url.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"document": map[string]interface{}{"type": "object", "description": "PortableStudioDocument v6; see get_studio_schema."},
+					"name":     map[string]string{"type": "string"},
+				},
+				"required": []string{"document"}, "additionalProperties": false,
+			},
+			"annotations": writeTool,
 		},
 	}
 	for _, tool := range mcpProductionTools() {
@@ -263,6 +295,27 @@ func executeMCPProductionTool(parent *fasthttp.RequestCtx, name string, argument
 		internal.Request.Header.SetContentType("application/json")
 		internal.Request.SetBody(body)
 		handleStudioAssetPresign(internal)
+		response, status := mcpInternalJSON(internal)
+		return response, status, true
+	case "get_studio_schema":
+		schema := map[string]interface{}{}
+		_ = json.Unmarshal(studioSchemaJSON, &schema)
+		return schema, http.StatusOK, true
+	case "create_studio_project":
+		var args struct {
+			Document json.RawMessage `json:"document"`
+			Name     string          `json:"name"`
+		}
+		if err := decodeMCPArguments(arguments, &args); err != nil || len(args.Document) == 0 {
+			return map[string]interface{}{"error": "document is required"}, http.StatusBadRequest, true
+		}
+		body, _ := json.Marshal(args)
+		internal := newMCPInternalContext(parent)
+		internal.Request.Header.SetMethod(http.MethodPost)
+		internal.Request.SetRequestURI("/api/studio/projects/import")
+		internal.Request.Header.SetContentType("application/json")
+		internal.Request.SetBody(body)
+		handleStudioProjectImport(internal)
 		response, status := mcpInternalJSON(internal)
 		return response, status, true
 	case "wait_for_job":
@@ -375,6 +428,8 @@ var mcpPrompts = []mcpPrompt{
 		"Fix an image step by step with generate_media: image-edit or inpaint for removals and texture fixes, relight for lighting, remove-background for cutouts and upscale-image last. Show each intermediate URL so steps stay reversible."},
 	{"color-grade", "Color grade footage", "Balanced shots, natural skin tones and an exportable LUT.",
 		"Grade footage in ManifoldGen's browser grader at https://manifoldgen.com/tools/color-grade (or the Studio grade panel): auto white balance, lift/gamma/gain, curves, match to a reference frame, then export the .cube LUT and the graded MP4. Explain the node-style adjustments made."},
+	{"timeline-edit", "Edit video by JSON", "Assemble clips, titles, transitions, grades and music into an editable Studio timeline.",
+		"Assemble an edit as a Studio timeline. Call get_studio_schema, then write a PortableStudioDocument: title cards are image clips with text, sequential clips on visualTrack 0 (omit timelineStart to butt them together), a transition on the incoming clip for crossfades, adjustments for the grade and a LUT in document.luts, and an audio clip for the music bed. Call create_studio_project to get a studio_url the user can open and refine, then render_timeline (format mp4) for the final video. Return video_url, poster_url and studio_url."},
 	{"shader-fx", "Visual effects", "TouchDesigner-style real-time effects on images and video.",
 		"Build an effect stack at https://manifoldgen.com/tools/shader-fx (feedback, kaleidoscope, bloom, displacement, halftone, VHS, keys). Preview, tune parameters, then export MP4 or PNG, or open in Studio for the edit."},
 }

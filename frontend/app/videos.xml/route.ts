@@ -19,6 +19,8 @@ type VideoEntry = {
   seconds?: number;
 };
 
+const absoluteURL = (value: string) => (/^https?:\/\//.test(value) ? value : `${SITE_URL}${value}`);
+
 function collectBlogVideos(): VideoEntry[] {
   const entries: VideoEntry[] = [];
   for (const article of articles) {
@@ -26,12 +28,13 @@ function collectBlogVideos(): VideoEntry[] {
       if (block.type !== 'example') continue;
       const mediaList = [...(block.example.input && block.example.input.kind === 'video' ? [block.example.input] : []), ...block.example.media];
       for (const item of mediaList) {
+        if (item.kind !== 'video') continue;
         entries.push({
           articleSlug: article.slug,
-          thumbnail: `${SITE_URL}${item.poster || article.ogImage}`,
+          thumbnail: absoluteURL(item.poster || article.ogImage),
           title: `${article.title} — ${block.example.label || item.caption || 'Generated example'}`.slice(0, 100),
           description: block.example.prompt.slice(0, 200),
-          contentUrl: `${SITE_URL}${item.src}`,
+          contentUrl: absoluteURL(item.src),
           seconds: item.seconds,
         });
       }

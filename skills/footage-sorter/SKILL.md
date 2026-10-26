@@ -1,20 +1,23 @@
 ---
 name: footage-sorter
-description: Organize a folder of clips into scenes, shot types and selects for an edit. ManifoldGen's hosted footage sorter is coming soon; until then this skill sorts locally with ffprobe and ManifoldGen captions. Use when the user wants footage logged, tagged, binned or turned into an edit-ready timeline.
+description: Log, bin and audio-sync a batch of clips into an edit-ready timeline (OTIO, FCPXML for Premiere/Resolve/Final Cut, and a ManifoldGen Studio project) with ManifoldGen's hosted footage sorter. Use when the user wants footage organized, tagged, grouped by scene or shot type, multicam-synced, or turned into a starting timeline.
 ---
 
-# Footage Sorter (coming soon)
+# Footage Sorter
 
-No hosted service yet (status: service table in the `manifoldgen` skill). Do not call an unlisted service name.
+Service `footage-sorter`, MCP `organize_footage` (canonical names: service table in the `manifoldgen` skill). Async job, $0.05 + $0.02 per clip, up to 24 clips, 2 GB total.
 
 ## Ask first
-- Folder of clips, what to sort by (scene, shot size, subject, take quality, timecode), and the editor they use (Premiere, Resolve, Final Cut, ManifoldGen Studio).
+- The clips (local files: upload with `create_upload` / the CLI uploads automatically), which clip is the sync reference if known, target NLE (Premiere, Resolve, Final Cut, Studio) and timeline fps.
 
-## Interim workflow
-1. Metadata: `ffprobe -v error -show_entries format=duration:stream=width,height,r_frame_rate -of json clip.mp4` per clip.
-2. Grab a mid-frame still per clip (`ffmpeg -ss <mid> -i clip.mp4 -frames:v 1 thumb.jpg`) and caption it with ManifoldGen `caption` (check `mg pricing caption`; quote the total for the batch).
-3. Group by caption keywords and shot size; write `sorted.csv` (file, duration, resolution, scene, shot, caption).
-4. Editable timeline: write OTIO or FCPXML referencing the original files in sorted order; for ManifoldGen Studio, import the sorted files.
+## Run
+```bash
+mg generate footage-sorter --params '{"clips":["https://.../a.mp4","https://.../b.mp4"],"sync":true}' --wait --out out/sorted
+```
+MCP: `organize_footage {"clips":[...],"sync":true,"wait_seconds":300}`.
+
+Each clip is probed and captioned, classified (A-roll/B-roll, wide/medium/close), binned by scene, camera and role, and synced to the reference by audio (search window ±60 s, with a confidence score; low-confidence clips stay unsynced instead of being misplaced).
 
 ## Deliver
-- `sorted.csv`, the OTIO/FCPXML timeline, and folders or bins per scene. Never move or rename originals without asking.
+- `fcpxml_url` (Premiere, Resolve, Final Cut), `otio_url`, `studio_project_url` (open in https://manifoldgen.com/studio), `contact_sheet_url`, and the `report` bins and offsets.
+- NLE files reference the original media URLs: tell the user to relink to local copies if needed.

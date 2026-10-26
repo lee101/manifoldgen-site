@@ -75,6 +75,8 @@ var prodkitTools = []prodkitTool{
 		[]string{"clips", "reference_audio", "sync", "fps"}},
 	{prodkitShotComposer, "shot-composer", "Shot Composer", "composer", prodkitComposerBaseUSD, "per composite (max 30 s): AI matte adds the video background removal per-second rate, chroma key adds $0.01/s; +$0.04 for a generated background",
 		[]string{"background_video_url", "position", "scale", "match_color", "light_wrap", "grain", "shadow", "keep_audio", "key", "key_color"}},
+	{prodkitTimeline, "timeline-render", "Timeline Render", "timeline", 0.01, "per output second up to 1920x1080 ($0.02 above, $0.05 minimum); renders a Studio timeline JSON exactly like the Studio export and saves it as an editable project",
+		[]string{"document", "project_id", "name", "format", "quality", "resolution", "fps"}},
 }
 
 func prodkitToolFor(service string) (prodkitTool, bool) {
@@ -156,6 +158,8 @@ func prodkitPriceUSD(req ServiceUsageRequest) float64 {
 		return prodkitFootagePriceUSD(req)
 	case "composer":
 		return prodkitComposerPriceUSD(req, float64(req.Duration))
+	case "timeline":
+		return timelineEstimateUSD(req)
 	}
 	return 0
 }
@@ -175,7 +179,10 @@ func normalizeProdkitRequest(req *ServiceUsageRequest) error {
 	if !ok {
 		return fmt.Errorf("unknown production tool")
 	}
-	if len(req.Params) > prodkitMaxParams {
+	if tool.Engine == "timeline" && len(req.Params) > timelineMaxProjectParams {
+		return fmt.Errorf("params exceed %d KiB", timelineMaxProjectParams>>10)
+	}
+	if tool.Engine != "timeline" && len(req.Params) > prodkitMaxParams {
 		return fmt.Errorf("params exceed 64 KiB")
 	}
 	params := map[string]interface{}{}
@@ -263,6 +270,8 @@ func normalizeProdkitRequest(req *ServiceUsageRequest) error {
 		return normalizeProdkitFootage(params)
 	case "composer":
 		return normalizeProdkitComposer(req, params)
+	case "timeline":
+		return normalizeTimelineParams(params)
 	}
 	return nil
 }
@@ -433,12 +442,18 @@ func handleProdkitService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		jsonError(ctx, http.StatusUnauthorized, "authorization required")
 		return
 	}
+	if req.Service == prodkitTimeline {
+		if err := resolveTimelineProject(&req, user); err != nil {
+			jsonError(ctx, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if err := normalizeProdkitRequest(&req); err != nil {
 		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
 	tool, _ := prodkitToolFor(req.Service)
-	if tool.Engine == "blender" && prodkitBlenderBinary() == "" {
+	if (tool.Engine == "blender" && prodkitBlenderBinary() == "") || (tool.Engine == "timeline" && !timelineRendererAvailable()) {
 		jsonError(ctx, http.StatusServiceUnavailable, tool.Title+" is not available on this server")
 		return
 	}
@@ -538,7 +553,11 @@ func processProdkitJob(job *VideoJob) {
 		_ = dbConn.UpdateVideoJob(job.ID, "processing", payload, "")
 	}
 	setStage("starting")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	timeout := 30 * time.Minute
+	if tool.Engine == "timeline" {
+		timeout = 2 * time.Hour
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
@@ -584,6 +603,8 @@ func processProdkitJob(job *VideoJob) {
 		var seconds float64
 		result, seconds, providerUSD, err = runProdkitShotComposer(ctx, job, req, workDir, setStage)
 		chargedUSD = prodkitComposerPriceUSD(req, seconds)
+	case "timeline":
+		result, chargedUSD, providerUSD, err = runProdkitTimeline(ctx, job, req, workDir, setStage)
 	default:
 		err = fmt.Errorf("unsupported engine")
 	}
@@ -645,6 +666,7 @@ func prodkitPublicError(err error) string {
 var prodkitSlots = struct {
 	once    sync.Once
 	blender chan struct{}
+	chrome  chan struct{}
 	local   chan struct{}
 }{}
 
@@ -655,10 +677,15 @@ func prodkitSlot(kind string) chan struct{} {
 			blender = 1
 		}
 		prodkitSlots.blender = make(chan struct{}, blender)
+		chrome, _ := strconv.Atoi(getEnv("PRODKIT_CHROME_SLOTS", "2"))
+		prodkitSlots.chrome = make(chan struct{}, max(1, chrome))
 		prodkitSlots.local = make(chan struct{}, 4)
 	})
-	if kind == "blender" {
+	switch kind {
+	case "blender":
 		return prodkitSlots.blender
+	case "chrome":
+		return prodkitSlots.chrome
 	}
 	return prodkitSlots.local
 }
@@ -1311,9 +1338,9 @@ func prodkitFPS(fps float64) string {
 }
 
 var prodkitContentExt = map[string]string{
-	"video/mp4": "mp4", "image/jpeg": "jpg", "image/png": "png", "image/svg+xml": "svg",
+	"video/mp4": "mp4", "video/webm": "webm", "image/jpeg": "jpg", "image/png": "png", "image/svg+xml": "svg",
 	"application/x-blender": "blend", "model/gltf-binary": "glb", "text/plain": "txt",
-	"video/webm": "webm", "audio/mp4": "m4a", "application/json": "json", "application/x-otio+json": "otio",
+	"audio/mp4": "m4a", "application/json": "json", "application/x-otio+json": "otio",
 	"application/x-fcpxml+xml": "fcpxml", "text/x-cube": "cube", "image/webp": "webp", "video/quicktime": "mov",
 	"video/x-matroska": "mkv", "audio/wav": "wav", "audio/mpeg": "mp3", "audio/aac": "aac", "audio/flac": "flac", "audio/ogg": "ogg",
 }

@@ -1,5 +1,5 @@
 export type BlogMediaItem = {
-  kind: 'video' | 'image' | 'audio';
+  kind: 'video' | 'image' | 'audio' | 'model';
   src: string;
   poster?: string;
   aspect?: '16:9' | '9:16' | '1:1';
@@ -10,6 +10,7 @@ export type BlogMediaItem = {
 
 export type BlogExample = {
   label?: string;
+  promptLabel?: string;
   prompt: string;
   input?: BlogMediaItem;
   media: BlogMediaItem[];
@@ -66,8 +67,32 @@ import { howToUseSeedance25 } from './content/how-to-use-seedance-2-5';
 import { howToUseSeedance4k } from './content/how-to-use-seedance-4k';
 import { h3ShortFilmsEmberHollowOrbit } from './content/h3-short-films-ember-hollow-orbit';
 import { h3ControlVideoStyleTransfer } from './content/h3-control-video-style-transfer';
+import { hostedProductionSuite } from './content/hosted-production-suite-higgsfield-alternative';
+import { blenderDestructionSimulation } from './content/blender-destruction-simulation-online';
+import { explodedViewAnimationGenerator } from './content/exploded-view-animation-generator';
+import { toonShader3dModel } from './content/toon-shader-3d-model-online';
+import { remoteBlenderSceneSpec } from './content/remote-blender-mcp-scene-spec';
+import { photoTo3dModelGlb } from './content/photo-to-3d-model-glb';
+import { vectorizeImageToLayeredSvg } from './content/vectorize-image-to-layered-svg';
+import { removeObjectsFromVideoAi } from './content/remove-objects-from-video-ai';
+import { colorGradeVideoOnline } from './content/color-grade-video-online-cube-lut';
+import { shaderEffectsTouchdesignerAlternative } from './content/shader-effects-touchdesigner-alternative';
+import { footageSorterFcpxmlOtio } from './content/footage-sorter-fcpxml-otio-audio-sync';
+import { compositeVfxShotOnline } from './content/composite-vfx-shot-online';
 
 export const articles: BlogArticle[] = [
+  hostedProductionSuite,
+  blenderDestructionSimulation,
+  explodedViewAnimationGenerator,
+  toonShader3dModel,
+  remoteBlenderSceneSpec,
+  photoTo3dModelGlb,
+  vectorizeImageToLayeredSvg,
+  removeObjectsFromVideoAi,
+  colorGradeVideoOnline,
+  shaderEffectsTouchdesignerAlternative,
+  footageSorterFcpxmlOtio,
+  compositeVfxShotOnline,
   music3Float16EchoFix,
   h3ControlVideoStyleTransfer,
   h3ShortFilmsEmberHollowOrbit,

@@ -417,6 +417,10 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleStudioAudioProxy(ctx)
 	case path == "/api/studio/projects" && method == "GET":
 		handleListStudioProjects(ctx)
+	case path == "/api/studio/projects/import" && method == "POST":
+		handleStudioProjectImport(ctx)
+	case path == "/api/studio/schema" && (method == "GET" || method == "HEAD"):
+		handleStudioSchema(ctx)
 	case strings.HasPrefix(path, "/api/studio/projects/"):
 		handleStudioProject(ctx, strings.TrimPrefix(path, "/api/studio/projects/"), method)
 	case path == "/api/studio/assets/presign" && method == "POST":

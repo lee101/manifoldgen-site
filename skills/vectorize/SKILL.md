@@ -9,7 +9,7 @@ Service `vectorize`, MCP `vectorize_image` (canonical names and params: service 
 
 ## Ask first
 - Source image and use: logo, icon, illustration, line art, print/cut file.
-- Style: `mode` color, poster (flat), bw, lineart; number of colors (`colors` 2-8); keep fine detail or simplify (`detail` 0-1); `smooth` spline, polygon or pixel; corner sharpness (`corners` 0-180).
+- Style: `mode` color, poster (flat), bw, lineart; palette size (`colors` 2-32; each color becomes one SVG layer); keep fine detail or simplify (`detail` 0-1); `smooth` spline, polygon or pixel; corner sharpness (`corners` 0-180).
 - Engine: `trace` (exact) or `ai` (cleaner shapes on noisy or low-res input).
 
 ## Run

@@ -939,24 +939,24 @@ type fcpMarker struct {
 	Value    string `xml:"value,attr"`
 }
 
-type prodkitTimeline struct {
+type prodkitFootageTimeline struct {
 	Num, Den      int64
 	Width, Height int
 	Name          string
 }
 
-func (t prodkitTimeline) frames(seconds float64) int64 {
+func (t prodkitFootageTimeline) frames(seconds float64) int64 {
 	return int64(math.Round(seconds * float64(t.Den) / float64(t.Num)))
 }
 
-func (t prodkitTimeline) fcp(frames int64) string {
+func (t prodkitFootageTimeline) fcp(frames int64) string {
 	if frames <= 0 {
 		return "0s"
 	}
 	return fmt.Sprintf("%d/%ds", frames*t.Num, t.Den)
 }
 
-func (t prodkitTimeline) clipFrames(clip *prodkitClip) int64 {
+func (t prodkitFootageTimeline) clipFrames(clip *prodkitClip) int64 {
 	return maxInt64(1, int64(math.Floor(clip.Duration*float64(t.Den)/float64(t.Num)+1e-6)))
 }
 
@@ -967,7 +967,7 @@ func maxInt64(a, b int64) int64 {
 	return b
 }
 
-func buildProdkitFCPXML(clips []*prodkitClip, bins []prodkitBin, tl prodkitTimeline) ([]byte, error) {
+func buildProdkitFCPXML(clips []*prodkitClip, bins []prodkitBin, tl prodkitFootageTimeline) ([]byte, error) {
 	doc := fcpXML{Version: "1.10"}
 	doc.Resources.Formats = append(doc.Resources.Formats, fcpFormat{ID: "r1", FrameDuration: tl.fcp(1), Width: tl.Width, Height: tl.Height})
 	formats := map[string]string{}
@@ -1035,7 +1035,7 @@ func otioRange(start, duration int64, rate float64) map[string]interface{} {
 	return map[string]interface{}{"OTIO_SCHEMA": "TimeRange.1", "start_time": otioTime(start, rate), "duration": otioTime(duration, rate)}
 }
 
-func buildProdkitOTIO(clips []*prodkitClip, bins []prodkitBin, tl prodkitTimeline) ([]byte, error) {
+func buildProdkitOTIO(clips []*prodkitClip, bins []prodkitBin, tl prodkitFootageTimeline) ([]byte, error) {
 	rate := float64(tl.Den) / float64(tl.Num)
 	lanes := map[int][]*prodkitClip{}
 	for _, clip := range clips {
@@ -1117,7 +1117,7 @@ func prodkitStudioDocument(assets []map[string]interface{}, width, height int) (
 	})
 }
 
-func buildProdkitFootageStudio(clips []*prodkitClip, bins []prodkitBin, tl prodkitTimeline) ([]byte, error) {
+func buildProdkitFootageStudio(clips []*prodkitClip, bins []prodkitBin, tl prodkitFootageTimeline) ([]byte, error) {
 	track := map[int]int{}
 	primary := "scene"
 	hasScene := false
@@ -1277,7 +1277,7 @@ func runProdkitFootageSorter(ctx context.Context, job *VideoJob, req ServiceUsag
 	}
 	prodkitFootageLayout(clips, doSync)
 	fps := prodkitNumber(params, "fps", 0, 1, 120)
-	tl := prodkitTimeline{Name: "ManifoldGen footage"}
+	tl := prodkitFootageTimeline{Name: "ManifoldGen footage"}
 	counts := map[float64]int{}
 	for _, clip := range clips {
 		if clip.Kind == "video" {

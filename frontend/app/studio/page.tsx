@@ -53,24 +53,7 @@ import {
   X,
   ZoomIn,
 } from 'lucide-react';
-import {
-  ALL_FORMATS,
-  AudioBufferSink,
-  AudioSample,
-  AudioSampleSource,
-  BlobSource,
-  BufferTarget,
-  CanvasSource,
-  Input,
-  Mp4OutputFormat,
-  Output,
-  Quality,
-  VideoSampleSink,
-  VideoSample,
-  WebMOutputFormat,
-  canEncodeAudio,
-  canEncodeVideo,
-} from 'mediabunny';
+import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from 'mediabunny';
 import { clearUser, loadStoredUser, nsfwAuthHeaders, refreshUser, saveUser, type StoredUser } from '../../lib/auth';
 import { HTTPResponseError, parseJSONResponse } from '../../lib/http';
 import { loadPromptHistory, promptHistoryUserKey, recordPrompt, usePromptHistoryCycler, type PromptHistoryEntry, type PromptKind } from '../../lib/prompt-history';
@@ -98,7 +81,10 @@ import {
 import { MEDIA_DRAG_TYPE, decodeMediaDrag, encodeMediaDrag, galleryProxyURL as galleryImportURL, isStreamingPlaceholder, mediaKindFromURL, streamingPlaceholder, type DraggedMedia } from '../../lib/studio-media-drag';
 import { FILMSTRIP_FRAME_HEIGHT, FILMSTRIP_FRAME_WIDTH, dropFilmstrip, ensureFilmstrip, filmstripFrame, filmstripFrameIndex, filmstripGrid, filmstripTiles, subscribeFilmstrip } from '../../lib/studio-filmstrip';
 import { RETIME_SPEED_PRESETS, parseSpeed, retimeBlocker, retimedDuration, speedLabel, type RetimeOptions } from '../../lib/studio-retime';
-import { MAX_TIMELINE_ZOOM, MIN_TIMELINE_ZOOM, adjacentEdge, fitZoom, rippleRemove } from '../../lib/studio-timeline-ops';
+import { MAX_TIMELINE_ZOOM, MAX_VISUAL_TRACKS, MIN_TIMELINE_ZOOM, adjacentEdge, fitZoom, rippleRemove, stackOverlappingVisuals, visualClipsOverlap } from '../../lib/studio-timeline-ops';
+import { DEFAULT_EXPORT_SETTINGS, clipDuration, clipEnd, exportFormatDetails, exportSize, fitWithin, renderStudioVideo, timelineComposition, type ExportAudioCodec, type ExportFormat, type ExportFrameRate, type ExportQuality, type ExportResolution, type ExportSettings, type StudioExportDiagnostics } from '../../lib/studio-export';
+import { STUDIO_FONTS, renderTextFile, studioFontStack, type StudioTextStyle } from '../../lib/studio-text';
+import { DEFAULT_DESIGN_SIZE, MAX_DESIGN_EDGE, MIN_DESIGN_EDGE, documentAudioTrackVolume, documentDesignSize, materializeStudioAsset, normalizeDesignSize, type DesignSize } from '../../lib/studio-document';
 import { h3Dimensions, loopAnchorURL, type H3Aspect, type H3Size } from '../../lib/h3-loop';
 import { VIDEO_GENERATORS } from '../../lib/video-generators';
 import { curvesActive, samplePixels, type PixelSample, type StudioLUT } from '../../lib/studio-grade';
@@ -114,20 +100,7 @@ type MediaKind = 'video' | 'image' | 'audio';
 type Tool = 'media' | 'text' | 'adjust' | 'crop' | 'effects' | 'audio' | 'ai';
 type MediaBrowserMode = 'project' | 'videos' | 'images' | 'music' | 'tools';
 type ImageGenerationEngine = 'images3' | 'omniserve';
-type ExportFormat = 'mp4-h264' | 'webm-vp9' | 'webm-av1';
-type ExportResolution = 'source' | '2160p' | '1440p' | '1080p' | '720p';
-type ExportFrameRate = 'source' | 24 | 30 | 60;
-type ExportQuality = 'draft' | 'balanced' | 'high';
-type ExportAudioCodec = 'aac' | 'opus';
 type H3Format = 'webm-av1' | 'webm-vp9' | 'mp4-h264';
-type ExportSettings = {
-  format: ExportFormat;
-  resolution: ExportResolution;
-  frameRate: ExportFrameRate;
-  quality: ExportQuality;
-  audio: ExportAudioCodec;
-};
-type DesignSize = { width: number; height: number };
 type DesignDialogMode = 'new' | 'resize';
 type SpeechVoice = 'M1' | 'F1' | 'M2' | 'F2';
 type TimelineDrag = {
@@ -584,40 +557,6 @@ type RestyleReference = {
   cloudURL?: string;
 };
 
-type StudioTextStyle = {
-  content: string;
-  fontSize: number;
-  fontFamily: string;
-  fontWeight: 400 | 600 | 800;
-  color: string;
-  align: 'left' | 'center' | 'right';
-};
-
-const STUDIO_FONTS = [
-  { name: 'DM Sans', category: 'Clean sans', stack: 'var(--font-body), sans-serif' },
-  { name: 'Space Grotesk', category: 'Modern sans', stack: 'var(--font-space-grotesk), sans-serif' },
-  { name: 'Syne', category: 'Display', stack: 'var(--font-display), sans-serif' },
-  { name: 'Bebas Neue', category: 'Condensed display', stack: 'var(--font-bebas), Impact, sans-serif' },
-  { name: 'Playfair Display', category: 'Editorial serif', stack: 'var(--font-playfair), Georgia, serif' },
-  { name: 'Cormorant Garamond', category: 'Elegant serif', stack: 'var(--font-cormorant), Georgia, serif' },
-  { name: 'IBM Plex Mono', category: 'Modern mono', stack: 'var(--font-ibm-plex-mono), monospace' },
-  { name: 'Inter', category: 'Modern sans', stack: 'Inter, var(--font-body), sans-serif' },
-  { name: 'Arial', category: 'Clean sans', stack: 'Arial, Helvetica, sans-serif' },
-  { name: 'Trebuchet MS', category: 'Humanist sans', stack: '"Trebuchet MS", Arial, sans-serif' },
-  { name: 'Verdana', category: 'Clean sans', stack: 'Verdana, Geneva, sans-serif' },
-  { name: 'Impact', category: 'Bold display', stack: 'Impact, Haettenschweiler, sans-serif' },
-  { name: 'Georgia', category: 'Editorial serif', stack: 'Georgia, "Times New Roman", serif' },
-  { name: 'Times New Roman', category: 'Classic serif', stack: '"Times New Roman", Times, serif' },
-  { name: 'Courier New', category: 'Monospace', stack: '"Courier New", Courier, monospace' },
-] as const;
-
-function studioFontStack(name: string) {
-  const configured = STUDIO_FONTS.find((font) => font.name === name)?.stack;
-  if (!configured) return `${JSON.stringify(name)}, sans-serif`;
-  if (typeof window === 'undefined' || !configured.includes('var(')) return configured;
-  return configured.replace(/var\((--[^)]+)\)/g, (_, variable: string) =>
-    getComputedStyle(document.documentElement).getPropertyValue(variable).trim() || 'sans-serif');
-}
 type StudioImageHit = {
   id: string;
   prompt: string;
@@ -707,19 +646,6 @@ type EditorHistory = {
 };
 
 const HISTORY_LIMIT = 20;
-const DEFAULT_DESIGN_SIZE: DesignSize = { width: 1920, height: 1080 };
-const MIN_DESIGN_EDGE = 64;
-const MAX_DESIGN_EDGE = 8192;
-
-function normalizeDesignSize(value: Partial<DesignSize> | undefined, fallback = DEFAULT_DESIGN_SIZE): DesignSize {
-  const width = Number(value?.width);
-  const height = Number(value?.height);
-  return {
-    width: Number.isFinite(width) ? Math.max(MIN_DESIGN_EDGE, Math.min(MAX_DESIGN_EDGE, Math.round(width))) : fallback.width,
-    height: Number.isFinite(height) ? Math.max(MIN_DESIGN_EDGE, Math.min(MAX_DESIGN_EDGE, Math.round(height))) : fallback.height,
-  };
-}
-
 type CloudProject = {
   id: string;
   name: string;
@@ -754,37 +680,10 @@ type StudioPerfDiagnostics = {
   previewLastAt: number;
   previewMediaTime?: number;
   redrawPreview?: () => void;
-  export?: {
-    sourceWidth: number;
-    sourceHeight: number;
-    width: number;
-    height: number;
-    hardwareAcceleration: 'prefer-hardware' | 'no-preference';
-    hardwareRequested: 'prefer-hardware';
-    startedAt: number;
-    completedAt?: number;
-    frames?: number;
-    format?: ExportFormat;
-    frameRate?: ExportFrameRate;
-    quality?: ExportQuality;
-    preparedAt?: number;
-    framesCompletedAt?: number;
-    outputBytes?: number;
-    estimatedWorkingSetBytes?: number;
-    heapStartedBytes?: number;
-    heapCompletedBytes?: number;
-  };
+  export?: StudioExportDiagnostics;
 };
 
 const EXPORT_SETTINGS_KEY = 'mg_studio_export_settings_v1';
-const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
-  format: 'mp4-h264',
-  resolution: 'source',
-  frameRate: 'source',
-  quality: 'balanced',
-  audio: 'aac',
-};
-
 const ADJUSTMENTS: { key: keyof StudioNumericAdjustments; label: string; min: number; max: number; step: number }[] = [
   { key: 'exposure', label: 'Exposure', min: -2, max: 2, step: 0.01 },
   { key: 'brightness', label: 'Brightness', min: -0.5, max: 0.5, step: 0.01 },
@@ -952,19 +851,6 @@ function uid() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
 }
 
-function fitWithin(width: number, height: number, maxWidth: number, maxHeight: number) {
-  const scale = Math.min(1, maxWidth / Math.max(1, width), maxHeight / Math.max(1, height));
-  const scaledWidth = Math.max(2, Math.round(width * scale / 2) * 2);
-  const scaledHeight = Math.max(2, Math.round(height * scale / 2) * 2);
-  // WebCodecs implementations commonly reject icon-sized 2×2/4×4 frames.
-  // Preserve aspect while meeting a conservative encoder minimum.
-  const encoderScale = Math.max(1, 16 / scaledWidth, 16 / scaledHeight);
-  return {
-    width: Math.max(16, Math.round(scaledWidth * encoderScale / 2) * 2),
-    height: Math.max(16, Math.round(scaledHeight * encoderScale / 2) * 2),
-  };
-}
-
 function fitStagePreview(width: number, height: number, maxWidth: number, maxHeight: number) {
   const scale = Math.min(maxWidth / Math.max(1, width), maxHeight / Math.max(1, height));
   return {
@@ -977,15 +863,6 @@ function h3AspectForSize(size: DesignSize): H3Aspect {
   const ratio = size.width / Math.max(1, size.height);
   const choices: [H3Aspect, number][] = [['16:9', 16 / 9], ['9:16', 9 / 16], ['1:1', 1], ['4:3', 4 / 3], ['3:4', 3 / 4], ['21:9', 21 / 9]];
   return choices.reduce((best, candidate) => Math.abs(candidate[1] - ratio) < Math.abs(best[1] - ratio) ? candidate : best)[0];
-}
-
-function exportSize(width: number, height: number, resolution: ExportResolution) {
-  if (resolution === 'source') return fitWithin(width, height, 4096, 4096);
-  const shortEdge = Number.parseInt(resolution, 10);
-  const longEdge = Math.round(shortEdge * 16 / 9);
-  return width >= height
-    ? fitWithin(width, height, longEdge, shortEdge)
-    : fitWithin(width, height, shortEdge, longEdge);
 }
 
 function loadExportSettings(): ExportSettings {
@@ -1007,12 +884,6 @@ function loadExportSettings(): ExportSettings {
   } catch {
     return DEFAULT_EXPORT_SETTINGS;
   }
-}
-
-function exportFormatDetails(format: ExportFormat) {
-  if (format === 'mp4-h264') return { codec: 'avc' as const, extension: 'mp4', mime: 'video/mp4', label: 'H.264' };
-  if (format === 'webm-vp9') return { codec: 'vp9' as const, extension: 'webm', mime: 'video/webm', label: 'VP9' };
-  return { codec: 'av1' as const, extension: 'webm', mime: 'video/webm', label: 'AV1' };
 }
 
 function perfDiagnostics(): StudioPerfDiagnostics {
@@ -1087,32 +958,18 @@ async function materializeProject(document: PortableStudioDocument, localFiles =
       // the remaining snapshots instead of fetching the media repeatedly.
       localFiles.set(mediaID, file);
     }
+    if (!file && stored.text) {
+      file = await renderTextFile(stored.text);
+      localFiles.set(mediaID, file);
+    }
     if (!file) continue;
-    assets.push({
-      ...stored,
-      mediaID,
-      visualTrack: stored.kind === 'audio' ? 0 : Math.max(0, Math.floor(stored.visualTrack || 0)),
-      stageScale: Math.max(0.1, Math.min(4, stored.stageScale ?? 1)),
-      stageRotation: stored.stageRotation ?? 0,
-      file,
-      url: URL.createObjectURL(file),
-      adjustments: { ...DEFAULT_ADJUSTMENTS, ...stored.adjustments },
-    });
+    assets.push(materializeStudioAsset(stored, file));
   }
   return stackOverlappingVisuals(assets);
 }
 
 const MIN_CLIP_DURATION = 0.1;
 const TIMELINE_SNAP_PX = 6;
-const MAX_VISUAL_TRACKS = 12;
-
-function clipDuration(asset: Pick<StudioAsset, 'trimStart' | 'trimEnd'>) {
-  return Math.max(0, asset.trimEnd - asset.trimStart);
-}
-
-function clipEnd(asset: Pick<StudioAsset, 'timelineStart' | 'trimStart' | 'trimEnd'>) {
-  return asset.timelineStart + clipDuration(asset);
-}
 
 const GAP_EPSILON = 0.001;
 
@@ -1165,33 +1022,6 @@ function snapTimelineMoveDelta(drag: Pick<TimelineDrag, 'originals' | 'pixelsPer
     }
   }
   return bestDelta;
-}
-
-function visualClipsOverlap(left: StudioAsset, right: StudioAsset) {
-  return left.kind !== 'audio' && right.kind !== 'audio'
-    && left.timelineStart < clipEnd(right) - 0.0001
-    && right.timelineStart < clipEnd(left) - 0.0001;
-}
-
-// A visual lane may contain many sequential clips, but never two clips that
-// occupy the same time. Stable asset order keeps older material below newer
-// overlays, while pinned IDs let an explicit layer command take precedence.
-function stackOverlappingVisuals(items: StudioAsset[], pinnedIDs = new Set<string>()) {
-  const visuals = items.map((asset, index) => ({ asset, index })).filter(({ asset }) => asset.kind !== 'audio');
-  visuals.sort((left, right) => (
-    left.asset.visualTrack - right.asset.visualTrack
-    || Number(pinnedIDs.has(right.asset.id)) - Number(pinnedIDs.has(left.asset.id))
-    || left.index - right.index
-  ));
-  const lanes: StudioAsset[][] = Array.from({ length: MAX_VISUAL_TRACKS }, () => []);
-  const assigned = new Map<string, number>();
-  for (const { asset } of visuals) {
-    let track = Math.max(0, Math.min(MAX_VISUAL_TRACKS - 1, Math.floor(asset.visualTrack)));
-    while (track < MAX_VISUAL_TRACKS - 1 && lanes[track].some((other) => visualClipsOverlap(asset, other))) track += 1;
-    assigned.set(asset.id, track);
-    lanes[track].push(asset);
-  }
-  return items.map((asset) => asset.kind === 'audio' ? asset : { ...asset, visualTrack: assigned.get(asset.id) ?? asset.visualTrack });
 }
 
 function moveVisualLayersWithSwap(items: StudioAsset[], selectedIDs: Set<string>, delta: number) {
@@ -1509,47 +1339,10 @@ function galleryImageURL(value?: string) {
   return `${GALLERY_CDN}/${source.replace(/^\/?(?:images\/|gallery\/)?/, '')}`;
 }
 
-function textFileName(content: string) {
-  const stem = content.trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 42) || 'text';
-  return `${stem}.png`;
-}
-
 function generationFileName(prompt: string | undefined, jobId: string) {
   const suffix = jobId.slice(-8);
   const stem = (prompt ?? '').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 64);
   return stem ? `${stem}-${suffix}` : `manifold-generation-${suffix}`;
-}
-
-async function renderTextFile(style: StudioTextStyle) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1920;
-  canvas.height = 1080;
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('Text rendering is unavailable');
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = style.color;
-  context.textAlign = style.align;
-  context.textBaseline = 'middle';
-  const fontStack = studioFontStack(style.fontFamily);
-  await document.fonts?.load(`${style.fontWeight} ${style.fontSize}px ${fontStack}`).catch(() => undefined);
-  context.font = `${style.fontWeight} ${style.fontSize}px ${fontStack}`;
-  const maxWidth = 1600;
-  const words = style.content.trim().split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let line = '';
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && context.measureText(candidate).width > maxWidth) { lines.push(line); line = word; }
-    else line = candidate;
-  }
-  if (line) lines.push(line);
-  const visible = lines.slice(0, 8);
-  const lineHeight = style.fontSize * 1.18;
-  const startY = canvas.height / 2 - (visible.length - 1) * lineHeight / 2;
-  const x = style.align === 'left' ? 160 : style.align === 'right' ? canvas.width - 160 : canvas.width / 2;
-  visible.forEach((value, index) => context.fillText(value, x, startY + index * lineHeight, maxWidth));
-  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Could not render text')), 'image/png'));
-  return new File([blob], textFileName(style.content), { type: 'image/png' });
 }
 
 function wavBlob(buffer: AudioBuffer) {
@@ -1621,44 +1414,6 @@ async function probeRemoteMedia(url: string, kind: 'image' | 'video', hintDurati
     video.removeAttribute('src');
     video.load();
   }
-}
-
-async function renderTimelineAudio(timelineAssets: StudioAsset[], duration: number, audioTrackVolume = 1) {
-  const decoder = new AudioContext();
-  const offline = new OfflineAudioContext(2, Math.max(1, Math.ceil(duration * 48_000)), 48_000);
-  let scheduled = 0;
-  const schedule = async (asset: StudioAsset, start: number, offset: number, clipDuration: number) => {
-    try {
-      const decoded = await decoder.decodeAudioData(await asset.file.arrayBuffer());
-      const available = Math.min(clipDuration, decoded.duration - offset, duration - start);
-      if (available <= 0) return;
-      const source = offline.createBufferSource(); source.buffer = decoded;
-      const gain = offline.createGain();
-      const fadeIn = Math.min(asset.fadeIn, available / 2);
-      const fadeOut = Math.min(asset.fadeOut, available / 2);
-      const volume = asset.volume * (asset.kind === 'audio' ? audioTrackVolume : 1);
-      gain.gain.setValueAtTime(fadeIn > 0 ? 0 : volume, start);
-      if (fadeIn > 0) gain.gain.linearRampToValueAtTime(volume, start + fadeIn);
-      if (fadeOut > 0) {
-        gain.gain.setValueAtTime(volume, start + available - fadeOut);
-        gain.gain.linearRampToValueAtTime(0, start + available);
-      }
-      source.connect(gain).connect(offline.destination);
-      source.start(start, offset, available);
-      scheduled += 1;
-    } catch {
-      // Silent videos and unsupported source audio are valid; additional clips still render.
-    }
-  };
-  for (const clip of timelineAssets.filter((asset) => asset.kind !== 'image' && !(asset.kind === 'video' && asset.sourceAudioMuted))) {
-    const overlapStart = Math.max(0, clip.timelineStart);
-    const overlapEnd = Math.min(duration, clipEnd(clip));
-    if (overlapEnd <= overlapStart) continue;
-    await schedule(clip, overlapStart, clip.trimStart + overlapStart - clip.timelineStart, overlapEnd - overlapStart);
-  }
-  await decoder.close();
-  if (!scheduled) return null;
-  return offline.startRendering();
 }
 
 async function renderAudioInterval(asset: StudioAsset, sourceStart: number, sourceEnd: number) {
@@ -2047,16 +1802,15 @@ export default function StudioPage() {
       return leftDistance - rightDistance || left.timelineStart - right.timelineStart;
     })
     .slice(0, 3), [assets, playhead]);
-  const timelineVisuals = useMemo(() => assets.filter((asset) => asset.kind !== 'audio'), [assets]);
-  const compositionBase = useMemo(() => [...timelineVisuals].sort((left, right) => left.timelineStart - right.timelineStart || left.visualTrack - right.visualTrack)[0] || null, [timelineVisuals]);
+  const composition = useMemo(() => timelineComposition(assets), [assets]);
+  const timelineVisuals = composition.visuals;
+  const compositionBase = composition.base;
   const selectedExportSize = exportSize(designSize.width, designSize.height, exportSettings.resolution);
   const selectedClipDuration = selected ? clipDuration(selected) : 0;
   const canExtendSelected = selected?.kind === 'video' && selectedClipDuration >= 2 && selectedClipDuration <= 15.1;
   const canOpenUpscale = selected?.kind === 'video' && selected.duration <= 60 && selected.width * 2 <= 8192 && selected.height * 2 <= 8192;
   const canUpscaleSelected = selected?.kind === 'video' && selected.duration <= 60 && selected.width * upscaleScale <= 8192 && selected.height * upscaleScale <= 8192;
-  const timelineDuration = useMemo(() => {
-    return Math.max(1, ...assets.map(clipEnd));
-  }, [assets]);
+  const timelineDuration = composition.duration;
   const visualTrackCount = useMemo(() => Math.max(2, 1 + Math.max(0, ...assets.filter((asset) => asset.kind !== 'audio').map((asset) => asset.visualTrack))), [assets]);
   const visibleVisualTrackCount = Math.min(3, visualTrackCount);
   const pixelsPerSecond = 64 * timelineZoom;
@@ -2314,9 +2068,8 @@ export default function StudioPage() {
     });
     setProjectID(id);
     setProjectName(name || 'Untitled project');
-    const inferredCanvas = restored.find((asset) => asset.kind !== 'audio');
-    setDesignSize(normalizeDesignSize(document.canvas, inferredCanvas ? normalizeDesignSize({ width: inferredCanvas.width, height: inferredCanvas.height }) : DEFAULT_DESIGN_SIZE));
-    setAudioTrackVolume(Math.max(0, Math.min(2, document.audioTrackVolume ?? 1)));
+    setDesignSize(documentDesignSize(document, restored));
+    setAudioTrackVolume(documentAudioTrackVolume(document));
     const restoredSelected = restored.some((asset) => asset.id === document.selectedID) ? document.selectedID : restored[0]?.id || '';
     setSelectedID(restoredSelected);
     setSelectedIDs(restoredSelected ? [restoredSelected] : []);
@@ -5098,262 +4851,18 @@ export default function StudioPage() {
     if (assets.some((asset) => isStreamingPlaceholder(asset.file))) throw new Error('Media is still downloading. Try again in a moment.');
     const visualAssets = singleAsset ? [{ ...singleAsset, timelineStart: 0 }] : timelineVisuals;
     const exportBase = singleAsset || compositionBase;
-    const exportDuration = singleAsset ? clipDuration(singleAsset) : timelineDuration;
-    const exportAssets = singleAsset ? visualAssets : assets;
     if (!exportBase || !visualAssets.length) throw new Error('Add an image or video to the timeline first');
-    setExportProgress(0.01);
-    let output: Output | null = null;
-    // Chrome caps a page at ~16 live WebGL contexts and silently force-loses
-    // the oldest ones beyond that. Giving every clip its own StudioRenderer
-    // made long timelines export black segments for exactly those evicted
-    // clips (draw() no-ops and readPixels returns zeros without throwing), so
-    // all clips share one GL context; each frame's draws are sequential, so
-    // nothing needs to stay resident between clips.
-    const sharedCanvas = document.createElement('canvas');
-    const sharedRenderer = new StudioRenderer(sharedCanvas, { preserveDrawingBuffer: true });
-    const sharedRaster = document.createElement('canvas');
-    const sharedRasterContext = sharedRaster.getContext('2d', { alpha: true });
-    const lutFor = (asset: StudioAsset) => (asset.adjustments.lutID ? luts[asset.adjustments.lutID] || null : null);
-    let sharedContextLost = false;
-    sharedCanvas.addEventListener('webglcontextlost', (event) => {
-      event.preventDefault();
-      sharedContextLost = true;
+    return renderStudioVideo({
+      visualAssets,
+      mediaAssets: singleAsset ? visualAssets : assets,
+      canvas: singleAsset ? { width: exportBase.width, height: exportBase.height } : designSize,
+      duration: singleAsset ? clipDuration(singleAsset) : timelineDuration,
+      luts,
+      audioTrackVolume: singleAsset ? 1 : audioTrackVolume,
+      settings,
+      onProgress: setExportProgress,
+      diagnostics: perfDiagnostics(),
     });
-    type ExportVisualState = {
-      asset: StudioAsset;
-      /** Images composite from a persistent raster; videos share sharedRaster. */
-      rasterCanvas: HTMLCanvasElement | null;
-      /** Glitched stills retain their source so the shader can animate them. */
-      imageSource: HTMLImageElement | null;
-      input: Input | null;
-      iterator: AsyncIterator<VideoSample> | null;
-      current: VideoSample | null;
-      next: VideoSample | null;
-    };
-    const resizeSharedRaster = (sourceWidth: number, sourceHeight: number) => {
-      sharedRenderer.resize(sourceWidth, sourceHeight);
-      if (sharedRaster.width !== sharedCanvas.width) sharedRaster.width = sharedCanvas.width;
-      if (sharedRaster.height !== sharedCanvas.height) sharedRaster.height = sharedCanvas.height;
-    };
-    const visualStates: ExportVisualState[] = [];
-    let antiAliasRenderer: StudioRenderer | null = null;
-    try {
-      const format = exportFormatDetails(settings.format);
-      const codec = format.codec;
-      const sourceCanvas = singleAsset ? { width: exportBase.width, height: exportBase.height } : designSize;
-      const requestedSize = exportSize(sourceCanvas.width, sourceCanvas.height, settings.resolution);
-      const qualityLevel = settings.quality === 'draft' ? 'medium' : settings.quality === 'high' ? 'very-high' : 'high';
-      const requestedQuality = new Quality(qualityLevel);
-      const hardwareSupported = await canEncodeVideo(codec, { ...requestedSize, quality: requestedQuality, hardwareAcceleration: 'prefer-hardware' });
-      // Software WebCodecs at 2K can be slower than 0.1x realtime. Keep full
-      // 2K/4K when a hardware encoder is exposed and use a 1080p safety path
-      // otherwise, so export never wedges a laptop for minutes per second.
-      // Explicit 2K/4K used to bypass the software safety path. That made the
-      // slowest browsers attempt the largest jobs. Preserve the requested size
-      // only with a hardware encoder; otherwise cap every format at 1080p.
-      const softwareSafeSize = fitWithin(requestedSize.width, requestedSize.height, 1920, 1080);
-      const { width, height } = hardwareSupported ? requestedSize : softwareSafeSize;
-      const quality = hardwareSupported ? requestedQuality : new Quality(settings.quality === 'high' ? 'high' : qualityLevel);
-      const hardwareAcceleration = hardwareSupported
-        ? 'prefer-hardware' as const
-        : 'no-preference' as const;
-      if (!(await canEncodeVideo(codec, { width, height, quality, hardwareAcceleration }))) {
-        throw new Error(`${format.label} encoding is not available in this browser`);
-      }
-      const performanceWithMemory = performance as Performance & { memory?: { usedJSHeapSize?: number } };
-      perfDiagnostics().export = {
-        sourceWidth: sourceCanvas.width, sourceHeight: sourceCanvas.height, width, height,
-        hardwareAcceleration, hardwareRequested: 'prefer-hardware', startedAt: performance.now(),
-        format: settings.format, frameRate: settings.frameRate, quality: settings.quality,
-        heapStartedBytes: performanceWithMemory.memory?.usedJSHeapSize,
-      };
-      const duration = exportDuration;
-
-      const workCanvas = document.createElement('canvas');
-      workCanvas.width = width;
-      workCanvas.height = height;
-      const compositor = workCanvas.getContext('2d', { alpha: false, desynchronized: true });
-      if (!compositor) throw new Error('This browser cannot start the timeline compositor');
-      compositor.imageSmoothingEnabled = true;
-      compositor.imageSmoothingQuality = 'high';
-      if (!sharedRasterContext) throw new Error('This browser cannot prepare the export frame buffer');
-
-      // Editable text starts as a crisp transparent PNG, but the 2D
-      // compositor has to resample it when it is rotated. A final, tiny FXAA
-      // pass repairs those diagonal glyph edges without changing ordinary
-      // photo/video exports or adding an export control users need to manage.
-      const needsTextAntiAlias = visualAssets.some((asset) => asset.text && Math.abs(asset.stageRotation % 90) > 0.01);
-      const exportCanvas = needsTextAntiAlias ? document.createElement('canvas') : workCanvas;
-      if (needsTextAntiAlias) {
-        exportCanvas.width = width;
-        exportCanvas.height = height;
-        antiAliasRenderer = new StudioRenderer(exportCanvas, { preserveDrawingBuffer: true });
-        antiAliasRenderer.resize(width, height);
-      }
-
-      for (const asset of visualAssets) {
-        const state: ExportVisualState = { asset, rasterCanvas: null, imageSource: null, input: null, iterator: null, current: null, next: null };
-        if (asset.kind === 'image') {
-          const image = new Image();
-          image.src = asset.url;
-          await image.decode();
-          if (asset.adjustments.glitchAmount > 0 || fxAnimated(asset.adjustments.fx)) {
-            state.imageSource = image;
-          } else {
-            resizeSharedRaster(asset.width, asset.height);
-            sharedRenderer.draw(image, asset.adjustments, 0, { time: 0, lut: lutFor(asset), stateKey: asset.id });
-            // Ordinary images filter once and keep a persistent raster. An
-            // animated glitch still instead goes through the shared renderer
-            // per output frame below, just like video.
-            const rasterCanvas = document.createElement('canvas');
-            rasterCanvas.width = sharedRaster.width;
-            rasterCanvas.height = sharedRaster.height;
-            sharedRenderer.copyToCanvas(sharedRasterContext);
-            rasterCanvas.getContext('2d')?.drawImage(sharedRaster, 0, 0);
-            state.rasterCanvas = rasterCanvas;
-          }
-        } else {
-          state.input = new Input({ source: new BlobSource(asset.file), formats: ALL_FORMATS });
-          const track = await state.input.getPrimaryVideoTrack();
-          if (!track || !(await track.canDecode())) throw new Error(`${asset.name} cannot be decoded in this browser`);
-          const sink = new VideoSampleSink(track, { optimizeForLatency: true });
-          const span = clipWindow(asset, visualAssets);
-          state.iterator = sink.samples(Math.max(0, asset.trimStart - span.handleIn), Math.min(asset.duration, asset.trimEnd + span.handleOut))[Symbol.asyncIterator]();
-          const first = await state.iterator.next();
-          state.next = first.done ? null : first.value;
-        }
-        visualStates.push(state);
-      }
-
-      const exportDiagnostics = perfDiagnostics().export;
-      if (exportDiagnostics) {
-        const outputCanvases = needsTextAntiAlias ? 2 : 1;
-        exportDiagnostics.estimatedWorkingSetBytes = width * height * 4 * (outputCanvases + 1)
-          + visualStates.reduce((total, state) => total + (state.rasterCanvas ? state.rasterCanvas.width * state.rasterCanvas.height * 4 : 0), 0);
-      }
-
-      const target = new BufferTarget();
-      output = new Output({
-        format: settings.format.startsWith('webm-') ? new WebMOutputFormat() : new Mp4OutputFormat({ fastStart: 'in-memory' }),
-        target,
-      });
-      const videoSource = new CanvasSource(exportCanvas, {
-        codec, quality, hardwareAcceleration,
-        latencyMode: hardwareSupported ? 'quality' : 'realtime',
-        contentHint: 'motion',
-      });
-      output.addVideoTrack(videoSource);
-
-      let audioSource: AudioSampleSource | null = null;
-      const audioCodec: ExportAudioCodec = !settings.format.startsWith('webm-') && settings.audio === 'aac' && (await canEncodeAudio('aac'))
-        ? 'aac'
-        : 'opus';
-      const mixedAudio = exportAssets.some((asset) => asset.kind !== 'image') ? await renderTimelineAudio(exportAssets, duration, singleAsset ? 1 : audioTrackVolume) : null;
-      if (mixedAudio) {
-        if (!(await canEncodeAudio(audioCodec))) throw new Error(`${audioCodec.toUpperCase()} audio encoding is not available in this browser`);
-        audioSource = new AudioSampleSource({ codec: audioCodec, quality: new Quality('high') });
-        output.addAudioTrack(audioSource);
-      }
-
-      await output.start();
-      if (perfDiagnostics().export) perfDiagnostics().export!.preparedAt = performance.now();
-      // A mixed timeline has no single source cadence. "Source" therefore uses
-      // a deterministic 30 fps clock; explicit 24/30/60 choices stay exact.
-      const outputFPS = settings.frameRate === 'source' ? 30 : settings.frameRate;
-      const frameDuration = 1 / outputFPS;
-      const frames = Math.max(1, Math.ceil(duration * outputFPS));
-      const orderedStates = [...visualStates].sort((left, right) => left.asset.visualTrack - right.asset.visualTrack || left.asset.timelineStart - right.asset.timelineStart || visualAssets.indexOf(left.asset) - visualAssets.indexOf(right.asset));
-
-      for (let index = 0; index < frames; index += 1) {
-        const timestamp = index * frameDuration;
-        compositor.setTransform(1, 0, 0, 1, 0, 0);
-        compositor.fillStyle = '#000';
-        compositor.fillRect(0, 0, width, height);
-        for (const state of orderedStates) {
-          const { asset } = state;
-          const transition = transitionState(asset, visualAssets, timestamp);
-          if (!transition) continue;
-          if (state.imageSource) {
-            if (sharedContextLost) throw new Error('The graphics context was lost during export. Retry the export once other graphics-heavy tabs are closed.');
-            resizeSharedRaster(asset.width, asset.height);
-            sharedRenderer.draw(state.imageSource, asset.adjustments, timestamp * 24, { time: timestamp - asset.timelineStart, lut: lutFor(asset), stateKey: asset.id });
-            sharedRenderer.copyToCanvas(sharedRasterContext!);
-          } else if (asset.kind === 'video') {
-            const sourceTime = Math.max(0, Math.min(asset.duration, asset.trimStart + timestamp - asset.timelineStart));
-            while (state.next && state.next.timestamp <= sourceTime + 1e-7) {
-              state.current?.close();
-              state.current = state.next;
-              const following = await state.iterator!.next();
-              state.next = following.done ? null : following.value;
-            }
-            const sample = state.current || state.next;
-            if (!sample) continue;
-            if (sharedContextLost) throw new Error('The graphics context was lost during export. Retry the export once other graphics-heavy tabs are closed.');
-            resizeSharedRaster(asset.width, asset.height);
-            const frame = sample.toVideoFrame();
-            sharedRenderer.draw(frame, asset.adjustments, timestamp * 24, { time: sourceTime - asset.trimStart, lut: lutFor(asset), stateKey: asset.id });
-            sharedRenderer.copyToCanvas(sharedRasterContext!);
-            frame.close();
-          }
-          const fit = Math.min(width / Math.max(1, asset.width), height / Math.max(1, asset.height));
-          const drawWidth = asset.width * fit * asset.stageScale;
-          const drawHeight = asset.height * fit * asset.stageScale;
-          const raster = state.rasterCanvas ?? sharedRaster;
-          const crop = asset.crop || { left: 0, top: 0, right: 0, bottom: 0 };
-          compositor.save();
-          compositor.globalAlpha = Math.max(0, Math.min(1, (asset.opacity ?? 1) * transition.alpha));
-          compositor.globalCompositeOperation = blendMode(asset.blendMode).canvas;
-          compositor.translate(width * (0.5 + asset.stageX), height * (0.5 + asset.stageY));
-          compositor.rotate(asset.stageRotation * Math.PI / 180);
-          if (transition.wipe) {
-            const rect = wipeRect(transition.wipe.type, transition.wipe.progress, drawWidth, drawHeight);
-            compositor.beginPath();
-            compositor.rect(rect.x - drawWidth / 2, rect.y - drawHeight / 2, rect.width, rect.height);
-            compositor.clip();
-          }
-          const sourceWidth = raster.width * (1 - crop.left - crop.right);
-          const sourceHeight = raster.height * (1 - crop.top - crop.bottom);
-          if (sourceWidth >= 1 && sourceHeight >= 1) {
-            compositor.drawImage(raster, raster.width * crop.left, raster.height * crop.top, sourceWidth, sourceHeight,
-              -drawWidth / 2 + drawWidth * crop.left, -drawHeight / 2 + drawHeight * crop.top, drawWidth * (1 - crop.left - crop.right), drawHeight * (1 - crop.top - crop.bottom));
-          }
-          compositor.restore();
-        }
-        if (antiAliasRenderer) antiAliasRenderer.draw(workCanvas, DEFAULT_ADJUSTMENTS, index, { fxaa: true });
-        await videoSource.add(timestamp, Math.min(frameDuration, duration - timestamp), { keyFrame: index % (outputFPS * 2) === 0 });
-        setExportProgress(Math.min(0.9, (index + 1) / frames * 0.9));
-      }
-
-      if (perfDiagnostics().export) perfDiagnostics().export!.framesCompletedAt = performance.now();
-
-      if (audioSource && mixedAudio) {
-        for (const sample of AudioSample.fromAudioBuffer(mixedAudio, 0)) {
-          await audioSource.add(sample);
-          sample.close();
-        }
-      }
-      await output.finalize();
-      const perf = perfDiagnostics();
-      if (perf.export) {
-        perf.export.completedAt = performance.now();
-        perf.export.frames = frames;
-        perf.export.outputBytes = target.buffer?.byteLength || 0;
-        perf.export.heapCompletedBytes = performanceWithMemory.memory?.usedJSHeapSize;
-      }
-      setExportProgress(1);
-      return new Blob([target.buffer!], { type: format.mime });
-    } catch (reason) {
-      await output?.cancel().catch(() => undefined);
-      throw reason;
-    } finally {
-      for (const state of visualStates) {
-        state.current?.close();
-        state.next?.close();
-        state.input?.dispose();
-      }
-      sharedRenderer.destroy();
-      antiAliasRenderer?.destroy();
-    }
   }
 
 

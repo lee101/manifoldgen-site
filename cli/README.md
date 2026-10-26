@@ -19,6 +19,8 @@ mg generate destruction-studio --model vase.glb --param impact=ball --param qual
 | `auth status \| logout \| token` | Account and balance; remove stored key; print key |
 | `pricing [service]`, `services` | Live prices |
 | `generate <service> [flags]` | `--prompt`, `--image/--video/--audio/--mask/--model` (file or URL), `--ref-image` (repeatable), `--param k=v`, `--params '{json}'`, any `--key value`; `--wait`, `--out dir`, `--dry-run` |
+| `render <timeline.json> \| --project <id>` | Render a Studio timeline (`--format mp4\|webm`, `--quality`, `--resolution`, `--fps`, `--wait`, `--out`); local `cloudURL` paths and `.cube` files upload automatically |
+| `studio open <timeline.json> [--no-browser]` | Save the timeline as an editable Studio project and open it |
 | `job <id> [--wait] [--out dir]`, `jobs [--kind audio]` | Poll, download, list |
 | `search <query> --kind images\|videos\|audio` | Semantic media search |
 | `mcp config [--client claude\|codex\|cursor] [--show-key]` | MCP setup snippets |

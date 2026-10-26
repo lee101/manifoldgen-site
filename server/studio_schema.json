@@ -1,0 +1,177 @@
+{
+  "name": "PortableStudioDocument",
+  "version": 6,
+  "summary": "A ManifoldGen Studio timeline. assets[] holds every clip: video/image clips composite on visual tracks (visualTrack 0 is the bottom layer), audio clips mix into A1. Times are seconds. Only id, kind and cloudURL (or text for title cards) are required; the server probes media for duration/width/height, defaults trimEnd to the media length and, when timelineStart is omitted, places a clip right after the previous clip on the same track. A transition on a clip blends it with the clip that ends exactly where it starts on the same track. Open the result in https://manifoldgen.com/studio?project=<id> to keep editing.",
+  "limits": { "maxBytes": 524288, "maxClips": 200, "maxSeconds": 600, "maxWidth": 3840, "maxHeight": 2160, "maxFps": 60, "maxLuts": 8, "maxFx": 12, "maxVisualTracks": 12 },
+  "document": {
+    "type": "object",
+    "required": ["assets"],
+    "additionalProperties": false,
+    "properties": {
+      "version": { "type": "integer", "enum": [6], "description": "Schema version; defaults to 6." },
+      "selectedID": { "type": "string", "description": "Clip selected when Studio opens." },
+      "canvas": {
+        "type": "object", "additionalProperties": false, "required": ["width", "height"],
+        "properties": { "width": { "type": "integer", "minimum": 64, "maximum": 3840 }, "height": { "type": "integer", "minimum": 64, "maximum": 2160 } },
+        "description": "Output frame size; defaults to the first visual clip's size."
+      },
+      "luts": {
+        "type": "object", "maxProperties": 8,
+        "description": "3D LUTs keyed by id; reference one from adjustments.lutID. Give a .cube as text (cube) or URL (url); Studio's own {size,data} form is also accepted.",
+        "additionalProperties": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "size": { "type": "integer", "minimum": 2, "maximum": 33 },
+            "data": { "type": "string", "description": "Base64 little-endian uint16 RGB triples, red fastest." },
+            "cube": { "type": "string", "x-input-only": true, "description": "Adobe .cube text (LUT_3D_SIZE 2-65)." },
+            "url": { "type": "string", "x-input-only": true, "description": "Public http(s) URL of a .cube file." }
+          }
+        }
+      },
+      "audioTrackVolume": { "type": "number", "minimum": 0, "maximum": 2, "description": "Master gain for audio clips; default 1." },
+      "history": { "type": "object", "description": "Studio undo/redo snapshots; ignored on input." },
+      "assets": {
+        "type": "array", "minItems": 1, "maxItems": 200,
+        "items": {
+          "type": "object",
+          "required": ["id", "kind"],
+          "additionalProperties": false,
+          "properties": {
+            "id": { "type": "string", "maxLength": 128 },
+            "mediaID": { "type": "string", "description": "UUID of the media bytes; server fills." },
+            "name": { "type": "string", "maxLength": 200 },
+            "kind": { "type": "string", "enum": ["video", "image", "audio"], "description": "Title cards are kind image with text." },
+            "duration": { "type": "number", "minimum": 0, "description": "Source media length; probed when omitted. Images default to 5." },
+            "width": { "type": "number", "minimum": 1, "description": "Source pixels; probed when omitted (text cards are 1920x1080)." },
+            "height": { "type": "number", "minimum": 1 },
+            "trimStart": { "type": "number", "minimum": 0, "description": "Source in-point; default 0." },
+            "trimEnd": { "type": "number", "minimum": 0, "description": "Source out-point; clip length is trimEnd - trimStart. Default: media length (5 for images and text)." },
+            "timelineStart": { "type": "number", "minimum": 0, "description": "Where the clip starts on the timeline; default right after the previous clip on its track." },
+            "visualTrack": { "type": "integer", "minimum": 0, "maximum": 11, "description": "Layer for video/image; higher draws on top." },
+            "volume": { "type": "number", "minimum": 0, "maximum": 2 },
+            "fadeIn": { "type": "number", "minimum": 0, "maximum": 30, "description": "Audio fade seconds." },
+            "fadeOut": { "type": "number", "minimum": 0, "maximum": 30 },
+            "sourceAudioMuted": { "type": "boolean", "description": "Drop a video's own soundtrack." },
+            "stageX": { "type": "number", "minimum": -2, "maximum": 2, "description": "Horizontal offset as a fraction of canvas width; 0 centers." },
+            "stageY": { "type": "number", "minimum": -2, "maximum": 2, "description": "Vertical offset as a fraction of canvas height; 0 centers." },
+            "stageScale": { "type": "number", "minimum": 0.1, "maximum": 4, "description": "1 fits the clip inside the canvas." },
+            "stageRotation": { "type": "number", "minimum": -360, "maximum": 360, "description": "Clockwise degrees." },
+            "attribution": { "type": "string" },
+            "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+            "blendMode": { "type": "string", "enum": ["normal", "multiply", "screen", "overlay", "add", "difference"] },
+            "crop": {
+              "type": "object", "additionalProperties": false,
+              "properties": { "left": { "type": "number", "minimum": 0, "maximum": 0.95 }, "top": { "type": "number", "minimum": 0, "maximum": 0.95 }, "right": { "type": "number", "minimum": 0, "maximum": 0.95 }, "bottom": { "type": "number", "minimum": 0, "maximum": 0.95 } }
+            },
+            "transition": {
+              "type": "object", "additionalProperties": false, "required": ["type"],
+              "properties": {
+                "type": { "type": "string", "enum": ["crossfade", "dip", "wipe-left", "wipe-right", "wipe-up", "wipe-down"] },
+                "duration": { "type": "number", "minimum": 0.1, "maximum": 5 }
+              },
+              "description": "Incoming transition from the adjacent previous clip on the same track (or from black when none)."
+            },
+            "adjustments": {
+              "type": "object", "additionalProperties": false,
+              "description": "Per-clip grade. Numbers default to 0 except glitchSpeed 0.5, glitchHue 180, lutIntensity 1.",
+              "properties": {
+                "exposure": { "type": "number", "minimum": -2, "maximum": 2 },
+                "brightness": { "type": "number", "minimum": -0.5, "maximum": 0.5 },
+                "contrast": { "type": "number", "minimum": -0.8, "maximum": 1 },
+                "highlights": { "type": "number", "minimum": -1, "maximum": 1 },
+                "shadows": { "type": "number", "minimum": -1, "maximum": 1 },
+                "shadowHue": { "type": "number", "minimum": -180, "maximum": 180 },
+                "midtoneHue": { "type": "number", "minimum": -180, "maximum": 180 },
+                "highlightHue": { "type": "number", "minimum": -180, "maximum": 180 },
+                "saturation": { "type": "number", "minimum": -1, "maximum": 1 },
+                "temperature": { "type": "number", "minimum": -1, "maximum": 1 },
+                "tint": { "type": "number", "minimum": -1, "maximum": 1 },
+                "fade": { "type": "number", "minimum": 0, "maximum": 1 },
+                "vignette": { "type": "number", "minimum": 0, "maximum": 1 },
+                "grain": { "type": "number", "minimum": 0, "maximum": 1 },
+                "glitchAmount": { "type": "number", "minimum": 0, "maximum": 1 },
+                "glitchRGB": { "type": "number", "minimum": 0, "maximum": 1 },
+                "glitchTear": { "type": "number", "minimum": 0, "maximum": 1 },
+                "glitchBlocks": { "type": "number", "minimum": 0, "maximum": 1 },
+                "glitchColor": { "type": "number", "minimum": 0, "maximum": 1 },
+                "glitchScanlines": { "type": "number", "minimum": 0, "maximum": 1 },
+                "glitchSpeed": { "type": "number", "minimum": 0, "maximum": 1 },
+                "glitchHue": { "type": "number", "minimum": 0, "maximum": 360 },
+                "liftR": { "type": "number", "minimum": -1, "maximum": 1 },
+                "liftG": { "type": "number", "minimum": -1, "maximum": 1 },
+                "liftB": { "type": "number", "minimum": -1, "maximum": 1 },
+                "liftM": { "type": "number", "minimum": -1, "maximum": 1 },
+                "gammaR": { "type": "number", "minimum": -1, "maximum": 1 },
+                "gammaG": { "type": "number", "minimum": -1, "maximum": 1 },
+                "gammaB": { "type": "number", "minimum": -1, "maximum": 1 },
+                "gammaM": { "type": "number", "minimum": -1, "maximum": 1 },
+                "gainR": { "type": "number", "minimum": -1, "maximum": 1 },
+                "gainG": { "type": "number", "minimum": -1, "maximum": 1 },
+                "gainB": { "type": "number", "minimum": -1, "maximum": 1 },
+                "gainM": { "type": "number", "minimum": -1, "maximum": 1 },
+                "lutIntensity": { "type": "number", "minimum": 0, "maximum": 1 },
+                "lutID": { "type": "string", "description": "Key into document.luts." },
+                "curves": {
+                  "type": "object", "additionalProperties": false,
+                  "description": "Point lists [[in,out],...] in 0..1 per channel.",
+                  "properties": { "master": { "type": "array" }, "red": { "type": "array" }, "green": { "type": "array" }, "blue": { "type": "array" } }
+                },
+                "fx": {
+                  "type": "array", "maxItems": 12,
+                  "items": {
+                    "type": "object", "required": ["type"],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "type": { "type": "string", "enum": ["feedback", "kaleidoscope", "mirror", "pixelate", "chromatic", "rgbShift", "bloom", "edges", "posterize", "halftone", "noiseWarp", "wave", "lightLeak", "crt", "vhs", "datamosh", "lumaKey", "chromaKey"] },
+                      "enabled": { "type": "boolean" },
+                      "params": { "type": "object", "description": "Numeric shader params plus mix 0..1; unknown keys are dropped." }
+                    }
+                  }
+                }
+              }
+            },
+            "cloudURL": { "type": "string", "description": "Public http(s) URL of the media. Optional for text cards." },
+            "objectKey": { "type": "string", "description": "Server fills." },
+            "previewURL": { "type": "string", "description": "Server fills." },
+            "contentType": { "type": "string", "description": "Server fills." },
+            "size": { "type": "number", "description": "Bytes; server fills." },
+            "lastModified": { "type": "number", "description": "Server fills." },
+            "text": {
+              "type": "object", "additionalProperties": false, "required": ["content"],
+              "description": "Makes an image clip an editable title card rendered on a transparent 1920x1080 layer.",
+              "properties": {
+                "content": { "type": "string", "maxLength": 2000 },
+                "fontSize": { "type": "number", "minimum": 8, "maximum": 400 },
+                "fontFamily": { "type": "string", "enum": ["DM Sans", "Space Grotesk", "Syne", "Bebas Neue", "Playfair Display", "Cormorant Garamond", "IBM Plex Mono", "Inter", "Arial", "Trebuchet MS", "Verdana", "Impact", "Georgia", "Times New Roman", "Courier New"] },
+                "fontWeight": { "type": "integer", "enum": [400, 600, 800] },
+                "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+                "align": { "type": "string", "enum": ["left", "center", "right"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "render": {
+    "format": ["mp4", "webm"],
+    "quality": ["draft", "balanced", "high"],
+    "resolution": ["source", "2160p", "1440p", "1080p", "720p"],
+    "fps": { "minimum": 1, "maximum": 60, "default": 30 },
+    "pricing": "$0.01 per output second up to 1920x1080, $0.02 above, $0.05 minimum; charged on success."
+  },
+  "example": {
+    "version": 6,
+    "canvas": { "width": 1280, "height": 720 },
+    "luts": {
+      "warm": { "name": "Warm", "cube": "LUT_3D_SIZE 2\n0 0 0.02\n1 0.05 0\n0 0.95 0\n1 0.98 0\n0.03 0 0.9\n1 0.05 0.85\n0.03 0.95 0.85\n1 1 0.95\n" }
+    },
+    "assets": [
+      { "id": "title", "kind": "image", "visualTrack": 1, "trimEnd": 3, "timelineStart": 0, "transition": { "type": "dip", "duration": 0.6 }, "text": { "content": "Northern Lights", "fontSize": 140, "fontFamily": "Bebas Neue", "fontWeight": 800, "color": "#ffffff", "align": "center" } },
+      { "id": "shot-1", "kind": "video", "cloudURL": "https://example.com/aurora-wide.mp4", "trimStart": 1, "trimEnd": 5, "adjustments": { "lutID": "warm", "lutIntensity": 0.8, "contrast": 0.1 } },
+      { "id": "shot-2", "kind": "video", "cloudURL": "https://example.com/aurora-close.mp4", "trimEnd": 4, "transition": { "type": "crossfade", "duration": 1 }, "adjustments": { "lutID": "warm", "lutIntensity": 0.8, "saturation": 0.15 } },
+      { "id": "music", "kind": "audio", "cloudURL": "https://example.com/ambient-bed.mp3", "timelineStart": 0, "trimEnd": 8, "volume": 0.7, "fadeIn": 0.5, "fadeOut": 1.5 }
+    ]
+  }
+}

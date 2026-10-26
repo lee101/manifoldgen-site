@@ -76,17 +76,19 @@ Update names here only; the workflow skills defer to this table. Prices are base
 | toon-shader | `toon-shader` | `blender_toon_shader` | `model_url` or `image_url` | `style` cel/anime/comic/flat, `bands` 2-5, `outline_width`, `outline_color`, `rim`, `palette`, `turntable`, `demo` | `video_url`, `poster_url`, `blend_url` | $0.30 |
 | scene-builder | `blender-scene` | `blender_render_scene` | `model_urls` (max 16) | `spec` {objects, lights, camera, world, frames} | `video_url`, `poster_url`, `blend_url` | $0.30 |
 | scene-builder | `image-to-3d` | `image_to_3d` | `image_url` | `quality` standard/high ($0.45) | `glb_url` | $0.06 |
-| vectorize | `vectorize` | `vectorize_image` | `image_url` | `mode` color/poster/bw/lineart, `colors` 2-8, `detail`, `corners`, `smooth`, `engine` trace/ai ($0.03) | `svg_url` (one layer per color) | $0.02 |
+| vectorize | `vectorize` | `vectorize_image` | `image_url` | `mode` color/poster/bw/lineart, `colors` 2-32 (= layers), `detail`, `corners`, `smooth`, `engine` trace/ai ($0.03) | `svg_url` (one layer per color) | $0.02 |
 | shot-cleanup | `shot-cleanup` | `remove_video_objects` | `video_url`, `prompt` (what to erase), `duration` 1-30 | `points` [{x,y,type}] (clips up to 4.8 s), `keep_audio` | `video_url` | $0.24/s |
 | shot-cleanup | `video_background_removal` | `generate_media` | `video_url` | - | alpha video | per s |
 | image-fixer | `image-edit`, `remove-background`, `relight`, `upscale-image`, `extend-image`, `smart-resize` | `generate_media` | `image_url` (+ `mask_url`, `prompt`) | - | PNG | per image |
-| shot-composer | Studio + `video`, `reference-video`, `music`, `sfx` | `generate_media` | clips, stills, audio | - | Studio project, MP4 | varies |
+| shot-composer | `shot-composer` | `composite_shot` | `video_url` (subject), `image_url` or `prompt` (background), `duration` 1-30 | `background_video_url`, `key` ai/chroma, `key_color`, `position`, `scale`, `match_color`, `light_wrap`, `grain`, `shadow`, `keep_audio` | `video_url`, `fg_alpha_url`, `background_url`, `lut_url`, Studio project | $0.10 + matte per s |
+| timeline-edit | `timeline-render` (`mg render edit.json`) | `render_timeline` | `params.document` (PortableStudioDocument v6, `get_studio_schema`) or `params.project_id` | `format` mp4/webm, `quality`, `resolution`, `fps` 1-60, `name` | `video_url`, `poster_url`, `studio_url` | $0.01/s (<=1080p), $0.02/s above, $0.05 min |
+| timeline-edit | `POST /api/studio/projects/import` (`mg studio open edit.json`) | `create_studio_project` | `document`, `name` | - | `project_id`, `studio_url` | free |
 | color-grade | client tool `/tools/color-grade` | none | image/video | - | `.cube` LUT | free |
 | shader-fx | client tool `/tools/shader-fx` | none | image/video | - | `.cube` LUT, rendered video | free |
-| footage-sorter | coming soon | none | - | - | - | - |
+| footage-sorter | `footage-sorter` | `organize_footage` | `params.clips` (1-24 URLs) | `sync`, `reference_audio`, `fps` | `otio_url`, `fcpxml_url`, `studio_project_url`, `contact_sheet_url`, `report` | $0.05 + $0.02/clip |
 
 Blender tools share `params`: `duration` 2-8 s, `aspect` 16:9/9:16/1:1, `quality` draft (~540p) / standard (720p) / high (1080p, +$0.20), `background` studio/dark/sky/white, `seed`. Preview with `quality=draft`, then render final. 3D inputs: `.glb .gltf .obj .fbx .stl .ply`.
 
-MCP production tools take these fields flat (no `params` wrapper) plus optional `wait_seconds` (0-600). REST and the CLI put tool options in `params`; `image_url`, `model_url`, `model_urls`, `video_url`, `prompt` stay top level; `duration` is top level for shot-cleanup and inside `params` for Blender tools. If a service answers `unknown service`, it is not deployed on that host yet: say so and stop.
+MCP production tools take these fields flat (no `params` wrapper) plus optional `wait_seconds` (0-600). REST and the CLI put tool options in `params`; `image_url`, `model_url`, `model_urls`, `video_url`, `prompt` stay top level; `duration` is top level for shot-cleanup and shot-composer and inside `params` for Blender tools. If a service answers `unknown service`, it is not deployed on that host yet: say so and stop.
 
 MCP also serves workflow prompts (`prompts/list`) mirroring these skills.
