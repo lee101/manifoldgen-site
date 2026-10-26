@@ -36,9 +36,11 @@ export default function ToolsIndex({ tools }: { tools: readonly ToolCard[] }) {
     <h1 className={styles.srOnly}>AI creative tools</h1>
     <section className={styles.grid}>
       {filtered.map((tool) => <Link key={tool.href} href={tool.href} className={`${styles.card} ${tool.layout ? styles[tool.layout] : ''}`}>
-        {tool.kind === 'video'
+        {tool.kind === 'video' && !/\.(jpe?g|png|webp)$/i.test(tool.src)
           ? <video src={tool.src} muted autoPlay loop playsInline preload="metadata" />
-          : <img src={tool.src} alt={tool.assetLabel || `${tool.name} real output`} loading="lazy" />}
+          : <img src={tool.src} alt={tool.assetLabel || `${tool.name} real output`} loading="lazy"
+            ref={(element) => { if (element?.complete && element.naturalWidth === 0) element.style.visibility = 'hidden'; }}
+            onError={(event) => { event.currentTarget.style.visibility = 'hidden'; }} />}
         <span className={styles.tag}>{tool.label}</span>
         <div className={styles.copy}>
           <h2>{tool.name}</h2>

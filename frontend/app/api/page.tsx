@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ArrowLeft, Bot, Check, Clock3, Code2, KeyRound, Sparkles, Terminal, WalletCards } from 'lucide-react';
 import { CopyMarkdownButton } from './copy-markdown-button';
 import { PricingTable } from './pricing-table';
+import { PRODUCTION_TOOLS } from '@/lib/production-tools';
 
 export const metadata = {
   title: 'API Documentation',
@@ -182,6 +183,9 @@ LoRA lane: add \`{"kind":"lora"}\` (optional \`{"resolution":"480p"|"768p"}\`, \
 ## Reference video (Seedance 2.0)
 POST \`/api/service\` with \`{"service":"reference-video","prompt":"Recreate @Video1 shot for shot with the robot from @Image1 ...","reference_image_urls":["https://...png"],"reference_video_urls":["https://...mp4"],"reference_audio_urls":["https://...mp3"],"model":"mini","resolution":"720p","duration":0,"aspect_ratio":"auto","include_audio":false,"preserve_audio":true}\`. Up to 9 reference images, 3 reference videos and 3 audio clips (12 files total); at least one image or video is required. \`model\` is \`mini\` or \`pro\`; \`resolution\` is \`480p\`|\`720p\` (mini) or \`480p\`|\`720p\`|\`1080p\` (pro). \`duration\` is 0 to follow the reference video or 4-15 seconds; \`aspect_ratio\` is \`auto\`|\`16:9\`|\`9:16\`|\`1:1\`|\`4:3\`|\`3:4\`|\`21:9\`. \`preserve_audio\` (default true) lays the first audio reference, or the first reference video's soundtrack, under the result; \`include_audio\` (default false) lets the model generate its own audio. The audio slots accept any media file including mp4/mov/webm video: only the audio track is extracted, so pass a video URL as \`reference_audio_urls\` to reuse its soundtrack. A single reference video may run up to 60 s: the server splits it at detected cuts into <=15 s segments, renders them, and joins them back together (\`long\` true and \`segments\` N in the response). Preflight with \`POST /api/reference-video/estimate\` using the same fields; both endpoints return \`estimated_cost_usd\`, \`estimated_credits\`, \`segments\`, \`long\`, \`output_seconds\`, \`reference_video_seconds\`, \`usd_per_output_second\`, \`usd_per_reference_video_second\`, \`keeps_soundtrack\` and \`estimated_generation_seconds\`, and the service call adds \`result.job_id\`/\`result.status_url\`. Poll the status URL for \`job.status\` (queued|processing|completed|failed|payment_required), \`job.error\`, \`job.result.stage\` (prepare|video|mux|completed), \`segments_total\`, \`segments_completed\`, \`video_url\`, \`duration_seconds\`, \`charged_usd\` and \`credits_used\`. Seedance refuses references or prompts that show or name real people: use face-free references (robots, characters, products, scenes) and describe people in words. Pricing: Mini $0.23 per output second + $0.14 per reference-video second at 720p ($0.11 + $0.07 at 480p); Pro $0.46 + $0.27 at 720p, $0.20 + $0.12 at 480p, $1.02 + $0.61 at 1080p.
 
+## Production tools
+POST \`/api/service\` with \`{"service":"<name>","image_url"?,"model_url"?,"model_urls"?,"video_url"?,"prompt"?,"duration"?,"params":{...}}\`. Services: destruction-studio, exploded-view, toon-shader, blender-scene (hosted Blender; MP4 + poster + editable .blend; render length goes in \`params.duration\`), image-to-3d (GLB), vectorize (layered SVG), shot-cleanup (object removal, $0.24/s, max 30 s, top-level \`duration\`). Returns 202 with \`result.job_id\`; vectorize and image-to-3d may complete inline. Poll \`GET /api/video-jobs/{job_id}\` for \`job.result\` (\`video_url\`, \`poster_url\`, \`blend_url\`, \`glb_url\`, \`svg_url\`, \`palette\`, \`layers\`, \`stage\`). Upload files with \`POST /api/studio/assets/presign\` (content_type such as model/gltf-binary). MCP server: \`https://manifoldgen.com/api/mcp\`.
+
 ## Generate voices
 POST \`/api/voice/generate\` with a model ID, text, and optional delivery/audio controls. Discover the live model catalog at \`GET /api/voice/models\`. Batch size is 1–4. Successful results contain durable private \`audio_url\` values and exact usage charges.
 
@@ -224,6 +228,7 @@ export default function ApiDocsPage() {
             <a href="#anima" className="block py-1.5 hover:text-white">Anima character art</a>
             <a href="#audio" className="block py-1.5 hover:text-white">Generate audio</a>
             <a href="#voice" className="block py-1.5 hover:text-white">Generate voices</a>
+            <a href="#production" className="block py-1.5 hover:text-white">Production tools</a>
             <a href="#pricing" className="block py-1.5 hover:text-white">Pricing</a>
             <a href="#errors" className="block py-1.5 hover:text-white">Errors</a>
           </nav>
@@ -382,6 +387,23 @@ export default function ApiDocsPage() {
               Call <code>GET /api/voice/models</code> for live pricing and model-specific controls.
             </p>
             <CodeBlock>{createVoice}</CodeBlock>
+          </section>
+
+          <section id="production" className="scroll-mt-28 border-t border-white/10 py-10">
+            <h2 className="font-display text-2xl font-700">Production tools</h2>
+            <p className="mb-5 mt-3 leading-7 text-white/55">Hosted Blender renders, photo to 3D, vectorizing and shot cleanup through <code>POST /api/service</code>. Jobs return 202; poll <code>/api/video-jobs/:id</code> and read <code>job.result.stage</code> while processing. Charged only on success. Also available as MCP tools at <code>/api/mcp</code>. <Link href="/tools/production" className="text-[var(--color-accent-2)]">Production suite</Link></p>
+            <CodeBlock>{`{"service":"destruction-studio","params":{"subject":"tower","material":"glass","impact":"ball","pieces":64,"quality":"draft"}}`}</CodeBlock>
+            <div className="mt-6 overflow-hidden rounded-2xl border border-white/10 text-sm">
+              <div className="hidden gap-2 border-b border-white/10 bg-white/[0.03] px-4 py-2 text-xs text-white/40 sm:grid sm:grid-cols-[140px_1fr_1fr_130px]"><span>Service</span><span>Inputs</span><span>Outputs</span><span>Price</span></div>
+              {PRODUCTION_TOOLS.map((tool) => (
+                <div key={tool.service} className="grid gap-1 border-b border-white/10 px-4 py-3 last:border-0 sm:grid-cols-[140px_1fr_1fr_130px] sm:gap-2">
+                  <Link href={`/tools/${tool.slug}`}><code className="text-[var(--color-accent-2)]">{tool.service}</code></Link>
+                  <span className="break-words text-white/55">{tool.inputsDoc}</span>
+                  <span className="break-words text-white/45">{tool.outputs}</span>
+                  <span className="text-white/70">{tool.priceDoc}</span>
+                </div>
+              ))}
+            </div>
           </section>
 
           <section id="pricing" className="scroll-mt-28 border-t border-white/10 py-10">
