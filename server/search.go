@@ -384,7 +384,7 @@ func (vs *VideoSearchEngine) loadAndIndex() {
 }
 
 func (vs *VideoSearchEngine) IndexIncremental(jobID, prompt, videoURL, service string) {
-	if vs == nil || prompt == "" || jobID == "" {
+	if vs == nil || prompt == "" || jobID == "" || !isOptimizedVideoURL(videoURL) {
 		return
 	}
 	vs.mu.Lock()

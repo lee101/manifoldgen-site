@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -1038,7 +1039,7 @@ func (db *DB) StreamCompletedVideoPrompts(nsfw bool, cb func(jobID, prompt, vide
 		if err := rows.Scan(&id, &prompt, &service, &resultText); err != nil {
 			return err
 		}
-		videoURL := extractVideoURLFromResultJSON(resultText)
+		videoURL := extractOptimizedVideoURLFromResultJSON(resultText)
 		// A completed orchestration row is not necessarily playable media (for
 		// example an older music-video envelope may only contain stage metadata).
 		// Do not let those rows occupy semantic-search slots with blank cards.
@@ -1052,15 +1053,27 @@ func (db *DB) StreamCompletedVideoPrompts(nsfw bool, cb func(jobID, prompt, vide
 	return rows.Err()
 }
 
-func extractVideoURLFromResultJSON(raw string) string {
-	u := extractRawVideoURLFromResultJSON(raw)
-	if len(u) > 2048 || strings.HasPrefix(u, "data:") {
-		return ""
+// isOptimizedVideoURL reports whether u is a hosted WebM. Search and featured
+// feeds only serve these; MP4 is produced locally in the browser on download.
+func isOptimizedVideoURL(u string) bool {
+	if len(u) > 2048 {
+		return false
 	}
-	return u
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Scheme != "https" {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(parsed.Path), ".webm")
 }
 
-func extractRawVideoURLFromResultJSON(raw string) string {
+func extractOptimizedVideoURLFromResultJSON(raw string) string {
+	if u := extractVideoURLFromResultJSON(raw); isOptimizedVideoURL(u) {
+		return u
+	}
+	return ""
+}
+
+func extractVideoURLFromResultJSON(raw string) string {
 	if raw == "" || raw == "null" {
 		return ""
 	}
@@ -1135,7 +1148,7 @@ func (db *DB) ListFeaturedVideos(limit, offset int, allowNSFW bool) ([]FeaturedV
 		if err := rows.Scan(&id, &prompt, &service, &resultText, &isNSFW); err != nil {
 			return nil, err
 		}
-		videoURL := extractVideoURLFromResultJSON(resultText)
+		videoURL := extractOptimizedVideoURLFromResultJSON(resultText)
 		if videoURL == "" {
 			continue
 		}
