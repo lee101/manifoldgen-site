@@ -56,6 +56,7 @@ var staticSitemapPages = []string{
 	"/tools/style-transfer", "/tools/h3-image-editor", "/tools/character-animator",
 	"/tools/video-background-remover", "/tools/video-dramatizer", "/tools/video-remake", "/tools/character-swap", "/tools/character-swap-exact", "/tools/character-swap-lora", "/tools/character-recast", "/tools/orbit-video", "/tools/flux-3-max-video", "/tools/anime-pose-control", "/tools/anime-scene-control", "/tools/anime-depth-control", "/tools/anime-sketch-control", "/tools/reference-video", "/tools/trailer-agent",
 	"/tools/production", "/tools/destruction-studio", "/tools/exploded-view", "/tools/toon-shader", "/tools/blender-scene", "/tools/image-to-3d", "/tools/vectorize", "/tools/shot-cleanup",
+	"/tools/motion-fx", "/tools/anime-fight-fx", "/tools/ki-aura-fx", "/tools/lightning-fx", "/tools/fight-game-hud", "/tools/motion-exaggerate-fx", "/tools/afterimage-fx", "/tools/fight-reel-reframe", "/tools/beat-drop-fx", "/tools/motion-tracker", "/tools/motion-score",
 	"/tools/canny-video", "/tools/depth-video", "/tools/hed-video", "/tools/mlsd-video", "/tools/pose-video", "/tools/video-inpainting",
 	"/tools/cinematic-cameras", "/tools/relight", "/tools/smart-resize", "/tools/color-grade", "/tools/shader-fx", "/tools/crazy-captions", "/tools/image-background-remover", "/tools/inpaint",
 	"/tools/image-upscale", "/tools/outpaint", "/tools/moodboard",

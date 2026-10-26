@@ -75,6 +75,14 @@ var prodkitTools = []prodkitTool{
 		[]string{"clips", "reference_audio", "sync", "fps"}},
 	{prodkitShotComposer, "shot-composer", "Shot Composer", "composer", prodkitComposerBaseUSD, "per composite (max 30 s): AI matte adds the video background removal per-second rate, chroma key adds $0.01/s; +$0.04 for a generated background",
 		[]string{"background_video_url", "position", "scale", "match_color", "light_wrap", "grain", "shadow", "keep_audio", "key", "key_color"}},
+	{prodkitMotionFX, "motion-fx", "Motion FX", "motion", prodkitMotionFXMin, "per second of source video (max 20 s, min $0.15): tracks every fighter and adds auras, trails, lightning, impact flashes, slow-mo and sound that follow the motion",
+		[]string{"preset", "intensity", "palette", "slowmo", "sfx", "text", "target", "names", "extra", "seed", "audio_start", "aspect"}},
+	{prodkitBeatDrop, "beat-drop", "Beat Drop", "motion", prodkitBeatDropMin, "per second of video (max 30 s, min $0.10): zoom punch, flash, shake and color split locked to the kicks and snares of audio_url",
+		[]string{"intensity", "palette", "seed", "audio_start", "aspect"}},
+	{prodkitMotionTrack, "motion-track", "Motion Track", "motion", prodkitMotionTrackMin, "per second of video (max 60 s, min $0.05): multi-person pose tracking JSON, motion signals and hit events, overlay preview and spline guide video",
+		[]string{}},
+	{prodkitMotionScore, "motion-score", "Motion Score", "motion", prodkitMotionScoreMin, "per second of video (max 30 s, min $0.20): beat-locked drums and impact sound design from the motion, optional audio_url music fitted to the beat",
+		[]string{"keep_audio"}},
 	{prodkitTimeline, "timeline-render", "Timeline Render", "timeline", 0.01, "per output second up to 1920x1080 ($0.02 above, $0.05 minimum); renders a Studio timeline JSON exactly like the Studio export and saves it as an editable project",
 		[]string{"document", "project_id", "name", "format", "quality", "resolution", "fps"}},
 }
@@ -158,6 +166,8 @@ func prodkitPriceUSD(req ServiceUsageRequest) float64 {
 		return prodkitFootagePriceUSD(req)
 	case "composer":
 		return prodkitComposerPriceUSD(req, float64(req.Duration))
+	case "motion":
+		return prodkitMotionEstimateUSD(req)
 	case "timeline":
 		return timelineEstimateUSD(req)
 	}
@@ -270,6 +280,8 @@ func normalizeProdkitRequest(req *ServiceUsageRequest) error {
 		return normalizeProdkitFootage(params)
 	case "composer":
 		return normalizeProdkitComposer(req, params)
+	case "motion":
+		return normalizeProdkitMotion(req, params)
 	case "timeline":
 		return normalizeTimelineParams(params)
 	}
@@ -453,7 +465,7 @@ func handleProdkitService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		return
 	}
 	tool, _ := prodkitToolFor(req.Service)
-	if (tool.Engine == "blender" && prodkitBlenderBinary() == "") || (tool.Engine == "timeline" && !timelineRendererAvailable()) {
+	if (tool.Engine == "blender" && prodkitBlenderBinary() == "") || (tool.Engine == "timeline" && !timelineRendererAvailable()) || (tool.Engine == "motion" && !prodkitMotionAvailable()) {
 		jsonError(ctx, http.StatusServiceUnavailable, tool.Title+" is not available on this server")
 		return
 	}
@@ -603,6 +615,10 @@ func processProdkitJob(job *VideoJob) {
 		var seconds float64
 		result, seconds, providerUSD, err = runProdkitShotComposer(ctx, job, req, workDir, setStage)
 		chargedUSD = prodkitComposerPriceUSD(req, seconds)
+	case "motion":
+		var seconds float64
+		result, seconds, providerUSD, err = runProdkitMotion(ctx, job, req, workDir, setStage)
+		chargedUSD = prodkitMotionPriceUSD(req.Service, seconds)
 	case "timeline":
 		result, chargedUSD, providerUSD, err = runProdkitTimeline(ctx, job, req, workDir, setStage)
 	default:
@@ -668,6 +684,7 @@ var prodkitSlots = struct {
 	blender chan struct{}
 	chrome  chan struct{}
 	local   chan struct{}
+	motion  chan struct{}
 }{}
 
 func prodkitSlot(kind string) chan struct{} {
@@ -680,12 +697,16 @@ func prodkitSlot(kind string) chan struct{} {
 		chrome, _ := strconv.Atoi(getEnv("PRODKIT_CHROME_SLOTS", "2"))
 		prodkitSlots.chrome = make(chan struct{}, max(1, chrome))
 		prodkitSlots.local = make(chan struct{}, 4)
+		motion, _ := strconv.Atoi(getEnv("PRODKIT_MOTION_SLOTS", "2"))
+		prodkitSlots.motion = make(chan struct{}, max(1, motion))
 	})
 	switch kind {
 	case "blender":
 		return prodkitSlots.blender
 	case "chrome":
 		return prodkitSlots.chrome
+	case "motion":
+		return prodkitSlots.motion
 	}
 	return prodkitSlots.local
 }

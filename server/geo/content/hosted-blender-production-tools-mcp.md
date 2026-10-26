@@ -20,6 +20,10 @@ ManifoldGen's production tools are hosted versions of the jobs people normally d
 | remove_video_objects | shot-cleanup | cleaned MP4 with the original audio | $0.24 per second, up to 30 s |
 | organize_footage | footage-sorter | bins, audio sync offsets, FCPXML 1.10, OTIO, Studio project, contact sheet, JSON report | $0.05 + $0.02 per clip, up to 24 clips |
 | composite_shot | shot-composer | composite MP4, alpha WebM, background, color-match .cube LUT, Studio project | $0.10 + the video background removal per-second rate (AI matte) or + $0.01 per second (chroma key); +$0.04 for a generated background; up to 30 s |
+| apply_motion_fx | motion-fx | MP4 with tracked aura, trails, lightning, impact, slow-mo, HUD or spotlight FX and impact sound, poster, tracks JSON, hit events | $0.06 per second, minimum $0.15, up to 20 s |
+| beat_drop_video | beat-drop | MP4 with zoom, flash and shake locked to the kicks and snares of a song | $0.04 per second, minimum $0.10, up to 30 s |
+| track_motion | motion-track | pose tracks JSON, motion signals and hit events, skeleton overlay video, spline guide video | $0.02 per second, minimum $0.05, up to 60 s |
+| score_motion_video | motion-score | MP4 and WAV with beat-locked drums and impact sound design, cue sheet, music prompt | $0.05 per second, minimum $0.20, up to 30 s |
 
 Color grading (.cube LUT export) and shader effects run in the browser at /tools/color-grade and /tools/shader-fx at no per-job charge.
 
@@ -27,7 +31,7 @@ Color grading (.cube LUT export) and shader effects run in the browser at /tools
 
     claude mcp add --transport http manifoldgen https://manifoldgen.com/api/mcp --header "Authorization: Bearer $MANIFOLDGEN_API_KEY"
 
-The server also lists guided workflows through prompts/list: production-bundle, destruction-studio, exploded-view, scene-builder, toon-shader, shot-cleanup, shot-composer, footage-sorter, vectorize, image-fixer, color-grade and shader-fx.
+The server also lists guided workflows through prompts/list: production-bundle, destruction-studio, exploded-view, scene-builder, toon-shader, shot-cleanup, shot-composer, footage-sorter, motion-fx, beat-drop, motion-track, motion-score, vectorize, image-fixer, color-grade and shader-fx.
 
 The same tools work from the terminal (`npm i -g manifoldgen-cli`, `mg auth login`, `mg generate <service> ... --wait --out dir`) and as agent skills (`npx skills add manifoldgen/skills`).
 

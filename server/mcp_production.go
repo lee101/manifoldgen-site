@@ -173,6 +173,63 @@ func mcpProductionTools() []mcpProductionTool {
 			Required: []string{"video_url"},
 		},
 		{
+			Name: "apply_motion_fx", Title: "Add motion-tracked FX to a fight or action clip", Service: "motion-fx",
+			Description: "Tracks every person in a clip (pose + ID) and adds effects that follow the motion: ki aura, speed trails, lightning, impact flash/shockwave/comic text, speed lines, slow-mo ramps on big hits, neon skeleton, game HUD or spotlight, with synthesized impact sound. Optional audio_url makes the effects react to a song. Returns the MP4, a poster, the tracks JSON and the detected hit events. $0.06 per second of video, minimum $0.15, max 20 s.",
+			Properties: map[string]interface{}{
+				"video_url":   map[string]string{"type": "string", "description": "Clip with one or more fully visible people (use create_upload for local files)."},
+				"audio_url":   map[string]string{"type": "string", "description": "Optional song: effects pulse on its kicks and snares and it becomes the soundtrack."},
+				"preset":      mcpEnum("anime-fight", "ki-aura", "lightning", "neon-trails", "game-hud", "spotlight", "slowmo-impacts", "exaggerate", "echo"),
+				"intensity":   mcpNumber(0.3, 1.6, "Effect strength (default 1)."),
+				"palette":     mcpEnum("gold-blue", "fire", "neon", "ice"),
+				"slowmo":      map[string]string{"type": "boolean", "description": "Override the preset's slow-mo ramps on big hits."},
+				"sfx":         map[string]string{"type": "boolean", "description": "Override the preset's synthesized impact and whoosh sounds."},
+				"text":        map[string]string{"type": "boolean", "description": "Comic hit words (POW!, BAM!) and HUD text."},
+				"target":      map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 8, "description": "Track ID to spotlight (default: most active)."},
+				"names":       map[string]interface{}{"type": "array", "maxItems": 4, "items": map[string]interface{}{"type": "string", "maxLength": 16}, "description": "Fighter names for the HUD and spotlight tags."},
+				"extra":       map[string]interface{}{"type": "array", "items": mcpEnum("trails", "aura", "lightning", "speedlines", "impact"), "description": "Extra effect layers on top of the preset."},
+				"seed":        map[string]string{"type": "integer"},
+				"aspect":      mcpEnum("9:16", "4:5", "1:1", "16:9"),
+				"audio_start": mcpNumber(0, 3600, "Start the song (audio_url) this many seconds in."),
+				"duration":    map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 20, "description": "Seconds from the start (defaults to the clip up to 20 s)."},
+			},
+			Required: []string{"video_url"},
+		},
+		{
+			Name: "beat_drop_video", Title: "Sync video effects to a song", Service: "beat-drop",
+			Description: "Beat-synced edit: zoom punch, flash, camera shake and color split land on the kicks and snares of the song, which replaces the soundtrack. No people needed. $0.04 per second of video, minimum $0.10, max 30 s.",
+			Properties: map[string]interface{}{
+				"video_url":   map[string]string{"type": "string", "description": "Video to edit."},
+				"audio_url":   map[string]string{"type": "string", "description": "Song or beat the effects follow (up to 60 MB)."},
+				"intensity":   mcpNumber(0.3, 1.6, "Effect strength (default 1)."),
+				"palette":     mcpEnum("gold-blue", "fire", "neon", "ice"),
+				"seed":        map[string]string{"type": "integer"},
+				"audio_start": mcpNumber(0, 3600, "Start the song this many seconds in (skip the intro)."),
+				"aspect":      mcpEnum("9:16", "4:5", "1:1", "16:9"),
+				"duration":    map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 30, "description": "Seconds from the start (defaults to the clip up to 30 s)."},
+			},
+			Required: []string{"video_url", "audio_url"},
+		},
+		{
+			Name: "track_motion", Title: "Track people and motion in a video", Service: "motion-track",
+			Description: "Multi-person pose tracking with persistent IDs: returns tracks JSON (COCO-17 keypoints and boxes per frame), motion signals (energy curve, tempo, beat grid, strike and impact events with positions and power), a skeleton overlay preview and a colored spline guide video of head, wrist, ankle and hip trajectories for motion-control models. $0.02 per second, minimum $0.05, max 60 s.",
+			Properties: map[string]interface{}{
+				"video_url": map[string]string{"type": "string", "description": "Clip with one or more fully visible people."},
+				"duration":  map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 60, "description": "Seconds from the start (defaults to the clip up to 60 s)."},
+			},
+			Required: []string{"video_url"},
+		},
+		{
+			Name: "score_motion_video", Title: "Score a video from its motion", Service: "motion-score",
+			Description: "Builds a soundtrack that follows what happens on screen: beat-locked drums whose density follows the motion energy, plus impact and whoosh sound design on every detected strike. With audio_url the track is time-stretched (up to 12%) and phase-aligned to the motion beat and ducked on impacts. Returns the scored MP4, the WAV, a cue sheet and a music_prompt for generating matching music. $0.05 per second, minimum $0.20, max 30 s.",
+			Properties: map[string]interface{}{
+				"video_url":  map[string]string{"type": "string", "description": "Clip with one or more fully visible people."},
+				"audio_url":  map[string]string{"type": "string", "description": "Optional music track to fit to the motion beat."},
+				"keep_audio": map[string]string{"type": "boolean", "description": "Keep the clip's own audio underneath."},
+				"duration":   map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 30, "description": "Seconds from the start (defaults to the clip up to 30 s)."},
+			},
+			Required: []string{"video_url"},
+		},
+		{
 			Name: "render_timeline", Title: "Render a Studio timeline to video", Service: "timeline-render",
 			Description: "Render a PortableStudioDocument (call get_studio_schema first) or a saved Studio project with the exact Studio export pipeline: trims, layers, transforms, crops, blend modes, transitions, grades, LUTs, shader FX, title cards and audio mix. Returns video_url, poster_url and studio_url (an editable copy in ManifoldGen Studio). $0.01 per output second up to 1080p, $0.02 above, $0.05 minimum, charged on success.",
 			Properties: map[string]interface{}{
@@ -188,9 +245,9 @@ func mcpProductionTools() []mcpProductionTool {
 	}
 }
 
-var mcpTopLevelFields = map[string]bool{"image_url": true, "model_url": true, "model_urls": true, "video_url": true, "prompt": true, "duration": true}
+var mcpTopLevelFields = map[string]bool{"image_url": true, "model_url": true, "model_urls": true, "video_url": true, "audio_url": true, "prompt": true, "duration": true}
 
-var mcpTopLevelDuration = map[string]bool{"remove_video_objects": true, "composite_shot": true}
+var mcpTopLevelDuration = map[string]bool{"remove_video_objects": true, "composite_shot": true, "apply_motion_fx": true, "beat_drop_video": true, "track_motion": true, "score_motion_video": true}
 
 func mcpProductionToolDefs() []map[string]interface{} {
 	writeTool := map[string]bool{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true}
@@ -407,7 +464,7 @@ type mcpPrompt struct {
 
 var mcpPrompts = []mcpPrompt{
 	{"production-bundle", "Production skills bundle", "Turn an idea into an editable production project using the best-fit ManifoldGen workflow.",
-		"Help me turn my idea into an editable production project. Pick the workflow that fits: destruction-studio, exploded-view, scene-builder, toon-shader, shot-cleanup, shot-composer, footage-sorter, vectorize, image-fixer, color-grade or shader-fx. Ask about goals, reference assets, output format and duration, check cost with list_services, then run it. Keep outputs editable (.blend, layered SVG, .cube LUT, Studio project) and return every download link."},
+		"Help me turn my idea into an editable production project. Pick the workflow that fits: destruction-studio, exploded-view, scene-builder, toon-shader, shot-cleanup, shot-composer, footage-sorter, motion-fx, beat-drop, motion-track, motion-score, vectorize, image-fixer, color-grade or shader-fx. Ask about goals, reference assets, output format and duration, check cost with list_services, then run it. Keep outputs editable (.blend, layered SVG, .cube LUT, Studio project) and return every download link."},
 	{"destruction-studio", "Simulate destruction", "Cinematic fracture, debris and dust with an editable .blend.",
 		"Create a destruction shot with blender_destruction. Ask what should break (preset subject, 3D text, my model or a photo), the material, impact type, slow motion and aspect. Start at quality draft to check framing, then render standard or high. Return the MP4, poster and .blend links and offer a Studio edit."},
 	{"exploded-view", "Animate assembly", "Exploded or assembling parts with clean product staging.",
@@ -422,6 +479,14 @@ var mcpPrompts = []mcpPrompt{
 		"Composite a shot with composite_shot. Ask for the subject video, the background (image_url, background_video_url or a prompt to generate one), whether it was shot on green/blue screen (key chroma, cheaper) or needs AI background removal, placement (position, scale) and the finish (match_color, light_wrap, shadow, grain). Confirm the cost, run it, then return the composite MP4, alpha WebM, LUT and the Studio project link so layers stay editable."},
 	{"footage-sorter", "Organize footage", "Bin, caption and audio-sync a pile of clips into an NLE-ready timeline.",
 		"Organize my footage with organize_footage. Collect up to 24 clip URLs (upload local files with create_upload), ask which clip has the best audio for reference_audio and the timeline frame rate, confirm the $0.05 + $0.02/clip cost, then run it. Summarize the bins, the A-roll/B-roll split and each sync offset with its confidence, flag low-confidence clips, and return the FCPXML (Premiere/Resolve/Final Cut), OTIO, Studio project, contact sheet and report links."},
+	{"motion-fx", "Motion-tracked action FX", "Auras, trails, lightning, impacts and slow-mo that follow every fighter.",
+		"Make a fight or action clip viral with apply_motion_fx. Ask for the clip (full-body people, 2-20 s, upload local files with create_upload), then the look: anime-fight (aura, trails, comic hits, slow-mo), ki-aura, lightning, neon-trails, game-hud (health bars and combo counter, ask for the fighter names), spotlight, slowmo-impacts, exaggerate (limbs whip and smear so hits read bigger) or echo (afterimage ghosts). Optionally add a song with audio_url. Confirm the $0.06/s cost, run it, return the MP4 and poster, and offer a second preset or intensity change."},
+	{"beat-drop", "Beat-synced video edit", "Zoom punch, flash and shake locked to a song.",
+		"Make a beat-synced edit with beat_drop_video. Ask for the video and the song (audio_url), the palette and intensity, confirm the $0.04/s cost, run it and return the MP4."},
+	{"motion-track", "Track people and export motion data", "Pose tracks, hit events, tempo, overlay and spline guide video.",
+		"Track a clip with track_motion. Ask for a video with fully visible people, confirm the $0.02/s cost, run it, then summarize the people found, the tempo and the strongest hit events, and return the tracks JSON, signals JSON, overlay preview and guide video links. Explain that tracks_url holds COCO-17 keypoints per frame and the guide video shows head, wrist, ankle and hip trajectories."},
+	{"motion-score", "Score a video from its motion", "Beat-locked drums and impact sound design that follow the action.",
+		"Score a clip with score_motion_video. Ask for the video and whether to fit an existing music track (audio_url) or just use the generated drum and impact bed, confirm the $0.05/s cost, run it and return the scored MP4, the WAV, the detected tempo and the music_prompt for generating a matching track."},
 	{"vectorize", "Convert images to vectors", "Layered SVG with one group per color.",
 		"Vectorize an image with vectorize_image. Ask whether it is a logo/flat art (mode poster, fewer colors), line art (lineart) or illustration (color). Return the layered SVG link and the palette."},
 	{"image-fixer", "Clean up images", "Fix textures, remove objects, relight and upscale.",

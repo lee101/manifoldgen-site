@@ -78,6 +78,10 @@ var servicePricesUSD = map[string]float64{
 	prodkitShotCleanup:         prodkitEraserUSDSec * 5,
 	prodkitFootageSorter:       prodkitFootageBaseUSD,
 	prodkitShotComposer:        prodkitComposerBaseUSD,
+	prodkitMotionFX:            prodkitMotionFXMin,
+	prodkitBeatDrop:            prodkitBeatDropMin,
+	prodkitMotionTrack:         prodkitMotionTrackMin,
+	prodkitMotionScore:         prodkitMotionScoreMin,
 	prodkitTimeline:            timelineMinUSD,
 }
 
@@ -504,6 +508,10 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "shot-cleanup", Internal: prodkitShotCleanup},
 	{Public: "footage-sorter", Internal: prodkitFootageSorter},
 	{Public: "shot-composer", Internal: prodkitShotComposer},
+	{Public: "motion-fx", Internal: prodkitMotionFX},
+	{Public: "beat-drop", Internal: prodkitBeatDrop},
+	{Public: "motion-track", Internal: prodkitMotionTrack},
+	{Public: "motion-score", Internal: prodkitMotionScore},
 	{Public: "timeline-render", Internal: prodkitTimeline},
 }
 
