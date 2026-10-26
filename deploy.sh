@@ -303,6 +303,11 @@ else
   "${SUDO[@]}" rsync -a --delete --chown=www-data:www-data \
     --exclude demos/ --exclude testdata/ --exclude __pycache__/ --exclude '*.blend1' \
     "$ROOT/workers/prodkit/" "$DEPLOY_ROOT/workers/prodkit/"
+  "${SUDO[@]}" install -d -o www-data -g www-data -m 755 "$DEPLOY_ROOT/workers/motiontrack"
+  "${SUDO[@]}" rsync -a --chown=www-data:www-data \
+    --exclude .venv/ --exclude .home/ --exclude tests/ --exclude __pycache__/ --exclude '*.egg-info/' \
+    --exclude .pytest_cache/ --exclude .coverage --exclude '*.tracks.json' \
+    "$ROOT/workers/motiontrack/" "$DEPLOY_ROOT/workers/motiontrack/"
   "${SUDO[@]}" find "$DEPLOY_ROOT/frontend/out" \
     \( -name '*.fasthttp.gz' -o -name '*.fasthttp.br' \) -delete
 
