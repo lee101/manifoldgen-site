@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft, Sparkles } from 'lucide-react';
 import { JsonLd, toolJsonLd } from '@/components/seo/kit';
-import { MCP_SETUP, PRODUCTION_SUITE, PRODUCTION_TOOLS } from '@/lib/production-tools';
+import { MCP_SETUP, MOTION_TOOLS, PRODUCTION_SUITE, PRODUCTION_TOOLS } from '@/lib/production-tools';
 import styles from '@/components/production/production.module.css';
 
 export const metadata: Metadata = {
@@ -38,7 +38,7 @@ function ProductionHub() {
         </div>
         <div className={`${styles.panel} ${styles.controls}`}>
           <div className={styles.sectionLabel}>Connect your agent (MCP)</div>
-          <p className={styles.hint} style={{ marginTop: 0 }}>Add ManifoldGen to Claude, Cursor or any MCP client. Tools: {PRODUCTION_TOOLS.map((tool) => tool.mcp).join(', ')}, plus create_upload, wait_for_job and list_services.</p>
+          <p className={styles.hint} style={{ marginTop: 0 }}>Add ManifoldGen to Claude, Cursor or any MCP client. Tools: {[...PRODUCTION_TOOLS, ...MOTION_TOOLS.filter((tool) => !tool.variantOf)].map((tool) => tool.mcp).join(', ')}, plus create_upload, wait_for_job and list_services.</p>
           <div className={styles.code}><pre><code>{MCP_SETUP}</code></pre></div>
           <p className={styles.hint}>Prompts: {prompts.join(' · ')}. Start with <code>production-bundle</code> and describe what you want to make.</p>
         </div>

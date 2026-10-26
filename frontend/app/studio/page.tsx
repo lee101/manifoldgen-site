@@ -51,6 +51,7 @@ import {
   VolumeX,
   WandSparkles,
   X,
+  Zap,
   ZoomIn,
 } from 'lucide-react';
 import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from 'mediabunny';
@@ -93,6 +94,8 @@ import { blendMode, clipWindow, compositeClipPath, previousAdjacent, transitionS
 import { GradeControls } from '../../components/studio/grade-controls';
 import { CompositeControls, type CompositePatch } from '../../components/studio/composite-controls';
 import { FxStack } from '../../components/studio/fx-stack';
+import { MotionFxDialog } from '../../components/studio/motion-fx-dialog';
+import { DEFAULT_MOTION_OPTIONS, buildMotionRequest, motionBlocker, motionOutputName, motionSummary, motionWindow, parseMotionResult, pollJob, type MotionOptions } from '../../lib/studio-motion';
 import { takeStudioHandoff } from '../../lib/studio-handoff';
 import styles from './page.module.css';
 
@@ -1635,6 +1638,9 @@ export default function StudioPage() {
   const [retimeStabilize, setRetimeStabilize] = useState(false);
   const [retimeSmooth, setRetimeSmooth] = useState(false);
   const [restyleOpen, setRestyleOpen] = useState(false);
+  const [motionSourceID, setMotionSourceID] = useState('');
+  const [motionOptions, setMotionOptions] = useState<MotionOptions>(DEFAULT_MOTION_OPTIONS);
+  const [motionBusy, setMotionBusy] = useState(false);
   const [restyleSourceID, setRestyleSourceID] = useState('');
   const [restyleModel, setRestyleModel] = useState<'wan-2.2' | 'h3-reference' | 'wan-animate-2'>('wan-2.2');
   const [restylePrompt, setRestylePrompt] = useState('Transform this clip into a cinematic hand-painted animation while preserving the original motion and composition.');
@@ -4124,6 +4130,54 @@ export default function StudioPage() {
     }
   }
 
+  function openMotionFx(asset: StudioAsset) {
+    if (asset.kind !== 'video') return;
+    selectOnly(asset.id);
+    setMotionSourceID(asset.id);
+    setContextMenu(null);
+  }
+
+  async function runMotionFx(source: StudioAsset, options: MotionOptions) {
+    const blocker = motionBlocker(source, { signedIn: !!user, streaming: isStreamingPlaceholder(source.file) });
+    if (blocker || !user) {
+      setError(blocker || 'Sign in to use Motion FX');
+      return;
+    }
+    setMotionBusy(true);
+    const activityID = startBackgroundActivity('Adding Motion FX');
+    setError(''); setNotice('Motion FX started');
+    try {
+      const videoURL = source.cloudURL || await uploadPublic(source.file);
+      const request = buildMotionRequest(source, videoURL, 'motion-fx', options);
+      const response = await fetch('/api/service', { method: 'POST', headers: authHeaders(user.api_key), body: JSON.stringify(request) });
+      const queued = await parseJSONResponse<{ result?: { job_id?: string; status_url?: string }; job_id?: string; status_url?: string }>(response, 'Could not start Motion FX');
+      const jobID = queued.result?.job_id || queued.job_id;
+      const statusURL = queued.result?.status_url || queued.status_url || `/api/video-jobs/${jobID}`;
+      if (!jobID) throw new Error('Motion FX returned no job');
+      setMotionSourceID('');
+      const jobResult = await pollJob(async () => {
+        const poll = await fetch(statusURL, { headers: authHeaders(user.api_key, false) });
+        return parseJSONResponse(poll, 'Motion FX status failed');
+      }, { label: 'Motion FX', onStatus: (status) => setNotice(status === 'processing' ? 'Tracking fighters and rendering…' : 'Motion FX queued…') });
+      const result = parseMotionResult(jobResult);
+      if (!result) throw new Error('Motion FX completed without a video');
+      updateBackgroundActivity(activityID, 'Adding Motion FX video to Media');
+      const download = await fetchWithRetry(galleryImportURL(result.videoURL));
+      if (!download.ok) throw new Error('Could not download the Motion FX video');
+      const blob = await download.blob();
+      await addGeneratedFile(new File([blob], motionOutputName(source.name, 'motion-fx', options.preset), { type: blob.type || 'video/mp4' }), 'video', 'Motion FX');
+      setMediaBrowserMode('project');
+      const refreshed = await refreshUser(user.api_key).catch(() => null);
+      if (refreshed) { setUser(refreshed); saveUser(refreshed); }
+      setNotice(motionSummary(result));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Motion FX failed');
+    } finally {
+      setMotionBusy(false);
+      finishBackgroundActivity(activityID);
+    }
+  }
+
   function openRestyle(asset: StudioAsset) {
     if (asset.kind !== 'video') return;
     selectOnly(asset.id);
@@ -5261,6 +5315,7 @@ export default function StudioPage() {
               <button data-testid="studio-upscale-open" className={styles.aiCard} disabled={!canOpenUpscale} onClick={() => setUpscaleOpen(true)}><span className={styles.aiIcon}><Maximize size={19} /></span><span><b>Upscale video</b><small>{selected?.kind === 'video' && !canOpenUpscale ? 'Use a clip under 60s' : 'Real-ESRGAN · 2× or 4×'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-retime-open" className={styles.aiCard} disabled={!selected || selected.kind === 'image'} onClick={() => selected && selected.kind !== 'image' && openRetime(selected)}><span className={styles.aiIcon}><Gauge size={19} /></span><span><b>Speed, reverse, stabilize</b><small>Free · −1× reverses</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-restyle-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openRestyle(selected)}><span className={styles.aiIcon}><WandSparkles size={19} /></span><span><b>Restyle video</b><small>Keep motion · change look</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
+              <button data-testid="studio-motion-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openMotionFx(selected)}><span className={styles.aiIcon}><Zap size={19} /></span><span><b>Motion FX</b><small>Auras, impacts, slow-mo · from $0.15</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-animation-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openAnimationTransfer(selected)}><span className={styles.aiIcon}><Clapperboard size={19} /></span><span><b>Animation Transfer</b><small>Drive a character from this clip</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button className={styles.aiCard} disabled={!canExtendSelected} onClick={() => setExtendOpen(true)}><span className={styles.aiIcon}><Sparkles size={19} /></span><span><b>Extend video</b><small>{selected?.kind === 'video' && !canExtendSelected ? 'Use a 2–15s clip' : 'Grok · MP4'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
             </div>
@@ -5636,6 +5691,21 @@ export default function StudioPage() {
         </Modal>;
       })()}
 
+      {motionSourceID && (() => {
+        const source = assets.find((asset) => asset.id === motionSourceID);
+        if (!source) return null;
+        return <Modal title="Motion FX" onClose={() => setMotionSourceID('')}>
+          <MotionFxDialog
+            sourceName={source.name}
+            window={motionWindow(source, 'motion-fx')}
+            options={motionOptions}
+            onChange={(patch) => setMotionOptions((current) => ({ ...current, ...patch }))}
+            onRun={() => void runMotionFx(source, motionOptions)}
+            busy={motionBusy}
+            blocker={motionBlocker(source, { signedIn: !!user, streaming: isStreamingPlaceholder(source.file) })}
+          />
+        </Modal>;
+      })()}
       {restyleOpen && <Modal title={restyleModel === 'wan-animate-2' ? 'Animation Transfer' : 'Restyle video'} onClose={() => setRestyleOpen(false)}>
         <div className={styles.restyleModes} role="tablist" aria-label="Video transformation mode">
           <button role="tab" aria-selected={restyleModel === 'wan-2.2'} className={restyleModel === 'wan-2.2' ? styles.durationActive : ''} onClick={() => { setRestyleModel('wan-2.2'); setRestyleResolution('720p'); setRestyleAspect('auto'); }}>Transform</button>
@@ -5748,6 +5818,7 @@ export default function StudioPage() {
             {asset.kind === 'image' && <button onClick={() => void removeBackground()}><ImageIcon size={15} /><span><b>Remove background</b><small>Add a transparent cutout to Media</small></span></button>}
             {asset.kind === 'image' && <button onClick={() => openImageStyleTransfer({ url: asset.url, thumbURL: asset.url, name: asset.name, prompt: promptForAsset(asset), kind: 'image', file: asset.file, cloudURL: asset.cloudURL })}><WandSparkles size={15} /><span><b>Style transfer</b><small>Create a styled image variation</small></span></button>}
             {asset.kind === 'video' && <button data-testid="studio-context-video-remove-background" onClick={() => void removeVideoBackground(asset)}><ImageIcon size={15} /><span><b>Remove video background</b><small>Create a transparent video and add it to Media</small></span></button>}
+            {asset.kind === 'video' && <button data-testid="studio-context-video-motion-fx" onClick={() => openMotionFx(asset)}><Zap size={15} /><span><b>Motion FX</b><small>Track fighters · auras, impacts, slow-mo</small></span></button>}
             {asset.kind === 'video' && <button data-testid="studio-context-video-style-transfer" onClick={() => openRestyle(asset)}><WandSparkles size={15} /><span><b>Prompt style transfer</b><small>Restyle video · transform look, preserve motion</small></span></button>}
             {asset.kind !== 'audio' && <button data-testid="studio-context-layer-forward" onClick={() => { moveSelectionBetweenLayers(1); setContextMenu(null); }}><ChevronUp size={15} /><span><b>Move forward</b><small>One layer up</small></span><kbd>{commandKeyLabel}]</kbd></button>}
             {asset.kind !== 'audio' && <button data-testid="studio-context-layer-back" onClick={() => { moveSelectionBetweenLayers(-1); setContextMenu(null); }}><ChevronDown size={15} /><span><b>Move back</b><small>One layer down</small></span><kbd>{commandKeyLabel}[</kbd></button>}

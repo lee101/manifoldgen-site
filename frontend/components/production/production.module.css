@@ -150,3 +150,19 @@
 .textarea{min-height:180px}
 .viewer{height:340px}
 }
+
+.stats{margin:0 16px 12px;padding:10px 12px;border:1px solid #27253a;border-radius:10px;background:#0d0c15;min-width:0}
+.statsHead{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px;margin-bottom:8px;color:#c6bfd8;font-size:12px}
+.statsHead span{color:#8a85a0;font:10px var(--font-ibm-plex-mono),monospace}
+.statsRows{display:grid;gap:2px;min-width:0}
+.statsRow{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(6,minmax(0,1fr));gap:6px;align-items:center;padding:6px 4px;border-radius:7px;color:#ece7fb;font:11px var(--font-ibm-plex-mono),monospace;font-variant-numeric:tabular-nums}
+.statsRow[data-active]{background:rgba(143,120,217,.14)}
+.statsLabels{color:#8a85a0;font-size:9px;letter-spacing:.08em;text-transform:uppercase}
+.statsName{display:flex;flex-direction:column;gap:2px;min-width:0;font-family:inherit;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.statsName i{color:#cbb5ff;font-size:9px;font-style:normal;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+@media (max-width:620px){
+  .statsLabels{display:none}
+  .statsRow{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:4px;padding:8px 6px;border:1px solid #1f1d2f}
+  .statsName{grid-column:1 / -1;flex-direction:row;align-items:baseline;gap:8px;white-space:normal}
+  .statsRow span[data-label]::before{content:attr(data-label);display:block;color:#77718e;font-size:9px;letter-spacing:.06em;text-transform:uppercase}
+}

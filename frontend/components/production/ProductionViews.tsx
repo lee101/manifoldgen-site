@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState, type UIEvent } from 'react';
-import { ArrowRight, Code2, Pause, Play } from 'lucide-react';
-import { demoMedia, snippets, type ProductionRequest, type ProductionTool } from '@/lib/production-tools';
+import { ArrowRight, Code2, Link2, Pause, Play, Share2 } from 'lucide-react';
+import { demoMedia, formatFightStats, snippets, type ProductionRequest, type ProductionTool } from '@/lib/production-tools';
 import styles from './production.module.css';
 
 export function SvgCompare({ original, svg }: { original: string; svg: string }) {
@@ -124,6 +124,59 @@ export function DemoGallery({ tool }: { tool: ProductionTool }) {
           <p>{demo.caption}</p>
         </figure>;
       })}
+    </div>
+  </section>;
+}
+
+
+export function ShareRow({ url, title, page }: { url: string; title: string; page: string }) {
+  const [note, setNote] = useState('');
+  const text = `${title} ${page}`;
+  const say = (message: string) => { setNote(message); setTimeout(() => setNote(''), 2200); };
+  async function share() {
+    try {
+      const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
+      if (!nav.share) { await navigator.clipboard?.writeText(url); say('Link copied'); return; }
+      try {
+        const blob = await (await fetch(url)).blob();
+        const file = new File([blob], 'manifoldgen.mp4', { type: blob.type || 'video/mp4' });
+        if (nav.canShare?.({ files: [file] })) { await nav.share({ files: [file], title, text }); return; }
+      } catch { /* cross-origin or too large: share the link instead */ }
+      await nav.share({ title, text, url });
+    } catch { /* cancelled */ }
+  }
+  const links: [string, string][] = [
+    ['X', `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`],
+    ['Reddit', `https://www.reddit.com/submit?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`],
+    ['WhatsApp', `https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`],
+  ];
+  return <div className={styles.actions} data-testid="share-row" style={{ marginTop: 6 }}>
+    <button type="button" className={`${styles.action} ${styles.actionPrimary}`} onClick={() => void share()}><Share2 size={13} /> Share</button>
+    <button type="button" className={styles.action} onClick={() => { void navigator.clipboard?.writeText(url).then(() => say('Link copied'), () => say('Copy failed')); }}><Link2 size={13} /> Copy link</button>
+    {links.map(([label, href]) => <a key={label} className={styles.action} href={href} target="_blank" rel="noreferrer">{label}</a>)}
+    {note && <span className={styles.hint} role="status">{note}</span>}
+  </div>;
+}
+
+export function FightStatsCard({ stats, names = [] }: { stats: unknown; names?: readonly string[] }) {
+  const view = formatFightStats(stats, names);
+  if (!view) return null;
+  const { rows, totals } = view;
+  return <section className={styles.stats} data-testid="fight-stats" aria-label="Fight stats">
+    <header className={styles.statsHead}>
+      <b>Fight stats</b>
+      <span>{totals.strikes} strikes · {totals.impacts} hits{totals.bpm ? ` · ${totals.bpm} BPM` : ''} · peak at {totals.peakAt} s</span>
+    </header>
+    <div className={styles.statsRows} role="table" aria-label="Per fighter stats">
+      <div className={`${styles.statsRow} ${styles.statsLabels}`} role="row">
+        <span role="columnheader">Fighter</span><span role="columnheader">Strikes</span><span role="columnheader">Hits</span><span role="columnheader">Taken</span>
+        <span role="columnheader">Power</span><span role="columnheader">Top speed</span><span role="columnheader">Combo</span>
+      </div>
+      {rows.map((row) => <div key={row.id} className={styles.statsRow} role="row" data-testid={`fight-stats-row-${row.id}`} data-active={row.mostActive || undefined}>
+        <span role="cell" className={styles.statsName}>{row.label}{row.mostActive && <i>most active</i>}</span>
+        <span role="cell" data-label="Strikes">{row.strikes}</span><span role="cell" data-label="Hits">{row.impacts}</span><span role="cell" data-label="Taken">{row.hitsTaken}</span>
+        <span role="cell" data-label="Power">{row.avgPower}</span><span role="cell" data-label="Top speed">{row.topSpeed}</span><span role="cell" data-label="Combo">{row.bestCombo}</span>
+      </div>)}
     </div>
   </section>;
 }
