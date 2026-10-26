@@ -1,0 +1,115 @@
+{
+ "phase": "done",
+ "io": {
+  "ensure_weights_s": 2.7,
+  "seq_te_4gb_mb_s": 510,
+  "parallel_fl2va": {
+   "files": [
+    {
+     "file": "PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors",
+     "gb": 19.53,
+     "seconds": 7.7,
+     "mb_s": 2738
+    }
+   ],
+   "skipped": [],
+   "budget_gb": 1861.2,
+   "seconds": 7.7,
+   "gb": 19.53
+  },
+  "parallel_rest": {
+   "files": [
+    {
+     "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+     "gb": 14.61,
+     "seconds": 4.8,
+     "mb_s": 3271
+    },
+    {
+     "file": "minimax_h3_video_vae_fp16.safetensors",
+     "gb": 4.85,
+     "seconds": 2.3,
+     "mb_s": 2273
+    },
+    {
+     "file": "minimax_h3_audio_vae_fp32.safetensors",
+     "gb": 0.56,
+     "seconds": 0.8,
+     "mb_s": 784
+    }
+   ],
+   "skipped": [],
+   "budget_gb": 1860.9,
+   "seconds": 7.9,
+   "gb": 20.02
+  },
+  "runtime_init_s": 9.5
+ },
+ "runs": [
+  {
+   "label": "warmup",
+   "arm": "base",
+   "scene": "rooftop",
+   "wall_s": 104.0,
+   "generation_s": 100.882,
+   "steps": 20,
+   "file": "warmup_rooftop.webm"
+  },
+  {
+   "label": "turbo8",
+   "arm": "turbo8",
+   "scene": "rooftop",
+   "wall_s": 57.67,
+   "generation_s": 54.17,
+   "steps": 8,
+   "file": "turbo8_rooftop.webm"
+  },
+  {
+   "label": "turbo8",
+   "arm": "turbo8",
+   "scene": "apartment",
+   "wall_s": 57.58,
+   "generation_s": 54.15,
+   "steps": 8,
+   "file": "turbo8_apartment.webm"
+  },
+  {
+   "label": "turbo8",
+   "arm": "turbo8",
+   "scene": "beach",
+   "wall_s": 57.67,
+   "generation_s": 54.169,
+   "steps": 8,
+   "file": "turbo8_beach.webm"
+  },
+  {
+   "label": "turbo6",
+   "arm": "turbo6",
+   "scene": "rooftop",
+   "wall_s": 47.82,
+   "generation_s": 44.345,
+   "steps": 6,
+   "file": "turbo6_rooftop.webm"
+  },
+  {
+   "label": "turbo6",
+   "arm": "turbo6",
+   "scene": "apartment",
+   "wall_s": 47.67,
+   "generation_s": 44.143,
+   "steps": 6,
+   "file": "turbo6_apartment.webm"
+  },
+  {
+   "label": "turbo6",
+   "arm": "turbo6",
+   "scene": "beach",
+   "wall_s": 47.68,
+   "generation_s": 44.133,
+   "steps": 6,
+   "file": "turbo6_beach.webm"
+  }
+ ],
+ "errors": [],
+ "spent_usd": 0.566
+}

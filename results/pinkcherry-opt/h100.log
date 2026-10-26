@@ -1,0 +1,19 @@
+pod 3z366uwz9g29fd 3.49
+$0.15 warmup:rooftop runs=0 err=0
+$0.18 warmup:rooftop runs=0 err=0
+$0.21 warmup:rooftop runs=0 err=0
+$0.24 base:rooftop runs=1 err=0
+$0.26 base:apartment runs=2 err=0
+$0.29 base:apartment runs=2 err=0
+$0.32 base:apartment runs=2 err=0
+$0.35 base:beach runs=3 err=0
+$0.38 base:beach runs=3 err=0
+$0.41 cap14:rooftop runs=4 err=0
+$0.44 cap14:rooftop runs=4 err=0
+$0.47 cap14:apartment runs=5 err=0
+$0.50 cap14:apartment runs=5 err=0
+$0.53 cap14:apartment runs=5 err=0
+$0.56 cap14:beach runs=6 err=0
+$0.59 cap14:beach runs=6 err=0
+$0.62 done runs=7 err=6
+deleted 3z366uwz9g29fd

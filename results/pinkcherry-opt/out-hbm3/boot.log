@@ -1,0 +1,361 @@
++ base64 -d
++ echo aW1wb3J0IGpzb24sIG9zLCBzaHV0aWwsIHN5cywgdGltZQpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKCnN5cy5wYXRoLmluc2VydCgwLCAiL3NyYyIpClBVQiA9IFBhdGgob3MuZW52aXJvblsiQkVOQ0hfUFVCIl0pCk9VVCA9IFBVQiAvICJvdXQiCk9VVC5ta2RpcihwYXJlbnRzPVRydWUsIGV4aXN0X29rPVRydWUpClNUQVRFID0geyJwaGFzZSI6ICJzdGFydCIsICJpbyI6IHt9LCAicnVucyI6IFtdLCAiZXJyb3JzIjogW119ClBST01QVFMgPSBqc29uLmxvYWRzKFBhdGgoIi90bXAvcHJvbXB0cy5qc29uIikucmVhZF90ZXh0KCkpCkFSTVMgPSBbYSBmb3IgYSBpbiBvcy5lbnZpcm9uLmdldCgiQkVOQ0hfQVJNUyIsICJiYXNlLGNhcDE0LHR1cmJvOCx0dXJibzYiKS5zcGxpdCgiLCIpIGlmIGFdCkFSTV9FTlYgPSB7CiAgICAiYmFzZSI6IHsiSDNfQUNDRUxfUFJPRklMRSI6ICJiYWxhbmNlZCJ9LAogICAgImNhcDE0IjogeyJIM19BQ0NFTF9QUk9GSUxFIjogImJhbGFuY2VkIiwgIkgzX01BWF9TVEVQUyI6ICIxNCJ9LAogICAgImNhcDE2IjogeyJIM19BQ0NFTF9QUk9GSUxFIjogImJhbGFuY2VkIiwgIkgzX01BWF9TVEVQUyI6ICIxNiJ9LAogICAgImFnZ3IiOiB7IkgzX0FDQ0VMX1BST0ZJTEUiOiAiYWdncmVzc2l2ZSJ9LAogICAgInR1cmJvOCI6IHsiSDNfQUNDRUxfUFJPRklMRSI6ICJ0dXJiby04IiwgIkgzX1RVUkJPX1JFTUFQX1NURVBTIjogIjEifSwKICAgICJ0dXJibzYiOiB7IkgzX0FDQ0VMX1BST0ZJTEUiOiAidHVyYm8tNiIsICJIM19UVVJCT19SRU1BUF9TVEVQUyI6ICIxIn0sCn0KQVJNX0tFWVMgPSB7ayBmb3IgZW52IGluIEFSTV9FTlYudmFsdWVzKCkgZm9yIGsgaW4gZW52fQoKCmRlZiBzYXZlKCk6CiAgICAoUFVCIC8gInN0YXR1cy5qc29uIikud3JpdGVfdGV4dChqc29uLmR1bXBzKFNUQVRFLCBpbmRlbnQ9MSkpCgoKZGVmIHNlcV9yZWFkKHBhdGgsIGxpbWl0KToKICAgIHN0YXJ0ZWQsIGRvbmUgPSB0aW1lLm1vbm90b25pYygpLCAwCiAgICB3aXRoIG9wZW4ocGF0aCwgInJiIiwgYnVmZmVyaW5nPTApIGFzIGhhbmRsZToKICAgICAgICB3aGlsZSBkb25lIDwgbGltaXQgYW5kIChjaHVuayA6PSBoYW5kbGUucmVhZCg4IDw8IDIwKSk6CiAgICAgICAgICAgIGRvbmUgKz0gbGVuKGNodW5rKQogICAgcmV0dXJuIHJvdW5kKGRvbmUgLyAodGltZS5tb25vdG9uaWMoKSAtIHN0YXJ0ZWQpIC8gMWU2KQoKCmRlZiBtYWluKCk6CiAgICBpbXBvcnQgaDNfcHJlZmV0Y2gKICAgIGltcG9ydCB3ZWlnaHRzCiAgICB0ID0gdGltZS5tb25vdG9uaWMoKQogICAgd2VpZ2h0cy5lbnN1cmVfd2VpZ2h0cyhpbmNsdWRlX3R1cmJvPSJ0dXJibzgiIGluIEFSTVMgb3IgInR1cmJvNiIgaW4gQVJNUywgaW5jbHVkZV9mYWNlX3JlZmluZT1GYWxzZSkKICAgIFNUQVRFWyJpbyJdWyJlbnN1cmVfd2VpZ2h0c19zIl0gPSByb3VuZCh0aW1lLm1vbm90b25pYygpIC0gdCwgMSkKICAgIGZpbGVzID0gaDNfcHJlZmV0Y2guZGVmYXVsdF9maWxlcygpCiAgICBTVEFURVsiaW8iXVsic2VxX3RlXzRnYl9tYl9zIl0gPSBzZXFfcmVhZChmaWxlc1swXS5yZXNvbHZlKCksIDQgPDwgMzApCiAgICBTVEFURVsiaW8iXVsicGFyYWxsZWxfZmwydmEiXSA9IGgzX3ByZWZldGNoLnByZWZldGNoKFtmaWxlc1sxXV0pCiAgICBTVEFURVsiaW8iXVsicGFyYWxsZWxfcmVzdCJdID0gaDNfcHJlZmV0Y2gucHJlZmV0Y2goW2ZpbGVzWzBdLCBmaWxlc1syXSwgZmlsZXNbM11dKQogICAgU1RBVEVbInBoYXNlIl0gPSAicnVudGltZSI7IHNhdmUoKQogICAgZnJvbSBoM19ydW50aW1lIGltcG9ydCBIM1J1bnRpbWUKICAgIHQgPSB0aW1lLm1vbm90b25pYygpCiAgICBydW50aW1lID0gSDNSdW50aW1lKCkKICAgIFNUQVRFWyJpbyJdWyJydW50aW1lX2luaXRfcyJdID0gcm91bmQodGltZS5tb25vdG9uaWMoKSAtIHQsIDEpCiAgICBwbGFuID0gWygid2FybXVwIiwgImJhc2UiLCAicm9vZnRvcCIpXSArIFsoYXJtLCBhcm0sIHNjZW5lKSBmb3IgYXJtIGluIEFSTVMgZm9yIHNjZW5lIGluIFBST01QVFNdCiAgICBmb3IgbGFiZWwsIGFybSwgc2NlbmUgaW4gcGxhbjoKICAgICAgICBTVEFURVsicGhhc2UiXSA9IGYie2xhYmVsfTp7c2NlbmV9Ijsgc2F2ZSgpCiAgICAgICAgZm9yIGtleSBpbiBBUk1fS0VZUzoKICAgICAgICAgICAgb3MuZW52aXJvbi5wb3Aoa2V5LCBOb25lKQogICAgICAgIG9zLmVudmlyb24udXBkYXRlKEFSTV9FTlZbYXJtXSkKICAgICAgICB0cnk6CiAgICAgICAgICAgIHQgPSB0aW1lLm1vbm90b25pYygpCiAgICAgICAgICAgIHJlc3VsdCA9IHJ1bnRpbWUuZ2VuZXJhdGUocHJvbXB0PVBST01QVFNbc2NlbmVdLCBhc3BlY3RfcmF0aW89IjE2OjkiLCBzaXplPSJiYWxhbmNlZCIsIGR1cmF0aW9uPTUsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgc3RlcHM9MjAsIHNlZWQ9NyBpZiBsYWJlbCA9PSAid2FybXVwIiBlbHNlIDEsIHJldHVybl9tZXRyaWNzPVRydWUsIGVuY29kZV9xdWFsaXR5PTI2KQogICAgICAgICAgICB3YWxsID0gcm91bmQodGltZS5tb25vdG9uaWMoKSAtIHQsIDIpCiAgICAgICAgICAgIHRhcmdldCA9IE9VVCAvIGYie2xhYmVsfV97c2NlbmV9LndlYm0iCiAgICAgICAgICAgIHNodXRpbC5tb3ZlKHN0cihyZXN1bHQucGF0aCksIHRhcmdldCkKICAgICAgICAgICAgU1RBVEVbInJ1bnMiXS5hcHBlbmQoeyJsYWJlbCI6IGxhYmVsLCAiYXJtIjogYXJtLCAic2NlbmUiOiBzY2VuZSwgIndhbGxfcyI6IHdhbGwsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAiZ2VuZXJhdGlvbl9zIjogcmVzdWx0Lm1ldHJpY3MuZ2V0KCJnZW5lcmF0aW9uX3NlY29uZHMiKSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICJzdGVwcyI6IHJlc3VsdC5tZXRyaWNzLmdldCgic3RlcHMiKSwgImZpbGUiOiB0YXJnZXQubmFtZX0pCiAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlcnI6CiAgICAgICAgICAgIFNUQVRFWyJlcnJvcnMiXS5hcHBlbmQoeyJsYWJlbCI6IGxhYmVsLCAic2NlbmUiOiBzY2VuZSwgImVycm9yIjogcmVwcihlcnIpWzo0MDBdfSkKICAgICAgICBzYXZlKCkKICAgIHJ1bnRpbWUuY2xvc2UoKQoKCnRyeToKICAgIG1haW4oKQogICAgU1RBVEVbInBoYXNlIl0gPSAiZG9uZSIKZXhjZXB0IEV4Y2VwdGlvbiBhcyBlcnI6CiAgICBTVEFURVsicGhhc2UiXSA9ICJmYWlsZWQiCiAgICBTVEFURVsiZXJyb3JzIl0uYXBwZW5kKHsiZmF0YWwiOiByZXByKGVycilbOjgwMF19KQpzYXZlKCkK
++ echo ewogInJvb2Z0b3AiOiAiQ2luZW1hdGljIG1lZGl1bSBjbG9zZS11cCBvZiBhIGJlYXV0aWZ1bCB5b3VuZyB3b21hbiBhbmQgYSBoYW5kc29tZSBtYW4gb24gYSByb29mdG9wIHRlcnJhY2UgYXQgZ29sZGVuIGhvdXIsIGNpdHkgc2t5bGluZSBnbG93aW5nIGJlaGluZCB0aGVtLiBIZSBnZW50bHkgY3VwcyBoZXIgZmFjZSwgdGhleSBsZWFuIGluIGFuZCBzaGFyZSBhIHNsb3cgdGVuZGVyIGtpc3MsIGhlciBoYW5kIHJlc3Rpbmcgb24gaGlzIGNoZXN0LCBzb2Z0IHdpbmQgbW92aW5nIGhlciBoYWlyLCB3YXJtIHN1bnNldCByaW0gbGlnaHQsIHNoYWxsb3cgZGVwdGggb2YgZmllbGQsIHNsb3cgY2FtZXJhIHB1c2gtaW4uIFNvZnQgYW1iaWVudCBjaXR5IHNvdW5kcyBhbmQgZ2VudGxlIGJyZWF0aGluZy4iLAogImFwYXJ0bWVudCI6ICJBIGJlYXV0aWZ1bCB3b21hbiB3aXRoIGxvbmcgZGFyayBoYWlyIGFuZCBhIGhhbmRzb21lIGJlYXJkZWQgbWFuIGVtYnJhY2UgaW4gYSB3YXJtbHkgbGl0IGNvenkgYXBhcnRtZW50IGF0IG5pZ2h0LCBjYW5kbGVsaWdodCBnbG93aW5nLiBUaGV5IGdhemUgaW50byBlYWNoIG90aGVyJ3MgZXllcywgaGUgYnJ1c2hlcyBoYWlyIGZyb20gaGVyIGNoZWVrLCBhbmQgdGhleSBraXNzIHBhc3Npb25hdGVseSwgaGVyIGFybXMgYXJvdW5kIGhpcyBuZWNrLCBjaW5lbWF0aWMgaGFuZGhlbGQgY2xvc2UtdXAsIHNvZnQgcm9tYW50aWMgYW1iaWVuY2UgYW5kIHF1aWV0IGJyZWF0aGluZy4iLAogImJlYWNoIjogIlNsb3cgc2Vuc3VhbCBjbG9zZS11cCBvZiBhIGJlYXV0aWZ1bCBjb3VwbGUsIGEgd29tYW4gYW5kIGEgbWFuLCBraXNzaW5nIHRlbmRlcmx5IG9uIGEgd2hpdGUgc2FuZCBiZWFjaCBhdCBzdW5zZXQsIGZvcmVoZWFkcyB0b3VjaGluZyBiZXR3ZWVuIGtpc3Nlcywgb2NlYW4gd2F2ZXMgYmVoaW5kIHRoZW0sIGdvbGRlbiBsaWdodCwgZ2VudGxlIGNhbWVyYSBkcmlmdC4iCn0K
++ base64 -d
++ nvidia-smi
+Thu Oct  8 03:54:02 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.173.02             Driver Version: 580.173.02     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H100 80GB HBM3          On  |   00000000:86:00.0 Off |                    0 |
+| N/A   31C    P0             74W /  700W |       0MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
++ free -g
+               total        used        free      shared  buff/cache   available
+Mem:            2015         132         475          22        1440        1883
+Swap:              0           0           0
++ cat /sys/fs/cgroup/memory.max
+cat: /sys/fs/cgroup/memory.max: No such file or directory
++ BENCH_PUB=/tmp/pub/7b00dcc34456bfb16f259732481f8094
++ python3 -u /tmp/pod_bench.py
+weight manifest cache unavailable ([Errno 122] Disk quota exceeded)
+using runpod model cache SexGod1979/PinkCherry_MiniMax-H3/beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0sready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+
+fetching hf://larryvrh/MiniMax-H3-Turbo-Lora/minimax_h3_turbo_v4_step600_ema.safetensors
+ready loras/minimax_h3_turbo_v4_step600_ema.safetensors in 2.2s
+weight manifest cache unavailable ([Errno 122] Disk quota exceeded)
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+using preinstalled loras/minimax_h3_turbo_v4_step600_ema.safetensors
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+using runpod model cache SexGod1979/PinkCherry_MiniMax-H3/beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors
+[32m[INFO][0m setup plugin alembic.autogenerate.schemas
+[32m[INFO][0m setup plugin alembic.autogenerate.tables
+[32m[INFO][0m setup plugin alembic.autogenerate.types
+[32m[INFO][0m setup plugin alembic.autogenerate.constraints
+[32m[INFO][0m setup plugin alembic.autogenerate.defaults
+[32m[INFO][0m setup plugin alembic.autogenerate.comments
+[32m[INFO][0m setup plugin alembic.autogenerate.checkconstraint_byname
+[32m[INFO][0m Found comfy_kitchen backend cuda: {'available': True, 'disabled': False, 'unavailable_reason': None, 'capabilities': ['adaln', 'apply_rope', 'apply_rope1', 'apply_rope1_', 'apply_rope_', 'apply_rope_split_half', 'apply_rope_split_half1', 'apply_rope_split_half1_', 'apply_rope_split_half_', 'convrot_w4a4_linear', 'dequantize_convrot_w4a4_weight', 'dequantize_int8_convrot_weight', 'dequantize_int8_convrot_weight_dtype', 'dequantize_int8_simple', 'dequantize_int8_simple_dtype', 'dequantize_nvfp4', 'dequantize_per_tensor_fp8', 'dequantize_w4a8_int8_weight', 'gemv_awq_w4a16', 'int8_linear', 'na3d', 'prepare_int4_weight_for_int8_linear', 'quantize_and_rotate_rowwise', 'quantize_convrot_w4a4_weight', 'quantize_int8_convrot_weight', 'quantize_int8_rowwise', 'quantize_int8_tensorwise', 'quantize_mxfp8', 'quantize_nvfp4', 'quantize_per_tensor_fp8', 'quantize_svdquant_w4a4', 'quantize_w4a8_int8_weight', 'rms_adaln', 'rms_rope', 'rms_rope1', 'rms_rope1_', 'rms_rope_', 'rms_rope_split_half', 'rms_rope_split_half1', 'rms_rope_split_half1_', 'rms_rope_split_half_', 'rotate_int8_convrot_weight', 'scaled_mm_nvfp4', 'scaled_mm_svdquant_w4a4', 'stochastic_rounding_fp8', 'w4a8_int8_linear']}
+[32m[INFO][0m Found comfy_kitchen backend eager: {'available': True, 'disabled': False, 'unavailable_reason': None, 'capabilities': ['adaln', 'apply_rope', 'apply_rope1', 'apply_rope1_', 'apply_rope_', 'apply_rope_split_half', 'apply_rope_split_half1', 'apply_rope_split_half1_', 'apply_rope_split_half_', 'convrot_w4a4_linear', 'dequantize_convrot_w4a4_weight', 'dequantize_int8_convrot_weight', 'dequantize_int8_convrot_weight_dtype', 'dequantize_int8_embedding', 'dequantize_int8_simple', 'dequantize_int8_simple_dtype', 'dequantize_mxfp8', 'dequantize_nvfp4', 'dequantize_per_tensor_fp8', 'dequantize_w4a8_int8_weight', 'gemv_awq_w4a16', 'int8_linear', 'na3d', 'prepare_int4_weight_for_int8_linear', 'quantize_and_rotate_rowwise', 'quantize_convrot_w4a4_weight', 'quantize_int8_convrot_weight', 'quantize_int8_rowwise', 'quantize_int8_tensorwise', 'quantize_mxfp8', 'quantize_nvfp4', 'quantize_per_tensor_fp8', 'quantize_svdquant_w4a4', 'quantize_w4a8_int8_weight', 'rms_adaln', 'rms_rope', 'rms_rope1', 'rms_rope1_', 'rms_rope_', 'rms_rope_split_half', 'rms_rope_split_half1', 'rms_rope_split_half1_', 'rms_rope_split_half_', 'rotate_int8_convrot_weight', 'scaled_mm_mxfp8', 'scaled_mm_nvfp4', 'scaled_mm_svdquant_w4a4', 'stochastic_rounding_fp8', 'w4a8_int8_linear']}
+[32m[INFO][0m Found comfy_kitchen backend triton: {'available': True, 'disabled': True, 'unavailable_reason': None, 'capabilities': ['adaln', 'apply_rope', 'apply_rope1', 'apply_rope1_', 'apply_rope_', 'apply_rope_split_half', 'apply_rope_split_half1', 'apply_rope_split_half1_', 'apply_rope_split_half_', 'dequantize_nvfp4', 'dequantize_per_tensor_fp8', 'int8_linear', 'na3d', 'quantize_and_rotate_rowwise', 'quantize_int8_rowwise', 'quantize_mxfp8', 'quantize_nvfp4', 'quantize_per_tensor_fp8', 'rms_adaln', 'rms_rope', 'rms_rope1', 'rms_rope1_', 'rms_rope_', 'rms_rope_split_half', 'rms_rope_split_half1', 'rms_rope_split_half1_', 'rms_rope_split_half_', 'w4a8_int8_linear']}
+[32m[INFO][0m Found comfy_kitchen backend hip: {'available': False, 'disabled': False, 'unavailable_reason': 'PyTorch ROCm/HIP runtime not available', 'capabilities': []}
+[32m[INFO][0m Checkpoint files will always be loaded safely.
+[32m[INFO][0m Total VRAM 81079 MB, total RAM 2063866 MB
+[32m[INFO][0m pytorch version: 2.11.0+cu130
+[32m[INFO][0m Set vram state to: LOW_VRAM
+[32m[INFO][0m Device: cuda:0 NVIDIA H100 80GB HBM3 : cudaMallocAsync
+[32m[INFO][0m Using async weight offloading with 2 streams
+[32m[INFO][0m Enabled pinned memory 1857479.0
+[32m[INFO][0m Using pytorch attention
+[32m[INFO][0m Using Comfy Kitchen attention
+[32m[INFO][0m aimdo: /project/src/control.c:276:INFO:comfy-aimdo inited for GPU: NVIDIA H100 80GB HBM3 (VRAM: 81079 MB)
+[32m[INFO][0m DynamicVRAM support detected and enabled
+[32m[INFO][0m Python version: 3.12.13 (main, Aug  5 2026, 01:10:24) [GCC 14.2.0]
+[32m[INFO][0m ComfyUI version: 0.31.0
+[32m[INFO][0m comfy-aimdo version: 0.4.13
+[32m[INFO][0m comfy-kitchen version: 0.2.30
+[1m[33m[WARNING][0m ****** User settings have been changed to be stored on the server instead of browser storage. ******
+[1m[33m[WARNING][0m ****** For multi-user setups add the --multi-user CLI argument to enable multiple user profiles. ******
+[32m[INFO][0m comfyui-frontend-package version: 1.48.7
+[32m[INFO][0m comfyui-workflow-templates version: 0.11.37
+[32m[INFO][0m comfyui-embedded-docs version: 0.5.9
+[32m[INFO][0m comfy-kitchen version: 0.2.30
+[32m[INFO][0m comfy-aimdo version: 0.4.13
+[32m[INFO][0m [Prompt Server] web root: /usr/local/lib/python3.12/site-packages/comfyui_frontend_package/static
+[32m[INFO][0m Asset seeder disabled
+[32m[INFO][0m No OpenGL_accelerate module loaded: No module named 'OpenGL_accelerate'
+[32m[INFO][0m 
+Import times for custom nodes:
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/comfy_h3_benchmark
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/websocket_image_save.py
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-H3-NativeAudioLock
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/h3_conditioning_cache.py
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/h3_trajectory.py
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-AdaptiveTaylor
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-Turbo
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-FirstBlockCache
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-H3-Latent-Upscaler-Mamad8
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-Image-Studio
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-H3-FaceRefine
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-Spectrum-MiniMax-H3
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-SolAttn_triton
+[32m[INFO][0m    0.1 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-VideoHelperSuite
+[32m[INFO][0m 
+[32m[INFO][0m Context impl SQLiteImpl.
+[32m[INFO][0m Will assume non-transactional DDL.
+[32m[INFO][0m Context impl SQLiteImpl.
+[32m[INFO][0m Will assume non-transactional DDL.
+[32m[INFO][0m Running upgrade  -> 0001_assets, Initial assets schema
+Revision ID: 0001_assets
+Revises: None
+Create Date: 2025-12-10 00:00:00
+[32m[INFO][0m Running upgrade 0001_assets -> 0002_merge_to_asset_references, Merge AssetInfo and AssetCacheState into unified asset_references table.
+[32m[INFO][0m Running upgrade 0002_merge_to_asset_references -> 0003_add_metadata_job_id, Add system_metadata and job_id columns to asset_references.
+Change preview_id FK from assets.id to asset_references.id.
+[32m[INFO][0m Running upgrade 0003_add_metadata_job_id -> 0004_drop_tag_type, Drop the vestigial tags.tag_type column.
+[32m[INFO][0m Running upgrade 0004_drop_tag_type -> 0005_allow_case_sensitive_tags, Allow case-sensitive tag names.
+[32m[INFO][0m Running upgrade 0005_allow_case_sensitive_tags -> 0006_add_loader_path, Add loader_path column to asset_references.
+[32m[INFO][0m Database upgraded from None to 0006_add_loader_path
+[32m[INFO][0m Using RAM pressure cache.
+[32m[INFO][0m Starting server
+
+[32m[INFO][0m To see the GUI go to: http://127.0.0.1:8188
+MiniMax H3 ready: attention=ck vram_mode=low comfy_pid=572
+H3 model profile: custom:fl2va,turbo models=fl2va,turbo lazy_ref2va=False face_detector_prewarm=False
+[32m[INFO][0m got prompt
+[32m[INFO][0m VAE load device: cuda:0, offload device: cpu, dtype: torch.float32
+[32m[INFO][0m VAE load device: cuda:0, offload device: cpu, dtype: torch.float16
+[32m[INFO][0m Found quantization metadata version 1
+[32m[INFO][0m Using MixedPrecisionOps for text encoder
+[32m[INFO][0m CLIP/text encoder model load device: cuda:0, offload device: cpu, current: cpu, dtype: torch.float16
+[32m[INFO][0m Requested to load MiniMaxH3TEModel_
+[32m[INFO][0m Model MiniMaxH3TEModel_ prepared for dynamic VRAM loading. 14956MB Staged. 0 patches attached. Force pre-loaded 410 weights: 4572 KB.
+[32m[INFO][0m Found quantization metadata version 1
+[32m[INFO][0m Detected mixed precision quantization
+[32m[INFO][0m Using mixed precision operations
+[32m[INFO][0m Native ops: float8_e4m3fn, asym_w4a8_int8, int8_tensorwise, float8_e5m2, convrot_w4a4 , emulated ops: mxfp8, nvfp4
+[32m[INFO][0m model weight dtype torch.bfloat16, manual cast: torch.bfloat16
+[32m[INFO][0m model_type FLOW_AV
+[32m[INFO][0m EasyCache enabled - threshold: 0.12, start_percent: 0.15, end_percent: 0.9
+[32m[INFO][0m Requested to load MiniMaxH3
+[32m[INFO][0m Model MiniMaxH3 prepared for dynamic VRAM loading. 19995MB Staged. 0 patches attached. Force pre-loaded 210 weights: 1175 KB.
+
+  0%|          | 0/20 [00:00<?, ?it/s]
+  0%|          | 0/20 [00:00<?, ?it/s,   Model Initializing ...  ]
+  0%|          | 0/20 [00:07<?, ?it/s,  Model Initialization complete!  ]
+  5%|▌         | 1/20 [00:07<02:18,  7.28s/it,  Model Initialization complete!  ]
+  5%|▌         | 1/20 [00:09<02:18,  7.28s/it]                                   
+ 10%|█         | 2/20 [00:09<01:24,  4.67s/it]
+ 15%|█▌        | 3/20 [00:14<01:19,  4.66s/it]
+ 20%|██        | 4/20 [00:18<01:14,  4.67s/it]
+ 25%|██▌       | 5/20 [00:23<01:10,  4.68s/it]
+ 30%|███       | 6/20 [00:28<01:05,  4.66s/it]
+ 40%|████      | 8/20 [00:32<00:28,  2.33s/it]
+ 50%|█████     | 10/20 [00:37<00:23,  2.34s/it]
+ 60%|██████    | 12/20 [00:42<00:18,  2.33s/it]
+ 70%|███████   | 14/20 [00:46<00:13,  2.33s/it]
+ 85%|████████▌ | 17/20 [00:51<00:04,  1.56s/it]
+ 95%|█████████▌| 19/20 [00:56<00:02,  2.33s/it]
+100%|██████████| 20/20 [01:00<00:00,  4.67s/it]
+100%|██████████| 20/20 [01:00<00:00,  3.03s/it]
+[32m[INFO][0m EasyCache - skipped 7/20 steps (1.54x speedup).
+[32m[INFO][0m Requested to load MiniMaxH3AudioVAE
+[32m[INFO][0m Model MiniMaxH3AudioVAE prepared for dynamic VRAM loading. 576MB Staged. 0 patches attached. Force pre-loaded 401 weights: 539 KB.
+[32m[INFO][0m Requested to load MiniMaxH3VideoVAE
+[32m[INFO][0m Model MiniMaxH3VideoVAE prepared for dynamic VRAM loading. 4965MB Staged. 0 patches attached. Force pre-loaded 128 weights: 348 KB.
+[32m[INFO][0m [32mPrompt executed in 100.49 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1184x672 frames=124 seconds=5.17 steps=20 seed=7 loop=False audio_drive=False quant=int8_convrot total_seconds=103.993 cache=balanced
+weight manifest cache unavailable ([Errno 122] Disk quota exceeded)
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+using preinstalled loras/minimax_h3_turbo_v4_step600_ema.safetensors
+using runpod model cache SexGod1979/PinkCherry_MiniMax-H3/beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors
+[32m[INFO][0m got prompt
+[MiniMaxH3TurboLoRA] pruned base [bypass]: lora=minimax_h3_turbo_v4_step600_ema.safetensors strength=1.0 | 208 backbone modules, 158 bypass adapters, 1 injections, 50 int8 fc2 via merge + 51 adaln injected at run time | model=MiniMaxH3 weight_dtype=torch.bfloat16 weight_dev=cpu
+[32m[INFO][0m Requested to load MiniMaxH3
+[32m[INFO][0m Model MiniMaxH3 prepared for dynamic VRAM loading. 19995MB Staged. 50 patches attached. Force pre-loaded 210 weights: 1175 KB.
+[H3TURBO sampler] native ModelSamplingAV -> single-schedule Euler  sigmas=[1.0, 0.9882, 0.973, 0.9524, 0.9231, 0.878, 0.8, 0.6316, 0.0]  x.shape=(1, 1, 2773152) dtype=torch.float32
+
+  0%|          | 0/8 [00:00<?, ?it/s][H3TURBO fwd pruned/bypass] call#1  qkv_proj.forward_owner=BypassForwardHook (BypassForwardHook => lora ACTIVE; else => BASE ONLY!)  is_injected=True  timestep=1000.00  video_rms=1.0000 audio_rms=1.0044 dtype=torch.bfloat16
+[H3TURBO step 0] sv=1.0000->0.9882  denoised_rms=1.2506 x_rms=0.9886 d_rms=1.5849
+
+ 12%|█▎        | 1/8 [00:05<00:35,  5.06s/it][H3TURBO fwd pruned/bypass] call#2  qkv_proj.forward_owner=BypassForwardHook (BypassForwardHook => lora ACTIVE; else => BASE ONLY!)  is_injected=True  timestep=988.24  video_rms=0.9886 audio_rms=0.9588 dtype=torch.bfloat16
+[H3TURBO step 1] sv=0.9882->0.9730  denoised_rms=1.2011 x_rms=0.9740 d_rms=1.5536
+
+ 25%|██▌       | 2/8 [00:10<00:30,  5.04s/it][H3TURBO fwd pruned/bypass] call#3  qkv_proj.forward_owner=BypassForwardHook (BypassForwardHook => lora ACTIVE; else => BASE ONLY!)  is_injected=True  timestep=972.97  video_rms=0.9740 audio_rms=0.9078 dtype=torch.bfloat16
+[H3TURBO step 2] sv=0.9730->0.9524  denoised_rms=1.1223 x_rms=0.9547 d_rms=1.4958
+
+ 38%|███▊      | 3/8 [00:15<00:25,  5.04s/it][H3TURBO fwd pruned/bypass] call#4  qkv_proj.forward_owner=BypassForwardHook (BypassForwardHook => lora ACTIVE; else => BASE ONLY!)  is_injected=True  timestep=952.38  video_rms=0.9546 audio_rms=0.8442 dtype=torch.bfloat16
+[H3TURBO step 3] sv=0.9524->0.9231  denoised_rms=1.1115 x_rms=0.9282 d_rms=1.4870
+
+ 50%|█████     | 4/8 [00:20<00:20,  5.03s/it][H3TURBO fwd pruned/bypass] call#5  qkv_proj.forward_owner=BypassForwardHook (BypassForwardHook => lora ACTIVE; else => BASE ONLY!)  is_injected=True  timestep=923.08  video_rms=0.9281 audio_rms=0.7691 dtype=torch.bfloat16
+[H3TURBO step 4] sv=0.9231->0.8780  denoised_rms=1.1015 x_rms=0.8902 d_rms=1.4768
+
+ 62%|██████▎   | 5/8 [00:25<00:15,  5.02s/it][H3TURBO fwd pruned/bypass] call#6  qkv_proj.forward_owner=BypassForwardHook (BypassForwardHook => lora ACTIVE; else => BASE ONLY!)  is_injected=True  timestep=878.05  video_rms=0.8901 audio_rms=0.6768 dtype=torch.bfloat16
+[H3TURBO step 5] sv=0.8780->0.8000  denoised_rms=1.0991 x_rms=0.8333 d_rms=1.4706
+
+ 75%|███████▌  | 6/8 [00:30<00:10,  5.02s/it][H3TURBO step 6] sv=0.8000->0.6316  denoised_rms=1.1015 x_rms=0.7584 d_rms=1.4658
+
+ 88%|████████▊ | 7/8 [00:35<00:05,  5.02s/it][H3TURBO step 7] sv=0.6316->0.0000  denoised_rms=1.1098 x_rms=1.1098 d_rms=1.4608
+
+100%|██████████| 8/8 [00:40<00:00,  5.02s/it]
+100%|██████████| 8/8 [00:40<00:00,  5.02s/it]
+[32m[INFO][0m Model MiniMaxH3AudioVAE prepared for dynamic VRAM loading. 576MB Staged. 0 patches attached. Force pre-loaded 401 weights: 539 KB.
+[32m[INFO][0m Model MiniMaxH3VideoVAE prepared for dynamic VRAM loading. 4965MB Staged. 0 patches attached. Force pre-loaded 128 weights: 348 KB.
+[32m[INFO][0m [32mPrompt executed in 53.16 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1184x672 frames=124 seconds=5.17 steps=8 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=57.667 cache=turbo-8
+weight manifest cache unavailable ([Errno 122] Disk quota exceeded)
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+using preinstalled loras/minimax_h3_turbo_v4_step600_ema.safetensors
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0sready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+
+using runpod model cache SexGod1979/PinkCherry_MiniMax-H3/beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors
+[32m[INFO][0m got prompt
+[32m[INFO][0m Model MiniMaxH3TEModel_ prepared for dynamic VRAM loading. 14956MB Staged. 0 patches attached. Force pre-loaded 410 weights: 4572 KB.
+[32m[INFO][0m Model MiniMaxH3 prepared for dynamic VRAM loading. 19995MB Staged. 50 patches attached. Force pre-loaded 210 weights: 1175 KB.
+[H3TURBO sampler] native ModelSamplingAV -> single-schedule Euler  sigmas=[1.0, 0.9882, 0.973, 0.9524, 0.9231, 0.878, 0.8, 0.6316, 0.0]  x.shape=(1, 1, 2773152) dtype=torch.float32
+
+  0%|          | 0/8 [00:00<?, ?it/s][H3TURBO step 0] sv=1.0000->0.9882  denoised_rms=0.9755 x_rms=0.9886 d_rms=1.3800
+
+ 12%|█▎        | 1/8 [00:05<00:35,  5.02s/it][H3TURBO step 1] sv=0.9882->0.9730  denoised_rms=1.1791 x_rms=0.9740 d_rms=1.5363
+
+ 25%|██▌       | 2/8 [00:10<00:30,  5.01s/it][H3TURBO step 2] sv=0.9730->0.9524  denoised_rms=1.1070 x_rms=0.9545 d_rms=1.4880
+
+ 38%|███▊      | 3/8 [00:15<00:25,  5.00s/it][H3TURBO step 3] sv=0.9524->0.9231  denoised_rms=1.0657 x_rms=0.9277 d_rms=1.4549
+
+ 50%|█████     | 4/8 [00:20<00:20,  5.00s/it][H3TURBO step 4] sv=0.9231->0.8780  denoised_rms=1.0547 x_rms=0.8891 d_rms=1.4443
+
+ 62%|██████▎   | 5/8 [00:25<00:15,  5.00s/it][H3TURBO step 5] sv=0.8780->0.8000  denoised_rms=1.0504 x_rms=0.8303 d_rms=1.4370
+
+ 75%|███████▌  | 6/8 [00:30<00:10,  5.00s/it][H3TURBO step 6] sv=0.8000->0.6316  denoised_rms=1.0552 x_rms=0.7480 d_rms=1.4352
+
+ 88%|████████▊ | 7/8 [00:35<00:05,  5.01s/it][H3TURBO step 7] sv=0.6316->0.0000  denoised_rms=1.0642 x_rms=1.0642 d_rms=1.4304
+
+100%|██████████| 8/8 [00:40<00:00,  5.01s/it]
+100%|██████████| 8/8 [00:40<00:00,  5.01s/it]
+[32m[INFO][0m Model MiniMaxH3AudioVAE prepared for dynamic VRAM loading. 576MB Staged. 0 patches attached. Force pre-loaded 401 weights: 539 KB.
+[32m[INFO][0m Model MiniMaxH3VideoVAE prepared for dynamic VRAM loading. 4965MB Staged. 0 patches attached. Force pre-loaded 128 weights: 348 KB.
+[32m[INFO][0m [32mPrompt executed in 53.26 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1184x672 frames=124 seconds=5.17 steps=8 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=57.571 cache=turbo-8
+weight manifest cache unavailable ([Errno 122] Disk quota exceeded)
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+using preinstalled loras/minimax_h3_turbo_v4_step600_ema.safetensors
+using runpod model cache SexGod1979/PinkCherry_MiniMax-H3/beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors
+[32m[INFO][0m got prompt
+[32m[INFO][0m Model MiniMaxH3TEModel_ prepared for dynamic VRAM loading. 14956MB Staged. 0 patches attached. Force pre-loaded 410 weights: 4572 KB.
+[32m[INFO][0m Model MiniMaxH3 prepared for dynamic VRAM loading. 19995MB Staged. 50 patches attached. Force pre-loaded 210 weights: 1175 KB.
+[H3TURBO sampler] native ModelSamplingAV -> single-schedule Euler  sigmas=[1.0, 0.9882, 0.973, 0.9524, 0.9231, 0.878, 0.8, 0.6316, 0.0]  x.shape=(1, 1, 2773152) dtype=torch.float32
+
+  0%|          | 0/8 [00:00<?, ?it/s][H3TURBO step 0] sv=1.0000->0.9882  denoised_rms=1.0954 x_rms=0.9886 d_rms=1.4633
+
+ 12%|█▎        | 1/8 [00:05<00:35,  5.03s/it][H3TURBO step 1] sv=0.9882->0.9730  denoised_rms=1.1632 x_rms=0.9741 d_rms=1.5218
+
+ 25%|██▌       | 2/8 [00:10<00:30,  5.01s/it][H3TURBO step 2] sv=0.9730->0.9524  denoised_rms=1.0813 x_rms=0.9547 d_rms=1.4637
+
+ 38%|███▊      | 3/8 [00:15<00:25,  5.01s/it][H3TURBO step 3] sv=0.9524->0.9231  denoised_rms=1.0693 x_rms=0.9281 d_rms=1.4535
+
+ 50%|█████     | 4/8 [00:20<00:20,  5.01s/it][H3TURBO step 4] sv=0.9231->0.8780  denoised_rms=1.0670 x_rms=0.8899 d_rms=1.4496
+
+ 62%|██████▎   | 5/8 [00:25<00:15,  5.01s/it][H3TURBO step 5] sv=0.8780->0.8000  denoised_rms=1.0705 x_rms=0.8321 d_rms=1.4484
+
+ 75%|███████▌  | 6/8 [00:30<00:10,  5.00s/it][H3TURBO step 6] sv=0.8000->0.6316  denoised_rms=1.0742 x_rms=0.7534 d_rms=1.4444
+
+ 88%|████████▊ | 7/8 [00:35<00:05,  5.01s/it][H3TURBO step 7] sv=0.6316->0.0000  denoised_rms=1.0846 x_rms=1.0846 d_rms=1.4399
+
+100%|██████████| 8/8 [00:40<00:00,  5.01s/it]
+100%|██████████| 8/8 [00:40<00:00,  5.01s/it]
+[32m[INFO][0m Model MiniMaxH3AudioVAE prepared for dynamic VRAM loading. 576MB Staged. 0 patches attached. Force pre-loaded 401 weights: 539 KB.
+[32m[INFO][0m Model MiniMaxH3VideoVAE prepared for dynamic VRAM loading. 4965MB Staged. 0 patches attached. Force pre-loaded 128 weights: 348 KB.
+[32m[INFO][0m [32mPrompt executed in 53.70 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1184x672 frames=124 seconds=5.17 steps=8 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=57.667 cache=turbo-8
+weight manifest cache unavailable ([Errno 122] Disk quota exceeded)
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0susing preinstalled loras/minimax_h3_turbo_v4_step600_ema.safetensors
+
+using runpod model cache SexGod1979/PinkCherry_MiniMax-H3/beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors
+[32m[INFO][0m got prompt
+[32m[INFO][0m Model MiniMaxH3 prepared for dynamic VRAM loading. 19995MB Staged. 50 patches attached. Force pre-loaded 210 weights: 1175 KB.
+[H3TURBO sampler] native ModelSamplingAV -> single-schedule Euler  sigmas=[1.0, 0.9837, 0.9601, 0.9231, 0.8575, 0.7064, 0.0]  x.shape=(1, 1, 2773152) dtype=torch.float32
+
+  0%|          | 0/6 [00:00<?, ?it/s][H3TURBO step 0] sv=1.0000->0.9837  denoised_rms=1.2506 x_rms=0.9843 d_rms=1.5849
+
+ 17%|█▋        | 1/6 [00:05<00:25,  5.06s/it][H3TURBO step 1] sv=0.9837->0.9601  denoised_rms=1.1717 x_rms=0.9619 d_rms=1.5319
+
+ 33%|███▎      | 2/6 [00:10<00:20,  5.01s/it][H3TURBO step 2] sv=0.9601->0.9231  denoised_rms=1.1246 x_rms=0.9284 d_rms=1.4976
+
+ 50%|█████     | 3/6 [00:15<00:14,  4.99s/it][H3TURBO step 3] sv=0.9231->0.8575  denoised_rms=1.1056 x_rms=0.8743 d_rms=1.4795
+
+ 67%|██████▋   | 4/6 [00:19<00:09,  4.99s/it][H3TURBO step 4] sv=0.8575->0.7064  denoised_rms=1.1047 x_rms=0.7830 d_rms=1.4733
+
+ 83%|████████▎ | 5/6 [00:24<00:04,  4.99s/it][H3TURBO step 5] sv=0.7064->0.0000  denoised_rms=1.1146 x_rms=1.1146 d_rms=1.4694
+
+100%|██████████| 6/6 [00:29<00:00,  5.00s/it]
+100%|██████████| 6/6 [00:29<00:00,  5.00s/it]
+[32m[INFO][0m Model MiniMaxH3AudioVAE prepared for dynamic VRAM loading. 576MB Staged. 0 patches attached. Force pre-loaded 401 weights: 539 KB.
+[32m[INFO][0m Model MiniMaxH3VideoVAE prepared for dynamic VRAM loading. 4965MB Staged. 0 patches attached. Force pre-loaded 128 weights: 348 KB.
+[32m[INFO][0m [32mPrompt executed in 43.92 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1184x672 frames=124 seconds=5.17 steps=6 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=47.812 cache=turbo-6
+weight manifest cache unavailable ([Errno 122] Disk quota exceeded)
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+using preinstalled loras/minimax_h3_turbo_v4_step600_ema.safetensors
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+using runpod model cache SexGod1979/PinkCherry_MiniMax-H3/beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors
+[32m[INFO][0m got prompt
+[32m[INFO][0m Model MiniMaxH3 prepared for dynamic VRAM loading. 19995MB Staged. 50 patches attached. Force pre-loaded 210 weights: 1175 KB.
+[H3TURBO sampler] native ModelSamplingAV -> single-schedule Euler  sigmas=[1.0, 0.9837, 0.9601, 0.9231, 0.8575, 0.7064, 0.0]  x.shape=(1, 1, 2773152) dtype=torch.float32
+
+  0%|          | 0/6 [00:00<?, ?it/s][H3TURBO step 0] sv=1.0000->0.9837  denoised_rms=0.9755 x_rms=0.9842 d_rms=1.3800
+
+ 17%|█▋        | 1/6 [00:05<00:26,  5.28s/it][H3TURBO step 1] sv=0.9837->0.9601  denoised_rms=1.1311 x_rms=0.9617 d_rms=1.5027
+
+ 33%|███▎      | 2/6 [00:10<00:20,  5.13s/it][H3TURBO step 2] sv=0.9601->0.9231  denoised_rms=1.0815 x_rms=0.9277 d_rms=1.4697
+
+ 50%|█████     | 3/6 [00:15<00:15,  5.07s/it][H3TURBO step 3] sv=0.9231->0.8575  denoised_rms=1.0495 x_rms=0.8723 d_rms=1.4412
+
+ 67%|██████▋   | 4/6 [00:20<00:10,  5.04s/it][H3TURBO step 4] sv=0.8575->0.7064  denoised_rms=1.0432 x_rms=0.7746 d_rms=1.4309
+
+ 83%|████████▎ | 5/6 [00:25<00:05,  5.02s/it][H3TURBO step 5] sv=0.7064->0.0000  denoised_rms=1.0533 x_rms=1.0533 d_rms=1.4270
+
+100%|██████████| 6/6 [00:30<00:00,  5.01s/it]
+100%|██████████| 6/6 [00:30<00:00,  5.05s/it]
+[32m[INFO][0m Model MiniMaxH3AudioVAE prepared for dynamic VRAM loading. 576MB Staged. 0 patches attached. Force pre-loaded 401 weights: 539 KB.
+[32m[INFO][0m Model MiniMaxH3VideoVAE prepared for dynamic VRAM loading. 4965MB Staged. 0 patches attached. Force pre-loaded 128 weights: 348 KB.
+[32m[INFO][0m [32mPrompt executed in 43.53 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1184x672 frames=124 seconds=5.17 steps=6 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=47.658 cache=turbo-6
+weight manifest cache unavailable ([Errno 122] Disk quota exceeded)
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+using preinstalled loras/minimax_h3_turbo_v4_step600_ema.safetensors
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+using runpod model cache SexGod1979/PinkCherry_MiniMax-H3/beta-0.6-fl2va/PinkCherry_fl2va_MiniMax_H3_pruned_int8_convrot-beta-0.6.safetensors
+[32m[INFO][0m got prompt
+[32m[INFO][0m Model MiniMaxH3 prepared for dynamic VRAM loading. 19995MB Staged. 50 patches attached. Force pre-loaded 210 weights: 1175 KB.
+[H3TURBO sampler] native ModelSamplingAV -> single-schedule Euler  sigmas=[1.0, 0.9837, 0.9601, 0.9231, 0.8575, 0.7064, 0.0]  x.shape=(1, 1, 2773152) dtype=torch.float32
+
+  0%|          | 0/6 [00:00<?, ?it/s][H3TURBO step 0] sv=1.0000->0.9837  denoised_rms=1.0954 x_rms=0.9843 d_rms=1.4633
+
+ 17%|█▋        | 1/6 [00:05<00:25,  5.00s/it][H3TURBO step 1] sv=0.9837->0.9601  denoised_rms=1.1352 x_rms=0.9619 d_rms=1.5032
+
+ 33%|███▎      | 2/6 [00:10<00:20,  5.01s/it][H3TURBO step 2] sv=0.9601->0.9231  denoised_rms=1.0768 x_rms=0.9282 d_rms=1.4606
+
+ 50%|█████     | 3/6 [00:15<00:15,  5.00s/it][H3TURBO step 3] sv=0.9231->0.8575  denoised_rms=1.0670 x_rms=0.8735 d_rms=1.4500
+
+ 67%|██████▋   | 4/6 [00:20<00:10,  5.01s/it][H3TURBO step 4] sv=0.8575->0.7064  denoised_rms=1.0670 x_rms=0.7788 d_rms=1.4442
+
+ 83%|████████▎ | 5/6 [00:25<00:05,  5.02s/it][H3TURBO step 5] sv=0.7064->0.0000  denoised_rms=1.0781 x_rms=1.0781 d_rms=1.4406
+
+100%|██████████| 6/6 [00:30<00:00,  5.02s/it]
+100%|██████████| 6/6 [00:30<00:00,  5.01s/it]
+[32m[INFO][0m Model MiniMaxH3AudioVAE prepared for dynamic VRAM loading. 576MB Staged. 0 patches attached. Force pre-loaded 401 weights: 539 KB.
+[32m[INFO][0m Model MiniMaxH3VideoVAE prepared for dynamic VRAM loading. 4965MB Staged. 0 patches attached. Force pre-loaded 128 weights: 348 KB.
+[32m[INFO][0m [32mPrompt executed in 43.73 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1184x672 frames=124 seconds=5.17 steps=6 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=47.675 cache=turbo-6
++ sleep infinity
