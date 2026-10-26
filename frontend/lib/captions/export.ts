@@ -1,6 +1,7 @@
 import { CaptionEngine } from './render';
 import { ensureFonts } from './registry';
 import type { CaptionDoc } from './types';
+import { deviceTier, exportCaps } from '../device-budget';
 
 export type ExportQuality = 'standard' | 'high' | 'max';
 
@@ -30,7 +31,13 @@ export function exportSize(width: number, height: number, maxSide: number) {
 /** Re-encode the video in the browser with the captions burned in; the soundtrack is carried over. */
 export async function exportCaptionedMP4(options: ExportOptions): Promise<Blob> {
   const { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, Quality, canEncodeAudio, canEncodeVideo } = await import('mediabunny');
-  const size = exportSize(options.width, options.height, options.maxSide);
+  const caps = exportCaps(deviceTier());
+  const capSide = (limit: { width: number; height: number }) => Math.min(options.maxSide, Math.max(limit.width, limit.height));
+  // Prefer a hardware H.264 encoder; without one, phones and low-memory
+  // machines drop to a smaller frame so software encoding keeps moving.
+  let size = exportSize(options.width, options.height, capSide(caps.hardware));
+  const hardware = await canEncodeVideo('avc', { ...size, hardwareAcceleration: 'prefer-hardware' });
+  if (!hardware) size = exportSize(options.width, options.height, capSide(caps.software));
   const codec = (await canEncodeVideo('avc', size)) ? 'avc' : null;
   if (!codec) throw new Error('This browser cannot encode MP4 (H.264). Try Chrome, Edge or Safari.');
   const { style, secondary } = options.doc;
@@ -59,6 +66,7 @@ export async function exportCaptionedMP4(options: ExportOptions): Promise<Blob> 
       showWarnings: false,
       video: {
         codec,
+        hardwareAcceleration: hardware ? 'prefer-hardware' : 'no-preference',
         quality: new Quality(QUALITY_LEVEL[options.quality]),
         forceTranscode: true,
         width: size.width,
