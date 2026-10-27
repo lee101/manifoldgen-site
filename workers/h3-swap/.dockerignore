@@ -1,6 +1,8 @@
 *
 !swap_graph.py
 !swap_weights.py
+!swap_relay.py
 !swap_runtime.py
+!gpu_profile.py
 !swap_handler.py
 !Dockerfile

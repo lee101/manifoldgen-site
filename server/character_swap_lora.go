@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -10,7 +11,6 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -290,7 +290,7 @@ func loraInput(state characterSwapState, chunk characterSwapChunk) map[string]in
 	return input
 }
 
-func submitLoraRunpod(endpointID string, input map[string]interface{}, queued *h3RunpodQueuedJob) (int, error) {
+func submitLoraRunpod(endpointID string, input map[string]interface{}, queued *h3RunpodQueuedJob, execution time.Duration) (int, error) {
 	lock := h3EndpointScaleLock(endpointID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -298,10 +298,7 @@ func submitLoraRunpod(endpointID string, input map[string]interface{}, queued *h
 	if err != nil {
 		return 0, err
 	}
-	workers := loraSlots
-	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("H3_SWAP_WORKERS_MAX"))); err == nil && value > 0 {
-		workers = value
-	}
+	workers := loraWorkersMax()
 	if current != workers {
 		if err := characterAnimationSetWorkersMax(endpointID, "standard", workers); err != nil {
 			return 0, err
@@ -309,7 +306,7 @@ func submitLoraRunpod(endpointID string, input map[string]interface{}, queued *h
 	}
 	var status int
 	for attempt := 0; attempt < 7; attempt++ {
-		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, runpodRunBody(input, 40*time.Minute), queued)
+		status, err = callH3Runpod(endpointID, "/run", http.MethodPost, runpodRunBody(input, execution), queued)
 		if status != http.StatusConflict || err == nil || !strings.Contains(err.Error(), "ENDPOINT_PAUSED") {
 			return status, err
 		}
@@ -321,43 +318,45 @@ func submitLoraRunpod(endpointID string, input map[string]interface{}, queued *h
 	return status, err
 }
 
-func waitLoraClip(ctx context.Context, jobID, endpointID, runpodID, expectedURL string) (string, float64, error) {
-	deadline := time.Now().Add(loraChunkTimeout)
-	for time.Now().Before(deadline) {
-		if ctx.Err() != nil {
-			return "", 0, ctx.Err()
-		}
-		if videoJobCancellationRequested(jobID) {
-			_, _ = callH3Runpod(endpointID, "/cancel/"+url.PathEscape(runpodID), http.MethodPost, nil, nil)
-			return "", 0, fmt.Errorf("cancelled")
-		}
-		var state h3RunpodStatus
-		if _, err := callH3Runpod(endpointID, "/status/"+url.PathEscape(runpodID), http.MethodGet, nil, &state); err != nil {
-			time.Sleep(4 * time.Second)
-			continue
-		}
-		switch strings.ToUpper(strings.TrimSpace(state.Status)) {
-		case "COMPLETED":
-			if len(state.Output.Outputs) == 0 {
-				return "", 0, fmt.Errorf("swap worker completed without a clip")
+func prepareLoraSources(ctx context.Context, job *VideoJob, state *characterSwapState, mu *sync.Mutex, sourcePath, workDir string) error {
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, loraSlots)
+	errs := make([]error, len(state.Chunks))
+	for i := range state.Chunks {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			mu.Lock()
+			chunk := state.Chunks[i]
+			mu.Unlock()
+			if chunk.SourceURL != "" || (chunk.Status == "completed" && chunk.OutputURL != "") {
+				return
 			}
-			videoURL, artifact, _, err := resolveH3RunpodArtifact(state.Output.Outputs[0], expectedURL)
+			clipPath := filepath.Join(workDir, fmt.Sprintf("lora-src-%02d.mp4", chunk.Index))
+			if err := lofiloop.RunFFmpeg(ctx, "-y", "-loglevel", "error", "-ss", trimSeconds(chunk.Start), "-i", sourcePath, "-t", trimSeconds(chunk.Length), "-an",
+				"-vf", "fps=24,scale='min(1280,iw)':-2,format=yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-movflags", "+faststart", clipPath); err != nil {
+				errs[i] = fmt.Errorf("could not cut the source into clips")
+				return
+			}
+			sourceURL, err := uploadCharacterSwapFile(ctx, clipPath, job.UserID, "video/mp4")
 			if err != nil {
-				return "", 0, err
+				errs[i] = fmt.Errorf("could not store a source clip")
+				return
 			}
-			if videoURL == "" {
-				videoURL, err = uploadH3RunpodVideo(ctx, artifact, "", state.Output.Outputs[0].ContentType)
-				if err != nil {
-					return "", 0, err
-				}
-			}
-			return videoURL, float64(state.ExecutionTime) / 1000, nil
-		case "FAILED", "CANCELLED", "TIMED_OUT":
-			return "", 0, fmt.Errorf("swap worker %s: %s", strings.ToLower(state.Status), truncateString(state.Error, 200))
-		}
-		time.Sleep(5 * time.Second)
+			mu.Lock()
+			state.Chunks[i].SourceURL = sourceURL
+			mu.Unlock()
+		}(i)
 	}
-	return "", 0, fmt.Errorf("swap clip did not finish in time")
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func processCharacterSwapLora(ctx context.Context, job *VideoJob, state *characterSwapState, sourcePath, workDir string) (string, string, error) {
@@ -381,88 +380,22 @@ func processCharacterSwapLora(ctx context.Context, job *VideoJob, state *charact
 		defer mu.Unlock()
 		_ = persistCharacterSwapState(job.ID, "processing", *state)
 	}
-	var wg sync.WaitGroup
-	slots := make(chan struct{}, loraSlots*2)
-	errs := make([]error, len(state.Chunks))
-	for i := range state.Chunks {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			slots <- struct{}{}
-			defer func() { <-slots }()
-			mu.Lock()
-			chunk := state.Chunks[i]
-			mu.Unlock()
-			if chunk.Status == "completed" && chunk.OutputURL != "" {
-				return
-			}
-			if chunk.SourceURL == "" {
-				clipPath := filepath.Join(workDir, fmt.Sprintf("lora-src-%02d.mp4", chunk.Index))
-				if err := lofiloop.RunFFmpeg(ctx, "-y", "-loglevel", "error", "-ss", trimSeconds(chunk.Start), "-i", sourcePath, "-t", trimSeconds(chunk.Length), "-an",
-					"-vf", "fps=24,scale='min(1280,iw)':-2,format=yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-movflags", "+faststart", clipPath); err != nil {
-					errs[i] = fmt.Errorf("could not cut the source into clips")
-					return
-				}
-				sourceURL, err := uploadCharacterSwapFile(ctx, clipPath, job.UserID, "video/mp4")
-				if err != nil {
-					errs[i] = fmt.Errorf("could not store a source clip")
-					return
-				}
-				chunk.SourceURL = sourceURL
-			}
-			var lastErr error
-			for attempt := 0; attempt < loraMaxAttempts; attempt++ {
-				if videoJobCancellationRequested(job.ID) {
-					errs[i] = fmt.Errorf("cancelled")
-					return
-				}
-				input := loraInput(*state, chunk)
-				if attempt > 0 {
-					input["seed"] = 1000 + chunk.Index*7 + attempt
-				}
-				if err := prepareH3RunpodOutputTarget(input, job.UserID); err != nil {
-					errs[i] = fmt.Errorf("could not prepare the clip upload")
-					return
-				}
-				expected, _ := input["_output_public_url"].(string)
-				var queued h3RunpodQueuedJob
-				if _, err := submitLoraRunpod(endpointID, input, &queued); err != nil || queued.ID == "" {
-					lastErr = fmt.Errorf("swap worker rejected clip %d", chunk.Index+1)
-					log.Printf("[character-swap-lora] job=%s clip=%d submit: %v", job.ID, chunk.Index, err)
-					time.Sleep(10 * time.Second)
-					continue
-				}
-				mu.Lock()
-				state.Chunks[i].SourceURL, state.Chunks[i].RequestID, state.Chunks[i].Status = chunk.SourceURL, queued.ID, "queued"
-				mu.Unlock()
-				persist()
-				outputURL, execSeconds, err := waitLoraClip(ctx, job.ID, endpointID, queued.ID, expected)
-				if err != nil {
-					lastErr = fmt.Errorf("clip %d: %w", chunk.Index+1, err)
-					log.Printf("[character-swap-lora] job=%s clip=%d attempt=%d: %v", job.ID, chunk.Index, attempt, err)
-					if err.Error() == "cancelled" {
-						errs[i] = err
-						return
-					}
-					continue
-				}
-				mu.Lock()
-				state.Chunks[i].OutputURL, state.Chunks[i].Status = outputURL, "completed"
-				state.Chunks[i].ProviderUSD += execSeconds * loraGPUUSDPerSecond()
-				state.Chunks[i].Retries = attempt
-				mu.Unlock()
-				persist()
-				return
-			}
-			errs[i] = lastErr
-		}(i)
+	if err := prepareLoraSources(ctx, job, state, &mu, sourcePath, workDir); err != nil {
+		return "", "", err
 	}
-	wg.Wait()
+	persist()
+	err := runLoraClips(ctx, job, endpointID, state, &mu, persist)
 	scheduleH3ScaleToZero(endpointID)
-	for _, err := range errs {
-		if err != nil {
-			return "", "", err
+	var capacity *loraCapacityError
+	if errors.As(err, &capacity) {
+		log.Printf("[character-swap-lora] job=%s no capacity: %s", job.ID, capacity.reason)
+		if loraFalFallbackAvailable(*state) {
+			return processLoraFalFallback(ctx, job, state, sourcePath, workDir)
 		}
+		return "", "", fmt.Errorf("%s", loraCapacityMessage)
+	}
+	if err != nil {
+		return "", "", err
 	}
 	if videoJobCancellationRequested(job.ID) {
 		return "", "", fmt.Errorf("cancelled")

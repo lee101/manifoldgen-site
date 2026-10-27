@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import threading
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -33,6 +34,10 @@ MIRROR_FILES = {
     "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors": (20970379616, "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779"),
     f"loras/{TURBO_NAME}": (1956193000, "5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c"),
 }
+QUANT_FILES = {
+    "fp8_scaled": ("diffusion_models/minimax_h3_ref2va_pruned_fp8_scaled.safetensors", 20958205608,
+                   "f86f2f79ebd2d76eb8eeb46091e83982e6ff51d255747e7b16e92834b392b8e9"),
+}
 COMFY_MODELS = Path(os.environ.get("SWAP_COMFY_MODELS", "/opt/ComfyUI/models"))
 ROOT = Path(os.environ.get("SWAP_MODELS_DIR") or ("/runpod-volume/h3-swap-models" if Path("/runpod-volume").is_dir() else str(COMFY_MODELS)))
 PART_BYTES = int(os.environ.get("SWAP_WEIGHT_PART_MB", "256")) << 20
@@ -40,6 +45,11 @@ CONNECTIONS = int(os.environ.get("SWAP_WEIGHT_CONNECTIONS", "48"))
 RETRIES = 6
 UA = {"User-Agent": "manifoldgen-h3-swap/1.0"}
 T0 = time.monotonic()
+PROGRESS = {"bytes": 0, "total": 0}
+
+
+def progress():
+    return {"weights_gb": round(PROGRESS["bytes"] / 1e9, 1), "weights_total_gb": round(PROGRESS["total"] / 1e9, 1)}
 
 
 def log(message):
@@ -71,6 +81,7 @@ def download_part(url, fd, start, end):
                 while chunk := response.read(4 << 20):
                     os.pwrite(fd, chunk, offset)
                     offset += len(chunk)
+                    PROGRESS["bytes"] += len(chunk)
             if offset - start != expected:
                 raise RuntimeError(f"short read {offset - start} of {expected}")
             return expected
@@ -80,7 +91,7 @@ def download_part(url, fd, start, end):
     raise RuntimeError(f"part {start}-{end} of {url} failed: {last}")
 
 
-def plan():
+def plan(quant="int8_convrot", lightx=()):
     manifest = fetch_json(f"{BASE}/manifest.json")
     if isinstance(manifest, list):
         manifest = {entry["path"]: entry for entry in manifest}
@@ -89,16 +100,31 @@ def plan():
     for path, (size, digest) in MIRROR_FILES.items():
         entries.append({"path": path, "size": size, "sha256": digest, "url": f"{LORA_BASE}/{path}",
                         "fallback": f"https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/{HF_REVISION}/{path}"})
-    for name, digest in LIGHTX_FILES.items():
+    for name in lightx:
+        digest = LIGHTX_FILES[name]
         hf = f"https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/{LIGHTX_REVISION}/{name}"
         entries.append({"path": f"loras/{name}", "size": 1_956_193_000, "sha256": digest, "url": hf})
+    if quant in QUANT_FILES:
+        path, size, digest = QUANT_FILES[quant]
+        entries.append({"path": path, "size": size, "sha256": digest,
+                        "url": f"https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/{HF_REVISION}/{path}"})
     return entries
 
 
-def ensure_weights():
-    wanted = plan()
+LIGHTX_LOCK = threading.Lock()
+
+
+def ensure_lightx(name, quant="int8_convrot"):
+    if name in LIGHTX_FILES and not (ROOT / "loras" / name).exists():
+        with LIGHTX_LOCK:
+            ensure_weights(quant, (name,))
+
+
+def ensure_weights(quant="int8_convrot", lightx=()):
+    wanted = plan(quant, lightx)
     pending = [e for e in wanted if not ((ROOT / e["path"]).exists() and (ROOT / e["path"]).stat().st_size == e["size"])]
     total = sum(e["size"] for e in pending)
+    PROGRESS["total"] += total
     log(f"{len(pending)} of {len(wanted)} files to fetch, {total / 1e9:.1f} GB")
     if pending:
         started = time.monotonic()

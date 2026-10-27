@@ -78,46 +78,9 @@ func checkCharacterSwapClip(ctx context.Context, state characterSwapState, clipP
 			map[string]interface{}{"type": "image_url", "image_url": map[string]string{"url": "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(frame)}},
 		)
 	}
-	payload, _ := json.Marshal(map[string]interface{}{
-		"model":           characterSwapQAModel,
-		"messages":        []map[string]interface{}{{"role": "user", "content": content}},
-		"response_format": map[string]string{"type": "json_object"},
-		"max_tokens":      300,
-		"temperature":     0,
-	})
-	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	defer cancel()
-	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, openPathsBaseURL+"/v1/chat/completions", bytes.NewReader(payload))
+	text, err := characterSwapVisionJSON(ctx, content)
 	if err != nil {
 		return false, err.Error()
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+openPathsAPIKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := backendClient.Do(httpReq)
-	if err != nil {
-		return false, "vision unavailable: " + err.Error()
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		return false, fmt.Sprintf("vision returned %d", resp.StatusCode)
-	}
-	var envelope struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Choices) == 0 {
-		return false, "vision returned no answer"
-	}
-	text := strings.TrimSpace(envelope.Choices[0].Message.Content)
-	if start := strings.Index(text, "{"); start > 0 {
-		text = text[start:]
-	}
-	if end := strings.LastIndex(text, "}"); end >= 0 {
-		text = text[:end+1]
 	}
 	var reply characterSwapQAReply
 	if err := json.Unmarshal([]byte(text), &reply); err != nil {
@@ -129,4 +92,51 @@ func checkCharacterSwapClip(ctx context.Context, state characterSwapState, clipP
 		reason = fmt.Sprintf("frames %v: %s", reply.LeakedFrames, reason)
 	}
 	return leaked, reason
+}
+
+// characterSwapVisionJSON sends one multimodal user message to the QA vision
+// model and returns the JSON object in its answer.
+func characterSwapVisionJSON(ctx context.Context, content []map[string]interface{}) (string, error) {
+	payload, _ := json.Marshal(map[string]interface{}{
+		"model":           characterSwapQAModel,
+		"messages":        []map[string]interface{}{{"role": "user", "content": content}},
+		"response_format": map[string]string{"type": "json_object"},
+		"max_tokens":      300,
+		"temperature":     0,
+	})
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, openPathsBaseURL+"/v1/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+openPathsAPIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := backendClient.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("vision unavailable: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("vision returned %d", resp.StatusCode)
+	}
+	var envelope struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Choices) == 0 {
+		return "", fmt.Errorf("vision returned no answer")
+	}
+	text := strings.TrimSpace(envelope.Choices[0].Message.Content)
+	if start := strings.Index(text, "{"); start > 0 {
+		text = text[start:]
+	}
+	if end := strings.LastIndex(text, "}"); end >= 0 {
+		text = text[:end+1]
+	}
+	return text, nil
 }

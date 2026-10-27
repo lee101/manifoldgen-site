@@ -6,6 +6,8 @@ boxout     : hide every person except one behind a background-coloured box
 crops      : cut one reference crop per person out of the swapped frame
 composite  : paste each pass's replaced person back onto the original footage
 posecheck  : joint error between two videos in torso units
+shotinfo   : person boxes and face visibility of one still
+shotcheck  : compare a swapped keyframe against its source frame (people, order, framing, face views)
 """
 import argparse, json, subprocess, sys
 import numpy as np, cv2
@@ -309,6 +311,71 @@ def cmd_posecheck(a):
     print(json.dumps({'sampled': int(len(errs)), 'mean_joint_error': round(float(errs.mean()), 4), 'p90': round(float(np.percentile(errs, 90)), 4), 'bad_fraction': round(float((errs > 0.5).mean()), 4)}))
 
 
+def still_people(m, img, min_height=0.04):
+    H, W = img.shape[:2]
+    out = []
+    for p in detect(m, img, conf=0.25):
+        x0, y0, x1, y1 = p['box']
+        if (y1 - y0) / H < min_height:
+            continue
+        face = False
+        if p['kc'] is not None:
+            kc = p['kc']
+            face = bool(kc[0] > 0.5 and (kc[1] > 0.5 or kc[2] > 0.5))
+        out.append({'box': [x0 / W, y0 / H, x1 / W, y1 / H], 'face': face})
+    out.sort(key=lambda q: (q['box'][0] + q['box'][2]) / 2)
+    return out
+
+
+def box_iou(a, b):
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])); iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def compare_stills(sp, op, min_iou=0.45, scale_lo=0.7, scale_hi=1.43):
+    reasons = []
+    res = {'src_people': len(sp), 'out_people': len(op), 'src_faces': sum(q['face'] for q in sp), 'out_faces': sum(q['face'] for q in op),
+           'mean_iou': 0.0, 'scale_ratio': 1.0}
+    if len(sp) != len(op):
+        reasons.append(f'people {len(op)} vs source {len(sp)}')
+    else:
+        ious, ratios = [], []
+        for i, (a, b) in enumerate(zip(sp, op)):
+            ious.append(box_iou(a['box'], b['box']))
+            ratios.append((b['box'][3] - b['box'][1]) / max(a['box'][3] - a['box'][1], 1e-6))
+            if a['face'] != b['face']:
+                reasons.append(f"person {i + 1} {'face' if b['face'] else 'back'} view differs from source")
+        if ious:
+            res['mean_iou'] = round(float(np.mean(ious)), 4)
+            res['scale_ratio'] = round(float(np.exp(np.mean(np.log(np.clip(ratios, 1e-3, 1e3))))), 4)
+            if res['mean_iou'] < min_iou:
+                reasons.append(f"framing iou {res['mean_iou']:.2f} < {min_iou}")
+            if not scale_lo <= res['scale_ratio'] <= scale_hi:
+                reasons.append(f"scale ratio {res['scale_ratio']:.2f}")
+    res['ok'] = not reasons
+    res['reasons'] = reasons
+    return res
+
+
+def cmd_shotinfo(a):
+    img = cv2.imread(a.image)
+    if img is None:
+        sys.exit('cannot read image')
+    print(json.dumps({'people': still_people(model(), img)}))
+
+
+def cmd_shotcheck(a):
+    m = model()
+    s, o = cv2.imread(a.src), cv2.imread(a.out)
+    if s is None or o is None:
+        sys.exit('cannot read image')
+    if o.shape[:2] != s.shape[:2]:
+        o = cv2.resize(o, (s.shape[1], s.shape[0]))
+    print(json.dumps(compare_stills(still_people(m, s), still_people(m, o), a.min_iou)))
+
+
 def main():
     p = argparse.ArgumentParser(); s = p.add_subparsers(dest='cmd', required=True)
     t = s.add_parser('track'); t.add_argument('--src', required=True); t.add_argument('--out', required=True); t.add_argument('--width', type=int, default=1280); t.add_argument('--height', type=int, default=720); t.add_argument('--max-people', type=int, default=3); t.set_defaults(f=cmd_track)
@@ -319,6 +386,8 @@ def main():
     pc = s.add_parser('personcrops'); pc.add_argument('--image', required=True); pc.add_argument('--out-dir', required=True); pc.add_argument('--max-people', type=int, default=3); pc.set_defaults(f=cmd_personcrops)
     g = s.add_parser('align'); g.add_argument('--ref', required=True); g.add_argument('--out', required=True); g.add_argument('--max-lag', type=float, default=0.75); g.set_defaults(f=cmd_align)
     q = s.add_parser('posecheck'); q.add_argument('--src', required=True); q.add_argument('--out', required=True); q.set_defaults(f=cmd_posecheck)
+    si = s.add_parser('shotinfo'); si.add_argument('--image', required=True); si.set_defaults(f=cmd_shotinfo)
+    sc = s.add_parser('shotcheck'); sc.add_argument('--src', required=True); sc.add_argument('--out', required=True); sc.add_argument('--min-iou', type=float, default=0.45); sc.set_defaults(f=cmd_shotcheck)
     a = p.parse_args(); a.f(a)
 
 

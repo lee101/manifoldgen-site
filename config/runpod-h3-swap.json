@@ -1,6 +1,10 @@
 {
   "image": "ghcr.io/lee101/h3-swap:cu130-20261001-r4",
-  "dockerStartCmd": ["python", "-u", "/src/swap_handler.py"],
+  "dockerStartCmd": [
+    "python",
+    "-u",
+    "/src/swap_handler.py"
+  ],
   "env": {
     "H3_MODERATION_DEVICE": "cpu",
     "MINIMAX_H3_LICENSE_ACCEPTED": "1",
@@ -14,16 +18,41 @@
   "flashboot": true,
   "scalerType": "REQUEST_COUNT",
   "scalerValue": 1,
-  "allowedCudaVersions": ["13.0"],
   "endpoints": [
     {
       "id": "vwsukvlfhbtqon",
       "templateId": "jm5rc2f10w",
       "name": "cog-manifold-h3-swap",
       "workersMax": 4,
-      "gpuTypeIds": ["NVIDIA H100 PCIe", "NVIDIA H100 80GB HBM3", "NVIDIA H100 NVL"]
+      "gpuTypeIds": [
+        "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+        "NVIDIA L40S",
+        "NVIDIA H100 PCIe",
+        "NVIDIA H100 80GB HBM3",
+        "NVIDIA H100 NVL",
+        "NVIDIA A100 80GB PCIe",
+        "NVIDIA A100-SXM4-80GB",
+        "NVIDIA H200",
+        "NVIDIA B200",
+        "NVIDIA RTX 6000 Ada Generation",
+        "NVIDIA L40",
+        "NVIDIA RTX A6000",
+        "NVIDIA A40"
+      ],
+      "gpuTypesUnverified": [
+        "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+        "NVIDIA A100-SXM4-80GB",
+        "NVIDIA RTX 6000 Ada Generation",
+        "NVIDIA L40",
+        "NVIDIA RTX A6000",
+        "NVIDIA A40"
+      ]
     }
   ],
   "weights": "https://appstatic.app.nz/models/Comfy-Org/MiniMax-H3/manifest.json",
-  "notes": "Character swap lane: MiniMax H3 Ref2VA int8 plus the Akatz character-swap LoRA (mirrored at manifoldgenstatic models/h3-character-swap, pinned to HF revision 62407e0 and sha256). Request contract: task-less input {video_url, image_urls[1-3], prompt, steps, turbo, easycache, megapixels, seed, _output_upload_url, _output_public_url}; the server app (H3_SWAP_RUNPOD_ENDPOINT_ID, H3_SWAP_WORKERS_MAX) fans a source out as <=5 s clips. Weights are fetched by 48 ranged connections at cold start; only the Ref2VA transformer, text encoder, video and audio VAEs are installed (no FL2VA). See workers/h3-swap/README.md."
+  "notes": "Character swap lane: MiniMax H3 Ref2VA int8 plus the Akatz character-swap LoRA (mirrored at manifoldgenstatic models/h3-character-swap, pinned to HF revision 62407e0 and sha256). Request contract: task-less input {video_url, image_urls[1-3], prompt, steps, turbo, easycache, megapixels, seed, _output_upload_url, _output_public_url}; the server app (H3_SWAP_RUNPOD_ENDPOINT_ID, H3_SWAP_WORKERS_MAX) fans a source out as <=5 s clips. Weights are fetched by 48 ranged connections at cold start; only the Ref2VA transformer, text encoder, video and audio VAEs are installed (no FL2VA). See workers/h3-swap/README.md.",
+  "minCudaVersion": "13.0",
+  "rollbackImage": "ghcr.io/lee101/h3-swap:cu130-20261001-r4",
+  "candidateImage": "ghcr.io/lee101/h3-swap:cu130-20261027-r7"
 }

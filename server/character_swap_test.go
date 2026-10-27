@@ -85,14 +85,21 @@ func TestCharacterSwapProviderUSD(t *testing.T) {
 		t.Fatalf("2K 30.16s charge %.4f", usd)
 	}
 	shots, _ := planCharacterSwapChunks(30.16, 5, 10, 20)
-	if fee := characterSwapShotFee(ServiceUsageRequest{MaxQuality: boolPtr(true)}, shots); math.Abs(fee-0.90) > 1e-9 {
+	if fee := characterSwapShotFee(ServiceUsageRequest{MaxQuality: boolPtr(true)}, shots); math.Abs(fee-0.36) > 1e-9 {
 		t.Fatalf("shot fee %.4f", fee)
 	}
-	if fee := characterSwapShotFee(ServiceUsageRequest{}, shots); fee != 0 {
+	if fee := characterSwapShotFee(ServiceUsageRequest{}, shots); math.Abs(fee-0.36) > 1e-9 {
+		t.Fatalf("per-shot keyframes are the default from three shots: %.4f", fee)
+	}
+	if fee := characterSwapShotFee(ServiceUsageRequest{MaxQuality: boolPtr(false)}, shots); fee != 0 {
 		t.Fatalf("shot fee should be waived when per-shot frames are off: %.4f", fee)
 	}
+	two, _ := planCharacterSwapChunks(30.16, 15)
+	if fee := characterSwapShotFee(ServiceUsageRequest{}, two); fee != 0 {
+		t.Fatalf("two shots keep the single frame by default: %.4f", fee)
+	}
 	usd, _, _, err := characterSwapEstimate(ServiceUsageRequest{Resolution: "768P", ImageURL: "https://x/i.png", MaxQuality: boolPtr(true)}, 30.16, 5, 10, 20)
-	if err != nil || math.Abs(usd-(6.04+0.90)) > 1e-9 {
+	if err != nil || math.Abs(usd-(6.04+0.36)) > 1e-9 {
 		t.Fatalf("estimate with shots %.4f %v", usd, err)
 	}
 }
@@ -159,9 +166,19 @@ func TestCharacterSwapFalInput(t *testing.T) {
 	}
 	shot := characterSwapFalInput(state, characterSwapChunk{Index: 3, Duration: 5, SourceURL: "https://x/c.mp4", ShotImage: "https://x/s.png", PrevFrame: "https://x/p.png"})
 	shotImages := shot["reference_image_urls"].([]string)
-	if len(shotImages) != 3 || shotImages[0] != "https://x/s.png" || shotImages[1] != "https://x/i.png" || !strings.Contains(shot["prompt"].(string), "Image 3 is the exact frame") {
+	if len(shotImages) != 2 || shotImages[0] != "https://x/s.png" || shotImages[1] != "https://x/p.png" || !strings.HasPrefix(shot["prompt"].(string), "Image 2 is the exact frame") || !strings.Contains(shot["prompt"].(string), characterSwapKeyframeLead) {
 		t.Fatalf("shot clip references wrong: %+v", shot)
 	}
+	state.IdentityURLs = []string{"https://x/f1.png", "https://x/b1.png"}
+	withCrops := characterSwapFalInput(state, characterSwapChunk{Index: 3, Duration: 5, SourceURL: "https://x/c.mp4", ShotImage: "https://x/s.png"})
+	if got := withCrops["reference_image_urls"].([]string); len(got) != 1 || got[0] != "https://x/s.png" {
+		t.Fatalf("a shot keyframe replaces the global frame and identity crops: %+v", got)
+	}
+	plain := characterSwapFalInput(state, characterSwapChunk{Index: 0, Duration: 5, SourceURL: "https://x/c.mp4"})
+	if got := plain["reference_image_urls"].([]string); len(got) != 3 || got[0] != "https://x/i.png" {
+		t.Fatalf("clips without a keyframe keep the global frame and identity crops: %+v", got)
+	}
+	state.IdentityURLs = nil
 	audio := ServiceUsageRequest{VideoURL: "https://example.com/a.mp4", ImageURL: "https://example.com/b.png", IncludeAudio: boolPtr(true)}
 	if err := normalizeCharacterSwapRequest(&audio); err != nil || !strings.Contains(audio.Prompt, "Audio 1") {
 		t.Fatalf("audio reference prompt missing: %v %q", err, audio.Prompt)

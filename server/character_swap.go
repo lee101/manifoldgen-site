@@ -16,13 +16,20 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/valyala/fasthttp"
 
 	"manifoldgen-site/lofiloop"
 )
+
+// characterSwapKeyframeLead introduces a per-shot keyframe as the only scene
+// reference. On the rap test video adding the global swapped frame or its body
+// and face crops pulled wide shots and close-ups back to the medium two-shot
+// (bbox IoU 0.15-0.36 vs 0.84-0.91 with the keyframe alone), and the keyframe
+// alone leaked the source performers in 4 of 10 clips until the prompt said
+// that Video 1 is a motion reference only.
+const characterSwapKeyframeLead = "Image 1 is the exact target look for this shot, including its camera distance, framing and composition: keep the same crop and positions throughout. The people in Video 1 are only a motion reference; never reproduce their faces, hats, chains, tattoos or clothing, show only the people exactly as they look in Image 1. "
 
 const (
 	characterSwapService        = "character_swap_video"
@@ -41,11 +48,9 @@ const (
 	characterSwapFalPath        = "minimax/h3-max/reference-to-video"
 	characterSwapFalRequestBase = "minimax/h3-max"
 	characterSwapAudioPrompt    = " Audio 1 is the song being performed: match the lip sync and rhythm to Audio 1."
-	characterSwapShotFeeUSD     = 0.30
+	characterSwapShotFeeUSD     = 0.12
 	characterSwapShotSlots      = 4
 )
-
-const characterSwapShotEditPrompt = "Edit the first image in place. The output must keep the identical crop, framing and camera distance as the first image: a close-up stays an equally tight close-up, a wide shot stays a wide shot, never a different framing. Replace each person in the first image with the corresponding character from the second image, keeping every replacement in the exact same position, pose, scale and framing as the person it replaces. Keep the set, the props, the lighting and everything else identical. Output exactly one image, not a collage or grid. Photorealistic music video still."
 
 // characterSwapRates is what fal bills per generated second; 2K and 4K are
 // upscales of the 768P base, so 768P is the native fidelity ceiling.
@@ -60,43 +65,50 @@ var characterSwapRenderSlots = make(chan struct{}, 2)
 const characterSwapDefaultVideoPrompt = "Image 1 is the exact target look: the new characters, their wardrobe, the set and the background. Video 1 is only the motion and camera reference. From the very first frame show only the characters of Image 1, never the original people. Each new character performs every move, gesture, lip movement and timing of the corresponding person in Video 1, in the identical position and scale. Same camera angles, same framing, same cuts, same props, and the background of Image 1 throughout. Photorealistic music video."
 
 type characterSwapChunk struct {
-	Index       int     `json:"index"`
-	Start       float64 `json:"start"`
-	Length      float64 `json:"length"`
-	Duration    int     `json:"duration"`
-	Lead        float64 `json:"lead"`
-	ShotStart   bool    `json:"shot_start,omitempty"`
-	ShotImage   string  `json:"shot_image,omitempty"`
-	SourceURL   string  `json:"source_url,omitempty"`
-	AudioURL    string  `json:"audio_url,omitempty"`
-	PrevFrame   string  `json:"prev_frame,omitempty"`
-	RequestID   string  `json:"request_id,omitempty"`
-	OutputURL   string  `json:"output_url,omitempty"`
-	Status      string  `json:"status,omitempty"`
-	ProviderUSD float64 `json:"provider_usd"`
-	Retries     int     `json:"retries,omitempty"`
-	QAReason    string  `json:"qa_reason,omitempty"`
-	LocalPath   string  `json:"-"`
+	Index       int                       `json:"index"`
+	Start       float64                   `json:"start"`
+	Length      float64                   `json:"length"`
+	Duration    int                       `json:"duration"`
+	Lead        float64                   `json:"lead"`
+	ShotStart   bool                      `json:"shot_start,omitempty"`
+	ShotImage   string                    `json:"shot_image,omitempty"`
+	SourceURL   string                    `json:"source_url,omitempty"`
+	AudioURL    string                    `json:"audio_url,omitempty"`
+	PrevFrame   string                    `json:"prev_frame,omitempty"`
+	RequestID   string                    `json:"request_id,omitempty"`
+	OutputURL   string                    `json:"output_url,omitempty"`
+	Status      string                    `json:"status,omitempty"`
+	ProviderUSD float64                   `json:"provider_usd"`
+	Retries     int                       `json:"retries,omitempty"`
+	QAReason    string                    `json:"qa_reason,omitempty"`
+	ShotNote    string                    `json:"shot_note,omitempty"`
+	Attempts    int                       `json:"attempts,omitempty"`
+	Metrics     *characterSwapClipMetrics `json:"metrics,omitempty"`
+	Flagged     bool                      `json:"flagged,omitempty"`
+	LipSynced   bool                      `json:"lipsynced,omitempty"`
+	LipSyncUSD  float64                   `json:"lipsync_usd,omitempty"`
+	LocalPath   string                    `json:"-"`
 }
 
 type characterSwapState struct {
-	Request          ServiceUsageRequest  `json:"request"`
-	Stage            string               `json:"stage"`
-	SourceSeconds    float64              `json:"source_seconds"`
-	FrameURL         string               `json:"frame_url,omitempty"`
-	SwappedImageURL  string               `json:"swapped_image_url,omitempty"`
-	ImageCredits     float64              `json:"image_credits"`
-	ImageUSD         float64              `json:"image_usd"`
-	Chunks           []characterSwapChunk `json:"chunks,omitempty"`
-	Cuts             []float64            `json:"cuts,omitempty"`
-	ShotFeeUSD       float64              `json:"shot_fee_usd"`
-	ShotImageUSD     float64              `json:"shot_image_usd"`
-	Exact            *exactState          `json:"exact,omitempty"`
-	IdentityURLs     []string             `json:"identity_urls,omitempty"`
-	EstimatedUSD     float64              `json:"estimated_usd"`
-	EstimatedCredits float64              `json:"estimated_credits"`
-	ChargeUSD        float64              `json:"charge_usd,omitempty"`
-	Recast           *recastState         `json:"recast,omitempty"`
+	Request          ServiceUsageRequest    `json:"request"`
+	Stage            string                 `json:"stage"`
+	SourceSeconds    float64                `json:"source_seconds"`
+	FrameURL         string                 `json:"frame_url,omitempty"`
+	SwappedImageURL  string                 `json:"swapped_image_url,omitempty"`
+	ImageCredits     float64                `json:"image_credits"`
+	ImageUSD         float64                `json:"image_usd"`
+	Chunks           []characterSwapChunk   `json:"chunks,omitempty"`
+	Cuts             []float64              `json:"cuts,omitempty"`
+	ShotFeeUSD       float64                `json:"shot_fee_usd"`
+	ShotImageUSD     float64                `json:"shot_image_usd"`
+	Exact            *exactState            `json:"exact,omitempty"`
+	IdentityURLs     []string               `json:"identity_urls,omitempty"`
+	EstimatedUSD     float64                `json:"estimated_usd"`
+	EstimatedCredits float64                `json:"estimated_credits"`
+	ChargeUSD        float64                `json:"charge_usd,omitempty"`
+	Recast           *recastState           `json:"recast,omitempty"`
+	FinalMetrics     map[string]interface{} `json:"final_metrics,omitempty"`
 }
 
 type characterSwapEnvelope struct {
@@ -138,6 +150,19 @@ func normalizeCharacterSwapRequest(req *ServiceUsageRequest) error {
 	}
 	if characterSwapIsLora(*req) {
 		return normalizeCharacterSwapLora(req)
+	}
+	if len(req.ReferenceImageURLs) > characterSwapKeyframeMaxRefs {
+		return fmt.Errorf("reference_image_urls accepts at most %d character photos", characterSwapKeyframeMaxRefs)
+	}
+	for i, ref := range req.ReferenceImageURLs {
+		ref = strings.TrimSpace(ref)
+		req.ReferenceImageURLs[i] = ref
+		if err := validateRestyleURL(ref); err != nil {
+			return fmt.Errorf("reference_image_urls: %w", err)
+		}
+		if err := characterSwapMediaKind(ref, "image"); err != nil {
+			return fmt.Errorf("reference_image_urls: %w", err)
+		}
 	}
 	if req.Prompt == "" {
 		req.Prompt = characterSwapDefaultVideoPrompt
@@ -185,14 +210,6 @@ func characterSwapUsesAudio(req ServiceUsageRequest) bool {
 	return req.IncludeAudio != nil && *req.IncludeAudio
 }
 
-// characterSwapPerShot reports whether every detected shot gets its own
-// redrawn reference frame so framing and camera distance follow the source
-// cut by cut. Opt-in: the redraws can reinterpret the set between shots, so
-// the single consistent frame stays the default.
-func characterSwapPerShot(req ServiceUsageRequest) bool {
-	return req.MaxQuality != nil && *req.MaxQuality
-}
-
 // characterSwapPlannedUnits is the number of provider generations the job
 // will run: reference clips for the H3 lane, performer passes for the exact
 // lane.
@@ -214,7 +231,7 @@ func characterSwapShotCount(chunks []characterSwapChunk) int {
 }
 
 func characterSwapShotFee(req ServiceUsageRequest, chunks []characterSwapChunk) float64 {
-	if !characterSwapPerShot(req) {
+	if !characterSwapPerShot(req, chunks) {
 		return 0
 	}
 	extra := characterSwapShotCount(chunks) - 1
@@ -322,7 +339,7 @@ func characterSwapEstimate(req ServiceUsageRequest, seconds float64, cuts ...flo
 	if err != nil {
 		return 0, 0, nil, err
 	}
-	charged := characterSwapChargeUSD(req.Resolution, math.Min(seconds, characterSwapMaxSeconds)) + characterSwapShotFee(req, chunks)
+	charged := characterSwapChargeUSD(req.Resolution, math.Min(seconds, characterSwapMaxSeconds)) + characterSwapShotFee(req, chunks) + characterSwapLipSyncMaxFee(req, chunks)
 	if characterSwapIsExact(req) {
 		charged = exactChargeUSD(req.Resolution, math.Min(seconds, characterSwapMaxSeconds), exactPeople(req))
 	}
@@ -370,8 +387,14 @@ func handleCharacterSwapEstimate(ctx *fasthttp.RequestCtx) {
 	}
 	shots := characterSwapShotCount(chunks)
 	generation := 50 * len(chunks)
-	if characterSwapPerShot(req) && shots > 1 {
-		generation += 90 * ((shots + characterSwapShotSlots - 1) / characterSwapShotSlots)
+	if characterSwapPerShot(req, chunks) && shots > 1 {
+		generation += 60 * ((shots + characterSwapShotSlots - 1) / characterSwapShotSlots)
+	}
+	if characterSwapScoreAvailable() {
+		generation += 25 * len(chunks)
+	}
+	if characterSwapLipSyncRequested(req) {
+		generation += 30 * len(chunks)
 	}
 	if characterSwapIsExact(req) {
 		exactChunks := planExactChunks(seconds, cuts)
@@ -390,7 +413,7 @@ func handleCharacterSwapEstimate(ctx *fasthttp.RequestCtx) {
 		"source_seconds": math.Round(seconds*100) / 100, "chunks": len(chunks), "shots": shots,
 		"resolution": req.Resolution, "image_included": req.ImageURL == "",
 		"image_cost_usd": servicePricesUSD["gpt_image"], "rate_usd_per_second": characterSwapPriceRates[req.Resolution],
-		"per_shot_frames": characterSwapPerShot(req), "shot_fee_usd": characterSwapShotFee(req, chunks), "shot_fee_unit_usd": characterSwapShotFeeUSD,
+		"per_shot_frames": characterSwapPerShot(req, chunks), "keyframe_model": characterSwapKeyframeModel, "lipsync": characterSwapLipSyncRequested(req), "lipsync_max_fee_usd": characterSwapLipSyncMaxFee(req, chunks), "shot_fee_usd": characterSwapShotFee(req, chunks), "shot_fee_unit_usd": characterSwapShotFeeUSD,
 		"audio_reference": characterSwapUsesAudio(req), "estimated_generation_seconds": generation,
 	})
 }
@@ -618,7 +641,7 @@ func processCharacterSwapJob(job *VideoJob) {
 		settleCharacterSwap(job, state, outputURL, outputPath)
 		return
 	}
-	if characterSwapPerShot(state.Request) && characterSwapShotCount(state.Chunks) > 1 {
+	if characterSwapPerShot(state.Request, state.Chunks) {
 		state.Stage = "shots"
 		_ = persistCharacterSwapState(job.ID, "processing", state)
 		redrawCharacterSwapShots(ctx, job, user, &state, sourcePath, workDir)
@@ -636,7 +659,7 @@ func processCharacterSwapJob(job *VideoJob) {
 		failCharacterSwap(job, state, false, err.Error())
 		return
 	}
-	if err := runCharacterSwapChunks(ctx, job, &state, workDir); err != nil {
+	if err := runCharacterSwapChunks(ctx, job, &state, sourcePath, workDir); err != nil {
 		failCharacterSwap(job, state, false, err.Error())
 		return
 	}
@@ -649,6 +672,11 @@ func processCharacterSwapJob(job *VideoJob) {
 	if err != nil {
 		failCharacterSwap(job, state, false, "could not assemble the final video: "+truncateString(err.Error(), 200))
 		return
+	}
+	if characterSwapScoreAvailable() {
+		if report, ok := runCharacterSwapScore(ctx, sourcePath, outputPath, characterSwapScoreRefs(ctx, state, workDir), workDir); ok {
+			state.FinalMetrics = report.publicResult()
+		}
 	}
 	outputURL, err := publishFinalVideo(ctx, outputPath, job.UserID, func() (string, error) {
 		return uploadCharacterSwapFile(ctx, outputPath, job.UserID, "video/mp4")
@@ -734,91 +762,6 @@ func characterSwapIdentityRefs(ctx context.Context, job *VideoJob, swappedURL, w
 	return refs
 }
 
-// redrawCharacterSwapShots gives every shot after the first its own swapped
-// reference frame: the shot's opening frame is redrawn by GPT Image 2 with the
-// user's swapped frame as the identity reference, so wide shots, close-ups and
-// camera angles are reproduced instead of every clip inheriting one framing.
-// A failed redraw silently falls back to the global swapped frame.
-func redrawCharacterSwapShots(ctx context.Context, job *VideoJob, user *User, state *characterSwapState, sourcePath, workDir string) {
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	slots := make(chan struct{}, characterSwapShotSlots)
-	first := true
-	for i := range state.Chunks {
-		chunk := state.Chunks[i]
-		if !chunk.ShotStart {
-			continue
-		}
-		if first {
-			first = false
-			continue
-		}
-		if chunk.ShotImage != "" {
-			continue
-		}
-		wg.Add(1)
-		go func(i int, chunk characterSwapChunk) {
-			defer wg.Done()
-			slots <- struct{}{}
-			defer func() { <-slots }()
-			framePath := filepath.Join(workDir, fmt.Sprintf("shot-%02d.png", chunk.Index))
-			at := chunk.Start + math.Min(0.4, chunk.Length/2)
-			if err := lofiloop.RunFFmpeg(ctx, "-y", "-loglevel", "error", "-ss", trimSeconds(at), "-i", sourcePath, "-frames:v", "1", "-update", "1", framePath); err != nil {
-				return
-			}
-			frameURL, err := uploadCharacterSwapFile(ctx, framePath, job.UserID, "image/png")
-			if err != nil {
-				return
-			}
-			prompt := characterSwapShotEditPrompt
-			if extra := strings.TrimSpace(state.Request.CharacterPrompt); extra != "" {
-				prompt += " " + extra
-			}
-			result, err := proxyOpenPathsShotEdit(prompt, frameURL, state.SwappedImageURL)
-			if err != nil {
-				log.Printf("[character-swap] job=%s shot at %.2fs redraw failed: %v", job.ID, chunk.Start, err)
-				return
-			}
-			editReq := ServiceUsageRequest{Service: "image_edit", Prompt: prompt, ImageURL: frameURL, Width: 1536, Height: 1024}
-			result, saved := persistGeneratedZImage(editReq, user, result)
-			hosted := characterSwapHostedImage(result, saved)
-			mu.Lock()
-			state.ShotImageUSD += servicePricesUSD["gpt_image"]
-			if hosted != "" {
-				state.Chunks[i].ShotImage = hosted
-			} else {
-				log.Printf("[character-swap] job=%s shot at %.2fs redraw returned no hosted image", job.ID, chunk.Start)
-			}
-			_ = persistCharacterSwapState(job.ID, "processing", *state)
-			mu.Unlock()
-		}(i, chunk)
-	}
-	wg.Wait()
-	current := ""
-	for i := range state.Chunks {
-		if state.Chunks[i].ShotStart {
-			current = state.Chunks[i].ShotImage
-		} else if state.Chunks[i].ShotImage == "" {
-			state.Chunks[i].ShotImage = current
-		}
-	}
-}
-
-// proxyOpenPathsShotEdit is the two-image variant of the image-edit lane: the
-// shot frame is edited in place and the swapped frame rides along as the
-// identity reference for the replacement characters.
-func proxyOpenPathsShotEdit(prompt, frameURL, identityURL string) ([]byte, error) {
-	if strings.TrimSpace(openPathsAPIKey) == "" {
-		return nil, fmt.Errorf("shot redraw requires OPENPATHS_API_KEY")
-	}
-	payload, _ := json.Marshal(map[string]interface{}{
-		"model": "gpt-image-2", "prompt": prompt, "size": "1536x1024", "n": 1,
-		"image_url": frameURL, "images": []map[string]string{{"url": frameURL}, {"url": identityURL}},
-		"reference_image_urls": []string{frameURL, identityURL},
-	})
-	return callOpenPathsImageEdit(openPathsBaseURL+"/v1/images/edits", payload)
-}
-
 func prepareCharacterSwapChunks(ctx context.Context, job *VideoJob, state *characterSwapState, sourcePath, workDir string) error {
 	useAudio := characterSwapUsesAudio(state.Request)
 	for i := range state.Chunks {
@@ -846,16 +789,7 @@ func prepareCharacterSwapChunks(ctx context.Context, job *VideoJob, state *chara
 		}
 		chunk.SourceURL = sourceURL
 		if useAudio {
-			var audioArgs []string
-			if chunk.Index == 0 || chunk.ShotStart {
-				delay := int(math.Round(chunk.Lead * 1000))
-				audioArgs = []string{"-y", "-loglevel", "error", "-ss", trimSeconds(chunk.Start), "-i", sourcePath, "-t", trimSeconds(chunk.Length), "-vn",
-					"-af", fmt.Sprintf("adelay=%d|%d", delay, delay)}
-			} else {
-				audioArgs = []string{"-y", "-loglevel", "error", "-ss", trimSeconds(chunk.Start - chunk.Lead), "-i", sourcePath, "-t", trimSeconds(float64(chunk.Duration)), "-vn"}
-			}
-			audioArgs = append(audioArgs, "-ac", "2", "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "160k", audioPath)
-			if err := lofiloop.RunFFmpeg(ctx, audioArgs...); err == nil {
+			if err := characterSwapChunkAudio(ctx, *chunk, sourcePath, audioPath); err == nil {
 				if audioURL, err := uploadCharacterSwapFile(ctx, audioPath, job.UserID, "audio/mpeg"); err == nil {
 					chunk.AudioURL = audioURL
 				}
@@ -869,11 +803,12 @@ func prepareCharacterSwapChunks(ctx context.Context, job *VideoJob, state *chara
 func characterSwapFalInput(state characterSwapState, chunk characterSwapChunk) map[string]interface{} {
 	images := []string{state.SwappedImageURL}
 	prompt := state.Request.Prompt
-	if chunk.ShotImage != "" && chunk.ShotImage != state.SwappedImageURL {
-		images = []string{chunk.ShotImage, state.SwappedImageURL}
-		prompt = "Image 1 is the exact target look for this shot, including its camera distance and framing. Image 2 shows the same characters in another shot and is only an identity reference. " + prompt
+	keyframe := chunk.ShotImage != "" && chunk.ShotImage != state.SwappedImageURL
+	if keyframe {
+		images = []string{chunk.ShotImage}
+		prompt = characterSwapKeyframeLead + prompt
 	}
-	if len(state.IdentityURLs) > 0 {
+	if len(state.IdentityURLs) > 0 && !keyframe {
 		first := len(images) + 1
 		images = append(images, state.IdentityURLs...)
 		prompt = fmt.Sprintf("Images %d to %d are close-up identity references for the characters, left to right (faces first, then full bodies): keep each character's exact face, hair, skin, build and outfit in every frame, including close-ups. ", first, len(images)) + prompt
@@ -901,11 +836,13 @@ func characterSwapFalInput(state characterSwapState, chunk characterSwapChunk) m
 	return input
 }
 
-// runCharacterSwapChunks renders the clips in order: each clip receives the
-// last usable frame of the previous clip as a second reference image so the
-// boundaries continue seamlessly, and every clip is vision-checked for source
-// performers leaking through before the next one is started.
-func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *characterSwapState, workDir string) error {
+// runCharacterSwapChunks renders the clips in order: each clip receives its
+// shot keyframe and, inside a shot, the last usable frame of the previous clip
+// as references. Every clip is vision-checked for source performers leaking
+// through and scored by the metrics CLI against its source segment; clips under
+// the threshold are regenerated up to twice and the best attempt by combined
+// score is kept. Weak close-ups can then get an optional lip-sync pass.
+func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *characterSwapState, sourcePath, workDir string) error {
 	persist := func() { _ = persistCharacterSwapState(job.ID, "processing", *state) }
 	generate := func(chunk characterSwapChunk, seed int) (string, error) {
 		input := characterSwapFalInput(*state, chunk)
@@ -929,6 +866,38 @@ func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *character
 		}
 		state.Chunks[chunk.Index].ProviderUSD += characterSwapRates[state.Request.Resolution] * float64(chunk.Duration)
 		return outputURL, nil
+	}
+	scoring := characterSwapScoreAvailable()
+	threshold := characterSwapScoreMin()
+	var refs []string
+	if scoring {
+		refs = characterSwapScoreRefs(ctx, *state, workDir)
+	}
+	tags := 0
+	evaluate := func(chunk characterSwapChunk, outputURL, path string) *characterSwapAttempt {
+		qaState := *state
+		if chunk.ShotImage != "" {
+			qaState.SwappedImageURL = chunk.ShotImage
+		}
+		attempt := &characterSwapAttempt{URL: outputURL, Path: path}
+		if characterSwapQAEnabled() {
+			attempt.Leaked, attempt.Reason = checkCharacterSwapClip(ctx, qaState, path)
+			if attempt.Leaked {
+				attempt.LeakCount = characterSwapLeakCount(attempt.Reason)
+			}
+		}
+		if scoring {
+			tags++
+			if srcSeg, outSeg, err := characterSwapClipSegments(ctx, chunk, sourcePath, path, workDir, fmt.Sprintf("t%d", tags)); err == nil {
+				if report, ok := runCharacterSwapScore(ctx, srcSeg, outSeg, refs, workDir); ok {
+					metrics := report.summary()
+					attempt.Metrics, attempt.Report = &metrics, report
+					attempt.Score = characterSwapClipScore(metrics.Overall, attempt.Leaked, attempt.LeakCount)
+				}
+				_ = os.Remove(outSeg)
+			}
+		}
+		return attempt
 	}
 	for i := range state.Chunks {
 		if videoJobCancellationRequested(job.ID) {
@@ -968,85 +937,53 @@ func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *character
 		}
 		state.Chunks[i].Status = "checking"
 		persist()
-		leaked, reason := false, ""
-		qaState := *state
-		if chunk.ShotImage != "" {
-			qaState.SwappedImageURL = chunk.ShotImage
-		}
-		if characterSwapQAEnabled() {
-			leaked, reason = checkCharacterSwapClip(ctx, qaState, localPath)
-		}
-		bestLeakCount := 0
-		if leaked {
-			bestLeakCount = characterSwapLeakCount(reason)
-		}
-		for attempt := 1; leaked && attempt <= characterSwapMaxRetries && !videoJobCancellationRequested(job.ID); attempt++ {
-			log.Printf("[character-swap] job=%s clip %d leaked source performers (%s); regenerating (attempt %d)", job.ID, chunk.Index+1, reason, attempt)
-			retryURL, err := generate(chunk, int(time.Now().UnixNano()%2_000_000_000)+chunk.Index+attempt)
+		chosen := *evaluate(chunk, outputURL, localPath)
+		attempts, kept := 1, 1
+		for retry := 1; !chosen.acceptable(threshold) && retry <= characterSwapMaxRetries && !videoJobCancellationRequested(job.ID); retry++ {
+			log.Printf("[character-swap] job=%s clip %d below gate (%s); regenerating (attempt %d)", job.ID, chunk.Index+1, chosen.describe(), retry)
+			retryURL, err := generate(chunk, int(time.Now().UnixNano()%2_000_000_000)+chunk.Index+retry)
 			if err != nil {
 				break
 			}
 			state.Chunks[i].Retries++
 			persist()
-			retryPath := filepath.Join(workDir, fmt.Sprintf("out-%02d-retry%d.mp4", chunk.Index, attempt))
+			retryPath := filepath.Join(workDir, fmt.Sprintf("out-%02d-retry%d.mp4", chunk.Index, retry))
 			if err := downloadURLToFile(ctx, retryURL, retryPath); err != nil {
 				continue
 			}
-			retryLeaked, retryReason := checkCharacterSwapClip(ctx, qaState, retryPath)
-			if !retryLeaked {
-				outputURL, localPath, leaked, reason = retryURL, retryPath, false, fmt.Sprintf("regenerated on attempt %d: %s", attempt, reason)
-				break
-			}
-			if count := characterSwapLeakCount(retryReason); count < bestLeakCount {
-				outputURL, localPath, bestLeakCount, reason = retryURL, retryPath, count, "kept least-leaking attempt: "+retryReason
+			attempts++
+			if candidate := evaluate(chunk, retryURL, retryPath); candidate.better(chosen) {
+				chosen, kept = *candidate, attempts
 			}
 		}
-		state.Chunks[i].OutputURL = outputURL
-		state.Chunks[i].LocalPath = localPath
+		lipNote := ""
+		chosen, lipNote = characterSwapMaybeLipSync(ctx, job, state, chunk, chosen, sourcePath, workDir, func(c characterSwapChunk, path string) (*characterSwapAttempt, bool) {
+			return evaluate(c, "", path), true
+		})
+		reason := chosen.describe()
+		if attempts > 1 {
+			reason = fmt.Sprintf("kept attempt %d of %d: %s", kept, attempts, reason)
+		}
+		if chosen.Metrics != nil && chosen.Metrics.Pose > characterSwapPoseFlagLimit() {
+			state.Chunks[i].Flagged = true
+			reason += fmt.Sprintf("; flagged: pose error %.2f stays above %.2f", chosen.Metrics.Pose, characterSwapPoseFlagLimit())
+		}
+		if lipNote != "" {
+			reason += "; " + lipNote
+		}
+		state.Chunks[i].OutputURL = chosen.URL
+		state.Chunks[i].LocalPath = chosen.Path
 		state.Chunks[i].Status = "completed"
-		state.Chunks[i].QAReason = reason
+		state.Chunks[i].Attempts = attempts
+		state.Chunks[i].Metrics = chosen.Metrics
+		state.Chunks[i].QAReason = strings.TrimPrefix(reason, "; ")
 		persist()
 	}
 	return nil
 }
 
 func waitCharacterSwapChunk(ctx context.Context, jobID, requestID string) (string, error) {
-	base := "https://queue.fal.run/" + characterSwapFalRequestBase + "/requests/" + url.PathEscape(requestID)
-	deadline := time.Now().Add(characterSwapChunkTimeout)
-	for time.Now().Before(deadline) {
-		if ctx.Err() != nil {
-			return "", fmt.Errorf("timed out")
-		}
-		if videoJobCancellationRequested(jobID) {
-			return "", fmt.Errorf("cancelled")
-		}
-		data, _, err := callFalQueue(http.MethodGet, base+"/status", nil)
-		if err == nil {
-			var status falQueueResponse
-			_ = json.Unmarshal(data, &status)
-			switch strings.ToLower(strings.TrimSpace(status.Status)) {
-			case "completed", "succeeded":
-				result, _, err := callFalQueue(http.MethodGet, base, nil)
-				if err != nil {
-					return "", fmt.Errorf("completed clip could not be retrieved")
-				}
-				var payload map[string]interface{}
-				if err := json.Unmarshal(result, &payload); err != nil {
-					return "", fmt.Errorf("video service returned an invalid result")
-				}
-				if video, ok := payload["video"].(map[string]interface{}); ok {
-					if outputURL, _ := video["url"].(string); outputURL != "" {
-						return outputURL, nil
-					}
-				}
-				return "", fmt.Errorf("video service returned no clip")
-			case "failed", "cancelled", "canceled":
-				return "", fmt.Errorf("video generation failed")
-			}
-		}
-		time.Sleep(3 * time.Second)
-	}
-	return "", fmt.Errorf("video generation did not finish in time")
+	return waitFalVideoResult(ctx, jobID, characterSwapFalRequestBase, requestID, characterSwapChunkTimeout)
 }
 
 // muxCharacterSwapVideo trims each clip's lead-in, normalises the clips to
@@ -1119,12 +1056,21 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 		}
 	}
 	state.ShotFeeUSD = math.Round(float64(redrawn)*characterSwapShotFeeUSD*100) / 100
-	chargedUSD := characterSwapChargeUSD(state.Request.Resolution, state.SourceSeconds) + state.ShotFeeUSD
-	providerUSD, retries := state.ShotImageUSD*0.88, 0
+	lipSeconds, lipClips, flagged := 0.0, 0, []int{}
+	providerUSD, retries := state.ShotImageUSD, 0
 	for _, chunk := range state.Chunks {
-		providerUSD += chunk.ProviderUSD
+		providerUSD += chunk.ProviderUSD + chunk.LipSyncUSD
 		retries += chunk.Retries
+		if chunk.LipSynced {
+			lipSeconds += chunk.Length
+			lipClips++
+		}
+		if chunk.Flagged {
+			flagged = append(flagged, chunk.Index)
+		}
 	}
+	lipFee := characterSwapLipSyncFee(lipSeconds)
+	chargedUSD := characterSwapChargeUSD(state.Request.Resolution, state.SourceSeconds) + state.ShotFeeUSD + lipFee
 	if characterSwapIsLora(state.Request) {
 		chargedUSD = loraChargeUSD(state.Request, state.SourceSeconds)
 	}
@@ -1155,9 +1101,12 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 		"cuts":              state.Cuts,
 		"kind":              strings.TrimSpace(state.Request.Kind),
 		"shots":             characterSwapShotCount(state.Chunks),
-		"per_shot_frames":   characterSwapPerShot(state.Request),
+		"per_shot_frames":   characterSwapPerShot(state.Request, state.Chunks),
 		"shot_fee_usd":      state.ShotFeeUSD,
 		"audio_reference":   characterSwapUsesAudio(state.Request),
+		"flagged_clips":     flagged,
+		"lipsync_clips":     lipClips,
+		"lipsync_fee_usd":   lipFee,
 		"resolution":        state.Request.Resolution,
 		"fps":               24,
 		"format":            finalVideoFormat(outputURL),
@@ -1166,6 +1115,9 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 		"image_charged_usd": state.ImageUSD,
 		"cute_price_usd":    cutePrice,
 		"credits_used":      chargedUSD/cutePrice + state.ImageCredits,
+	}
+	if state.FinalMetrics != nil {
+		result["metrics"] = state.FinalMetrics
 	}
 	if state.Exact != nil {
 		result["people"] = state.Exact.People

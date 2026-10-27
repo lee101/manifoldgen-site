@@ -7,6 +7,7 @@ from pathlib import Path
 
 FPS = 24
 REF2VA_MODEL = "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+QUANT_MODELS = {"int8_convrot": REF2VA_MODEL, "fp8_scaled": "minimax_h3_ref2va_pruned_fp8_scaled.safetensors"}
 TEXT_ENCODER = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 VIDEO_VAE = "minimax_h3_video_vae_fp16.safetensors"
 AUDIO_VAE = "minimax_h3_audio_vae_fp32.safetensors"
@@ -81,7 +82,7 @@ def normalize_source(src, dst, width, height, frames):
 
 def build_swap_graph(*, prompt, width, height, frames, steps, seed, video_name, image_names, turbo=False,
                      lora_strength=1.0, ref_image_size="match", prefix="swap", easycache=None, sol=False, spectrum=False, fbc=None,
-                     swap_lora=SWAP_LORA, sampler="res_multistep", scheduler="simple"):
+                     swap_lora=SWAP_LORA, sampler="res_multistep", scheduler="simple", model_name=REF2VA_MODEL, vae_tiled=False, compile_backend=""):
     if not image_names:
         raise ValueError("at least one character image is required")
     turbo_key = "ref2v4" if turbo is True else (turbo or None)
@@ -90,7 +91,7 @@ def build_swap_graph(*, prompt, width, height, frames, steps, seed, video_name, 
     if turbo is True and int(steps) != TURBO_STEPS:
         raise ValueError(f"turbo requires exactly {TURBO_STEPS} steps")
     graph = {
-        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": REF2VA_MODEL, "weight_dtype": "default"}},
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": model_name, "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": TEXT_ENCODER, "type": "minimax", "device": "default"}},
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": VIDEO_VAE}},
         "4": {"class_type": "VAELoader", "inputs": {"vae_name": AUDIO_VAE}},
@@ -117,6 +118,9 @@ def build_swap_graph(*, prompt, width, height, frames, steps, seed, video_name, 
         graph["27"] = {"class_type": "ApplyMiniMaxH3FirstBlockCache", "inputs": {"model": model, "mode": fbc, "threshold": 0.1, "start_percent": 0.1,
                                                                                  "end_percent": 0.95, "max_consecutive_hits": 2, "temporal_guard": False}}
         model = ["27", 0]
+    if compile_backend:
+        graph["28"] = {"class_type": "TorchCompileModel", "inputs": {"model": model, "backend": compile_backend}}
+        model = ["28", 0]
     if easycache is not None:
         graph["25"] = {"class_type": "EasyCache", "inputs": {
             "model": model, "reuse_threshold": easycache[0], "start_percent": easycache[1],
@@ -137,7 +141,8 @@ def build_swap_graph(*, prompt, width, height, frames, steps, seed, video_name, 
         "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": sampler}},
         "9": {"class_type": "BasicScheduler", "inputs": {"model": model, "scheduler": scheduler, "steps": int(steps), "denoise": 1.0}},
         "10": {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": ["7", 0], "guider": ["6", 0], "sampler": ["8", 0], "sigmas": ["9", 0], "latent_image": ["5", 1]}},
-        "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
+        "11": ({"class_type": "VAEDecodeTiled", "inputs": {"samples": ["10", 0], "vae": ["3", 0], "tile_size": 512, "overlap": 64, "temporal_size": 64, "temporal_overlap": 8}}
+               if vae_tiled else {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}}),
         "13": {"class_type": "CreateVideo", "inputs": {"images": ["11", 0], "fps": float(FPS)}},
         "14": {"class_type": "SaveVideo", "inputs": {"video": ["13", 0], "filename_prefix": prefix, "format": "auto", "codec": "auto"}},
     })
