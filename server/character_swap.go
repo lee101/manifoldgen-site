@@ -1173,9 +1173,9 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 		"credits_used":      chargedUSD/cutePrice + state.ImageCredits,
 	}
 	if state.FinalMetrics != nil {
-		result["metrics"] = state.FinalMetrics
+		result["quality_metrics"] = state.FinalMetrics
 	} else {
-		result["metrics"] = map[string]interface{}{"available": false, "reason": "objective metrics are not computed on this lane"}
+		result["quality_metrics"] = map[string]interface{}{"available": false, "reason": "objective metrics are not computed on this lane"}
 	}
 	if state.Exact != nil {
 		result["people"] = state.Exact.People
