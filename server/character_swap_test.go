@@ -161,7 +161,7 @@ func TestCharacterSwapFalInput(t *testing.T) {
 		t.Fatalf("unexpected fal input %+v", input)
 	}
 	first := characterSwapFalInput(state, characterSwapChunk{Index: 0, Duration: 5, SourceURL: "https://x/c.mp4"})
-	if len(first["reference_image_urls"].([]string)) != 1 || first["prompt"] != "p" {
+	if len(first["reference_image_urls"].([]string)) != 1 || first["prompt"] != "p"+characterSwapBackgroundClause("") {
 		t.Fatalf("first clip should not reference a previous frame: %+v", first)
 	}
 	shot := characterSwapFalInput(state, characterSwapChunk{Index: 3, Duration: 5, SourceURL: "https://x/c.mp4", ShotImage: "https://x/s.png", PrevFrame: "https://x/p.png"})

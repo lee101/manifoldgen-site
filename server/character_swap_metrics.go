@@ -25,6 +25,8 @@ const (
 	characterSwapPoseFlag       = 0.5
 	characterSwapLeakPenalty    = 25.0
 	characterSwapScoreMaxMisses = 3
+	characterSwapBGDriftLimit   = 25.0
+	characterSwapBGPenalty      = 15.0
 )
 
 // swapScoreReport is the JSON written by tools/swapscore/swapscore.py.
@@ -36,6 +38,7 @@ type characterSwapClipMetrics struct {
 	Framing  float64 `json:"framing"`
 	Identity float64 `json:"identity"`
 	Lipsync  float64 `json:"lipsync"`
+	BGDrift  float64 `json:"bg_drift"`
 }
 
 var (
@@ -79,6 +82,7 @@ func (r swapScoreReport) summary() characterSwapClipMetrics {
 	m.Framing, _ = r.sectionNumber("framing", "score")
 	m.Identity, _ = r.sectionNumber("identity", "score")
 	m.Lipsync, _ = r.sectionNumber("lipsync", "score")
+	m.BGDrift, _ = r.sectionNumber("background", "color_drift")
 	return m
 }
 
@@ -101,11 +105,30 @@ func characterSwapScoreMin() float64 {
 	return characterSwapScoreMinimum
 }
 
+// characterSwapBGLimit is the clip background drift (Lab dE against its source
+// segment) above which a clip is regenerated; the metric's own overall weight
+// for background is only 5%, so a black wall barely moves the overall score.
+func characterSwapBGLimit() float64 {
+	if v, err := strconv.ParseFloat(strings.TrimSpace(getEnv("CHARACTER_SWAP_BG_DRIFT", "")), 64); err == nil && v > 0 {
+		return v
+	}
+	return characterSwapBGDriftLimit
+}
+
 func characterSwapPoseFlagLimit() float64 {
 	if v, err := strconv.ParseFloat(strings.TrimSpace(getEnv("CHARACTER_SWAP_POSE_FLAG", "")), 64); err == nil && v > 0 {
 		return v
 	}
 	return characterSwapPoseFlag
+}
+
+func characterSwapScoreScriptCandidates() []string {
+	var candidates []string
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(dir, "tools", "swapscore", "swapscore.py"), filepath.Join(dir, "..", "tools", "swapscore", "swapscore.py"))
+	}
+	return append(candidates, filepath.Join("tools", "swapscore", "swapscore.py"), filepath.Join("..", "tools", "swapscore", "swapscore.py"))
 }
 
 // characterSwapScoreCommand resolves how to run the metrics CLI:
@@ -118,13 +141,7 @@ func characterSwapScoreCommand() (name string, prefix []string, ok bool) {
 	}
 	script := strings.TrimSpace(getEnv("CHARACTER_SWAP_SCORE_SCRIPT", ""))
 	if script == "" {
-		var candidates []string
-		if exe, err := os.Executable(); err == nil {
-			dir := filepath.Dir(exe)
-			candidates = append(candidates, filepath.Join(dir, "tools", "swapscore", "swapscore.py"), filepath.Join(dir, "..", "tools", "swapscore", "swapscore.py"))
-		}
-		candidates = append(candidates, filepath.Join("tools", "swapscore", "swapscore.py"), filepath.Join("..", "tools", "swapscore", "swapscore.py"))
-		for _, candidate := range candidates {
+		for _, candidate := range characterSwapScoreScriptCandidates() {
 			if _, err := os.Stat(candidate); err == nil {
 				script = candidate
 				break
@@ -150,24 +167,60 @@ func characterSwapScoreCommand() (name string, prefix []string, ok bool) {
 	return uv, []string{"run", script}, true
 }
 
+// characterSwapScoreSkipReason explains why metrics cannot run, or returns "".
+func characterSwapScoreSkipReason() string {
+	if strings.EqualFold(strings.TrimSpace(getEnv("CHARACTER_SWAP_SCORE", "true")), "false") {
+		return "disabled by CHARACTER_SWAP_SCORE=false"
+	}
+	if atomic.LoadInt32(&characterSwapScoreDisabled) != 0 {
+		return "disabled after repeated swapscore failures"
+	}
+	if _, _, ok := characterSwapScoreCommand(); ok {
+		return ""
+	}
+	if script := strings.TrimSpace(getEnv("CHARACTER_SWAP_SCORE_SCRIPT", "")); script != "" {
+		if _, err := os.Stat(script); err != nil {
+			return "swapscore script not found: " + script
+		}
+	} else if !characterSwapScoreDefaultScriptExists() {
+		return "swapscore script tools/swapscore/swapscore.py not deployed next to the server (set CHARACTER_SWAP_SCORE_SCRIPT)"
+	}
+	if python := strings.TrimSpace(getEnv("CHARACTER_SWAP_SCORE_PYTHON", "")); python != "" {
+		return "swapscore interpreter not found: " + python
+	}
+	return "swapscore interpreter not found (set CHARACTER_SWAP_SCORE_PYTHON or install uv)"
+}
+
+func characterSwapScoreDefaultScriptExists() bool {
+	for _, candidate := range characterSwapScoreScriptCandidates() {
+		if _, err := os.Stat(candidate); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func characterSwapScoreAvailable() bool {
-	_, _, ok := characterSwapScoreCommand()
-	if !ok {
+	reason := characterSwapScoreSkipReason()
+	if reason != "" {
 		characterSwapScoreOnce.Do(func() {
-			log.Printf("[character-swap] objective metrics skipped: swapscore script or interpreter not found (set CHARACTER_SWAP_SCORE_SCRIPT and CHARACTER_SWAP_SCORE_PYTHON)")
+			log.Printf("[character-swap] objective metrics unavailable: %s", reason)
 		})
 	}
-	return ok
+	return reason == ""
 }
 
 // runCharacterSwapScore scores output against source; refs are character
 // photos. It returns false when the CLI is unavailable or fails, and stops
 // trying after repeated failures with no success.
-func runCharacterSwapScore(ctx context.Context, sourcePath, outputPath string, refs []string, workDir string) (swapScoreReport, bool) {
+func runCharacterSwapScore(ctx context.Context, sourcePath, outputPath string, refs []string, workDir string) (swapScoreReport, error) {
 	name, prefix, ok := characterSwapScoreCommand()
 	if !ok {
-		characterSwapScoreAvailable()
-		return nil, false
+		reason := characterSwapScoreSkipReason()
+		if reason == "" {
+			reason = "swapscore unavailable"
+		}
+		return nil, fmt.Errorf("%s", reason)
 	}
 	jsonPath := filepath.Join(workDir, fmt.Sprintf("score-%d.json", time.Now().UnixNano()))
 	args := append(append([]string{}, prefix...), "--source", sourcePath, "--output", outputPath)
@@ -183,15 +236,13 @@ func runCharacterSwapScore(ctx context.Context, sourcePath, outputPath string, r
 	cmd := exec.CommandContext(runCtx, name, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	fail := func(reason string) (swapScoreReport, bool) {
+	fail := func(reason string) (swapScoreReport, error) {
 		if atomic.AddInt32(&characterSwapScoreMisses, 1) >= characterSwapScoreMaxMisses {
 			if atomic.CompareAndSwapInt32(&characterSwapScoreDisabled, 0, 1) {
 				log.Printf("[character-swap] objective metrics disabled after repeated failures: %s", reason)
 			}
-		} else {
-			log.Printf("[character-swap] metrics failed: %s", reason)
 		}
-		return nil, false
+		return nil, fmt.Errorf("swapscore failed: %s", reason)
 	}
 	if err := cmd.Run(); err != nil {
 		return fail(truncateString(err.Error()+": "+tailOutput(stderr.Bytes()), 300))
@@ -209,7 +260,7 @@ func runCharacterSwapScore(ctx context.Context, sourcePath, outputPath string, r
 		return fail("metrics file has no overall score")
 	}
 	atomic.StoreInt32(&characterSwapScoreMisses, 0)
-	return report, true
+	return report, nil
 }
 
 // characterSwapScoreRefs downloads the character photos used for the identity
@@ -263,11 +314,15 @@ func characterSwapClipSegments(ctx context.Context, chunk characterSwapChunk, so
 
 // characterSwapClipScore combines the metrics overall score with the vision
 // leak verdict into one comparable number.
-func characterSwapClipScore(overall float64, leaked bool, leakCount int) float64 {
-	if !leaked {
-		return overall
+func characterSwapClipScore(overall float64, leaked bool, leakCount int, bgDrift float64) float64 {
+	score := overall
+	if leaked {
+		score -= characterSwapLeakPenalty + 5*float64(leakCount)
 	}
-	return overall - characterSwapLeakPenalty - 5*float64(leakCount)
+	if limit := characterSwapBGLimit(); bgDrift > limit {
+		score -= characterSwapBGPenalty + (bgDrift - limit)
+	}
+	return score
 }
 
 type characterSwapAttempt struct {
@@ -293,19 +348,33 @@ func (a characterSwapAttempt) better(b characterSwapAttempt) bool {
 	return a.LeakCount < b.LeakCount
 }
 
-// acceptable is the retry gate: no leak and, when metrics exist, a combined
-// score at or above the threshold.
-func (a characterSwapAttempt) acceptable(threshold float64) bool {
+// gate returns why the attempt must be regenerated, or "" when it passes: a
+// vision leak, a background colour drift over the limit, or a combined score
+// under the threshold.
+func (a characterSwapAttempt) gate(threshold float64) string {
 	if a.Leaked {
-		return false
+		return "leak"
 	}
-	return a.Metrics == nil || a.Score >= threshold
+	if a.Metrics == nil {
+		return ""
+	}
+	if a.Metrics.BGDrift > characterSwapBGLimit() {
+		return fmt.Sprintf("background drift %.0f > %.0f", a.Metrics.BGDrift, characterSwapBGLimit())
+	}
+	if a.Score < threshold {
+		return fmt.Sprintf("score %.1f < %.0f", a.Score, threshold)
+	}
+	return ""
+}
+
+func (a characterSwapAttempt) acceptable(threshold float64) bool {
+	return a.gate(threshold) == ""
 }
 
 func (a characterSwapAttempt) describe() string {
 	parts := []string{}
 	if a.Metrics != nil {
-		parts = append(parts, fmt.Sprintf("score %.1f (overall %.1f pose %.2f framing %.0f identity %.0f lipsync %.0f)", a.Score, a.Metrics.Overall, a.Metrics.Pose, a.Metrics.Framing, a.Metrics.Identity, a.Metrics.Lipsync))
+		parts = append(parts, fmt.Sprintf("score %.1f (overall %.1f pose %.2f framing %.0f identity %.0f lipsync %.0f bg %.1f)", a.Score, a.Metrics.Overall, a.Metrics.Pose, a.Metrics.Framing, a.Metrics.Identity, a.Metrics.Lipsync, a.Metrics.BGDrift))
 	}
 	if a.Leaked {
 		parts = append(parts, "leak: "+a.Reason)

@@ -82,6 +82,7 @@ type characterSwapChunk struct {
 	Retries     int                       `json:"retries,omitempty"`
 	QAReason    string                    `json:"qa_reason,omitempty"`
 	ShotNote    string                    `json:"shot_note,omitempty"`
+	Background  string                    `json:"background,omitempty"`
 	Attempts    int                       `json:"attempts,omitempty"`
 	Metrics     *characterSwapClipMetrics `json:"metrics,omitempty"`
 	Flagged     bool                      `json:"flagged,omitempty"`
@@ -641,10 +642,11 @@ func processCharacterSwapJob(job *VideoJob) {
 		settleCharacterSwap(job, state, outputURL, outputPath)
 		return
 	}
+	infos := characterSwapShotInfos(ctx, job, &state, sourcePath, workDir)
 	if characterSwapPerShot(state.Request, state.Chunks) {
 		state.Stage = "shots"
 		_ = persistCharacterSwapState(job.ID, "processing", state)
-		redrawCharacterSwapShots(ctx, job, user, &state, sourcePath, workDir)
+		redrawCharacterSwapShots(ctx, job, user, &state, sourcePath, workDir, infos)
 		if videoJobCancellationRequested(job.ID) {
 			return
 		}
@@ -673,11 +675,7 @@ func processCharacterSwapJob(job *VideoJob) {
 		failCharacterSwap(job, state, false, "could not assemble the final video: "+truncateString(err.Error(), 200))
 		return
 	}
-	if characterSwapScoreAvailable() {
-		if report, ok := runCharacterSwapScore(ctx, sourcePath, outputPath, characterSwapScoreRefs(ctx, state, workDir), workDir); ok {
-			state.FinalMetrics = report.publicResult()
-		}
-	}
+	state.FinalMetrics = characterSwapFinalMetrics(ctx, job, state, sourcePath, outputPath, workDir)
 	outputURL, err := publishFinalVideo(ctx, outputPath, job.UserID, func() (string, error) {
 		return uploadCharacterSwapFile(ctx, outputPath, job.UserID, "video/mp4")
 	})
@@ -686,6 +684,24 @@ func processCharacterSwapJob(job *VideoJob) {
 		return
 	}
 	settleCharacterSwap(job, state, outputURL, outputPath)
+}
+
+// characterSwapFinalMetrics scores the assembled video; when scoring is skipped
+// or fails the result still says so, with the reason, and the job logs it.
+func characterSwapFinalMetrics(ctx context.Context, job *VideoJob, state characterSwapState, sourcePath, outputPath, workDir string) map[string]interface{} {
+	if reason := characterSwapScoreSkipReason(); reason != "" {
+		log.Printf("[character-swap] job=%s final metrics skipped: %s", job.ID, reason)
+		return map[string]interface{}{"available": false, "reason": reason}
+	}
+	report, err := runCharacterSwapScore(ctx, sourcePath, outputPath, characterSwapScoreRefs(ctx, state, workDir), workDir)
+	if err != nil {
+		log.Printf("[character-swap] job=%s final metrics failed: %v", job.ID, err)
+		return map[string]interface{}{"available": false, "reason": truncateString(err.Error(), 200)}
+	}
+	public := report.publicResult()
+	m := report.summary()
+	log.Printf("[character-swap] job=%s final metrics overall %.1f pose %.2f framing %.0f identity %.0f lipsync %.0f bg %.1f", job.ID, m.Overall, m.Pose, m.Framing, m.Identity, m.Lipsync, m.BGDrift)
+	return public
 }
 
 func generateCharacterSwapImage(user *User, state characterSwapState) (string, error) {
@@ -800,9 +816,21 @@ func prepareCharacterSwapChunks(ctx context.Context, job *VideoJob, state *chara
 	return persistCharacterSwapState(job.ID, "processing", *state)
 }
 
+// characterSwapBackgroundClause pins the shot's measured wall colour for H3,
+// which otherwise drifts to dark studio walls (6 of 10 shots on the rap test).
+// It must stay positive: "never introduce a dark studio wall" made 4 of 4
+// clips go dark (dE 43-70), while "the wall is bright orange (#B35420) in every
+// frame" kept 8 of 8 at dE 4-12.
+func characterSwapBackgroundClause(background string) string {
+	if background == "" {
+		return " The background and lighting are exactly those of Video 1 and Image 1 in every frame, from the first frame to the last."
+	}
+	return fmt.Sprintf(" The background wall is %s in every frame, the same flat evenly lit colour as in Video 1 and Image 1, from the first frame to the last.", background)
+}
+
 func characterSwapFalInput(state characterSwapState, chunk characterSwapChunk) map[string]interface{} {
 	images := []string{state.SwappedImageURL}
-	prompt := state.Request.Prompt
+	prompt := state.Request.Prompt + characterSwapBackgroundClause(chunk.Background)
 	keyframe := chunk.ShotImage != "" && chunk.ShotImage != state.SwappedImageURL
 	if keyframe {
 		images = []string{chunk.ShotImage}
@@ -867,7 +895,11 @@ func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *character
 		state.Chunks[chunk.Index].ProviderUSD += characterSwapRates[state.Request.Resolution] * float64(chunk.Duration)
 		return outputURL, nil
 	}
-	scoring := characterSwapScoreAvailable()
+	scoreSkip := characterSwapScoreSkipReason()
+	scoring := scoreSkip == ""
+	if !scoring {
+		log.Printf("[character-swap] job=%s per-clip metrics skipped: %s", job.ID, scoreSkip)
+	}
 	threshold := characterSwapScoreMin()
 	var refs []string
 	if scoring {
@@ -888,16 +920,37 @@ func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *character
 		}
 		if scoring {
 			tags++
-			if srcSeg, outSeg, err := characterSwapClipSegments(ctx, chunk, sourcePath, path, workDir, fmt.Sprintf("t%d", tags)); err == nil {
-				if report, ok := runCharacterSwapScore(ctx, srcSeg, outSeg, refs, workDir); ok {
+			if srcSeg, outSeg, err := characterSwapClipSegments(ctx, chunk, sourcePath, path, workDir, fmt.Sprintf("t%d", tags)); err != nil {
+				log.Printf("[character-swap] job=%s clip %d metrics skipped: segment cut failed: %v", job.ID, chunk.Index+1, err)
+			} else {
+				report, err := runCharacterSwapScore(ctx, srcSeg, outSeg, refs, workDir)
+				if err != nil {
+					log.Printf("[character-swap] job=%s clip %d metrics skipped: %v", job.ID, chunk.Index+1, err)
+				} else {
 					metrics := report.summary()
 					attempt.Metrics, attempt.Report = &metrics, report
-					attempt.Score = characterSwapClipScore(metrics.Overall, attempt.Leaked, attempt.LeakCount)
+					attempt.Score = characterSwapClipScore(metrics.Overall, attempt.Leaked, attempt.LeakCount, metrics.BGDrift)
 				}
 				_ = os.Remove(outSeg)
 			}
 		}
 		return attempt
+	}
+	logAttempt := func(chunk characterSwapChunk, n int, a characterSwapAttempt) {
+		gate := a.gate(threshold)
+		if gate == "" {
+			gate = "pass"
+		}
+		leak := "no"
+		if a.Leaked {
+			leak = fmt.Sprintf("yes(%d)", a.LeakCount)
+		}
+		if a.Metrics == nil {
+			log.Printf("[character-swap] job=%s clip %d/%d shot attempt %d no-metrics leak=%s gate=%s", job.ID, chunk.Index+1, len(state.Chunks), n, leak, gate)
+			return
+		}
+		m := a.Metrics
+		log.Printf("[character-swap] job=%s clip %d/%d attempt %d score %.1f overall %.1f pose %.2f frame %.0f id %.0f lip %.0f bg %.1f leak=%s gate=%s", job.ID, chunk.Index+1, len(state.Chunks), n, a.Score, m.Overall, m.Pose, m.Framing, m.Identity, m.Lipsync, m.BGDrift, leak, gate)
 	}
 	for i := range state.Chunks {
 		if videoJobCancellationRequested(job.ID) {
@@ -938,9 +991,10 @@ func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *character
 		state.Chunks[i].Status = "checking"
 		persist()
 		chosen := *evaluate(chunk, outputURL, localPath)
+		logAttempt(chunk, 1, chosen)
 		attempts, kept := 1, 1
 		for retry := 1; !chosen.acceptable(threshold) && retry <= characterSwapMaxRetries && !videoJobCancellationRequested(job.ID); retry++ {
-			log.Printf("[character-swap] job=%s clip %d below gate (%s); regenerating (attempt %d)", job.ID, chunk.Index+1, chosen.describe(), retry)
+			log.Printf("[character-swap] job=%s clip %d regenerating: %s", job.ID, chunk.Index+1, chosen.gate(threshold))
 			retryURL, err := generate(chunk, int(time.Now().UnixNano()%2_000_000_000)+chunk.Index+retry)
 			if err != nil {
 				break
@@ -952,7 +1006,9 @@ func runCharacterSwapChunks(ctx context.Context, job *VideoJob, state *character
 				continue
 			}
 			attempts++
-			if candidate := evaluate(chunk, retryURL, retryPath); candidate.better(chosen) {
+			candidate := evaluate(chunk, retryURL, retryPath)
+			logAttempt(chunk, attempts, *candidate)
+			if candidate.better(chosen) {
 				chosen, kept = *candidate, attempts
 			}
 		}
@@ -1118,6 +1174,8 @@ func settleCharacterSwap(job *VideoJob, state characterSwapState, outputURL, out
 	}
 	if state.FinalMetrics != nil {
 		result["metrics"] = state.FinalMetrics
+	} else {
+		result["metrics"] = map[string]interface{}{"available": false, "reason": "objective metrics are not computed on this lane"}
 	}
 	if state.Exact != nil {
 		result["people"] = state.Exact.People

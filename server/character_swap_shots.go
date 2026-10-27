@@ -47,6 +47,30 @@ type characterSwapShotCheck struct {
 	ScaleRatio float64  `json:"scale_ratio"`
 	OK         bool     `json:"ok"`
 	Reasons    []string `json:"reasons"`
+	BgSrc      string   `json:"bg_src"`
+	BgOut      string   `json:"bg_out"`
+	BgName     string   `json:"bg_name"`
+	BgDE       float64  `json:"bg_de"`
+}
+
+type characterSwapBackground struct {
+	Hex      string    `json:"hex"`
+	Name     string    `json:"name"`
+	Lab      []float64 `json:"lab"`
+	Coverage float64   `json:"coverage"`
+}
+
+// phrase names the wall colour for prompts, e.g. "bright orange (#B35420)".
+func (b *characterSwapBackground) phrase() string {
+	if b == nil || b.Hex == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s (%s)", b.Name, b.Hex)
+}
+
+type characterSwapShotInfo struct {
+	People     []characterSwapShotPerson `json:"people"`
+	Background *characterSwapBackground  `json:"background"`
 }
 
 type characterSwapShotSpan struct {
@@ -106,7 +130,7 @@ func characterSwapPositionName(i, n int) string {
 // back-of-head views of one source frame while the identities are swapped.
 // photos > 0 means Images 2.. are one photo per character, left to right;
 // otherwise Image 2 is a single image holding the characters left to right.
-func characterSwapKeyframePrompt(people []characterSwapShotPerson, photos int, characters int, extra, failure string) string {
+func characterSwapKeyframePrompt(people []characterSwapShotPerson, photos int, characters int, background, extra, failure string) string {
 	n := len(people)
 	var b strings.Builder
 	if n == 0 {
@@ -144,7 +168,11 @@ func characterSwapKeyframePrompt(people []characterSwapShotPerson, photos int, c
 		b.WriteString("Replace every person in Image 1 with the characters from the other images, left to right. ")
 	}
 	b.WriteString("Keep every person in the exact same position, pose, arm gestures, head direction, expression, scale and framing as Image 1: the crop and camera distance stay identical, a wide shot stays a wide shot and a close-up stays an equally tight close-up. ")
-	b.WriteString("Keep the set, props, lighting and background exactly as in Image 1. Remove tattoos, chains and hats; dress each in the clothing from their own photo. ")
+	b.WriteString("Keep the set, props, lighting and background exactly as in Image 1. ")
+	if background != "" {
+		fmt.Fprintf(&b, "The background wall stays exactly %s as in Image 1, with the same lighting: never darken it and never turn it into a dark studio. ", background)
+	}
+	b.WriteString("Remove tattoos, chains and hats; dress each in the clothing from their own photo. ")
 	if n > 0 {
 		fmt.Fprintf(&b, "Show exactly these %d %s, never the originals. ", n, map[bool]string{true: "person", false: "people"}[n == 1])
 	} else {
@@ -267,17 +295,90 @@ func characterSwapKeyframeTarget(width, height int) (int, int) {
 	return width &^ 1, height &^ 1
 }
 
-func characterSwapShotPeople(ctx context.Context, framePath string) ([]characterSwapShotPerson, bool) {
-	res, err := runExactHelper(ctx, "shotinfo", "--image", framePath)
+// characterSwapShotInfoErr runs the shotinfo helper, retrying once: parallel
+// YOLO processes occasionally abort at start-up.
+func characterSwapShotInfoErr(ctx context.Context, framePath string) (characterSwapShotInfo, error) {
+	var res map[string]interface{}
+	var err error
+	for try := 0; try < 2; try++ {
+		if res, err = runExactHelper(ctx, "shotinfo", "--image", framePath); err == nil {
+			break
+		}
+	}
 	if err != nil {
-		return nil, false
+		return characterSwapShotInfo{}, err
 	}
-	raw, _ := json.Marshal(res["people"])
-	var people []characterSwapShotPerson
-	if err := json.Unmarshal(raw, &people); err != nil {
-		return nil, false
+	raw, _ := json.Marshal(res)
+	var info characterSwapShotInfo
+	if err := json.Unmarshal(raw, &info); err != nil {
+		return characterSwapShotInfo{}, err
 	}
-	return people, true
+	return info, nil
+}
+
+func characterSwapShotInfoOf(ctx context.Context, framePath string) (characterSwapShotInfo, bool) {
+	info, err := characterSwapShotInfoErr(ctx, framePath)
+	return info, err == nil
+}
+
+func characterSwapShotPeople(ctx context.Context, framePath string) ([]characterSwapShotPerson, bool) {
+	info, ok := characterSwapShotInfoOf(ctx, framePath)
+	return info.People, ok
+}
+
+// characterSwapShotInfos measures people and the wall colour of every shot's
+// real mid-shot frame (median of the pixels outside the dilated person boxes)
+// and records the colour on the shot's chunks so the H3 prompt can pin it.
+func characterSwapShotInfos(ctx context.Context, job *VideoJob, state *characterSwapState, sourcePath, workDir string) map[int]characterSwapShotInfo {
+	spans := characterSwapShotSpans(state.Chunks)
+	infos := make(map[int]characterSwapShotInfo, len(spans))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, characterSwapShotSlots)
+	var failure string
+	for si, span := range spans {
+		wg.Add(1)
+		go func(si int, span characterSwapShotSpan) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			framePath := filepath.Join(workDir, fmt.Sprintf("bg-%02d.png", si))
+			if err := lofiloop.RunFFmpeg(ctx, "-y", "-loglevel", "error", "-ss", trimSeconds(span.Mid()), "-i", sourcePath, "-frames:v", "1", "-update", "1", framePath); err != nil {
+				return
+			}
+			info, err := characterSwapShotInfoErr(ctx, framePath)
+			if err != nil {
+				mu.Lock()
+				failure = truncateString(err.Error(), 160)
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			infos[si] = info
+			if phrase := info.Background.phrase(); phrase != "" {
+				for c := span.First; c <= span.Last; c++ {
+					if state.Chunks[c].Background == "" {
+						state.Chunks[c].Background = phrase
+					}
+				}
+			}
+		}(si, span)
+	}
+	wg.Wait()
+	if failure != "" {
+		log.Printf("[character-swap] job=%s shot analysis skipped (people, background colour): %s", job.ID, failure)
+	} else if len(infos) > 0 {
+		var names []string
+		for si := range spans {
+			if info, ok := infos[si]; ok && info.Background != nil {
+				names = append(names, fmt.Sprintf("%d:%s", si, info.Background.phrase()))
+			}
+		}
+		log.Printf("[character-swap] job=%s shot backgrounds %s", job.ID, strings.Join(names, " "))
+	}
+	_ = persistCharacterSwapState(job.ID, "processing", *state)
+	return infos
 }
 
 func characterSwapCheckKeyframe(ctx context.Context, srcPath, outPath string) (characterSwapShotCheck, bool) {
@@ -297,7 +398,7 @@ func characterSwapKeyframeBetter(a, b characterSwapShotCheck) bool {
 	if a.OK != b.OK {
 		return a.OK
 	}
-	return a.MeanIoU > b.MeanIoU
+	return a.MeanIoU-a.BgDE/100 > b.MeanIoU-b.BgDE/100
 }
 
 // characterSwapKeyframeVision asks the QA vision model whether a candidate
@@ -343,7 +444,7 @@ func characterSwapKeyframeVision(ctx context.Context, srcPath, outPath, identity
 // an optional vision check) and retried up to twice; a shot that never
 // validates keeps its best attempt, and a failed shot falls back to the global
 // frame.
-func redrawCharacterSwapShots(ctx context.Context, job *VideoJob, user *User, state *characterSwapState, sourcePath, workDir string) {
+func redrawCharacterSwapShots(ctx context.Context, job *VideoJob, user *User, state *characterSwapState, sourcePath, workDir string, infos map[int]characterSwapShotInfo) {
 	spans := characterSwapShotSpans(state.Chunks)
 	if len(spans) < 2 {
 		return
@@ -404,7 +505,8 @@ func redrawCharacterSwapShots(ctx context.Context, job *VideoJob, user *User, st
 			if ctx.Err() != nil || videoJobCancellationRequested(job.ID) {
 				return
 			}
-			hosted, calls, note := characterSwapShotKeyframe(ctx, job, state, sourcePath, workDir, si, span, identity, photos, characters, identityURL)
+			info, haveInfo := infos[si]
+			hosted, calls, note := characterSwapShotKeyframe(ctx, job, state, sourcePath, workDir, si, span, identity, photos, characters, identityURL, info, haveInfo)
 			mu.Lock()
 			defer mu.Unlock()
 			state.ShotImageUSD += float64(calls) * characterSwapKeyframeUSD
@@ -422,7 +524,7 @@ func redrawCharacterSwapShots(ctx context.Context, job *VideoJob, user *User, st
 	wg.Wait()
 }
 
-func characterSwapShotKeyframe(ctx context.Context, job *VideoJob, state *characterSwapState, sourcePath, workDir string, si int, span characterSwapShotSpan, identity [][]byte, photos, characters int, identityURL string) (string, int, string) {
+func characterSwapShotKeyframe(ctx context.Context, job *VideoJob, state *characterSwapState, sourcePath, workDir string, si int, span characterSwapShotSpan, identity [][]byte, photos, characters int, identityURL string, info characterSwapShotInfo, haveInfo bool) (string, int, string) {
 	srcPath := filepath.Join(workDir, fmt.Sprintf("kf-%02d-src.png", si))
 	if err := lofiloop.RunFFmpeg(ctx, "-y", "-loglevel", "error", "-ss", trimSeconds(span.Mid()), "-i", sourcePath, "-frames:v", "1", "-update", "1", srcPath); err != nil {
 		return "", 0, "could not extract the shot frame"
@@ -431,7 +533,14 @@ func characterSwapShotKeyframe(ctx context.Context, job *VideoJob, state *charac
 	if err != nil {
 		return "", 0, "could not read the shot frame"
 	}
-	people, havePeople := characterSwapShotPeople(ctx, srcPath)
+	if !haveInfo {
+		info, haveInfo = characterSwapShotInfoOf(ctx, srcPath)
+	}
+	people, havePeople := info.People, haveInfo
+	background := state.Chunks[span.First].Background
+	if background == "" {
+		background = info.Background.phrase()
+	}
 	w, h := characterSwapKeyframeTarget(characterSwapImageSize(srcPath))
 	images := append([][]byte{srcData}, identity...)
 	var best string
@@ -441,7 +550,7 @@ func characterSwapShotKeyframe(ctx context.Context, job *VideoJob, state *charac
 		if ctx.Err() != nil {
 			break
 		}
-		prompt := characterSwapKeyframePrompt(people, photos, characters, state.Request.CharacterPrompt, failure)
+		prompt := characterSwapKeyframePrompt(people, photos, characters, background, state.Request.CharacterPrompt, failure)
 		raw, err := callOpenPathsNanoBanana(ctx, prompt, images)
 		calls++
 		if err != nil {
@@ -461,7 +570,11 @@ func characterSwapShotKeyframe(ctx context.Context, job *VideoJob, state *charac
 		if havePeople {
 			if c, ok := characterSwapCheckKeyframe(ctx, srcPath, outPath); ok {
 				check = c
+			} else {
+				log.Printf("[character-swap] job=%s shot %d keyframe geometry/background check skipped: shotcheck helper failed", job.ID, si)
 			}
+		} else if attempt == 0 {
+			log.Printf("[character-swap] job=%s shot %d keyframe geometry/background check skipped: shotinfo helper unavailable (CHARACTER_SWAP_PYTHON)", job.ID, si)
 		}
 		if check.OK {
 			if ok, reason := characterSwapKeyframeVision(ctx, srcPath, outPath, identityURL); !ok {
@@ -474,10 +587,12 @@ func characterSwapShotKeyframe(ctx context.Context, job *VideoJob, state *charac
 		}
 		if check.OK {
 			note = fmt.Sprintf("keyframe attempt %d ok", attempt+1)
+			log.Printf("[character-swap] job=%s shot %d keyframe attempt %d ok iou %.2f bg dE %.1f", job.ID, si, attempt+1, check.MeanIoU, check.BgDE)
 			break
 		}
 		failure = strings.Join(check.Reasons, "; ")
 		note = fmt.Sprintf("keyframe best of %d attempts, flagged: %s", attempt+1, failure)
+		log.Printf("[character-swap] job=%s shot %d keyframe attempt %d rejected: %s", job.ID, si, attempt+1, failure)
 	}
 	if best == "" {
 		return "", calls, note

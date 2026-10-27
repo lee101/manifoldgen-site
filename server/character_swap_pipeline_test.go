@@ -54,21 +54,21 @@ func TestCharacterSwapShotSpans(t *testing.T) {
 
 func TestCharacterSwapKeyframePrompt(t *testing.T) {
 	people := []characterSwapShotPerson{{Box: [4]float64{0.1, 0.1, 0.4, 0.9}, Face: true}, {Box: [4]float64{0.55, 0.1, 0.9, 0.9}, Face: false}}
-	prompt := characterSwapKeyframePrompt(people, 2, 2, "extra words", "")
-	for _, want := range []string{"2 people", "person on the LEFT with the person from Image 2", "person on the RIGHT with the person from Image 3", "seen from behind", "wide shot stays a wide shot", "Remove tattoos, chains and hats", "exactly these 2 people", "extra words", "16:9"} {
+	prompt := characterSwapKeyframePrompt(people, 2, 2, "bright orange (#B35420)", "extra words", "")
+	for _, want := range []string{"2 people", "person on the LEFT with the person from Image 2", "person on the RIGHT with the person from Image 3", "seen from behind", "wide shot stays a wide shot", "Remove tattoos, chains and hats", "exactly these 2 people", "extra words", "16:9", "wall stays exactly bright orange (#B35420)", "never darken it"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q: %s", want, prompt)
 		}
 	}
-	frame := characterSwapKeyframePrompt(people, 0, 2, "", "people 3 vs source 2")
+	frame := characterSwapKeyframePrompt(people, 0, 2, "", "", "people 3 vs source 2")
 	if !strings.Contains(frame, "Image 2 shows the new characters") || !strings.Contains(frame, "second character from the left in Image 2") || !strings.Contains(frame, "previous attempt was rejected: people 3 vs source 2") {
 		t.Fatalf("frame-mode prompt: %s", frame)
 	}
-	solo := characterSwapKeyframePrompt(people[1:], 0, 2, "", "")
+	solo := characterSwapKeyframePrompt(people[1:], 0, 2, "", "", "")
 	if !strings.Contains(solo, "the person with the second character") {
 		t.Fatalf("a lone right-hand person maps to the last character: %s", solo)
 	}
-	unknown := characterSwapKeyframePrompt(nil, 2, 2, "", "")
+	unknown := characterSwapKeyframePrompt(nil, 2, 2, "", "", "")
 	if !strings.Contains(unknown, "Replace every person") {
 		t.Fatalf("unknown people: %s", unknown)
 	}
@@ -150,14 +150,14 @@ func TestCharacterSwapAttemptSelection(t *testing.T) {
 	m := func(score float64) *characterSwapClipMetrics { return &characterSwapClipMetrics{Overall: score} }
 	good := characterSwapAttempt{Metrics: m(80), Score: 80}
 	weak := characterSwapAttempt{Metrics: m(40), Score: 40}
-	leaky := characterSwapAttempt{Metrics: m(90), Leaked: true, LeakCount: 2, Score: characterSwapClipScore(90, true, 2)}
+	leaky := characterSwapAttempt{Metrics: m(90), Leaked: true, LeakCount: 2, Score: characterSwapClipScore(90, true, 2, 0)}
 	if !good.acceptable(55) || weak.acceptable(55) || leaky.acceptable(55) {
 		t.Fatal("gate: score threshold and leak")
 	}
 	if !good.better(weak) || weak.better(good) || !good.better(leaky) {
 		t.Fatal("best-of-N follows the combined score")
 	}
-	if characterSwapClipScore(90, true, 2) != 90-characterSwapLeakPenalty-10 {
+	if characterSwapClipScore(90, true, 2, 0) != 90-characterSwapLeakPenalty-10 {
 		t.Fatal("leak penalty")
 	}
 	noMetricsClean := characterSwapAttempt{}
@@ -178,13 +178,16 @@ func TestRunCharacterSwapScoreStub(t *testing.T) {
 	t.Setenv("CHARACTER_SWAP_SCORE_PYTHON", "sh")
 	t.Setenv("CHARACTER_SWAP_SCORE_SCRIPT", script)
 	atomicReset()
-	report, ok := runCharacterSwapScore(context.Background(), "a.mp4", "b.mp4", []string{"r.png"}, dir)
-	if !ok || report.summary().Overall != 64 || report.summary().Pose != 0.2 {
-		t.Fatalf("stub report %v %v", report, ok)
+	report, err := runCharacterSwapScore(context.Background(), "a.mp4", "b.mp4", []string{"r.png"}, dir)
+	if err != nil || report.summary().Overall != 64 || report.summary().Pose != 0.2 {
+		t.Fatalf("stub report %v %v", report, err)
 	}
 	t.Setenv("CHARACTER_SWAP_SCORE_SCRIPT", filepath.Join(dir, "missing.py"))
-	if _, ok := runCharacterSwapScore(context.Background(), "a.mp4", "b.mp4", nil, dir); ok || characterSwapScoreAvailable() {
+	if _, err := runCharacterSwapScore(context.Background(), "a.mp4", "b.mp4", nil, dir); err == nil || characterSwapScoreAvailable() {
 		t.Fatal("a missing script degrades to no metrics")
+	}
+	if reason := characterSwapScoreSkipReason(); !strings.Contains(reason, "script not found") {
+		t.Fatalf("skip reason %q", reason)
 	}
 	t.Setenv("CHARACTER_SWAP_SCORE_SCRIPT", script)
 	t.Setenv("CHARACTER_SWAP_SCORE", "false")
@@ -203,7 +206,7 @@ func TestRunCharacterSwapScoreDisablesAfterFailures(t *testing.T) {
 	t.Setenv("CHARACTER_SWAP_SCORE_SCRIPT", script)
 	atomicReset()
 	for i := 0; i < characterSwapScoreMaxMisses; i++ {
-		if _, ok := runCharacterSwapScore(context.Background(), "a", "b", nil, dir); ok {
+		if _, err := runCharacterSwapScore(context.Background(), "a", "b", nil, dir); err == nil {
 			t.Fatal("failing script must not report")
 		}
 	}
@@ -275,5 +278,42 @@ func TestCharacterSwapShotHelpers(t *testing.T) {
 	other := filepath.Join("..", "testvid", "rapviddario", "kf", "shot5.png")
 	if bad, ok := characterSwapCheckKeyframe(context.Background(), src, other); !ok || bad.OK {
 		t.Fatalf("a close-up must not validate against the wide source: %+v", bad)
+	}
+}
+
+func TestCharacterSwapBackgroundGate(t *testing.T) {
+	clean := characterSwapAttempt{Metrics: &characterSwapClipMetrics{Overall: 70, BGDrift: 8}}
+	clean.Score = characterSwapClipScore(70, false, 0, 8)
+	dark := characterSwapAttempt{Metrics: &characterSwapClipMetrics{Overall: 72, BGDrift: 52}}
+	dark.Score = characterSwapClipScore(72, false, 0, 52)
+	if clean.gate(50) != "" || !strings.Contains(dark.gate(50), "background drift 52") {
+		t.Fatalf("gate: %q %q", clean.gate(50), dark.gate(50))
+	}
+	if !clean.better(dark) || dark.better(clean) || dark.Score >= 72-characterSwapBGPenalty {
+		t.Fatalf("a dark wall must lose to a clean clip despite a higher overall: %.1f vs %.1f", dark.Score, clean.Score)
+	}
+	t.Setenv("CHARACTER_SWAP_BG_DRIFT", "60")
+	dark.Score = characterSwapClipScore(72, false, 0, 52)
+	if dark.gate(50) != "" {
+		t.Fatal("CHARACTER_SWAP_BG_DRIFT raises the limit")
+	}
+}
+
+func TestCharacterSwapBackgroundClause(t *testing.T) {
+	state := characterSwapState{Request: ServiceUsageRequest{Prompt: "p"}, SwappedImageURL: "https://x/i.png"}
+	named := characterSwapFalInput(state, characterSwapChunk{Index: 0, Duration: 5, SourceURL: "https://x/c.mp4", Background: "bright orange (#B35420)"})["prompt"].(string)
+	if !strings.Contains(named, "wall is bright orange (#B35420) in every frame") || strings.Contains(named, "dark") {
+		t.Fatalf("named background: %s", named)
+	}
+	generic := characterSwapFalInput(state, characterSwapChunk{Index: 0, Duration: 5, SourceURL: "https://x/c.mp4"})["prompt"].(string)
+	if !strings.Contains(generic, "lighting are exactly those of Video 1") || strings.Contains(generic, "dark") {
+		t.Fatalf("generic clause missing: %s", generic)
+	}
+}
+
+func TestCharacterSwapBackgroundPhrase(t *testing.T) {
+	var none *characterSwapBackground
+	if none.phrase() != "" || (&characterSwapBackground{Hex: "#B35420", Name: "bright orange"}).phrase() != "bright orange (#B35420)" {
+		t.Fatal("phrase")
 	}
 }

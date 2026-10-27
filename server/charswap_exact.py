@@ -359,11 +359,62 @@ def compare_stills(sp, op, min_iou=0.45, scale_lo=0.7, scale_hi=1.43):
     return res
 
 
+def lab_of(bgr):
+    px = np.uint8([[bgr]])
+    l = cv2.cvtColor(px, cv2.COLOR_BGR2LAB).astype(np.float32)[0, 0]
+    return [float(l[0] * 100 / 255), float(l[1] - 128), float(l[2] - 128)]
+
+
+def color_name(bgr):
+    import colorsys
+    r, g, b = [c / 255 for c in (bgr[2], bgr[1], bgr[0])]
+    h, sat, v = colorsys.rgb_to_hsv(r, g, b)
+    if v < 0.16:
+        return 'black'
+    if sat < 0.12:
+        return 'white' if v > 0.85 else ('light grey' if v > 0.55 else ('grey' if v > 0.3 else 'dark grey'))
+    deg = h * 360
+    names = [(15, 'red'), (40, 'orange'), (68, 'yellow'), (165, 'green'), (200, 'cyan'), (255, 'blue'), (290, 'purple'), (335, 'pink'), (361, 'red')]
+    base = next(n for lim, n in names if deg < lim)
+    if base == 'orange' and deg > 30 and sat > 0.5:
+        base = 'amber orange'
+    if v < 0.4:
+        return 'dark ' + base
+    if sat > 0.6 and v > 0.6:
+        return 'bright ' + base
+    if sat < 0.35:
+        return 'pale ' + base
+    return base
+
+
+def background_of(img, people, dilate=0.15):
+    H, W = img.shape[:2]
+    w = 320
+    h = max(1, int(round(w * H / W)))
+    small = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+    keep = np.ones((h, w), bool)
+    for q in people:
+        x0, y0, x1, y1 = q['box']
+        bw, bh = x1 - x0, y1 - y0
+        keep[int(max(0, (y0 - dilate * bh) * h)):int(min(h, (y1 + dilate * bh) * h + 1)), int(max(0, (x0 - dilate * bw) * w)):int(min(w, (x1 + dilate * bw) * w + 1))] = False
+    if keep.mean() < 0.05:
+        return None
+    bgr = [int(v) for v in np.median(small[keep].reshape(-1, 3), axis=0)]
+    return {'hex': '#%02X%02X%02X' % (bgr[2], bgr[1], bgr[0]), 'name': color_name(bgr), 'lab': lab_of(bgr), 'coverage': round(float(keep.mean()), 3)}
+
+
+def background_de(a, b):
+    if not a or not b:
+        return None
+    return float(np.linalg.norm(np.array(a['lab']) - np.array(b['lab'])))
+
+
 def cmd_shotinfo(a):
     img = cv2.imread(a.image)
     if img is None:
         sys.exit('cannot read image')
-    print(json.dumps({'people': still_people(model(), img)}))
+    people = still_people(model(), img)
+    print(json.dumps({'people': people, 'background': background_of(img, people)}))
 
 
 def cmd_shotcheck(a):
@@ -373,7 +424,18 @@ def cmd_shotcheck(a):
         sys.exit('cannot read image')
     if o.shape[:2] != s.shape[:2]:
         o = cv2.resize(o, (s.shape[1], s.shape[0]))
-    print(json.dumps(compare_stills(still_people(m, s), still_people(m, o), a.min_iou)))
+    sp, op = still_people(m, s), still_people(m, o)
+    res = compare_stills(sp, op, a.min_iou)
+    sb, ob = background_of(s, sp), background_of(o, op)
+    de = background_de(sb, ob)
+    res['bg_src'] = sb['hex'] if sb else None
+    res['bg_out'] = ob['hex'] if ob else None
+    res['bg_name'] = sb['name'] if sb else None
+    res['bg_de'] = round(de, 2) if de is not None else None
+    if de is not None and de > a.max_bg_de:
+        res['reasons'].append(f"background colour drift dE {de:.0f} ({ob['name']} {ob['hex']} instead of {sb['name']} {sb['hex']})")
+        res['ok'] = False
+    print(json.dumps(res))
 
 
 def main():
@@ -387,7 +449,7 @@ def main():
     g = s.add_parser('align'); g.add_argument('--ref', required=True); g.add_argument('--out', required=True); g.add_argument('--max-lag', type=float, default=0.75); g.set_defaults(f=cmd_align)
     q = s.add_parser('posecheck'); q.add_argument('--src', required=True); q.add_argument('--out', required=True); q.set_defaults(f=cmd_posecheck)
     si = s.add_parser('shotinfo'); si.add_argument('--image', required=True); si.set_defaults(f=cmd_shotinfo)
-    sc = s.add_parser('shotcheck'); sc.add_argument('--src', required=True); sc.add_argument('--out', required=True); sc.add_argument('--min-iou', type=float, default=0.45); sc.set_defaults(f=cmd_shotcheck)
+    sc = s.add_parser('shotcheck'); sc.add_argument('--src', required=True); sc.add_argument('--out', required=True); sc.add_argument('--min-iou', type=float, default=0.45); sc.add_argument('--max-bg-de', type=float, default=18.0); sc.set_defaults(f=cmd_shotcheck)
     a = p.parse_args(); a.f(a)
 
 
