@@ -56,6 +56,7 @@ import {
 } from '../lib/h3-loop';
 import { CURATED_SEARCH_PAGES } from '@/lib/search-pages';
 import { downloadVideo, videoExtension } from '../lib/video-export';
+import { jobLongPollHonored, jobLongPollURL } from '../lib/job-long-poll';
 
 const API = '/api';
 const GALLERY_CDN = 'https://manifoldgenstatic.manifoldgen.com/gallery';
@@ -1037,15 +1038,17 @@ export default function HomePage() {
   }
 
   async function pollJob(jobId: string, onUpdate?: (state: VideoJobState) => void): Promise<VideoJobState> {
+    let lastStatus = '';
     for (let i = 0; i < 1200; i++) {
-      const res = await fetch(`${API}/video-jobs/${jobId}`, {
+      const res = await fetch(jobLongPollURL(`${API}/video-jobs/${jobId}`, lastStatus), {
         headers: authHeaders(apiKey),
       });
-      const data = await parseJSONResponse<VideoJobState & { job?: VideoJobState }>(
+      const data = await parseJSONResponse<VideoJobState & { job?: VideoJobState; long_poll?: boolean }>(
         res,
         'Job poll failed',
       );
       const state: VideoJobState = data.job || data;
+      lastStatus = state.status || '';
       const url =
         state.result_url ||
         state.video_url ||
@@ -1057,7 +1060,7 @@ export default function HomePage() {
         }
         return state;
       }
-      await new Promise((r) => setTimeout(r, 2000));
+      if (!jobLongPollHonored(data)) await new Promise((r) => setTimeout(r, 2000));
     }
     throw new Error('Timed out waiting for video');
   }

@@ -388,6 +388,9 @@ func processRunpodH3ImageJob(job *VideoJob) {
 		return
 	}
 	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
+	wake, unwatch := watchRunpodH3Job(endpointID, providerJobID)
+	defer unwatch()
+	pollInterval := h3RunpodStatusInterval(endpointID)
 	deadline := time.Now().Add(45 * time.Minute)
 	for time.Now().Before(deadline) {
 		var state h3RunpodStatus
@@ -463,7 +466,9 @@ func processRunpodH3ImageJob(job *VideoJob) {
 			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image generation failed")
 			return
 		}
-		time.Sleep(2 * time.Second)
+		if !waitForRunpodH3Change(job.ID, pollInterval, wake) {
+			return
+		}
 	}
 	_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image generation timed out")
 }

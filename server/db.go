@@ -742,6 +742,7 @@ func (db *DB) SettleH3VideoJob(jobID string, result []byte, providerCostUSD, cha
 // SettleGeneratedVideoJob charges an async video exactly once and records the
 // job's own service name in the credit ledger.
 func (db *DB) SettleGeneratedVideoJob(jobID string, result []byte, providerCostUSD, chargedUSD, cutePrice float64) (float64, float64, error) {
+	defer notifyVideoJobChanged(jobID)
 	if chargedUSD <= 0 || cutePrice <= 0 {
 		return 0, 0, fmt.Errorf("invalid video settlement price")
 	}
@@ -863,6 +864,7 @@ func (db *DB) DeleteVideoJob(jobID, userID string) error {
 // CancelVideoJob atomically claims an active job for cancellation. Credits are
 // intentionally untouched: async providers may already have incurred the cost.
 func (db *DB) CancelVideoJob(jobID, userID string) (*VideoJob, error) {
+	defer notifyVideoJobChanged(jobID)
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	var job VideoJob
@@ -946,6 +948,7 @@ func (db *DB) FindVideoBackgroundJob(userID, requestKey string) (*VideoJob, erro
 }
 
 func (db *DB) UpdateVideoJob(jobID, status string, result []byte, jobErr string) error {
+	defer notifyVideoJobChanged(jobID)
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	var resultJSON interface{}
@@ -974,6 +977,7 @@ func (db *DB) UpdateCompletedVideoResult(jobID string, result []byte) error {
 // retaining the original request. Video restyles use this when a private worker
 // cannot finish and the same user-visible job is moved to the standby queue.
 func (db *DB) UpdateVideoJobProvider(jobID, providerJobID, status string, result []byte) error {
+	defer notifyVideoJobChanged(jobID)
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	var resultJSON interface{}
@@ -998,6 +1002,7 @@ func (db *DB) UpdateVideoJobProvider(jobID, providerJobID, status string, result
 // RequeueVideoJobProvider is the explicit user retry path. Unlike provider
 // fallback, it is allowed to revive a cancelled row after confirmation.
 func (db *DB) RequeueVideoJobProvider(jobID, providerJobID string, result []byte) error {
+	defer notifyVideoJobChanged(jobID)
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	var resultJSON interface{}

@@ -1405,6 +1405,9 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		}
 	}
 	_ = dbConn.UpdateVideoJob(job.ID, "processing", nil, "")
+	wake, unwatch := watchRunpodH3Job(endpointID, providerJobID)
+	defer unwatch()
+	pollInterval := h3RunpodStatusInterval(endpointID)
 	// A 60-second H3 request may chain twelve GPU generations. Keep the
 	// application watcher aligned with the endpoint's four-hour execution cap;
 	// shorter jobs still finish and release their worker immediately.
@@ -1528,7 +1531,7 @@ func processRunpodH3VideoJob(job *VideoJob) {
 			_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, videoGenerationFailedMessage)
 			return
 		}
-		if !waitForVideoJob(job.ID, 2*time.Second) {
+		if !waitForRunpodH3Change(job.ID, pollInterval, wake) {
 			return
 		}
 	}
@@ -1804,6 +1807,14 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 		jsonError(ctx, http.StatusNotFound, "video job not found")
 		return
 	}
+	longPoll := false
+	if wait := videoJobLongPollWait(ctx); wait > 0 {
+		longPoll = true
+		if shouldRelaunchVideoJob(job) {
+			launchVideoJob(job.ID)
+		}
+		job = awaitVideoJobChange(job, user.ID, strings.TrimSpace(string(ctx.QueryArgs().Peek("status"))), wait, dbConn.GetVideoJob)
+	}
 	if job.Status == "completed" && completedVideoNeedsPublishing(job) {
 		launchCompletedVideoRepair(job)
 	}
@@ -1831,10 +1842,16 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 	if job.Status == "payment_required" {
 		status = http.StatusPaymentRequired
 	}
-	jsonResponse(ctx, status, map[string]interface{}{
+	response := map[string]interface{}{
 		"job":        publicVideoJob(job),
 		"status_url": publicJobStatusURL(job),
-	})
+	}
+	// Only pending rows are marked: a client that does not recognise a
+	// terminal status then falls back to its own sleep instead of spinning.
+	if longPoll && videoJobPending(job.Status) {
+		response["long_poll"] = true
+	}
+	jsonResponse(ctx, status, response)
 }
 
 func retryH3VideoJob(job *VideoJob) error {

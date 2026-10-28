@@ -116,6 +116,31 @@ func TestH3EndpointIdleSecondsOnlyForPinkCherry(t *testing.T) {
 	}
 }
 
+func TestH3EndpointIdleSecondsPerLane(t *testing.T) {
+	t.Setenv("H3_NORMAL_RUNPOD_ENDPOINT", "normal")
+	t.Setenv("H3_LTX_RUNPOD_ENDPOINT", "ltx")
+	t.Setenv("H3_PINKCHERRY_RUNPOD_ENDPOINT", "pink")
+	t.Setenv("H3_NORMAL_RUNPOD_IDLE_SECONDS", "")
+	t.Setenv("H3_LTX_RUNPOD_IDLE_SECONDS", "")
+	t.Setenv("H3_PINKCHERRY_RUNPOD_IDLE_SECONDS", "")
+	for _, endpoint := range []string{"normal", "ltx", "pink", "other"} {
+		if got := h3EndpointIdleSeconds(endpoint); got != 5 {
+			t.Fatalf("%s default idle = %d", endpoint, got)
+		}
+	}
+	t.Setenv("H3_NORMAL_RUNPOD_IDLE_SECONDS", "120")
+	t.Setenv("H3_LTX_RUNPOD_IDLE_SECONDS", "90")
+	if got := h3EndpointIdleSeconds("normal"); got != 120 {
+		t.Fatalf("normal idle = %d", got)
+	}
+	if got := h3EndpointIdleSeconds("ltx"); got != 90 {
+		t.Fatalf("ltx idle = %d", got)
+	}
+	if got := h3EndpointIdleSeconds("pink"); got != 5 || h3EndpointIdleSeconds("other") != 5 {
+		t.Fatal("idle window leaked to another endpoint")
+	}
+}
+
 func TestH3RunpodJobsBusyUsesJobStatus(t *testing.T) {
 	statuses := map[string]string{"/ep/status/a": "COMPLETED", "/ep/status/b": "IN_PROGRESS", "/ep/status/c": "FAILED"}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

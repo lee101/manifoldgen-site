@@ -169,13 +169,21 @@ func h3EndpointConfig(endpointID string) (h3ScaleEndpoint, error) {
 	return config, err
 }
 
+// h3EndpointIdleSeconds is the warm window (RunPod idleTimeout, and the
+// reaper's grace before forcing workersMax=0) for a lane's endpoint:
+// <LANE>_RUNPOD_IDLE_SECONDS in [5, 600], default 5 (scale to zero at once).
 func h3EndpointIdleSeconds(endpointID string) int {
-	_, pink := h3LaneEnv("H3_PINKCHERRY")
-	if endpointID == "" || endpointID != pink {
+	if endpointID == "" {
 		return 5
 	}
-	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("H3_PINKCHERRY_RUNPOD_IDLE_SECONDS"))); err == nil && configured >= 5 && configured <= 600 {
-		return configured
+	for _, lane := range []string{"H3_NORMAL", "H3_PINKCHERRY", "H3_LTX"} {
+		if _, endpoint := h3LaneEnv(lane); endpoint == "" || endpoint != endpointID {
+			continue
+		}
+		if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv(lane + "_RUNPOD_IDLE_SECONDS"))); err == nil && configured >= 5 && configured <= 600 {
+			return configured
+		}
+		return 5
 	}
 	return 5
 }
@@ -210,7 +218,7 @@ func submitScaledH3RunpodJob(route h3WorkerRoute, input map[string]interface{}, 
 	reasserted := false
 	var status int
 	for attempt := 0; attempt < 7; attempt++ {
-		status, err = callH3Runpod(route.RunpodEndpointID, "/run", http.MethodPost, runpodRunBody(input, h3ExecutionBudget(input)), queued)
+		status, err = callH3Runpod(route.RunpodEndpointID, "/run", http.MethodPost, withH3RunpodWebhook(route.RunpodEndpointID, runpodRunBody(input, h3ExecutionBudget(input))), queued)
 		paused := status == http.StatusConflict && err != nil && strings.Contains(err.Error(), "ENDPOINT_PAUSED")
 		if !paused {
 			return status, err

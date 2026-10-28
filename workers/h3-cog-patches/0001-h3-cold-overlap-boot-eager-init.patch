@@ -1,0 +1,319 @@
+
+--- a/h3_runtime.py	2026-10-01 10:19:33.482781811 +1300
++++ b/h3_runtime.py	2026-10-28 13:29:32.322562766 +1300
+@@ -341,6 +341,10 @@
+     return ""
+ 
+ 
++def _overlap_boot_enabled() -> bool:
++    return os.getenv("H3_OVERLAP_BOOT", "1").strip().lower() not in {"0", "false", "no", "off"}
++
++
+ class H3Runtime:
+     def __init__(
+         self,
+@@ -368,14 +372,18 @@
+         lazy_ref2va = self.model_profile.has("ref2va") and os.getenv(
+             "H3_LAZY_REF2VA", ""
+         ).strip().lower() in {"1", "true", "yes", "on"}
+-        ensure_weights(
++        weight_kwargs = dict(
+             include_ref2va=self.model_profile.has("ref2va") and not lazy_ref2va,
+             include_face_refine=face_refine,
+             include_turbo=self.model_profile.has("turbo"),
+             include_style_loras=self.model_profile.has("style_loras"),
+             quant=self.quant,
+         )
+-        self.process = self._start_comfy()
++        if _overlap_boot_enabled():
++            self.process = self._start_comfy_with_weights(weight_kwargs)
++        else:
++            ensure_weights(**weight_kwargs)
++            self.process = self._start_comfy()
+         self.face_detector = EndpointFaceDetector(enabled=face_refine)
+         prewarm_face_detector = os.getenv("H3_PRELOAD_FACE_DETECTOR", "").strip().lower() in {
+             "1", "true", "yes", "on",
+@@ -396,6 +404,44 @@
+             flush=True,
+         )
+ 
++    def _start_comfy_with_weights(self, weight_kwargs: dict) -> subprocess.Popen:
++        """Boot ComfyUI while the weights download/verify.
++
++        ComfyUI's interpreter, CUDA and custom-node import do not read model
++        files (model lists are re-scanned when a prompt is validated), so the
++        cold path costs max(boot, fetch) instead of boot + fetch. The weights
++        and the generation graph are unchanged.
++        """
++        result: dict[str, BaseException | None] = {"error": None}
++
++        def fetch() -> None:
++            try:
++                ensure_weights(**weight_kwargs)
++            except BaseException as exc:  # re-raised on the caller's thread
++                result["error"] = exc
++
++        started = time.monotonic()
++        fetcher = threading.Thread(target=fetch, name="h3-weights", daemon=True)
++        fetcher.start()
++        try:
++            process = self._start_comfy()
++        except BaseException:
++            fetcher.join()
++            raise
++        boot_seconds = time.monotonic() - started
++        fetcher.join()
++        if result["error"] is not None:
++            terminate = getattr(process, "terminate", None)
++            if callable(terminate) and process.poll() is None:
++                terminate()
++            raise result["error"]
++        print(
++            f"H3 cold start: comfy_boot={boot_seconds:.1f}s "
++            f"boot+weights={time.monotonic() - started:.1f}s (overlapped)",
++            flush=True,
++        )
++        return process
++
+     @staticmethod
+     def _env_float(name: str, default: float) -> float:
+         try:
+
+--- a/rp_handler.py	2026-10-01 10:19:33.482781811 +1300
++++ b/rp_handler.py	2026-10-28 13:29:49.677545389 +1300
+@@ -7,6 +7,7 @@
+ import os
+ import socket
+ import tempfile
++import threading
+ import time
+ import urllib.parse
+ import urllib.request
+@@ -22,6 +23,7 @@
+ from h3_tuning import resolve_tuning, validate_tuning
+ 
+ _runtime = None
++_runtime_lock = threading.RLock()
+ _moderation = None
+ _exact_result_cache = None
+ MAX_IMAGE_BYTES = 32 * 1024 * 1024
+@@ -74,6 +76,15 @@
+     attention_backend: str | None = None,
+     benchmark_mode: bool = False,
+ ) -> H3Runtime:
++    with _runtime_lock:
++        return _get_runtime_locked(vram_mode, attention_backend, benchmark_mode)
++
++
++def _get_runtime_locked(
++    vram_mode: str | None,
++    attention_backend: str | None,
++    benchmark_mode: bool,
++) -> H3Runtime:
+     global _runtime
+     # Resolve omitted request values to the worker defaults. This makes a
+     # benchmark override a temporary runtime choice rather than sticky state.
+@@ -100,9 +111,13 @@
+         )
+     return _runtime
+ 
++_moderation_lock = threading.Lock()
++
++
+ def _get_moderation() -> Moderation:
+     global _moderation
+-    if _moderation is None: _moderation = Moderation()
++    with _moderation_lock:
++        if _moderation is None: _moderation = Moderation()
+     return _moderation
+ 
+ 
+@@ -398,5 +413,45 @@
+             release_profile(benchmark.trace_id)
+ 
+ 
++def _eager_init_enabled() -> bool:
++    return os.getenv("H3_EAGER_INIT", "").strip().lower() in {"1", "true", "yes", "on"}
++
++
++def _eager_init() -> None:
++    """Build the default runtime at container start instead of on the first job.
++
++    The first job's input downloads and RunPod hand-off then overlap the weight
++    fetch and ComfyUI boot; the job blocks on _runtime_lock until it is ready.
++    A failure here is only logged: the job path retries construction.
++    """
++    started = time.monotonic()
++    try:
++        _get_runtime()
++        print(f"H3 eager init ready in {time.monotonic() - started:.1f}s", flush=True)
++    except Exception as exc:
++        print(f"H3 eager init failed after {time.monotonic() - started:.1f}s: {exc}", flush=True)
++
++
++def _preload_moderation() -> None:
++    try:
++        moderation = _get_moderation()
++        moderation._nsfw_model()
++        moderation._age_model()
++    except Exception as exc:
++        print(f"H3 moderation preload failed: {exc}", flush=True)
++
++
++def start_eager_init() -> list[threading.Thread]:
++    threads = [
++        threading.Thread(target=_eager_init, name="h3-eager-init", daemon=True),
++        threading.Thread(target=_preload_moderation, name="h3-moderation-preload", daemon=True),
++    ]
++    for thread in threads:
++        thread.start()
++    return threads
++
++
+ if __name__ == "__main__":
++    if _eager_init_enabled():
++        start_eager_init()
+     runpod.serverless.start({"handler": handler})
+
+--- a/tests/test_rp_handler.py	2026-08-31 12:56:53.224323523 +1200
++++ b/tests/test_rp_handler.py	2026-10-28 13:29:49.681545384 +1300
+@@ -272,3 +272,56 @@
+     assert second["metrics"]["exact_result_cache_hit"] is True
+     assert second["metrics"]["generation_seconds"] == 0.0
+     rp_handler._exact_result_cache = None
++
++
++def test_eager_init_builds_default_runtime_once(monkeypatch):
++    import threading as _threading
++
++    created = []
++    release = _threading.Event()
++
++    class Runtime:
++        def __init__(self, **kwargs):
++            assert release.wait(5)
++            self.vram_mode = kwargs["vram_mode"]
++            self.attention_backend = kwargs["attention_backend"]
++            self.benchmark_mode = kwargs["benchmark_mode"]
++            created.append(self)
++
++        def close(self):
++            pass
++
++    class Moderation:
++        def _nsfw_model(self):
++            return None
++
++        def _age_model(self):
++            return None
++
++    monkeypatch.setattr(rp_handler, "H3Runtime", Runtime)
++    monkeypatch.setattr(rp_handler, "Moderation", Moderation)
++    monkeypatch.delenv("H3_COMFY_VRAM_MODE", raising=False)
++    monkeypatch.delenv("H3_ATTENTION_BACKEND", raising=False)
++    rp_handler._runtime = None
++    rp_handler._moderation = None
++
++    threads = rp_handler.start_eager_init()
++    result = {}
++    job = _threading.Thread(target=lambda: result.setdefault("runtime", rp_handler._get_runtime()))
++    job.start()
++    release.set()
++    job.join(5)
++    for thread in threads:
++        thread.join(5)
++
++    assert len(created) == 1
++    assert result["runtime"] is created[0]
++    rp_handler._runtime = None
++    rp_handler._moderation = None
++
++
++def test_eager_init_is_opt_in(monkeypatch):
++    monkeypatch.delenv("H3_EAGER_INIT", raising=False)
++    assert rp_handler._eager_init_enabled() is False
++    monkeypatch.setenv("H3_EAGER_INIT", "1")
++    assert rp_handler._eager_init_enabled() is True
+
+--- a/tests/test_runtime.py	2026-08-16 04:21:24.623099171 +1200
++++ b/tests/test_runtime.py	2026-10-28 13:30:06.686527781 +1300
+@@ -519,3 +519,79 @@
+         "free_memory": True,
+         "reason": "periodic reset after 2 jobs",
+     }]
++
++
++def test_comfy_boot_overlaps_weight_fetch(monkeypatch):
++    import threading as _threading
++
++    events = []
++    fetch_started = _threading.Event()
++    boot_started = _threading.Event()
++
++    class Process:
++        def poll(self):
++            return 0
++
++        def terminate(self):
++            events.append("terminate")
++
++    def ensure(**kwargs):
++        fetch_started.set()
++        assert boot_started.wait(5), "ComfyUI boot did not start while weights were fetching"
++        events.append(("weights", kwargs["include_ref2va"]))
++
++    def start(self):
++        boot_started.set()
++        assert fetch_started.wait(5), "weight fetch did not start while ComfyUI booted"
++        events.append("boot")
++        return Process()
++
++    monkeypatch.delenv("H3_OVERLAP_BOOT", raising=False)
++    monkeypatch.setenv("H3_LAZY_REF2VA", "1")
++    monkeypatch.setattr(h3_runtime, "ensure_weights", ensure)
++    monkeypatch.setattr(H3Runtime, "_start_comfy", start)
++    monkeypatch.setattr(h3_runtime, "EndpointFaceDetector", lambda **_kwargs: object())
++
++    runtime = H3Runtime(model_profile="audio")
++    assert sorted(map(str, events)) == sorted(map(str, ["boot", ("weights", False)]))
++    runtime.close()
++
++
++def test_weight_fetch_failure_stops_booted_comfy(monkeypatch):
++    stopped = []
++
++    class Process:
++        def poll(self):
++            return None
++
++        def terminate(self):
++            stopped.append(True)
++
++    def ensure(**_kwargs):
++        raise RuntimeError("r2 unavailable")
++
++    monkeypatch.delenv("H3_OVERLAP_BOOT", raising=False)
++    monkeypatch.setattr(h3_runtime, "ensure_weights", ensure)
++    monkeypatch.setattr(H3Runtime, "_start_comfy", lambda self: Process())
++    monkeypatch.setattr(h3_runtime, "EndpointFaceDetector", lambda **_kwargs: object())
++
++    with pytest.raises(RuntimeError, match="r2 unavailable"):
++        H3Runtime()
++    assert stopped == [True]
++
++
++def test_overlap_boot_can_be_disabled(monkeypatch):
++    order = []
++
++    class Process:
++        def poll(self):
++            return 0
++
++    monkeypatch.setenv("H3_OVERLAP_BOOT", "0")
++    monkeypatch.setattr(h3_runtime, "ensure_weights", lambda **_kwargs: order.append("weights"))
++    monkeypatch.setattr(H3Runtime, "_start_comfy", lambda self: order.append("boot") or Process())
++    monkeypatch.setattr(h3_runtime, "EndpointFaceDetector", lambda **_kwargs: object())
++
++    runtime = H3Runtime()
++    assert order == ["weights", "boot"]
++    runtime.close()

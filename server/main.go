@@ -323,6 +323,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 
 	case (path == "/api/stripe-webhook" || path == "/api/stripe/webhook") && method == "POST":
 		handleStripeWebhook(ctx)
+	case path == h3RunpodWebhookPath && method == "POST":
+		handleH3RunpodWebhook(ctx)
 
 	case path == "/api/autotopup-settings" && method == "GET":
 		handleGetAutotopupSettings(ctx)

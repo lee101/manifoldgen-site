@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpRight, Check, Clapperboard, Code2, Copy, Loader2, Play, SlidersHorizontal, WandSparkles } from 'lucide-react';
 import { loadStoredUser } from '@/lib/auth';
 import { generatorRequest, type VideoGenerator } from '@/lib/video-generators';
+import { jobLongPollHonored, jobLongPollURL } from '@/lib/job-long-poll';
 import VideoDownload from '../components/video-download';
 
 type JobPayload = {
@@ -93,11 +94,15 @@ export function VideoGeneratorWorkspace({ generator, apiOnly = false }: { genera
       const id = jobID(queued);
       if (!id) throw new Error('The generation service returned no job ID.');
       setStatus('Rendering video…');
+      let lastStatus = '';
+      let longPoll = false;
       for (let attempt = 0; attempt < 360 && !stopped.current; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 2500));
-        const poll = await fetch(`/api/video-jobs/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${user.api_key}` } });
+        if (!longPoll) await new Promise((resolve) => window.setTimeout(resolve, 2500));
+        const poll = await fetch(jobLongPollURL(`/api/video-jobs/${encodeURIComponent(id)}`, lastStatus), { headers: { Authorization: `Bearer ${user.api_key}` } });
         const data = await responseJSON(poll);
+        longPoll = jobLongPollHonored(data);
         const state = String(data.job?.status || data.status || '').toLowerCase();
+        lastStatus = String(data.job?.status || '');
         const url = videoURL(data.job?.result || data.result);
         if (url || state === 'completed') {
           if (!url) throw new Error('Generation completed without a video URL.');
