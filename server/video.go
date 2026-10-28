@@ -1431,6 +1431,15 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		}
 		consecutiveErrors = 0
 		providerStatus := strings.ToUpper(strings.TrimSpace(state.Status))
+		if providerStatus == "IN_QUEUE" {
+			if newID := runpodBatchExpire(endpointID, providerJobID); newID != "" {
+				if err := dbConn.RequeueVideoJobProvider(job.ID, "runpod:"+endpointID+":"+newID, job.Result); err == nil {
+					launchVideoJob(job.ID)
+					return
+				}
+				runpodCancelBestEffort(endpointID, newID)
+			}
+		}
 		if providerStatus == "IN_QUEUE" && time.Since(job.CreatedAt) >= h3RunpodQueueTimeout() {
 			if fallbackRunpodH3ToLocal(job, endpointID, providerJobID, variant) {
 				return

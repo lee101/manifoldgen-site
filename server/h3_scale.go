@@ -209,6 +209,9 @@ func submitScaledH3RunpodJob(route h3WorkerRoute, input map[string]interface{}, 
 	}
 	reasserted := false
 	var status int
+	if submitRunpodBatchJob(route.RunpodEndpointID, input, runpodJobPolicy(h3ExecutionBudget(input)), queued) {
+		return http.StatusOK, nil
+	}
 	for attempt := 0; attempt < 7; attempt++ {
 		status, err = callH3Runpod(route.RunpodEndpointID, "/run", http.MethodPost, runpodRunBody(input, h3ExecutionBudget(input)), queued)
 		paused := status == http.StatusConflict && err != nil && strings.Contains(err.Error(), "ENDPOINT_PAUSED")
