@@ -48,6 +48,25 @@ $4.80/h = $0.088; fal H3 Max $0.40 (we charge $0.48).
 - VDN: good but a step behind Pika at 5 s (dancer background drifts, a curtain appears; flicker 3.9); at 15 s it is as good as
   Pika. The potter VDN render is invalid (bench bug: render.num_frames only, latent size stayed landscape).
 
+## Production endpoint canary (cog-manifold-h3-flex r2w5aaxyz1bx08, image flex-r3, 2026-10-30)
+Direct RunPod submissions (scripts/runpod-h3-direct-canary.py), audit in audit-canary/ against the fal clips:
+| clip | worker | res | generation s | execution s |
+|---|---|---|---|---|
+| fox t2v | cold (boot 78 s) | 1344x768 | 54.1 | 139.5 |
+| dancer t2v hd | warm | 1920x1088 | 141.2 | 145.4 |
+| potter i2v 9:16 | cold | 768x1344 | 61.2 | 245.5 |
+All three match fal by eye (potter speaks the line, first-frame PSNR 43 vs fal 32; the 1080p dancer is visibly
+sharper). 1080p costs ~$0.16 of GPU per 5 s and is listed at $0.15/s ($0.75 per 5 s).
+
+## VDN verdict: not a production lane yet
+- The render hard-codes the latent canvas (src/inference/render.py LATENT_H, LATENT_W = 48, 84): 1344x768 16:9 only,
+  no portrait, square or 1080p without retraining/patching (this is the "potter rendered landscape" result above).
+- Its own stack (torch 2.13 cu129, patched diffusers, FA4) and a bf16 32B text encoder; another warm endpoint
+  would split traffic and double cold starts.
+- It wins only on single long shots (15 s: 99 s vs Pika 262 s denoise on H100); at 5 s it is a step behind Pika.
+  At list price the 15 s Pika clip already costs ~$0.26 of GPU against $1.44 charged, so the gain is latency.
+Revisit if VDN ships aspect-ratio support or a ComfyUI port.
+
 ## Spend
 Pods: $0.45 (failed, cu129 torch clobbered system torch) + $3.58 + $5.33 (VDN) + $0.69 (PRO 6000) + $1.13 (H100 int8 TE);
 fal reference $1.60. All pods deleted.
