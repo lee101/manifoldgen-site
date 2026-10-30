@@ -101,6 +101,8 @@ func h3DesiredWorkersMax(route h3WorkerRoute) int {
 		defaultMax, envName = 1, "H3_PINKCHERRY_RUNPOD_MAX_WORKERS"
 	case h3LtxVariant:
 		defaultMax, envName = 2, "H3_LTX_RUNPOD_MAX_WORKERS"
+	case h3FlexVariant:
+		defaultMax, envName = 3, "H3_FLEX_RUNPOD_MAX_WORKERS"
 	}
 	if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv(envName))); err == nil && configured > 0 {
 		return configured
@@ -170,6 +172,14 @@ func h3EndpointConfig(endpointID string) (h3ScaleEndpoint, error) {
 }
 
 func h3EndpointIdleSeconds(endpointID string) int {
+	// The flex lane carries all normal traffic: a warm worker (~55 s per clip)
+	// beats a multi-minute cold start, so it idles for a minute by default.
+	if flex, ok := h3FlexLane(); ok && endpointID == flex.RunpodEndpointID {
+		if configured, err := strconv.Atoi(strings.TrimSpace(os.Getenv("H3_FLEX_RUNPOD_IDLE_SECONDS"))); err == nil && configured >= 5 && configured <= 600 {
+			return configured
+		}
+		return 60
+	}
 	_, pink := h3LaneEnv("H3_PINKCHERRY")
 	if endpointID == "" || endpointID != pink {
 		return 5

@@ -9,7 +9,7 @@ type VideoPricePoint = {
 };
 
 type VideoPricingTier = {
-  size: 'preview' | 'balanced' | 'native';
+  size: 'preview' | 'balanced' | 'native' | 'hd';
   label: string;
   resolution_16_9: string;
   prices: VideoPricePoint[];

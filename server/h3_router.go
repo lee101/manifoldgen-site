@@ -171,6 +171,10 @@ func h3RouteForStoredJob(job *VideoJob) h3WorkerRoute {
 				if route, ok := h3PinkCherryLane(); ok {
 					return route
 				}
+			case h3FlexVariant:
+				if route, ok := h3FlexLane(); ok {
+					return route
+				}
 			}
 		}
 	}
@@ -194,6 +198,9 @@ func h3RouteForPrompt(prompt string) h3WorkerRoute {
 	}
 	normalEndpoint := strings.TrimSpace(os.Getenv("H3_NORMAL_RUNPOD_ENDPOINT"))
 	normal := h3WorkerRoute{Variant: h3NormalVariant, CogURL: normalURL, RunpodEndpointID: normalEndpoint}
+	if flex, ok := h3FlexLane(); ok {
+		normal = flex
+	}
 	adult, ok := h3AdultLane()
 	if !ok {
 		return normal

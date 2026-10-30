@@ -34,7 +34,7 @@ func h3FalMode(req ServiceUsageRequest) string {
 
 func h3FalCanHandle(req ServiceUsageRequest) bool {
 	wantsLocalRefine := req.LatentUpscale != nil && *req.LatentUpscale
-	return !wantsLocalRefine && req.Size != "audio" && req.AudioURL == "" && !req.Loop &&
+	return !wantsLocalRefine && req.Size != "audio" && req.Size != "hd" && req.AudioURL == "" && !req.Loop &&
 		len(req.Keyframes) <= 2 && req.Duration >= 5 && req.Duration <= 15
 }
 
@@ -241,6 +241,9 @@ func processFalH3MaxJob(job *VideoJob) {
 			req := h3FalStoredRequest(job)
 			providerUSD := h3FalProviderCost(req)
 			chargedUSD := math.Ceil(providerUSD*h3FalMarkup*1_000_000) / 1_000_000
+			if capUSD := h3StoredChargeCap(job); capUSD > 0 && capUSD < chargedUSD {
+				chargedUSD = capUSD // moved here from the flex lane: keep its quote
+			}
 			result, _ := json.Marshal(map[string]interface{}{
 				"video_url": response.Video.URL, "provider": "fal", "model_variant": "h3-max",
 				"output_format": "mp4", "codec": "h264", "bytes": response.Video.FileSize,

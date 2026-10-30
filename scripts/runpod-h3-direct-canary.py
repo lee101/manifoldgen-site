@@ -88,7 +88,7 @@ def main() -> int:
     parser.add_argument("--workers-max", type=int, default=1)
     parser.add_argument("--aspect-ratio", default="9:16")
     parser.add_argument("--seed", type=int, default=20260814)
-    parser.add_argument("--size", choices=("preview", "balanced", "quality"), default="preview")
+    parser.add_argument("--size", choices=("preview", "balanced", "native", "hd", "quality"), default="preview")
     parser.add_argument("--duration", type=float, default=5)
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--structured-prompt", action=argparse.BooleanOptionalAction, default=True)

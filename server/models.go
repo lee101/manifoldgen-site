@@ -203,6 +203,7 @@ type ServiceUsageRequest struct {
 	LastFrame           string             `json:"last_frame,omitempty"`
 	Keyframes           []string           `json:"keyframes,omitempty"`
 	Size                string             `json:"size,omitempty"`
+	H3Lane              string             `json:"-"` // worker lane chosen by the H3 router (pricing only)
 	Loop                bool               `json:"loop,omitempty"`
 	IncludeAudio        *bool              `json:"include_audio,omitempty"`
 	Structured          *bool              `json:"structured_prompt,omitempty"`

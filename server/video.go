@@ -437,7 +437,7 @@ func normalizeH3VideoRequest(req *ServiceUsageRequest) error {
 	if req.Size == "" {
 		req.Size = "balanced"
 	}
-	if !videoStringIn(req.Size, "preview", "balanced", "native", "audio") {
+	if !videoStringIn(req.Size, "preview", "balanced", "native", "hd", "audio") {
 		return fmt.Errorf("unsupported size")
 	}
 	if req.Duration == 0 {
@@ -571,6 +571,16 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		return
 	}
 	route := h3RouteForRequest(req)
+	if route.Variant == h3FlexVariant {
+		if err := prepareH3FlexRequest(&req); err != nil {
+			jsonError(ctx, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else if req.Size == "hd" {
+		jsonError(ctx, http.StatusBadRequest, "1080p video is not available for this request")
+		return
+	}
+	req.H3Lane = route.Variant
 	if route.Variant == h3NormalVariant && h3FalCanHandle(req) {
 		if rejectCreditsBelowEstimate(ctx, user, math.Ceil(h3FalProviderCost(req)*h3FalMarkup*100)/100, 1) {
 			return
@@ -1015,8 +1025,16 @@ func h3Estimate(req ServiceUsageRequest) (float64, float64, float64) {
 		sizeFactor = 0.5
 	}
 	predictSeconds := h3NativeFiveSecondBaseline.Seconds() * (float64(duration) / 5) * (float64(steps) / 20) * sizeFactor
+	if req.H3Lane == h3FlexVariant {
+		predictSeconds = h3FlexPredictSeconds(req)
+	}
 	providerMicros := int64(math.Ceil(servicePricesUSD["h3_video"] * predictSeconds / 3600 * 1_000_000))
 	chargedUSD := math.Ceil(float64(h3DownstreamMicros(providerMicros))/10_000) / 100
+	if req.H3Lane == h3FlexVariant {
+		if listUSD, ok := h3FlexListPriceUSD(req); ok {
+			chargedUSD = listUSD
+		}
+	}
 	creditPrice := getCUTEPriceUSD()
 	estimatedCredits := 0.0
 	if creditPrice > 0 {
@@ -1431,6 +1449,9 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		}
 		consecutiveErrors = 0
 		providerStatus := strings.ToUpper(strings.TrimSpace(state.Status))
+		if providerStatus == "IN_QUEUE" && variant == h3FlexVariant && fallbackFlexToFal(job, endpointID, providerJobID) {
+			return
+		}
 		if providerStatus == "IN_QUEUE" {
 			if newID := runpodBatchExpire(endpointID, providerJobID); newID != "" {
 				if err := dbConn.RequeueVideoJobProvider(job.ID, "runpod:"+endpointID+":"+newID, job.Result); err == nil {
@@ -1499,6 +1520,13 @@ func processRunpodH3VideoJob(job *VideoJob) {
 				providerMicros = 1
 			}
 			chargedUSD := float64(h3DownstreamMicros(providerMicros)) / 1_000_000
+			if variant == h3FlexVariant {
+				if stored, ok := h3FlexStoredRequest(job); ok {
+					if listUSD, ok := h3FlexListPriceUSD(stored); ok {
+						chargedUSD = listUSD
+					}
+				}
+			}
 			cutePrice := getCUTEPriceUSD()
 			if cutePrice <= 0 || math.IsNaN(cutePrice) || math.IsInf(cutePrice, 0) {
 				_ = dbConn.UpdateVideoJob(job.ID, "payment_required", nil, "CUTE price unavailable; retry status after pricing recovers")

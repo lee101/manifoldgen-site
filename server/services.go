@@ -442,11 +442,21 @@ func h3VideoPricingTiers() []h3VideoPricingTier {
 		{Size: "balanced", Label: "Balanced", Width16x9: 1184, Height16x9: 672, Resolution16x9: "1184 × 672"},
 		{Size: "native", Label: "Native", Width16x9: 1344, Height16x9: 768, Resolution16x9: "1344 × 768"},
 	}
+	lane := ""
+	if _, ok := h3FlexLane(); ok {
+		lane = h3FlexVariant
+		tiers = append(tiers, h3VideoPricingTier{Size: "hd", Label: "1080p", Width16x9: 1920, Height16x9: 1088, Resolution16x9: "1920 × 1088"})
+	}
 	for tierIndex := range tiers {
 		for _, duration := range []int{5, 10, 15, 30, 60} {
-			priceUSD, credits, _ := h3Estimate(ServiceUsageRequest{
-				Service: "h3_video", Size: tiers[tierIndex].Size, Duration: duration, NumSteps: 20,
-			})
+			if tiers[tierIndex].Size == "hd" && duration > h3FlexHDMaxDuration {
+				continue
+			}
+			req := ServiceUsageRequest{Service: "h3_video", Size: tiers[tierIndex].Size, Duration: duration, NumSteps: 20, H3Lane: lane}
+			if lane != "" {
+				_ = prepareH3FlexRequest(&req)
+			}
+			priceUSD, credits, _ := h3Estimate(req)
 			tiers[tierIndex].Prices = append(tiers[tierIndex].Prices, h3VideoPricePoint{
 				DurationSeconds: duration, PriceUSD: priceUSD, Credits: credits,
 			})
@@ -540,9 +550,11 @@ func publicServiceName(service string) string {
 // handleGetPricing returns current pricing for all services
 func handleGetPricing(ctx *fasthttp.RequestCtx) {
 	cutePrice := getCUTEPriceUSD()
-	h3EstimateUSD, h3EstimateCredits, h3EstimateSeconds := h3Estimate(ServiceUsageRequest{
-		Service: "h3_video", Size: "native", Duration: 5, NumSteps: 20,
-	})
+	h3Quote := ServiceUsageRequest{Service: "h3_video", Size: "native", Duration: 5, NumSteps: 20}
+	if _, ok := h3FlexLane(); ok {
+		h3Quote.H3Lane = h3FlexVariant
+	}
+	h3EstimateUSD, h3EstimateCredits, h3EstimateSeconds := h3Estimate(h3Quote)
 
 	units := map[string]string{
 		"zimage":                   fmt.Sprintf("per generation (base); $%.2f for 20+ steps", zimageHighStepPriceUSD),

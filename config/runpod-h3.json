@@ -69,7 +69,30 @@
       "gpuTypeIds": [
         "NVIDIA H100 80GB HBM3"
       ]
+    },
+    {
+      "id": "r2w5aaxyz1bx08",
+      "templateId": "cwvlh3haz6",
+      "name": "cog-manifold-h3-flex",
+      "workersMax": 3,
+      "image": "ghcr.io/lee101/h3-cog:cu130-20261030-flex-r3",
+      "idleTimeout": 60,
+      "env": {
+        "H3_ACCEL_PROFILE": "pika-6",
+        "H3_TURBO_REMAP_STEPS": "1",
+        "H3_MODEL_SET": "fl2va,pika",
+        "H3_COMFY_VRAM_MODE": "high",
+        "H3_TEXT_ENCODER": "auto",
+        "H3_BOOT_PREWARM": "1",
+        "H3_PREFETCH_WEIGHTS": "1"
+      },
+      "unsetEnv": ["H3_FACE_REFINE_LORA", "H3_FACE_REFINE_STEPS"],
+      "gpuTypeIds": [
+        "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "NVIDIA H100 80GB HBM3",
+        "NVIDIA H200"
+      ]
     }
   ],
-  "notes": "Both variants use the native handler and scale to zero after five idle seconds. H100 remains the validated default; REF2VA is an allowed lazy capability so text/video cold starts do not pay its load cost, while image edits load it on demand. Studio 1939 was removed after every representative A/B preferred base H3 on coherence and prompt adherence. The H3 face-refine pass is disabled and omitted from H3_MODEL_SET: repeated single- and multi-face audits found skips, no visible gain, or substantial detail loss. Re-enable only for a different restorer that wins a representative temporal A/B. PinkCherry beta-0.6 remains pinned to an immutable revision. The PinkCherry endpoint mounts network volume manifold-models (65aknc5k8g, EU-NL-1) which also holds the shared H3 text encoder, VAEs, ref2va and the PinkCherry fl2va, so it is pinned to H100 80GB HBM3 in that datacenter. A40 remains excluded after second-pass crashes."
+  "notes": "Both variants use the native handler and scale to zero after five idle seconds. H100 remains the validated default; REF2VA is an allowed lazy capability so text/video cold starts do not pay its load cost, while image edits load it on demand. Studio 1939 was removed after every representative A/B preferred base H3 on coherence and prompt adherence. The H3 face-refine pass is disabled and omitted from H3_MODEL_SET: repeated single- and multi-face audits found skips, no visible gain, or substantial detail loss. Re-enable only for a different restorer that wins a representative temporal A/B. PinkCherry beta-0.6 remains pinned to an immutable revision. The PinkCherry endpoint mounts network volume manifold-models (65aknc5k8g, EU-NL-1) which also holds the shared H3 text encoder, VAEs, ref2va and the PinkCherry fl2va, so it is pinned to H100 80GB HBM3 in that datacenter. A40 remains excluded after second-pass crashes. cog-manifold-h3-flex (server env H3_FLEX_RUNPOD_ENDPOINT) is the normal lane since 2026-10-30: the Pika H3 Flex LoRA at six NFE (profile pika-6) matched fal H3 Max in results/h3-flex-bench at ~$0.06 per 5 s 768p clip on the RTX PRO 6000; H3_TEXT_ENCODER=auto picks nvfp4 on Blackwell and int8_convrot on Hopper (nvfp4 is emulated there, +30-40 s per prompt). It also serves 1080p (size hd, <=10 s)."
 }

@@ -1,0 +1,28 @@
+{
+ "pika15/fox": {
+  "frames": 362,
+  "fps": 24.0,
+  "res": "1344x768",
+  "seconds": 15.08,
+  "sharp": 30.0,
+  "motion": 5.63,
+  "jumps": 1,
+  "flicker": 4.05,
+  "drift": 52.3,
+  "audio_db": -52.8,
+  "gen_s": null
+ },
+ "vdn15/fox": {
+  "frames": 362,
+  "fps": 24.0,
+  "res": "1344x768",
+  "seconds": 15.08,
+  "sharp": 29.1,
+  "motion": 6.09,
+  "jumps": 3,
+  "flicker": 4.24,
+  "drift": 42.6,
+  "audio_db": -47.3,
+  "gen_s": null
+ }
+}

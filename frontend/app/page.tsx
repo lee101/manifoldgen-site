@@ -192,7 +192,9 @@ const SIZES: { id: Size; label: string; hint: string }[] = [
   { id: 'preview', label: 'Preview', hint: 'Fast draft' },
   { id: 'balanced', label: 'Balanced', hint: 'Balanced speed and detail' },
   { id: 'native', label: 'Native', hint: 'Max detail' },
+  { id: 'hd', label: '1080p', hint: 'Sharpest detail, up to 10 seconds' },
 ];
+const HD_MAX_SECONDS = 10;
 
 function authHeaders(apiKey: string): HeadersInit {
   return {
@@ -261,6 +263,8 @@ export default function HomePage() {
   const [job, setJob] = useState<VideoJob | null>(null);
   const [generationTasks, setGenerationTasks] = useState<HomeGenerationTask[]>([]);
   const [h3BaseEstimateUSD, setH3BaseEstimateUSD] = useState(1.01);
+  // Per-size list prices from /api/pricing (video_pricing.tiers); hd appears only when the server offers 1080p.
+  const [h3TierPrices, setH3TierPrices] = useState<Partial<Record<Size, Array<{ duration_seconds: number; price_usd: number }>>>>({});
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [imageCredits, setImageCredits] = useState(4);
   const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
@@ -317,9 +321,16 @@ export default function HomePage() {
   }, [user, creditPrice]);
 
   const estVideoUSD = useMemo(() => {
+    const tier = h3TierPrices[size];
+    if (tier?.length) {
+      const exact = tier.find((point) => point.duration_seconds === duration);
+      if (exact) return exact.price_usd;
+      const base = tier[0];
+      return Math.max(0.1, Math.ceil((base.price_usd / base.duration_seconds) * duration * 100) / 100);
+    }
     const sizeFactor = size === 'preview' ? 0.45 : size === 'balanced' ? 0.7 : 1;
     return Math.max(0.1, Math.ceil(h3BaseEstimateUSD * (duration / 5) * (steps / 20) * sizeFactor * 100) / 100);
-  }, [h3BaseEstimateUSD, duration, size, steps]);
+  }, [h3BaseEstimateUSD, h3TierPrices, duration, size, steps]);
   const estUpscaleUSD = useMemo(() => {
     if (!upscaleMode) return 0;
     const [width, height] = h3Dimensions(aspect, size);
@@ -391,6 +402,13 @@ export default function HomePage() {
         }
         if (data.video_estimate?.estimated_cost_usd) {
           setH3BaseEstimateUSD(data.video_estimate.estimated_cost_usd);
+        }
+        if (Array.isArray(data.video_pricing?.tiers)) {
+          const tiers: Partial<Record<Size, Array<{ duration_seconds: number; price_usd: number }>>> = {};
+          for (const tier of data.video_pricing.tiers) {
+            if (tier?.size && Array.isArray(tier.prices)) tiers[tier.size as Size] = tier.prices;
+          }
+          setH3TierPrices(tiers);
         }
       })
       .catch(() => undefined);
@@ -1432,11 +1450,15 @@ export default function HomePage() {
                 <select
                   aria-label="Size"
                   value={size}
-                  onChange={(e) => setSize(e.target.value as Size)}
+                  onChange={(e) => {
+                    const next = e.target.value as Size;
+                    setSize(next);
+                    if (next === 'hd') setDuration((current) => Math.min(current, HD_MAX_SECONDS));
+                  }}
                   className="rounded-full bg-white/5 px-3 py-1.5 text-sm"
                   title={SIZES.find((s) => s.id === size)?.hint}
                 >
-                  {SIZES.map((s) => {
+                  {SIZES.filter((s) => s.id !== 'hd' || h3TierPrices.hd?.length).map((s) => {
                     const [width, height] = h3Dimensions(aspect, s.id);
                     return (
                       <option key={s.id} value={s.id}>
@@ -1486,6 +1508,7 @@ export default function HomePage() {
                       setLoopMode(false);
                       setIncludeAudio(true);
                       setDuration(15);
+                      setSize((current) => current === 'hd' ? 'native' : current);
                     }
                     return next;
                   })}
@@ -1853,20 +1876,20 @@ export default function HomePage() {
                 aria-label="Video duration in seconds"
                 type="range"
                 min={4}
-                max={60}
+                max={size === 'hd' ? HD_MAX_SECONDS : 60}
                 step={1}
                 value={duration}
                 disabled={musicVideoMode}
                 onChange={(e) => setDuration(Number(e.target.value))}
                 className="mt-5 w-full accent-[var(--color-accent)]"
               />
-              <div className="mt-1 flex justify-between text-[11px] text-white/30"><span>4 sec</span><span>60 sec</span></div>
+              <div className="mt-1 flex justify-between text-[11px] text-white/30"><span>4 sec</span><span>{size === 'hd' ? HD_MAX_SECONDS : 60} sec</span></div>
               <div className="mt-4 grid grid-cols-5 gap-1.5">
                 {[5, 10, 15, 30, 60].map((seconds) => (
                   <button
                     key={seconds}
                     type="button"
-                    disabled={musicVideoMode}
+                    disabled={musicVideoMode || (size === 'hd' && seconds > HD_MAX_SECONDS)}
                     onClick={() => setDuration(seconds)}
                     aria-pressed={duration === seconds}
                     className={`rounded-xl px-2 py-2 text-xs font-medium transition ${duration === seconds ? 'bg-[var(--color-accent-solid)] text-white' : 'bg-white/5 text-white/55 hover:bg-white/10 hover:text-white'}`}
