@@ -159,13 +159,19 @@ def assemble_cmd(args):
     lst = []
     for p in plan:
         src, dst = clips / f"{p['id']:02d}.mp4", tmp / f"{p['id']:02d}.mp4"
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", f"{p['dur']:.3f}", "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=24", "-c:v", "libx264", "-crf", "16", "-c:a", "aac", "-ar", "48000", "-ac", "2", dst], check=True)
+        dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", src], capture_output=True, text=True).stdout)
+        slot, vf, af = p["dur"], "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=24", "aresample=48000"
+        if dur < slot - 0.05:  # clip shorter than its beat-snapped slot: ease it out up to 1.15x slower (speech tempo-matched), hold the last frame for the rest
+            f = min(slot / dur, 1.15)
+            vf = f"setpts={f:.4f}*PTS," + vf + f",tpad=stop_mode=clone:stop_duration={slot - dur * f:.3f}"
+            af = f"atempo={1 / f:.4f}," + af + ",apad"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", f"{slot:.3f}", "-vf", vf, "-af", af, "-c:v", "libx264", "-crf", "16", "-c:a", "aac", "-ar", "48000", "-ac", "2", dst], check=True)
         lst.append(f"file '{dst}'")
     (tmp / "list.txt").write_text("\n".join(lst))
     # dialogue (clip audio) rides over the score, which ducks 8 dB under speech via sidechain
     score = next(OUT.glob("score.*"))
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", tmp / "list.txt", "-i", score, "-filter_complex",
-                    "[1:a]volume=0.9[m];[0:a][m]sidechaincompress=threshold=0.04:ratio=6:attack=20:release=400[d];[m][0:a]amix=inputs=2:duration=first:normalize=0[a]",
+                    "[1:a]volume=0.9[m];[0:a]asplit=2[dl][dk];[m][dk]sidechaincompress=threshold=0.04:ratio=6:attack=20:release=400[d];[d][dl]amix=inputs=2:duration=first:normalize=0[a]",
                     "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", OUT / "trailer.mp4"], check=True)
     print(OUT / "trailer.mp4")
 
