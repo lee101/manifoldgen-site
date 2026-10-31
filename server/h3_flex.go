@@ -31,6 +31,11 @@ const (
 	// 1080p list price per second (env H3_FLEX_HD_USD_PER_SECOND). A 5 s clip
 	// takes ~150 s on an RTX PRO 6000 (~$0.17 at serverless rates).
 	h3FlexHDUSDPerSecond = 0.15
+	// 1440p ("uhd", 2528x1440) is limited to the 5 s clips it was benchmarked at:
+	// ~390 s warm on the RTX PRO 6000 (~$0.43 of GPU), listed at $0.36/s
+	// (env H3_FLEX_UHD_USD_PER_SECOND), about 4x the GPU cost.
+	h3FlexUHDMaxDuration  = 5
+	h3FlexUHDUSDPerSecond = 0.36
 )
 
 // Warm seconds for a 5 s clip per worker size on the flex endpoint's primary
@@ -43,6 +48,7 @@ var h3FlexSizeSeconds = map[string]float64{
 	"balanced": 42,
 	"native":   h3FlexNative5sSeconds,
 	"hd":       150,
+	"uhd":      400,
 	"audio":    20,
 }
 
@@ -62,6 +68,9 @@ func prepareH3FlexRequest(req *ServiceUsageRequest) error {
 	}
 	if req.Size == "hd" && req.Duration > h3FlexHDMaxDuration {
 		return fmt.Errorf("1080p video supports up to %d seconds", h3FlexHDMaxDuration)
+	}
+	if req.Size == "uhd" && req.Duration > h3FlexUHDMaxDuration {
+		return fmt.Errorf("1440p video supports up to %d seconds", h3FlexUHDMaxDuration)
 	}
 	return nil
 }
@@ -93,9 +102,12 @@ func h3FlexListPriceUSD(req ServiceUsageRequest) (float64, bool) {
 		duration = 5
 	}
 	var usd float64
-	if req.Size == "hd" {
-		rate := h3FlexHDUSDPerSecond
-		if raw := strings.TrimSpace(os.Getenv("H3_FLEX_HD_USD_PER_SECOND")); raw != "" {
+	if req.Size == "hd" || req.Size == "uhd" {
+		rate, envName := h3FlexHDUSDPerSecond, "H3_FLEX_HD_USD_PER_SECOND"
+		if req.Size == "uhd" {
+			rate, envName = h3FlexUHDUSDPerSecond, "H3_FLEX_UHD_USD_PER_SECOND"
+		}
+		if raw := strings.TrimSpace(os.Getenv(envName)); raw != "" {
 			if parsed, err := strconv.ParseFloat(raw, 64); err == nil && parsed > 0 {
 				rate = parsed
 			}
@@ -146,11 +158,37 @@ func h3FlexStoredRequest(job *VideoJob) (ServiceUsageRequest, bool) {
 // charged the flex quote (stored as _charge_cap_usd), never the fal price.
 func fallbackFlexToFal(job *VideoJob, endpointID, providerJobID string) bool {
 	patience := h3FlexFalPatience()
-	if patience == 0 || time.Since(job.CreatedAt) < patience || strings.TrimSpace(falAPIKey) == "" {
+	if patience == 0 || time.Since(job.CreatedAt) < patience {
+		return false
+	}
+	return moveFlexJobToFal(job, endpointID, providerJobID, "queue-starved", true)
+}
+
+// recoverStuckFlexJob is the auto-recovery for a flex job that has run past
+// its execution budget (hung worker) or that RunPod ended as TIMED_OUT/FAILED:
+// cancel what is still running and finish the job on fal at the flex quote.
+func recoverStuckFlexJob(job *VideoJob, endpointID, providerJobID, providerStatus string) bool {
+	stored, ok := h3FlexStoredRequest(job)
+	if !ok {
+		return false
+	}
+	if providerStatus == "IN_PROGRESS" {
+		budget := h3FlexExecutionBudget(map[string]interface{}{"duration": stored.Duration, "size": stored.Size})
+		if time.Since(job.CreatedAt) < h3FlexFalPatience()+budget+2*time.Minute {
+			return false
+		}
+	}
+	return moveFlexJobToFal(job, endpointID, providerJobID, "stuck "+strings.ToLower(providerStatus), providerStatus == "IN_PROGRESS")
+}
+
+// moveFlexJobToFal submits the stored request to fal H3 Max, then (when
+// cancelFirst) cancels the RunPod job. The user is charged the flex quote.
+func moveFlexJobToFal(job *VideoJob, endpointID, providerJobID, reason string, cancelFirst bool) bool {
+	if strings.TrimSpace(falAPIKey) == "" {
 		return false
 	}
 	req, ok := h3FlexStoredRequest(job)
-	if !ok || req.Size == "hd" || !h3FalCanHandle(req) {
+	if !ok || req.Size == "hd" || req.Size == "uhd" || !h3FalCanHandle(req) {
 		return false
 	}
 	capUSD, _, _ := h3Estimate(withH3Lane(req, h3FlexVariant))
@@ -160,12 +198,14 @@ func fallbackFlexToFal(job *VideoJob, endpointID, providerJobID string) bool {
 		log.Printf("[h3-flex] fal fallback submit failed job=%s: %v", job.ID, err)
 		return false
 	}
-	var cancelled h3RunpodQueuedJob
-	_, cancelErr := callH3Runpod(endpointID, "/cancel/"+url.PathEscape(providerJobID), http.MethodPost, nil, &cancelled)
-	if status := strings.ToUpper(strings.TrimSpace(cancelled.Status)); cancelErr != nil || (status != "CANCELLED" && status != "CANCELED") {
-		// A worker picked the job up meanwhile: keep it and drop the fal request.
-		cancelFalH3Request(providerID)
-		return false
+	if cancelFirst {
+		var cancelled h3RunpodQueuedJob
+		_, cancelErr := callH3Runpod(endpointID, "/cancel/"+url.PathEscape(providerJobID), http.MethodPost, nil, &cancelled)
+		if status := strings.ToUpper(strings.TrimSpace(cancelled.Status)); cancelErr != nil || (status != "CANCELLED" && status != "CANCELED") {
+			// A worker picked the job up meanwhile: keep it and drop the fal request.
+			cancelFalH3Request(providerID)
+			return false
+		}
 	}
 	input := h3FalPayload(req)
 	input["_h3_variant"] = "h3-max"
@@ -175,7 +215,7 @@ func fallbackFlexToFal(job *VideoJob, endpointID, providerJobID string) bool {
 		log.Printf("[h3-flex] fal fallback persistence failed job=%s: %v", job.ID, err)
 		return false
 	}
-	log.Printf("[h3-flex] job=%s queued %s on %s, moved to fal H3 Max (charge cap $%.4f)", job.ID, time.Since(job.CreatedAt).Round(time.Second), endpointID, capUSD)
+	log.Printf("[h3-flex] job=%s %s after %s on %s, moved to fal H3 Max (charge cap $%.4f)", job.ID, reason, time.Since(job.CreatedAt).Round(time.Second), endpointID, capUSD)
 	launchVideoJob(job.ID)
 	return true
 }

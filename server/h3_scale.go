@@ -190,13 +190,25 @@ func h3EndpointIdleSeconds(endpointID string) int {
 	return 5
 }
 
+// h3EndpointSettings are the per-endpoint execution timeout and FlashBoot values pushed on every scale.
+// The flex endpoint runs with FlashBoot OFF and a 30 min cap: FlashBoot-restored workers came back with stale GPU
+// state and wedged jobs for the full timeout (2026-10-31: restored workers wedged, fresh boots of the same prompts
+// finished), and no flex job legitimately needs more than a few minutes.
+func h3EndpointSettings(endpointID string) (executionTimeoutMs int, flashboot bool) {
+	if flex, ok := h3FlexLane(); ok && endpointID == flex.RunpodEndpointID {
+		return 30 * 60 * 1000, false
+	}
+	return 2 * 60 * 60 * 1000, true
+}
+
 func h3SetWorkersMax(endpointID string, workersMax int) error {
+	executionTimeoutMs, flashboot := h3EndpointSettings(endpointID)
 	return h3NoteWorkersMax(endpointID, workersMax, h3ControlRequest(
 		http.MethodPost,
 		h3ControlBase()+"/endpoints/"+url.PathEscape(endpointID)+"/update",
 		map[string]interface{}{
 			"workersMin": 0, "workersMax": workersMax, "idleTimeout": h3EndpointIdleSeconds(endpointID),
-			"executionTimeoutMs": 2 * 60 * 60 * 1000, "flashboot": true,
+			"executionTimeoutMs": executionTimeoutMs, "flashboot": flashboot,
 			"scalerType": "REQUEST_COUNT", "scalerValue": 1,
 		},
 		nil,
@@ -219,11 +231,11 @@ func submitScaledH3RunpodJob(route h3WorkerRoute, input map[string]interface{}, 
 	}
 	reasserted := false
 	var status int
-	if submitRunpodBatchJob(route.RunpodEndpointID, input, runpodJobPolicy(h3ExecutionBudget(input)), queued) {
+	if submitRunpodBatchJob(route.RunpodEndpointID, input, runpodJobPolicy(h3JobBudget(route, input)), queued) {
 		return http.StatusOK, nil
 	}
 	for attempt := 0; attempt < 7; attempt++ {
-		status, err = callH3Runpod(route.RunpodEndpointID, "/run", http.MethodPost, runpodRunBody(input, h3ExecutionBudget(input)), queued)
+		status, err = callH3Runpod(route.RunpodEndpointID, "/run", http.MethodPost, runpodRunBody(input, h3JobBudget(route, input)), queued)
 		paused := status == http.StatusConflict && err != nil && strings.Contains(err.Error(), "ENDPOINT_PAUSED")
 		if !paused {
 			return status, err

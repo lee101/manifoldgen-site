@@ -1,0 +1,23 @@
+Downloading botocore (15.4MiB)
+ Downloaded botocore
+Installed 7 packages in 100ms
+gpu NVIDIA RTX PRO 6000 Blackwell Workstation Edition disk 300
+pod hjlsxj295o7itp 2.59
+$0.00 poll: HTTP Error 404: Not Found
+$0.02 poll: HTTP Error 404: Not Found
+$0.04 poll: HTTP Error 404: Not Found
+$0.07 poll: HTTP Error 404: Not Found
+$0.09 poll: HTTP Error 404: Not Found
+$0.11 runtime runs=0 err=0 vdn={}
+$0.13 warmup:fox runs=0 err=0 vdn={}
+$0.16 pika6_native:dancer runs=0 err=0 vdn={}
+$0.18 pika6_native:dancer runs=0 err=0 vdn={}
+$0.20 pika6_native:fox runs=1 err=0 vdn={}
+$0.22 pika6_native:tram runs=2 err=0 vdn={}
+$0.25 pika6_native:tram runs=2 err=0 vdn={}
+$0.27 pika6_native:potter runs=3 err=0 vdn={}
+$0.30 pika6_native:potter runs=3 err=0 vdn={}
+$0.32 done runs=4 err=0 vdn={}
+fetch failed vdn_setup.log HTTP Error 404: Not Found
+fetch failed vdn_run.log HTTP Error 404: Not Found
+deleted hjlsxj295o7itp

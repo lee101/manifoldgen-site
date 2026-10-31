@@ -327,3 +327,12 @@ Run the closest checks locally with:
 (cd server && go vet ./... && go test -race ./... && go build ./...)
 (cd frontend && bun run build && bunx playwright test tests/e2e/studio-media.spec.js tests/e2e/api-pricing.spec.js)
 ```
+
+## Worker job logs (private bucket)
+
+Every RunPod job ships its log (inputs, ComfyUI output, errors, also on failure/timeout) to the private R2 bucket `private`.
+The server presigns a PUT per job (`_log_upload_url`, `attachH3JobLogTarget` in `server/video.go`; `H3_LOG_BUCKET`/`H3_LOG_PREFIX`
+override, `H3_LOG_BUCKET=` disables) and the worker uploads it from `finally` (`h3-cog-flex/h3_joblog.py`; no worker credentials).
+Layout: `manifoldgen-site/h3-flex-logs/YYYY/MM/DD/<uuid>.log.gz`. On the 1st/15th `scripts/h3_log_rollup.py` (timer in `deploy/`)
+archives days older than 14 into `archive/<first>_<last>.tar.gz` + an index of job id/status/error. Logs contain prompts: keep the bucket private.
+Other sites copy `scripts/shared/runpod_joblog.py` next to their handler: `runpod_joblog.wrap(handler, "site/service")`.

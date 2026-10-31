@@ -1,0 +1,62 @@
+Downloading botocore (15.4MiB)
+ Downloaded botocore
+Installed 7 packages in 102ms
+create failed NVIDIA H100 NVL 500 b'{"error":"create pod: There are no instances currently available","status":500}\n'
+gpu NVIDIA H100 80GB HBM3 disk 300
+pod rwj3ao1wgp9dqw 3.99
+$0.00 poll: HTTP Error 404: Not Found
+$0.03 poll: HTTP Error 404: Not Found
+Traceback (most recent call last):
+  File "/vfast/data/code/manifoldgen-site/results/h3-flex-bench/launch.py", line 140, in main
+    time.sleep(30)
+    ~~~~~~~~~~^^^^
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/vfast/data/code/manifoldgen-site/results/h3-flex-bench/launch.py", line 161, in <module>
+    main()
+    ~~~~^^
+  File "/vfast/data/code/manifoldgen-site/results/h3-flex-bench/launch.py", line 152, in main
+    p.call(f"/pods/{pod_id}", "DELETE")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/vfast/data/code/manifoldgen-site/scripts/h3_upscale_gpu_probe.py", line 44, in call
+    with urllib.request.urlopen(request, timeout=120) as response:
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/urllib/request.py", line 187, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/urllib/request.py", line 487, in open
+    response = self._open(req, data)
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/urllib/request.py", line 504, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+                              '_open', req)
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/urllib/request.py", line 464, in _call_chain
+    result = func(*args)
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/urllib/request.py", line 1369, in https_open
+    return self.do_open(http.client.HTTPSConnection, req,
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        context=self._context)
+                        ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/urllib/request.py", line 1325, in do_open
+    r = h.getresponse()
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/http/client.py", line 1450, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/http/client.py", line 336, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/http/client.py", line 297, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/socket.py", line 725, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/ssl.py", line 1304, in recv_into
+    return self.read(nbytes, buffer)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/home/lee/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/ssl.py", line 1138, in read
+    return self._sslobj.read(len, buffer)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+KeyboardInterrupt

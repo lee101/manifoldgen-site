@@ -1,0 +1,61 @@
+{
+ "phase": "done",
+ "io": {
+  "system_torch": "2.11.0+cu130",
+  "ensure_weights_s": 161.2,
+  "runtime_init_s": 12.0
+ },
+ "runs": [
+  {
+   "arm": "pika6_native",
+   "scene": "dancer",
+   "size": "native",
+   "duration": 5,
+   "wall_s": 166.99,
+   "generation_s": 164.109,
+   "steps": 6,
+   "res": "1344x768",
+   "frames": 124,
+   "file": "pika6_native_dancer.webm"
+  },
+  {
+   "arm": "pika6_native",
+   "scene": "fox",
+   "size": "native",
+   "duration": 5,
+   "wall_s": 167.56,
+   "generation_s": 164.517,
+   "steps": 6,
+   "res": "1344x768",
+   "frames": 124,
+   "file": "pika6_native_fox.webm"
+  },
+  {
+   "arm": "pika6_native",
+   "scene": "tram",
+   "size": "native",
+   "duration": 5,
+   "wall_s": 185.88,
+   "generation_s": 181.484,
+   "steps": 6,
+   "res": "1344x768",
+   "frames": 124,
+   "file": "pika6_native_tram.webm"
+  },
+  {
+   "arm": "pika6_native",
+   "scene": "potter",
+   "size": "native",
+   "duration": 5,
+   "wall_s": 187.89,
+   "generation_s": 184.428,
+   "steps": 6,
+   "res": "768x1344",
+   "frames": 124,
+   "file": "pika6_native_potter.webm"
+  }
+ ],
+ "errors": [],
+ "vdn": {},
+ "spent_usd": 0.645
+}

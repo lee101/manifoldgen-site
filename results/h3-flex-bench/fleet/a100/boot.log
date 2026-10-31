@@ -1,0 +1,246 @@
++ curl -sfL --retry 5 'https://f76d25b8b86cfa5638f43016510d8f77.r2.cloudflarestorage.com/manifoldgenstatic/bench/h3flex/f5a0dfb0289f2f62aaf4084e7cf26204/kit.tgz?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=988d59421f91b28e97d1410118757329%2F20261031%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261031T013051Z&X-Amz-Expires=10800&X-Amz-SignedHeaders=host&X-Amz-Signature=a0c3c13aa4605f5d0a98d80014a377c5b1b44772815d73a02c6a5ea435c4a308' -o /tmp/kit.tgz
++ mkdir -p /tmp/kit
++ tar -xzf /tmp/kit.tgz -C /tmp/kit
++ cp /tmp/kit/src/h3_image_workflow.py /tmp/kit/src/h3_model_profile.py /tmp/kit/src/h3_runtime.py /tmp/kit/src/h3_tuning.py /tmp/kit/src/h3_workflow.py /tmp/kit/src/weights.py /src/
++ mkdir -p /tmp/bench
++ cp -r /tmp/kit/bench/frames /tmp/kit/bench/pod_bench.py /tmp/kit/bench/scenes.json /tmp/bench/
++ apt-get update -qq
++ DEBIAN_FRONTEND=noninteractive
++ apt-get install -y -qq gcc g++
++ nvidia-smi
+Sat Oct 31 01:33:25 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.91.07              Driver Version: 595.91.07      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100 80GB PCIe          On  |   00000000:00:0B.0 Off |                    0 |
+| N/A   35C    P0             48W /  300W |       0MiB /  81920MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
++ free -g
+               total        used        free      shared  buff/cache   available
+Mem:             944         106         149           0         695         838
+Swap:              0           0           0
++ df -h / /runpod-volume
+df: /runpod-volume: No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         300G  318M  300G   1% /
++ cat /sys/fs/cgroup/memory.max
+116999999488
++ BENCH_PUB=/tmp/pub/f5a0dfb0289f2f62aaf4084e7cf26204
++ python3 -u /tmp/bench/pod_bench.py
+fetching r2://diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors (20970379616 bytes)
+fetching r2://vae/minimax_h3_video_vae_fp16.safetensors (5207808496 bytes)fetching r2://text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors (15687142551 bytes)
+
+fetching r2://vae/minimax_h3_audio_vae_fp32.safetensors (605254808 bytes)
+r2-parallel minimax_h3_audio_vae_fp32.safetensors parts=8 bytes=605254808
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 8.4s
+fetching hf://larryvrh/MiniMax-H3-Turbo-Lora/minimax_h3_turbo_v4_step600_ema.safetensors
+ready loras/minimax_h3_turbo_v4_step600_ema.safetensors in 6.9s
+fetching hf://Pika-Labs/Pika-H3-Flex/comfy/loras/pika_h3_flex_fl2va_comfy_bf16.safetensors
+ready loras/pika_h3_flex_fl2va_comfy_bf16.safetensors in 6.6s
+r2-parallel minimax_h3_video_vae_fp16.safetensors parts=8 bytes=5207808496
+ready vae/minimax_h3_video_vae_fp16.safetensors in 58.5s
+r2-parallel qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors parts=8 bytes=15687142551
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 141.1s
+r2-parallel minimax_h3_fl2va_pruned_int8_convrot.safetensors parts=8 bytes=20970379616
+ready diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors in 160.8s
+ready diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors in 0.0s
+using preinstalled loras/minimax_h3_turbo_v4_step600_ema.safetensors
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0sready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+ready loras/pika_h3_flex_fl2va_comfy_bf16.safetensors in 0.0s
+[32m[INFO][0m setup plugin alembic.autogenerate.schemas
+[32m[INFO][0m setup plugin alembic.autogenerate.tables
+[32m[INFO][0m setup plugin alembic.autogenerate.types
+[32m[INFO][0m setup plugin alembic.autogenerate.constraints
+[32m[INFO][0m setup plugin alembic.autogenerate.defaults
+[32m[INFO][0m setup plugin alembic.autogenerate.comments
+[32m[INFO][0m setup plugin alembic.autogenerate.checkconstraint_byname
+[32m[INFO][0m Found comfy_kitchen backend hip: {'available': False, 'disabled': False, 'unavailable_reason': 'PyTorch ROCm/HIP runtime not available', 'capabilities': []}
+[32m[INFO][0m Found comfy_kitchen backend cuda: {'available': True, 'disabled': False, 'unavailable_reason': None, 'capabilities': ['adaln', 'apply_rope', 'apply_rope1', 'apply_rope1_', 'apply_rope_', 'apply_rope_split_half', 'apply_rope_split_half1', 'apply_rope_split_half1_', 'apply_rope_split_half_', 'convrot_w4a4_linear', 'dequantize_convrot_w4a4_weight', 'dequantize_int8_convrot_weight', 'dequantize_int8_convrot_weight_dtype', 'dequantize_int8_simple', 'dequantize_int8_simple_dtype', 'dequantize_nvfp4', 'dequantize_per_tensor_fp8', 'dequantize_w4a8_int8_weight', 'gemv_awq_w4a16', 'int8_linear', 'na3d', 'prepare_int4_weight_for_int8_linear', 'quantize_and_rotate_rowwise', 'quantize_convrot_w4a4_weight', 'quantize_int8_convrot_weight', 'quantize_int8_rowwise', 'quantize_int8_tensorwise', 'quantize_mxfp8', 'quantize_nvfp4', 'quantize_per_tensor_fp8', 'quantize_svdquant_w4a4', 'quantize_w4a8_int8_weight', 'rms_adaln', 'rms_rope', 'rms_rope1', 'rms_rope1_', 'rms_rope_', 'rms_rope_split_half', 'rms_rope_split_half1', 'rms_rope_split_half1_', 'rms_rope_split_half_', 'rotate_int8_convrot_weight', 'scaled_mm_nvfp4', 'scaled_mm_svdquant_w4a4', 'stochastic_rounding_fp8', 'w4a8_int8_linear']}
+[32m[INFO][0m Found comfy_kitchen backend triton: {'available': True, 'disabled': True, 'unavailable_reason': None, 'capabilities': ['adaln', 'apply_rope', 'apply_rope1', 'apply_rope1_', 'apply_rope_', 'apply_rope_split_half', 'apply_rope_split_half1', 'apply_rope_split_half1_', 'apply_rope_split_half_', 'dequantize_nvfp4', 'dequantize_per_tensor_fp8', 'int8_linear', 'na3d', 'quantize_and_rotate_rowwise', 'quantize_int8_rowwise', 'quantize_mxfp8', 'quantize_nvfp4', 'quantize_per_tensor_fp8', 'rms_adaln', 'rms_rope', 'rms_rope1', 'rms_rope1_', 'rms_rope_', 'rms_rope_split_half', 'rms_rope_split_half1', 'rms_rope_split_half1_', 'rms_rope_split_half_', 'w4a8_int8_linear']}
+[32m[INFO][0m Found comfy_kitchen backend eager: {'available': True, 'disabled': False, 'unavailable_reason': None, 'capabilities': ['adaln', 'apply_rope', 'apply_rope1', 'apply_rope1_', 'apply_rope_', 'apply_rope_split_half', 'apply_rope_split_half1', 'apply_rope_split_half1_', 'apply_rope_split_half_', 'convrot_w4a4_linear', 'dequantize_convrot_w4a4_weight', 'dequantize_int8_convrot_weight', 'dequantize_int8_convrot_weight_dtype', 'dequantize_int8_embedding', 'dequantize_int8_simple', 'dequantize_int8_simple_dtype', 'dequantize_mxfp8', 'dequantize_nvfp4', 'dequantize_per_tensor_fp8', 'dequantize_w4a8_int8_weight', 'gemv_awq_w4a16', 'int8_linear', 'na3d', 'prepare_int4_weight_for_int8_linear', 'quantize_and_rotate_rowwise', 'quantize_convrot_w4a4_weight', 'quantize_int8_convrot_weight', 'quantize_int8_rowwise', 'quantize_int8_tensorwise', 'quantize_mxfp8', 'quantize_nvfp4', 'quantize_per_tensor_fp8', 'quantize_svdquant_w4a4', 'quantize_w4a8_int8_weight', 'rms_adaln', 'rms_rope', 'rms_rope1', 'rms_rope1_', 'rms_rope_', 'rms_rope_split_half', 'rms_rope_split_half1', 'rms_rope_split_half1_', 'rms_rope_split_half_', 'rotate_int8_convrot_weight', 'scaled_mm_mxfp8', 'scaled_mm_nvfp4', 'scaled_mm_svdquant_w4a4', 'stochastic_rounding_fp8', 'w4a8_int8_linear']}
+[32m[INFO][0m Checkpoint files will always be loaded safely.
+[32m[INFO][0m Total VRAM 81153 MB, total RAM 967475 MB
+[32m[INFO][0m pytorch version: 2.11.0+cu130
+[32m[INFO][0m Set vram state to: HIGH_VRAM
+[32m[INFO][0m Device: cuda:0 NVIDIA A100 80GB PCIe : cudaMallocAsync
+[32m[INFO][0m Using async weight offloading with 2 streams
+[32m[INFO][0m Enabled pinned memory 870727.0
+[32m[INFO][0m Using pytorch attention
+[32m[INFO][0m Using Comfy Kitchen attention
+[32m[INFO][0m Python version: 3.12.13 (main, Aug  5 2026, 01:10:24) [GCC 14.2.0]
+[32m[INFO][0m ComfyUI version: 0.31.0
+[32m[INFO][0m comfy-aimdo version: 0.4.13
+[32m[INFO][0m comfy-kitchen version: 0.2.30
+[1m[33m[WARNING][0m ****** User settings have been changed to be stored on the server instead of browser storage. ******
+[1m[33m[WARNING][0m ****** For multi-user setups add the --multi-user CLI argument to enable multiple user profiles. ******
+[32m[INFO][0m comfyui-frontend-package version: 1.48.7
+[32m[INFO][0m comfyui-workflow-templates version: 0.11.37
+[32m[INFO][0m comfyui-embedded-docs version: 0.5.9
+[32m[INFO][0m comfy-kitchen version: 0.2.30
+[32m[INFO][0m comfy-aimdo version: 0.4.13
+[32m[INFO][0m [Prompt Server] web root: /usr/local/lib/python3.12/site-packages/comfyui_frontend_package/static
+[32m[INFO][0m Asset seeder disabled
+[32m[INFO][0m No OpenGL_accelerate module loaded: No module named 'OpenGL_accelerate'
+[32m[INFO][0m 
+Import times for custom nodes:
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/comfy_h3_benchmark
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/websocket_image_save.py
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-H3-NativeAudioLock
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/h3_conditioning_cache.py
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-AdaptiveTaylor
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/h3_trajectory.py
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-Turbo
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-FirstBlockCache
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-H3-Latent-Upscaler-Mamad8
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-H3-FaceRefine
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-Image-Studio
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-Spectrum-MiniMax-H3
+[32m[INFO][0m    0.0 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-SolAttn_triton
+[32m[INFO][0m    0.1 seconds: /opt/ComfyUI/custom_nodes/ComfyUI-VideoHelperSuite
+[32m[INFO][0m 
+[32m[INFO][0m Context impl SQLiteImpl.
+[32m[INFO][0m Will assume non-transactional DDL.
+[32m[INFO][0m Context impl SQLiteImpl.
+[32m[INFO][0m Will assume non-transactional DDL.
+[32m[INFO][0m Running upgrade  -> 0001_assets, Initial assets schema
+Revision ID: 0001_assets
+Revises: None
+Create Date: 2025-12-10 00:00:00
+[32m[INFO][0m Running upgrade 0001_assets -> 0002_merge_to_asset_references, Merge AssetInfo and AssetCacheState into unified asset_references table.
+[32m[INFO][0m Running upgrade 0002_merge_to_asset_references -> 0003_add_metadata_job_id, Add system_metadata and job_id columns to asset_references.
+Change preview_id FK from assets.id to asset_references.id.
+[32m[INFO][0m Running upgrade 0003_add_metadata_job_id -> 0004_drop_tag_type, Drop the vestigial tags.tag_type column.
+[32m[INFO][0m Running upgrade 0004_drop_tag_type -> 0005_allow_case_sensitive_tags, Allow case-sensitive tag names.
+[32m[INFO][0m Running upgrade 0005_allow_case_sensitive_tags -> 0006_add_loader_path, Add loader_path column to asset_references.
+[32m[INFO][0m Database upgraded from None to 0006_add_loader_path
+[32m[INFO][0m Using RAM pressure cache.
+[32m[INFO][0m Starting server
+
+[32m[INFO][0m To see the GUI go to: http://127.0.0.1:8188
+MiniMax H3 ready: attention=ck vram_mode=high comfy_pid=1339
+H3 model profile: custom:fl2va,pika,turbo models=fl2va,pika,turbo lazy_ref2va=False face_detector_prewarm=False
+ready diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors in 0.0s
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0sready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+ready loras/pika_h3_flex_fl2va_comfy_bf16.safetensors in 0.0s
+[32m[INFO][0m got prompt
+[32m[INFO][0m VAE load device: cuda:0, offload device: cpu, dtype: torch.float32
+[32m[INFO][0m VAE load device: cuda:0, offload device: cpu, dtype: torch.float16
+[32m[INFO][0m Found quantization metadata version 1
+[32m[INFO][0m Using MixedPrecisionOps for text encoder
+[32m[INFO][0m CLIP/text encoder model load device: cuda:0, offload device: cpu, current: cpu, dtype: torch.float16
+[32m[INFO][0m Requested to load MiniMaxH3TEModel_
+[32m[INFO][0m loaded completely;  14960.20 MB loaded, full load: True
+[32m[INFO][0m Found quantization metadata version 1
+[32m[INFO][0m Detected mixed precision quantization
+[32m[INFO][0m Using mixed precision operations
+[32m[INFO][0m Native ops: int8_tensorwise, convrot_w4a4, asym_w4a8_int8 , emulated ops: mxfp8, nvfp4, float8_e4m3fn, float8_e5m2
+[32m[INFO][0m model weight dtype torch.bfloat16, manual cast: torch.bfloat16
+[32m[INFO][0m model_type FLOW_AV
+[32m[INFO][0m Requested to load MiniMaxH3
+[32m[INFO][0m loaded completely;  19996.14 MB loaded, full load: True
+
+  0%|          | 0/6 [00:00<?, ?it/s]
+ 17%|█▋        | 1/6 [00:10<00:54, 10.82s/it]
+ 33%|███▎      | 2/6 [00:21<00:42, 10.72s/it]
+ 50%|█████     | 3/6 [00:32<00:32, 10.70s/it]
+ 67%|██████▋   | 4/6 [00:42<00:21, 10.70s/it]
+ 83%|████████▎ | 5/6 [00:53<00:10, 10.70s/it]
+100%|██████████| 6/6 [01:04<00:00, 10.70s/it]
+100%|██████████| 6/6 [01:04<00:00, 10.71s/it]
+[32m[INFO][0m Requested to load MiniMaxH3AudioVAE
+[32m[INFO][0m loaded completely;  577.08 MB loaded, full load: True
+[32m[INFO][0m Requested to load MiniMaxH3VideoVAE
+[32m[INFO][0m loaded completely;  4966.19 MB loaded, full load: True
+[32m[INFO][0m [32mPrompt executed in 251.55 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1184x672 frames=124 seconds=5.17 steps=6 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=254.814 cache=pika-6
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0sready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+
+ready diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors in 0.0s
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+ready loras/pika_h3_flex_fl2va_comfy_bf16.safetensors in 0.0s
+[32m[INFO][0m got prompt
+
+  0%|          | 0/6 [00:00<?, ?it/s]
+ 17%|█▋        | 1/6 [00:16<01:21, 16.37s/it]
+ 33%|███▎      | 2/6 [00:32<01:05, 16.27s/it]
+ 50%|█████     | 3/6 [00:48<00:48, 16.24s/it]
+ 67%|██████▋   | 4/6 [01:04<00:32, 16.22s/it]
+ 83%|████████▎ | 5/6 [01:21<00:16, 16.21s/it]
+100%|██████████| 6/6 [01:37<00:00, 16.20s/it]
+100%|██████████| 6/6 [01:37<00:00, 16.22s/it]
+[32m[INFO][0m [32mPrompt executed in 163.38 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1344x768 frames=124 seconds=5.17 steps=6 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=166.985 cache=pika-6
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0sready diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors in 0.0s
+
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+ready loras/pika_h3_flex_fl2va_comfy_bf16.safetensors in 0.0s
+[32m[INFO][0m got prompt
+
+  0%|          | 0/6 [00:00<?, ?it/s]
+ 17%|█▋        | 1/6 [00:16<01:21, 16.38s/it]
+ 33%|███▎      | 2/6 [00:32<01:05, 16.27s/it]
+ 50%|█████     | 3/6 [00:48<00:48, 16.24s/it]
+ 67%|██████▋   | 4/6 [01:04<00:32, 16.22s/it]
+ 83%|████████▎ | 5/6 [01:21<00:16, 16.22s/it]
+100%|██████████| 6/6 [01:37<00:00, 16.21s/it]
+100%|██████████| 6/6 [01:37<00:00, 16.23s/it]
+[32m[INFO][0m [32mPrompt executed in 164.16 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1344x768 frames=124 seconds=5.17 steps=6 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=167.556 cache=pika-6
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0s
+ready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+ready diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors in 0.0s
+ready loras/pika_h3_flex_fl2va_comfy_bf16.safetensors in 0.0s
+[32m[INFO][0m got prompt
+
+  0%|          | 0/6 [00:00<?, ?it/s]
+ 17%|█▋        | 1/6 [00:18<01:31, 18.35s/it]
+ 33%|███▎      | 2/6 [00:36<01:12, 18.16s/it]
+ 50%|█████     | 3/6 [00:54<00:54, 18.13s/it]
+ 67%|██████▋   | 4/6 [01:12<00:36, 18.12s/it]
+ 83%|████████▎ | 5/6 [01:30<00:18, 18.06s/it]
+100%|██████████| 6/6 [01:48<00:00, 18.09s/it]
+100%|██████████| 6/6 [01:48<00:00, 18.12s/it]
+[32m[INFO][0m [32mPrompt executed in 180.51 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 1344x768 frames=124 seconds=5.17 steps=6 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=185.873 cache=pika-6
+ready diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors in 0.0s
+ready text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in 0.0sready vae/minimax_h3_video_vae_fp16.safetensors in 0.0s
+
+ready vae/minimax_h3_audio_vae_fp32.safetensors in 0.0s
+ready loras/pika_h3_flex_fl2va_comfy_bf16.safetensors in 0.0s
+[32m[INFO][0m got prompt
+
+  0%|          | 0/6 [00:00<?, ?it/s]
+ 17%|█▋        | 1/6 [00:18<01:31, 18.36s/it]
+ 33%|███▎      | 2/6 [00:36<01:12, 18.24s/it]
+ 50%|█████     | 3/6 [00:54<00:54, 18.21s/it]
+ 67%|██████▋   | 4/6 [01:12<00:36, 18.16s/it]
+ 83%|████████▎ | 5/6 [01:30<00:18, 18.14s/it]
+100%|██████████| 6/6 [01:49<00:00, 18.16s/it]
+100%|██████████| 6/6 [01:49<00:00, 18.18s/it]
+[32m[INFO][0m [32mPrompt executed in 183.62 seconds[0m
+ffmpeg encoded webm with libsvtav1
+generated 768x1344 frames=124 seconds=5.17 steps=6 seed=1 loop=False audio_drive=False quant=int8_convrot total_seconds=187.889 cache=pika-6
++ sleep infinity

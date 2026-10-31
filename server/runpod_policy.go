@@ -31,16 +31,43 @@ func runpodRunBody(input interface{}, execution time.Duration) map[string]interf
 	return map[string]interface{}{"input": input, "policy": runpodJobPolicy(execution)}
 }
 
-func h3ExecutionBudget(input map[string]interface{}) time.Duration {
-	seconds := 0.0
+func h3InputSeconds(input map[string]interface{}) float64 {
 	switch value := input["duration"].(type) {
 	case int:
-		seconds = float64(value)
+		return float64(value)
 	case int64:
-		seconds = float64(value)
+		return float64(value)
 	case float64:
-		seconds = value
+		return value
 	}
+	return 0
+}
+
+// h3FlexColdBootAllowance covers a cold worker's weight download (78-175 s
+// measured), which is billed as execution time.
+const h3FlexColdBootAllowance = 4 * time.Minute
+
+// h3FlexExecutionBudget bounds a flex job at a cold boot plus 3x its predicted
+// generation time (about 7 min for a 5 s native clip). The generic budget
+// below was sized for the 20-step lanes and let a hung 10 s flex job bill 44
+// minutes (measured 2026-10-31: two jobs hung for 56 minutes before cancel).
+func h3FlexExecutionBudget(input map[string]interface{}) time.Duration {
+	req := ServiceUsageRequest{Duration: int(math.Ceil(h3InputSeconds(input)))}
+	if size, ok := input["size"].(string); ok {
+		req.Size = size
+	}
+	return h3FlexColdBootAllowance + time.Duration(3*h3FlexPredictSeconds(req))*time.Second
+}
+
+func h3JobBudget(route h3WorkerRoute, input map[string]interface{}) time.Duration {
+	if route.Variant == h3FlexVariant {
+		return h3FlexExecutionBudget(input)
+	}
+	return h3ExecutionBudget(input)
+}
+
+func h3ExecutionBudget(input map[string]interface{}) time.Duration {
+	seconds := h3InputSeconds(input)
 	if seconds <= 0 {
 		return 40 * time.Minute
 	}

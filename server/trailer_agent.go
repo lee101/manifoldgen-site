@@ -960,6 +960,7 @@ func waitH3LocalClip(ctx context.Context, cogURL string, input map[string]interf
 	delete(input, "_h3_cog_url")
 	delete(input, "_h3_variant")
 	delete(input, "_output_upload_url")
+	delete(input, "_log_upload_url")
 	delete(input, "_output_public_url")
 	stripH3ProviderTransparency(input)
 	body, _ := json.Marshal(map[string]interface{}{"input": input})

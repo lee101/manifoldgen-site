@@ -90,3 +90,17 @@ func TestCallH3RunpodSendsPolicyAndCancelHelperEscapes(t *testing.T) {
 		t.Fatalf("runs=%d cancels=%d", runs, cancels)
 	}
 }
+
+func TestH3FlexExecutionBudgetIsTight(t *testing.T) {
+	five := h3FlexExecutionBudget(map[string]interface{}{"duration": 5, "size": "native"})
+	if five < 5*time.Minute || five > 10*time.Minute {
+		t.Fatalf("5 s native budget = %s, want 5-10 min (cold boot + 3x warm)", five)
+	}
+	uhd := h3FlexExecutionBudget(map[string]interface{}{"duration": 5, "size": "uhd"})
+	if uhd <= five || uhd > 40*time.Minute {
+		t.Fatalf("uhd budget = %s", uhd)
+	}
+	if got := h3JobBudget(h3WorkerRoute{Variant: h3FlexVariant}, map[string]interface{}{"duration": 10, "size": "native"}); got >= h3ExecutionBudget(map[string]interface{}{"duration": 10}) {
+		t.Fatalf("flex budget %s must be below the generic %s", got, h3ExecutionBudget(map[string]interface{}{"duration": 10}))
+	}
+}

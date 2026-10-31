@@ -93,6 +93,8 @@ var allowedVideoModels = map[string]bool{
 	"kling-4.0-image-to-video":                      true,
 	"kling-4.0-reference-to-video":                  true,
 	"kling-4.0-video-edit":                          true,
+	"p-video":                                       true,
+	"p-video-edit":                                  true,
 	"fal-ai/veo3.1":                                 true,
 	"fal-ai/veo3.1/image-to-video":                  true,
 	"fal-ai/veo3.1/fast":                            true,
@@ -121,6 +123,17 @@ var referenceRequiredVideoModels = map[string]bool{
 	"seedance-2.0-reference-to-video":      true,
 	"seedance-2.5-reference-to-video":      true,
 	"kling-4.0-reference-to-video":         true,
+}
+
+// upstreamVideoModel sends Seedance 2.5 straight to BytePlus ModelArk through
+// OpenPaths (seedream provider), which bills well below the fal rate; the
+// public model ids and prices are unchanged.
+func upstreamVideoModel(model string) string {
+	switch model {
+	case "seedance-2.5-text-to-video", "seedance-2.5-image-to-video", "seedance-2.5-reference-to-video":
+		return "seedream/seedance-2.5"
+	}
+	return model
 }
 
 type openPathsVideoResponse struct {
@@ -167,12 +180,17 @@ func proxyOpenPathsVideo(req ServiceUsageRequest) ([]byte, error) {
 			return nil, err
 		}
 	}
+	if isPrunaVideoModel(model) {
+		if err := validatePrunaRequest(model, req); err != nil {
+			return nil, err
+		}
+	}
 	// Keep the studio usable on existing ManifoldGen installs while the OpenPaths
 	// service key is being provisioned. The configured FAL LTX backend supports
 	// both text-to-video and image-to-video; OpenPaths becomes the preferred path
 	// (and unlocks every model above) as soon as OPENPATHS_API_KEY is present.
 	if openPathsAPIKey == "" {
-		if isKling4Model(model) {
+		if isKling4Model(model) || isPrunaVideoModel(model) {
 			return nil, fmt.Errorf("%s requires OPENPATHS_API_KEY", model)
 		}
 		return proxyFallbackFalVideo(req)
@@ -187,6 +205,8 @@ func proxyOpenPathsVideo(req ServiceUsageRequest) ([]byte, error) {
 		}
 	} else if isKling4Model(model) {
 		duration = kling4Duration(duration)
+	} else if isPrunaVideoModel(model) {
+		duration = prunaDuration(model, duration)
 	} else if duration <= 0 || duration > 10 {
 		duration = 5
 	}
@@ -199,7 +219,7 @@ func proxyOpenPathsVideo(req ServiceUsageRequest) ([]byte, error) {
 		outputFormat = "mp4"
 	}
 	payload := map[string]interface{}{
-		"model":         model,
+		"model":         upstreamVideoModel(model),
 		"prompt":        strings.TrimSpace(req.Prompt),
 		"duration":      duration,
 		"aspect_ratio":  aspect,
@@ -225,6 +245,8 @@ func proxyOpenPathsVideo(req ServiceUsageRequest) ([]byte, error) {
 	}
 	if isKling4Model(model) {
 		payload["resolution"] = kling4Resolution(req.Resolution)
+	} else if isPrunaVideoModel(model) {
+		payload["resolution"] = prunaResolution(req.Resolution)
 	} else if req.Resolution != "" {
 		payload["resolution"] = strings.ToLower(strings.TrimSpace(req.Resolution))
 	}
@@ -437,7 +459,7 @@ func normalizeH3VideoRequest(req *ServiceUsageRequest) error {
 	if req.Size == "" {
 		req.Size = "balanced"
 	}
-	if !videoStringIn(req.Size, "preview", "balanced", "native", "hd", "audio") {
+	if !videoStringIn(req.Size, "preview", "balanced", "native", "hd", "uhd", "audio") {
 		return fmt.Errorf("unsupported size")
 	}
 	if req.Duration == 0 {
@@ -576,8 +598,8 @@ func handleH3VideoService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 			jsonError(ctx, http.StatusBadRequest, err.Error())
 			return
 		}
-	} else if req.Size == "hd" {
-		jsonError(ctx, http.StatusBadRequest, "1080p video is not available for this request")
+	} else if req.Size == "hd" || req.Size == "uhd" {
+		jsonError(ctx, http.StatusBadRequest, "1080p and 1440p video are not available for this request")
 		return
 	}
 	req.H3Lane = route.Variant
@@ -1282,12 +1304,8 @@ type h3RunpodStatus struct {
 	Error         string `json:"error"`
 	ExecutionTime int64  `json:"executionTime"`
 	Output        struct {
-		Outputs    []h3RunpodArtifact     `json:"outputs"`
-		Metrics    map[string]interface{} `json:"metrics"`
-		Moderation struct {
-			Status  string `json:"status"`
-			IsChild bool   `json:"is_child"`
-		} `json:"moderation"`
+		Outputs []h3RunpodArtifact     `json:"outputs"`
+		Metrics map[string]interface{} `json:"metrics"`
 	} `json:"output"`
 }
 
@@ -1336,7 +1354,22 @@ func prepareH3RunpodOutputTarget(input map[string]interface{}, userID string) er
 	}
 	input["_output_upload_url"] = uploadURL
 	input["_output_public_url"] = fmt.Sprintf("https://%s/%s", r2PublicHost, objectKey)
+	attachH3JobLogTarget(input)
 	return nil
+}
+
+// attachH3JobLogTarget lets the worker ship its per-job log (prompt, Comfy output, errors; also on failure/timeout)
+// to a PRIVATE bucket for offline audit. Bucket defaults to the shared private one (set H3_LOG_BUCKET= to disable); never the public media bucket.
+func attachH3JobLogTarget(input map[string]interface{}) {
+	bucket := strings.TrimSpace(getEnv("H3_LOG_BUCKET", "private"))
+	if bucket == "" || bucket == r2Bucket {
+		return
+	}
+	prefix := strings.Trim(getEnv("H3_LOG_PREFIX", "manifoldgen-site/h3-flex-logs"), "/")
+	key := fmt.Sprintf("%s/%s/%s.log.gz", prefix, time.Now().UTC().Format("2006/01/02"), newUUID())
+	if logURL, err := presignR2ObjectInBucket(bucket, http.MethodPut, key, 6*60*60); err == nil {
+		input["_log_upload_url"] = logURL
+	}
 }
 
 func expectedH3OutputURL(job *VideoJob) string {
@@ -1450,6 +1483,9 @@ func processRunpodH3VideoJob(job *VideoJob) {
 		consecutiveErrors = 0
 		providerStatus := strings.ToUpper(strings.TrimSpace(state.Status))
 		if providerStatus == "IN_QUEUE" && variant == h3FlexVariant && fallbackFlexToFal(job, endpointID, providerJobID) {
+			return
+		}
+		if variant == h3FlexVariant && (providerStatus == "IN_PROGRESS" || providerStatus == "TIMED_OUT" || providerStatus == "FAILED") && recoverStuckFlexJob(job, endpointID, providerJobID, providerStatus) {
 			return
 		}
 		if providerStatus == "IN_QUEUE" {
@@ -1664,6 +1700,7 @@ func processLocalH3VideoJob(job *VideoJob) {
 	delete(input, "_h3_variant")
 	delete(input, "_music_video")
 	delete(input, "_output_upload_url")
+	delete(input, "_log_upload_url")
 	delete(input, "_output_public_url")
 	stripH3ProviderTransparency(input)
 	if cogURL == "" {

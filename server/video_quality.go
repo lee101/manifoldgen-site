@@ -114,6 +114,7 @@ func retryRunpodH3QualityFailure(job *VideoJob, endpointID, variant string) bool
 	input["_h3_quality_retry"] = 1
 	delete(input, "seed")
 	delete(input, "_output_upload_url")
+	delete(input, "_log_upload_url")
 	delete(input, "_output_public_url")
 	if err := prepareH3RunpodOutputTarget(input, job.UserID); err != nil {
 		return false

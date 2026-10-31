@@ -1,0 +1,36 @@
+Downloading botocore (15.4MiB)
+ Downloaded botocore
+Installed 7 packages in 111ms
+gpu NVIDIA H100 PCIe disk 300
+pod r7126liv9kzwf9 2.89
+$0.00 poll: HTTP Error 404: Not Found
+$0.02 poll: HTTP Error 404: Not Found
+$0.05 poll: HTTP Error 404: Not Found
+$0.07 poll: HTTP Error 404: Not Found
+$0.10 poll: HTTP Error 404: Not Found
+$0.12 poll: HTTP Error 404: Not Found
+$0.15 poll: HTTP Error 404: Not Found
+$0.17 poll: HTTP Error 404: Not Found
+$0.20 poll: HTTP Error 404: Not Found
+$0.22 poll: HTTP Error 404: Not Found
+$0.24 poll: HTTP Error 404: Not Found
+$0.27 runtime runs=0 err=0 vdn={}
+$0.29 warmup:fox runs=0 err=0 vdn={}
+$0.32 warmup:fox runs=0 err=0 vdn={}
+$0.34 warmup:fox runs=0 err=0 vdn={}
+$0.37 pika6_native:dancer runs=0 err=0 vdn={}
+$0.39 pika6_native:dancer runs=0 err=0 vdn={}
+$0.42 pika6_native:dancer runs=0 err=0 vdn={}
+$0.44 pika6_native:fox runs=1 err=0 vdn={}
+$0.47 pika6_native:fox runs=1 err=0 vdn={}
+$0.49 pika6_native:fox runs=1 err=0 vdn={}
+$0.51 pika6_native:tram runs=2 err=0 vdn={}
+$0.54 pika6_native:tram runs=2 err=0 vdn={}
+$0.56 pika6_native:tram runs=2 err=0 vdn={}
+$0.59 pika6_native:potter runs=3 err=0 vdn={}
+$0.61 pika6_native:potter runs=3 err=0 vdn={}
+$0.64 pika6_native:potter runs=3 err=0 vdn={}
+$0.66 done runs=4 err=0 vdn={}
+fetch failed vdn_setup.log HTTP Error 404: Not Found
+fetch failed vdn_run.log HTTP Error 404: Not Found
+deleted r7126liv9kzwf9

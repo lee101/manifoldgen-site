@@ -68,6 +68,10 @@ func presignR2PutObject(objectKey, contentType string, expires int) (string, err
 // presignR2Object signs one object operation without exposing R2 credentials.
 // PUT is used for uploads and DELETE is used by authenticated asset cleanup.
 func presignR2Object(method, objectKey string, expires int) (string, error) {
+	return presignR2ObjectInBucket(r2Bucket, method, objectKey, expires)
+}
+
+func presignR2ObjectInBucket(bucket, method, objectKey string, expires int) (string, error) {
 	if r2AccountID == "" || r2AccessKeyID == "" || r2SecretAccessKey == "" {
 		return "", fmt.Errorf("R2 credentials not configured")
 	}
@@ -86,7 +90,7 @@ func presignR2Object(method, objectKey string, expires int) (string, error) {
 	dateStamp := now.Format("20060102")
 
 	// Canonical URI: /{bucket}/{key} (path-style)
-	canonicalURI := "/" + r2Bucket + "/" + escapePath(objectKey)
+	canonicalURI := "/" + bucket + "/" + escapePath(objectKey)
 
 	credentialScope := fmt.Sprintf("%s/%s/%s/aws4_request", dateStamp, region, service)
 	credential := r2AccessKeyID + "/" + credentialScope

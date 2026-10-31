@@ -1,0 +1,10 @@
+[Unit]
+Description=Roll up H3 worker logs on the 1st and 15th
+
+[Timer]
+OnCalendar=*-*-01,15 04:30:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

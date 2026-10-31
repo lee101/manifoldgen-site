@@ -1,0 +1,16 @@
+[Unit]
+Description=ManifoldGen H3 worker log rollup (fortnightly archive of per-job logs for audit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=administrator
+Group=administrator
+WorkingDirectory=/opt/manifoldgen-site
+EnvironmentFile=/opt/manifoldgen-site/.env
+ExecStart=/usr/bin/python3 /opt/manifoldgen-site/scripts/h3_log_rollup.py --apply
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

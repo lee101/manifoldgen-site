@@ -1,0 +1,608 @@
+[
+ {
+  "id": 1,
+  "mv": 1,
+  "chars": [
+   "ORIN_9",
+   "VESPER_12",
+   "TOMAS_PROLOGUE"
+  ],
+  "setting": "Mill loft, winter night, one oil lamp, snow on the shutters, Tomas at a workbench behind them",
+  "action": "Vesper (12) inks soot across Orin's (9) small palms with her thumb while he squirms; Tomas hums and watches them with a tired, enormous love",
+  "lines": [
+   [
+    "TOMAS_PROLOGUE",
+    "warm, amused, low",
+    "Left hand opens. Right hand shuts. Say it, boy."
+   ],
+   [
+    "ORIN_9",
+    "proud, small child's voice",
+    "Right hand shuts."
+   ]
+  ],
+  "want": 10
+ },
+ {
+  "id": 2,
+  "mv": 1,
+  "chars": [],
+  "setting": "Wickhollow at dusk, aerial, a bowl of ash-trees and black peat, cottage lamps, a faint heat-shimmer ring in the woods",
+  "action": "Slow crane down over the village as bread-smoke rises and children run home through the mud; the shimmer in the trees pulses once like a breath",
+  "lines": [],
+  "want": 8
+ },
+ {
+  "id": 3,
+  "mv": 1,
+  "chars": [
+   "ORIN_9",
+   "TOMAS_PROLOGUE"
+  ],
+  "setting": "The flooded mill-race at night, black water, torn timber, driving rain",
+  "action": "Tomas drags the boy up the bank by his coat and shoves him to safety, then the current takes him against the wheel; Orin's eyebrow splits on a stone; he screams and crawls to the still body",
+  "lines": [
+   [
+    "TOMAS_PROLOGUE",
+    "gasping, final, tender",
+    "Go. Go on. I've got you."
+   ],
+   [
+    "ORIN_9",
+    "shattered child's scream",
+    "Da! Da, wake up! Da!"
+   ]
+  ],
+  "want": 11
+ },
+ {
+  "id": 4,
+  "mv": 1,
+  "chars": [
+   "VESPER_12",
+   "ORIN_9",
+   "TOMAS_PROLOGUE"
+  ],
+  "setting": "Mud bank beside the mill-race, lantern guttering, rain, a grave-lantern burning at a distant mother's grave",
+  "action": "Vesper (12) kneels over Tomas's body, draws ash across his chest, cuts her own throat's skin with a small knife, speaks the words with her eyes open; she turns Orin's face away with both hands",
+  "lines": [
+   [
+    "VESPER_12",
+    "fierce, shaking, absolutely certain",
+    "Look at me, Orin. Don't look at him. Look at me."
+   ]
+  ],
+  "want": 11
+ },
+ {
+  "id": 5,
+  "mv": 1,
+  "chars": [
+   "tomas",
+   "ORIN_9",
+   "VESPER_12",
+   "sera"
+  ],
+  "setting": "Same mud bank, grey pre-dawn, fog",
+  "action": "Tomas sits up in the mud, gasping, and takes the boy in both arms; his eyes open a half-second too long over Orin's shoulder; at the edge of the lamplight Sera Valek arrives and stops dead",
+  "lines": [
+   [
+    "tomas",
+    "breaking, overwhelmed",
+    "I'm here. I'm here, boy. I've got you."
+   ],
+   [
+    "sera",
+    "flat, appalled, very quiet",
+    "What have you done, girl."
+   ]
+  ],
+  "want": 12
+ },
+ {
+  "id": 6,
+  "mv": 2,
+  "chars": [
+   "orin",
+   "tomas"
+  ],
+  "setting": "Wickhollow mill, daytime, nine years later, flour-dust in shafts of light",
+  "action": "Orin (18) stacks grain sacks beside his father who works untiring; Tomas looks up and smiles one second too long; Orin looks at the floor",
+  "lines": [
+   [
+    "orin",
+    "carefully casual, tired",
+    "You don't sleep, Da."
+   ],
+   [
+    "tomas",
+    "gentle, a half-beat late",
+    "Don't need to."
+   ]
+  ],
+  "want": 9
+ },
+ {
+  "id": 7,
+  "mv": 2,
+  "chars": [
+   "vesper",
+   "orin"
+  ],
+  "setting": "The loft, one candle, rain on the roof, nine years on",
+  "action": "Vesper (21) sits on the edge of the bed with her fingertips resting on the scar at her throat; Orin (18) stands in the doorway, not coming closer",
+  "lines": [
+   [
+    "vesper",
+    "low, unhurried, unkind to herself",
+    "You keep looking at me like I'm the one who's sorry."
+   ],
+   [
+    "orin",
+    "raw, quiet",
+    "Aren't you?"
+   ],
+   [
+    "vesper",
+    "a long breath, no apology",
+    "Every day. And I'd do it again."
+   ]
+  ],
+  "want": 12
+ },
+ {
+  "id": 8,
+  "mv": 2,
+  "chars": [
+   "vesper",
+   "orin"
+  ],
+  "setting": "The loft, closer, rain on the shutters",
+  "action": "She stands and takes his soot-stained hand and presses it flat to her throat scar; forehead to forehead, breath mixing; adult heat held in check",
+  "lines": [
+   [
+    "orin",
+    "hoarse",
+    "Say my name like you mean it."
+   ],
+   [
+    "vesper",
+    "almost a whisper",
+    "Orin."
+   ]
+  ],
+  "want": 10
+ },
+ {
+  "id": 9,
+  "mv": 2,
+  "chars": [
+   "silver",
+   "orin"
+  ],
+  "setting": "Wickhollow's edge, dawn mist at the tree line, hunters silhouetted behind",
+  "action": "Silver Hade steps out of the white mist in Order leathers, crossbow low, the nail-brand on his wrist; Orin freezes with a bucket in each hand",
+  "lines": [
+   [
+    "silver",
+    "quiet, heavy, almost kind",
+    "Orin. Don't run. I know how you stand when you're about to run."
+   ]
+  ],
+  "want": 10
+ },
+ {
+  "id": 10,
+  "mv": 2,
+  "chars": [
+   "aldren",
+   "tomas"
+  ],
+  "setting": "Mill yard, grey morning, mist, a ring of hunters with white-ash crossbows",
+  "action": "Brother Aldren on foot, calm as a headmaster, stops ten paces from Tomas who stands holding a flour sack; the hunters do not breathe",
+  "lines": [
+   [
+    "aldren",
+    "level, courteous, terrible",
+    "Nine years of warmth in a graveyard, Mr Calder. Do you know what that costs?"
+   ]
+  ],
+  "want": 10
+ },
+ {
+  "id": 11,
+  "mv": 3,
+  "chars": [
+   "tomas",
+   "orin",
+   "vesper"
+  ],
+  "setting": "Mill yard in the raid, smoke, bolts hissing",
+  "action": "A white-ash bolt takes Tomas in the chest; he looks down at it, pulls it out slowly, and smiles; Orin cries out; Vesper's hand goes to her throat",
+  "lines": [
+   [
+    "tomas",
+    "soft, wrong, delighted",
+    "That was my boy's coat."
+   ]
+  ],
+  "want": 9
+ },
+ {
+  "id": 12,
+  "mv": 3,
+  "chars": [
+   "tomas",
+   "mara",
+   "silver"
+  ],
+  "setting": "Burning mill yard, handheld chaos",
+  "action": "Tomas moves with a stillness no man has; hunters fall with their joints undone and breath stolen, no spell effects, just hands; Mara Quill watches him, shaking, bolt unfired",
+  "lines": [
+   [
+    "mara",
+    "terrified, a whisper",
+    "That's not a man. That's a lid."
+   ]
+  ],
+  "want": 9
+ },
+ {
+  "id": 13,
+  "mv": 3,
+  "chars": [
+   "orin",
+   "vesper",
+   "tomas"
+  ],
+  "setting": "Forest track at night, Wickhollow burning behind, rain; Tomas follows them not out of breath",
+  "action": "Orin and Vesper run, hand in hand, mud to the knees; Orin glances back at his father who has not stopped smiling",
+  "lines": [
+   [
+    "orin",
+    "ragged, begging",
+    "Is he still in there?"
+   ],
+   [
+    "vesper",
+    "breathless, honest",
+    "Both of them are."
+   ]
+  ],
+  "want": 10
+ },
+ {
+  "id": 14,
+  "mv": 3,
+  "chars": [
+   "sera",
+   "vesper"
+  ],
+  "setting": "Sera's fen house, a shadow on the wall that does not match the candle, bundled herbs, wet wood",
+  "action": "Sera stands over Vesper, absolutely still, the clouded eye catching light; Vesper stares back with nine years of defiance",
+  "lines": [
+   [
+    "sera",
+    "freezing, specific",
+    "You didn't bring him back. You opened the door."
+   ],
+   [
+    "vesper",
+    "chin up, cracking",
+    "He was my family."
+   ],
+   [
+    "sera",
+    "soft, merciless",
+    "He was your first mistake."
+   ]
+  ],
+  "want": 12
+ },
+ {
+  "id": 15,
+  "mv": 3,
+  "chars": [
+   "lazlo",
+   "orin",
+   "vesper"
+  ],
+  "setting": "Crowded river-market, lantern strings, rain-slick cobbles",
+  "action": "Lazlo Vane leans too close, flashing the gold tooth, selling forged papers and salt; Orin keeps a hand on his knife; Vesper's eyes go narrow",
+  "lines": [
+   [
+    "lazlo",
+    "amused, teasing",
+    "Two on a bounty. One pretty, one pretty angry. I'll give you a discount on the second."
+   ],
+   [
+    "orin",
+    "low, flat",
+    "How much to not tell them?"
+   ],
+   [
+    "lazlo",
+    "grinning, not unkind",
+    "More than you have, sunshine."
+   ]
+  ],
+  "want": 12
+ },
+ {
+  "id": 16,
+  "mv": 4,
+  "chars": [
+   "noll",
+   "orin"
+  ],
+  "setting": "Overgrown burying-ground at dusk, crooked stones, a freshly dug hole, lantern",
+  "action": "Noll lays his dirty hand on a grave, tilts his head, smiles at the ground the way other people smile at dogs, then looks at Orin",
+  "lines": [
+   [
+    "noll",
+    "dry, delighted, grim",
+    "Body's there. Soul's elsewhere. Your da's grave is the loudest in four counties."
+   ]
+  ],
+  "want": 10
+ },
+ {
+  "id": 17,
+  "mv": 4,
+  "chars": [
+   "orin",
+   "tomas"
+  ],
+  "setting": "Barn at night, one lantern, rope, straw",
+  "action": "Orin ties his father's wrists with trembling hands; Tomas, himself for one stretched moment, sweating and weeping, tilts his head back as if something presses from inside his skull",
+  "lines": [
+   [
+    "tomas",
+    "pleading, human",
+    "Tighter, Orin. Please. I can feel him pressing."
+   ],
+   [
+    "orin",
+    "sobbing, furious at himself",
+    "I'm sorry, Da. I'm sorry."
+   ]
+  ],
+  "want": 13
+ },
+ {
+  "id": 18,
+  "mv": 4,
+  "chars": [
+   "vesper",
+   "orin",
+   "tomas"
+  ],
+  "setting": "Campfire in a ruined chapel, sparks and smoke, rain through the roof",
+  "action": "Vesper grabs Orin's collar, face inches from his; the almost-kiss; from the shadows Tomas says a name neither of them knows",
+  "lines": [
+   [
+    "vesper",
+    "furious, frightened, tender",
+    "Don't you dare offer yourself as bait again."
+   ],
+   [
+    "orin",
+    "raw",
+    "Somebody has to."
+   ],
+   [
+    "vesper",
+    "a breath from his mouth",
+    "Not you."
+   ],
+   [
+    "tomas",
+    "distant, wrong, in the dark",
+    "Elspeth..."
+   ]
+  ],
+  "want": 13
+ },
+ {
+  "id": 19,
+  "mv": 4,
+  "chars": [
+   "veyra",
+   "vesper"
+  ],
+  "setting": "A widow's townhouse, red-lit by a single fire, dark silk and old wine, a hint of old blood on a cloth",
+  "action": "Lady Veyra pours a glass and does not drink it; she looks at Vesper like a long-awaited guest",
+  "lines": [
+   [
+    "veyra",
+    "cultured, precise, unhurried",
+    "Vampire hunter is the founding myth. The Order stretched the word until it meant anyone who will not die correctly."
+   ]
+  ],
+  "want": 12
+ },
+ {
+  "id": 20,
+  "mv": 4,
+  "chars": [
+   "mara",
+   "silver"
+  ],
+  "setting": "Order camp tent, night, a file open on a trunk",
+  "action": "Mara holds out the Order's file to Silver; Silver reads and the colour leaves his face",
+  "lines": [
+   [
+    "mara",
+    "shaking, controlled",
+    "It wasn't a vampire, Silver. It was never a vampire."
+   ],
+   [
+    "silver",
+    "hollow",
+    "Then what did they kill my family for?"
+   ]
+  ],
+  "want": 11
+ },
+ {
+  "id": 21,
+  "mv": 4,
+  "chars": [
+   "aldren",
+   "silver"
+  ],
+  "setting": "Cathedral nave of the Order, candle-lit, long shadows",
+  "action": "Aldren lays a hand on Silver's shoulder, paternal and unmoving",
+  "lines": [
+   [
+    "aldren",
+    "calm, wearied, absolutely sincere",
+    "One seating can unmake a march. Someone must be the monster so the children do not have to."
+   ]
+  ],
+  "want": 11
+ },
+ {
+  "id": 22,
+  "mv": 5,
+  "chars": [
+   "thorn",
+   "vesper"
+  ],
+  "setting": "Candlelit cellar, strangers bound on chairs, blood-ink on the walls",
+  "action": "Thorn Marrow, fever-bright, turns from a seated stranger and sees Vesper; he looks at her like a student at a forbidden book",
+  "lines": [
+   [
+    "thorn",
+    "reverent, thrilled",
+    "You were the first brave thing in five hundred years."
+   ]
+  ],
+  "want": 10
+ },
+ {
+  "id": 23,
+  "mv": 5,
+  "chars": [
+   "sera",
+   "vesper",
+   "orin"
+  ],
+  "setting": "Wickhollow's burnt cellar, a stone well sealed with iron",
+  "action": "Sera lifts the iron lid a hand's breadth; a cold breath comes out; Vesper steps back as if struck",
+  "lines": [
+   [
+    "sera",
+    "grave, quiet",
+    "Your mother and his father were keepers. They knew what was under the village."
+   ]
+  ],
+  "want": 11
+ },
+ {
+  "id": 24,
+  "mv": 5,
+  "chars": [
+   "silver",
+   "aldren",
+   "tomas",
+   "orin"
+  ],
+  "setting": "Ruined mill at dawn, hunters in a ring, Tomas kneeling bound before them",
+  "action": "Aldren hands Silver a white-ash bolt; Silver raises the crossbow at Tomas, hands shaking; Orin screams at him to stop",
+  "lines": [
+   [
+    "silver",
+    "breaking",
+    "I can't."
+   ],
+   [
+    "aldren",
+    "gentle, final",
+    "Then I will."
+   ]
+  ],
+  "want": 12
+ },
+ {
+  "id": 25,
+  "mv": 5,
+  "chars": [
+   "vesper",
+   "orin"
+  ],
+  "setting": "The sealed well, stone steps, a cold wind pulling at her hair, torches guttering",
+  "action": "Vesper steps up to the lip of the well; Orin grabs her wrist; she looks at him with absolute tenderness and certainty",
+  "lines": [
+   [
+    "orin",
+    "terrified, ragged",
+    "Vesper, no."
+   ],
+   [
+    "vesper",
+    "soft, loving, final",
+    "Someone has to be the lid."
+   ]
+  ],
+  "want": 12
+ },
+ {
+  "id": 26,
+  "mv": 6,
+  "chars": [
+   "orin",
+   "vesper"
+  ],
+  "setting": "A heavy wooden door in the dark, a thin line of light under it",
+  "action": "Orin and Vesper on opposite sides, each with a palm pressed flat on the wood, her voice not quite her own",
+  "lines": [
+   [
+    "orin",
+    "broken, pleading",
+    "Say my name."
+   ],
+   [
+    "vesper",
+    "gentle, slightly doubled, devastating",
+    "Orin. I'm still here."
+   ]
+  ],
+  "want": 10
+ },
+ {
+  "id": 27,
+  "mv": 6,
+  "chars": [
+   "tomas",
+   "orin"
+  ],
+  "setting": "The mill-race bank at dawn, still water, mist",
+  "action": "Tomas, fully himself for one last second, cups his son's face in both hands and smiles the right length",
+  "lines": [
+   [
+    "tomas",
+    "warm, steady, shattering",
+    "You said please. That's all a father needs. Now say goodbye."
+   ]
+  ],
+  "want": 11
+ },
+ {
+  "id": 28,
+  "mv": 6,
+  "chars": [
+   "vesper"
+  ],
+  "setting": "Black void with a single candle",
+  "action": "Smash to black. Vesper's face, half in candlelight, looks straight into the lens, the scar at her throat catching the flame; title CONJURER'S SOUL fades in as a single hard cut",
+  "lines": [
+   [
+    "vesper",
+    "a whisper, almost kind",
+    "How much of yours will you spend?"
+   ]
+  ],
+  "want": 9
+ }
+]
