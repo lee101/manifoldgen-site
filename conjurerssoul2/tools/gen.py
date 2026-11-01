@@ -187,7 +187,7 @@ def assemble_cmd(args):
     print("score swells (s):", ", ".join(f"{a:.1f}-{b:.1f}" for a, b in windows))
     score = next(OUT.glob("score.*"))
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", tmp / "list.txt", "-i", score, "-filter_complex",
-                    f"[1:a]volume='{expr}':eval=frame,afade=t=in:st=0:d=1.2[m];[0:a][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[a]",
+                    f"[1:a]volume='{expr}':eval=frame,afade=t=in:st=0:d=1.2[m];[0:a]loudnorm=I=-20:TP=-2:LRA=9[dl];[dl][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[a]",
                     "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", OUT / "trailer.mp4"], check=True)
     print(OUT / "trailer.mp4")
 
