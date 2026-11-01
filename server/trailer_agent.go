@@ -1063,14 +1063,19 @@ func assembleTrailer(ctx context.Context, shots []dramatizeShotResult, workDir, 
 		_ = os.Rename(joined, dest)
 		return timeline, nil
 	}
-	if err := mixTrailerScore(ctx, joined, musicPath, dest); err != nil {
+	swells, err := analyzeTrailerSpeech(ctx, joined)
+	if err != nil {
+		swells = trailerScoreWindows(timeline)
+	}
+	if err := mixTrailerScore(ctx, joined, musicPath, dest, swells); err != nil {
 		_ = os.Rename(joined, dest)
 	}
 	return timeline, nil
 }
 
-func mixTrailerScore(ctx context.Context, videoPath, musicPath, dest string) error {
-	filter := "[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=0.24,afade=t=in:st=0:d=1.2[m];[0:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a];[a][m]amix=inputs=2:duration=first:dropout_transition=2,alimiter=limit=0.95[mix]"
+func mixTrailerScore(ctx context.Context, videoPath, musicPath, dest string, swells []trailerScoreWindow) error {
+	// Score at ~30% under the characters; procedural swells to ~full volume in dialogue-free runs (trailer_mix.go).
+	filter := "[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume='" + trailerScoreVolumeExpr(swells) + "':eval=frame,afade=t=in:st=0:d=1.2[m];[0:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a];[a][m]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,alimiter=limit=0.95[mix]"
 	cmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-v", "error", "-i", videoPath, "-i", musicPath,
 		"-filter_complex", filter, "-map", "0:v:0", "-map", "[mix]",
 		"-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", dest)

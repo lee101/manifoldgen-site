@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["requests"]
+# dependencies = ["requests", "numpy"]
 # ///
 """Conjurer's Soul 2 trailer driver. Free stages: plan, prompts, review, assemble. Paid: clips --go.
 
@@ -168,11 +168,27 @@ def assemble_cmd(args):
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", f"{slot:.3f}", "-vf", vf, "-af", af, "-c:v", "libx264", "-crf", "16", "-c:a", "aac", "-ar", "48000", "-ac", "2", dst], check=True)
         lst.append(f"file '{dst}'")
     (tmp / "list.txt").write_text("\n".join(lst))
-    # dialogue (clip audio) rides over the score, which ducks 8 dB under speech via sidechain
+    # Procedural mix (mirrors server/trailer_mix.go): score at ~30% under speech, swelling to ~95% only in dialogue-free runs
+    # of >= 2.5 s (establishing sweeps, silent beats), 1.2 s ramp up, 1.0 s ramp down so it is back at base before speech.
+    BASE, PEAK, UP, DOWN, MIN = 0.30, 0.95, 1.2, 1.0, 2.5
+    import numpy as np
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-f", "concat", "-safe", "0", "-i", tmp / "list.txt", "-vn", "-af", "highpass=f=250,lowpass=f=3400",
+                          "-ac", "1", "-ar", "16000", "-f", "f32le", "-"], capture_output=True, check=True).stdout
+    x, hop = np.frombuffer(raw, np.float32), 4000  # 0.25 s windows of the dialogue band; speech > -43 dB, ambience <= -50 dB
+    db = np.array([10 * np.log10((x[i:i + hop] ** 2).mean() + 1e-12) for i in range(0, len(x) - hop + 1, hop)])
+    speech = np.convolve(db > -43, np.ones(3), "same") > 0  # one window of guard either side
+    windows, start = [], None
+    for i, sp in enumerate(list(speech) + [True]):
+        if not sp and start is None: start = i
+        if sp and start is not None:
+            if (i - start) * 0.25 >= MIN: windows.append((start * 0.25, i * 0.25))
+            start = None
+    expr = f"{BASE:.2f}" + "".join(f"+{PEAK - BASE:.2f}*clip(min((t-{a:.3f})/{UP},({b:.3f}-t)/{DOWN}),0,1)" for a, b in windows)
+    print("score swells (s):", ", ".join(f"{a:.1f}-{b:.1f}" for a, b in windows))
     score = next(OUT.glob("score.*"))
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", tmp / "list.txt", "-i", score, "-filter_complex",
-                    "[1:a]volume=0.9[m];[0:a]asplit=2[dl][dk];[m][dk]sidechaincompress=threshold=0.04:ratio=6:attack=20:release=400[d];[d][dl]amix=inputs=2:duration=first:normalize=0[a]",
-                    "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", OUT / "trailer.mp4"], check=True)
+                    f"[1:a]volume='{expr}':eval=frame,afade=t=in:st=0:d=1.2[m];[0:a][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[a]",
+                    "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", OUT / "trailer.mp4"], check=True)
     print(OUT / "trailer.mp4")
 
 
