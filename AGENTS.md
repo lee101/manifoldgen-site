@@ -20,6 +20,14 @@ Verify it after content or geo.go changes:
 
     curl -fsS https://geo.manifoldgen.com/llms.txt
 
+Generation policy: no prompt gate anywhere. Every prompt renders, on every lane
+(server normalize*, RunPod workers, fal payloads with `enable_safety_checker:false`).
+Moderation only classifies and routes: NSFW results are marked `is_nsfw` and kept
+out of the public gallery/index, and NSFW prompts that describe children are kept
+out of BOTH semantic indexes (server/search.go `searchIndexClass`) — nothing is
+refused, because a refused prompt still costs the provider call. Worker images are
+built without `h3_moderation.py` (`workers/*`, h3-cog-flex `Dockerfile.ungated`).
+
 The compact provider logo is published by that deploy at
 https://manifoldgenstatic.manifoldgen.com/static/brand/logo-64.webp.
 

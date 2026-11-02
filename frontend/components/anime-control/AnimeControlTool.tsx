@@ -23,7 +23,7 @@ type Phase = 'idle' | 'queued' | 'processing' | 'done' | 'error';
 type Source = 'studio' | 'photo' | 'paint';
 type JobPayload = { job?: { status?: string; error?: string; result?: { image_url?: string; charged_usd?: number } } };
 
-export default function AnimeControlTool({ tool: toolId }: { tool: AnimeToolId }) {
+export default function AnimeControlTool({ tool: toolId, initialPose }: { tool: AnimeToolId; initialPose?: string }) {
   const tool = ANIME_TOOLS[toolId];
   const sources: { id: Source; label: string }[] = [
     ...(tool.studio ? [{ id: 'studio' as const, label: '3D studio' }] : []),
@@ -162,7 +162,7 @@ export default function AnimeControlTool({ tool: toolId }: { tool: AnimeToolId }
         )}
         {source === 'studio' && (
           <div className={styles.studio} data-testid="anime-studio">
-            <PoseStudio ref={studio} outputSize={{ width, height }} />
+            <PoseStudio ref={studio} outputSize={{ width, height }} value={initialPose} />
           </div>
         )}
         {source === 'paint' && tool.paint && <PaintPad ref={pad} mode={tool.paint} width={width} height={height} disabled={busy} />}

@@ -230,6 +230,24 @@ export const VIDEO_GENERATORS: VideoGenerator[] = [
     guide: { slug: 'how-to-use-kling-4', title: 'How to Use Kling 4.0' },
   },
   {
+    slug: 'p-video', model: 'p-video', name: 'Pruna P-Video', shortName: 'P-Video', family: 'Pruna', mode: 'text',
+    description: 'Pruna P-Video turns text prompts into 1 to 10 second clips in seconds, at 720p or 1080p, with optional audio.',
+    strengths: ['Very fast', 'Very low cost', '720p and 1080p'], durations: [3, 5, 8, 10],
+    aspectRatios: ['16:9', '9:16', '4:3', '3:4', '1:1'], resolutions: ['720p', '1080p'], audio: true, price: 'from 11 Manifold credits', accent: '#7c4dff',
+  },
+  {
+    slug: 'p-video-image', model: 'p-video', name: 'Pruna P-Video Image to Video', shortName: 'P-Video Image', family: 'Pruna', mode: 'image',
+    description: 'Animate a still image with Pruna P-Video: fast, cheap 1 to 10 second clips at 720p or 1080p.',
+    strengths: ['Very fast', 'Image animation', 'Very low cost'], durations: [3, 5, 8, 10],
+    aspectRatios: ['16:9', '9:16', '4:3', '3:4', '1:1'], resolutions: ['720p', '1080p'], audio: true, price: 'from 11 Manifold credits', accent: '#9575ff',
+  },
+  {
+    slug: 'p-video-edit', model: 'p-video-edit', name: 'Pruna P-Video Edit', shortName: 'P-Video Edit', family: 'Pruna', mode: 'edit',
+    description: 'Edit an existing video of up to 15 seconds from a text prompt, optionally guided by up to 4 reference images.',
+    strengths: ['Text-driven edits', 'Image references', 'Up to 15s input'], durations: [5, 10, 15],
+    aspectRatios: ['16:9'], resolutions: ['720p', '1080p'], audio: true, price: 'from 25 Manifold credits', accent: '#b39dff',
+  },
+  {
     slug: 'veo-3-1-fast', model: 'fal-ai/veo3.1/fast/image-to-video', name: 'Veo 3.1 Fast', shortName: 'Veo Fast', family: 'Veo', mode: 'image',
     description: 'Google Veo 3.1 Fast animates a still with realistic motion and native audio at a low rate.',
     strengths: ['Realistic motion', 'Native audio', 'Low cost'], durations: [4, 6, 8],

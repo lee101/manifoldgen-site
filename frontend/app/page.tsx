@@ -193,8 +193,11 @@ const SIZES: { id: Size; label: string; hint: string }[] = [
   { id: 'balanced', label: 'Balanced', hint: 'Balanced speed and detail' },
   { id: 'native', label: 'Native', hint: 'Max detail' },
   { id: 'hd', label: '1080p', hint: 'Sharpest detail, up to 10 seconds' },
+  { id: 'uhd', label: '1440p', hint: 'Highest resolution, 5 second clips' },
 ];
-const HD_MAX_SECONDS = 10;
+// Flex-lane-only sizes and the longest clip each was benchmarked at (server/h3_flex.go).
+const SIZE_MAX_SECONDS: Partial<Record<Size, number>> = { hd: 10, uhd: 5 };
+const maxSecondsFor = (size: Size) => SIZE_MAX_SECONDS[size] ?? 60;
 
 function authHeaders(apiKey: string): HeadersInit {
   return {
@@ -1453,12 +1456,12 @@ export default function HomePage() {
                   onChange={(e) => {
                     const next = e.target.value as Size;
                     setSize(next);
-                    if (next === 'hd') setDuration((current) => Math.min(current, HD_MAX_SECONDS));
+                    setDuration((current) => Math.min(current, maxSecondsFor(next)));
                   }}
                   className="rounded-full bg-white/5 px-3 py-1.5 text-sm"
                   title={SIZES.find((s) => s.id === size)?.hint}
                 >
-                  {SIZES.filter((s) => s.id !== 'hd' || h3TierPrices.hd?.length).map((s) => {
+                  {SIZES.filter((s) => !SIZE_MAX_SECONDS[s.id] || h3TierPrices[s.id]?.length).map((s) => {
                     const [width, height] = h3Dimensions(aspect, s.id);
                     return (
                       <option key={s.id} value={s.id}>
@@ -1508,7 +1511,7 @@ export default function HomePage() {
                       setLoopMode(false);
                       setIncludeAudio(true);
                       setDuration(15);
-                      setSize((current) => current === 'hd' ? 'native' : current);
+                      setSize((current) => SIZE_MAX_SECONDS[current] ? 'native' : current);
                     }
                     return next;
                   })}
@@ -1876,20 +1879,20 @@ export default function HomePage() {
                 aria-label="Video duration in seconds"
                 type="range"
                 min={4}
-                max={size === 'hd' ? HD_MAX_SECONDS : 60}
+                max={maxSecondsFor(size)}
                 step={1}
                 value={duration}
                 disabled={musicVideoMode}
                 onChange={(e) => setDuration(Number(e.target.value))}
                 className="mt-5 w-full accent-[var(--color-accent)]"
               />
-              <div className="mt-1 flex justify-between text-[11px] text-white/30"><span>4 sec</span><span>{size === 'hd' ? HD_MAX_SECONDS : 60} sec</span></div>
+              <div className="mt-1 flex justify-between text-[11px] text-white/30"><span>4 sec</span><span>{maxSecondsFor(size)} sec</span></div>
               <div className="mt-4 grid grid-cols-5 gap-1.5">
                 {[5, 10, 15, 30, 60].map((seconds) => (
                   <button
                     key={seconds}
                     type="button"
-                    disabled={musicVideoMode || (size === 'hd' && seconds > HD_MAX_SECONDS)}
+                    disabled={musicVideoMode || seconds > maxSecondsFor(size)}
                     onClick={() => setDuration(seconds)}
                     aria-pressed={duration === seconds}
                     className={`rounded-xl px-2 py-2 text-xs font-medium transition ${duration === seconds ? 'bg-[var(--color-accent-solid)] text-white' : 'bg-white/5 text-white/55 hover:bg-white/10 hover:text-white'}`}

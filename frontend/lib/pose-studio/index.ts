@@ -9,3 +9,7 @@ export type { Props, PinKey } from './rig';
 export { rasterSkeleton, SKELETON_PALETTE, COCO_NAMES } from './skeleton2d';
 export type { PersonKeypoints, Kp } from './skeleton2d';
 export type { MapKind, RegionMode } from './gpu';
+export { BODY_TYPES, BODY_TYPE_NAMES } from './bodies';
+export type { BodyType } from './bodies';
+export { sampleSpec, BASE_IDS, rng } from './sampler';
+export type { SampledPose } from './sampler';

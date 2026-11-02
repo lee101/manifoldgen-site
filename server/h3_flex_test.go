@@ -117,3 +117,33 @@ func TestH3FlexStoredRequestKeepsDrivingAudioAndChargeCap(t *testing.T) {
 		t.Fatal("a fresh job must not fall back")
 	}
 }
+
+func TestH3FlexUHDIsFlexOnlyCappedAndProfitable(t *testing.T) {
+	uhd := ServiceUsageRequest{Service: "h3_video", Size: "uhd", Duration: 5, NumSteps: 20, H3Lane: h3FlexVariant}
+	if err := prepareH3FlexRequest(&uhd); err != nil || uhd.Size != "uhd" {
+		t.Fatalf("5 s 1440p: %q %v", uhd.Size, err)
+	}
+	long := uhd
+	long.Duration = 10
+	if err := prepareH3FlexRequest(&long); err == nil {
+		t.Fatal("10 s 1440p must be rejected: only 5 s was benchmarked")
+	}
+	if h3FalCanHandle(ServiceUsageRequest{Size: "uhd", Duration: 5}) {
+		t.Fatal("fal H3 Max cannot render 1440p")
+	}
+	hd := uhd
+	hd.Size = "hd"
+	hdUSD, _, _ := h3Estimate(hd)
+	uhdUSD, _, seconds := h3Estimate(uhd)
+	if uhdUSD <= hdUSD || seconds != 400 {
+		t.Fatalf("uhd $%.3f vs hd $%.3f, seconds %v", uhdUSD, hdUSD, seconds)
+	}
+	// Measured ~390 s warm on the PRO 6000; keep the 1440p price at least 3x its GPU cost.
+	if gpuUSD := servicePricesUSD["h3_video"] * h3FlexPredictSeconds(uhd) / 3600; uhdUSD < 3*gpuUSD {
+		t.Fatalf("uhd $%.3f vs gpu $%.3f", uhdUSD, gpuUSD)
+	}
+	t.Setenv("H3_FLEX_UHD_USD_PER_SECOND", "0.5")
+	if got, _ := h3FlexListPriceUSD(uhd); got != 2.5 {
+		t.Fatalf("env override price = %v", got)
+	}
+}

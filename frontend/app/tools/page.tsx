@@ -11,7 +11,7 @@ export const metadata = {
   description: 'Purpose-built spaces for AI art, image editing, relighting, upscaling, character animation, music, and video finishing.',
 };
 
-const FAMILIES = ['Kling', 'Veo', 'Seedance', 'Wan', 'LTX', 'Manifold', 'Happy Horse', 'RA2V'];
+const FAMILIES = ['Kling', 'Veo', 'Seedance', 'Wan', 'LTX', 'Manifold', 'Happy Horse', 'Pruna', 'RA2V'];
 
 export default function ToolsPage() {
   const videoFamilies = FAMILIES

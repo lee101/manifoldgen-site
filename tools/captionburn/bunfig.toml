@@ -1,0 +1,2 @@
+# installs the canvas shim before the caption engine module initialises
+preload = ["./src/shim.ts"]

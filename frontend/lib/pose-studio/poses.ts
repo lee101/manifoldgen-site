@@ -6,7 +6,7 @@ type V3 = [number, number, number];
 export type HandShape = 'open' | 'relaxed' | 'fist' | 'grip' | 'point' | 'spread';
 export const HAND_SHAPES: HandShape[] = ['open', 'relaxed', 'fist', 'grip', 'point', 'spread'];
 
-interface LimbSpec {
+export interface LimbSpec {
   t: V3;
   pole?: V3;
   twist?: number;
@@ -16,7 +16,7 @@ interface LimbSpec {
   foot?: { pitch?: number; yaw?: number; roll?: number };
 }
 
-interface Spec {
+export interface Spec {
   root?: { dy?: number; y?: number; yaw?: number; pitch?: number; roll?: number };
   spine?: V3;
   neck?: V3;
@@ -65,7 +65,7 @@ export function applyHand(body: Body, S: 'L' | 'R', shape: HandShape) {
 
 const STAND_ARM: LimbSpec = { t: [1.0, -0.45, 0.05], hand: 'relaxed' };
 
-const SPECS: Record<string, Spec> = {
+export const SPECS: Record<string, Spec> = {
   stand: { armL: STAND_ARM, armR: 'mirror' },
   relaxed: {
     root: { dy: -0.05, yaw: 8, roll: 3 },

@@ -853,7 +853,7 @@ func characterSwapFalInput(state characterSwapState, chunk characterSwapChunk) m
 		"resolution":            characterSwapFalResolution(state.Request.Resolution),
 		"aspect_ratio":          state.Request.AspectRatio,
 		"prompt_expansion_mode": state.Request.PromptExpansionMode,
-		"enable_safety_checker": true,
+		"enable_safety_checker": false,
 	}
 	if chunk.AudioURL != "" {
 		input["reference_audio_urls"] = []string{chunk.AudioURL}

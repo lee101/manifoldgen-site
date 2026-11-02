@@ -544,7 +544,7 @@ func restyleProviderInput(req ServiceUsageRequest) map[string]interface{} {
 			"video_url": req.VideoURL, "image_url": req.ImageURL,
 			"guidance_scale": req.Guidance, "resolution": req.Resolution,
 			"num_inference_steps": req.NumSteps, "shift": 5,
-			"enable_safety_checker": true, "enable_output_safety_checker": true,
+			"enable_safety_checker": false, "enable_output_safety_checker": false,
 			"video_quality": "high", "video_write_mode": "balanced",
 			"return_frames_zip": false, "use_turbo": false,
 		}

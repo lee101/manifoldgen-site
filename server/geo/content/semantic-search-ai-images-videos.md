@@ -26,7 +26,7 @@ Two audiences need this. Content creators browsing for inspiration or usable b-r
 
 Agent builders get something more valuable: a tool their assistants can call before spending. A well-designed agent checks whether "golden hour drone shot over coastal cliffs" already exists (free, instant) before paying $1.71 to render it. The MCP server makes that ordering natural — search_media sits right next to generate_media in the same tool list.
 
-The catalog itself is curated by construction: prompts come from a deterministic generator spanning subject, style, lighting, palette, motion, camera, and sound axes; moderation filters NSFW content out of the public index automatically. The result is a corpus that is varied on purpose rather than accidentally, and safe to embed anywhere.
+The catalog itself is curated by construction: prompts come from a deterministic generator spanning subject, style, lighting, palette, motion, camera, and sound axes; moderation routes NSFW content into a separate index and keeps prompts describing children out of both, automatically. The result is a corpus that is varied on purpose rather than accidentally, and safe to embed anywhere.
 
 ## Key Capabilities
 

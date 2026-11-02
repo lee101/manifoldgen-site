@@ -1,9 +1,9 @@
 'use client';
 
 import { forwardRef, type ForwardRefExoticComponent, type RefAttributes, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from 'react';
-import { ArrowUpDown, Bone, Check, ClipboardPaste, Copy, Download, FlipHorizontal2, Footprints, Grid3x3, Hand, LoaderCircle, Redo2, RotateCcw, Scan, Sun, Undo2, UserMinus, UserPlus } from 'lucide-react';
-import { CAMERA_VIEW_NAMES, HAND_SHAPES, MAP_KINDS, MAX_PEOPLE, OUTPUT_SIZES, PRESET_NAMES, PROP_LIMITS, PoseStudio as Studio, decodePose } from '../../lib/pose-studio';
-import type { MapKind, MapRequest, PinKey, PoseJSON, Props, RegionMode, StudioState } from '../../lib/pose-studio';
+import { Camera, RotateCw, ArrowUpDown, Bone, Check, ClipboardPaste, Copy, Download, FlipHorizontal2, Footprints, Grid3x3, Hand, LoaderCircle, Redo2, RotateCcw, Scan, Sun, Undo2, UserMinus, UserPlus } from 'lucide-react';
+import { CAMERA_VIEW_NAMES, HAND_SHAPES, MAP_KINDS, MAX_PEOPLE, OUTPUT_SIZES, PRESET_NAMES, PROP_LIMITS, BODY_TYPE_NAMES, PoseStudio as Studio, decodePose } from '../../lib/pose-studio';
+import type { BodyType, MapKind, MapRequest, PinKey, PoseJSON, Props, RegionMode, StudioState } from '../../lib/pose-studio';
 import { PERSON_COLORS } from '../../lib/pose-studio/gpu';
 import styles from './PoseStudio.module.css';
 
@@ -31,6 +31,7 @@ const PROP_META: { key: keyof Props; label: string; step: number; unit?: string;
   { key: 'shoulder', label: 'Shoulder width', step: 0.01 },
   { key: 'hip', label: 'Hip width', step: 0.01 },
   { key: 'limb', label: 'Limb length', step: 0.01 },
+  { key: 'sex', label: 'Build', step: 0.05, hint: '0 feminine, 0.5 neutral, 1 masculine' },
 ];
 const PINS: { key: PinKey; label: string; side: string; icon: 'hand' | 'foot' }[] = [
   { key: 'footL', label: 'left foot', side: 'L', icon: 'foot' },
@@ -198,7 +199,7 @@ const PoseStudioView = forwardRef<PoseStudioHandle, PoseStudioProps>(function Po
     s.handleKey(e.nativeEvent);
   };
 
-  const download = async (kind: MapKind) => {
+  const download = async (kind: MapKind, prefix = 'pose') => {
     const s = studioRef.current;
     if (!s) return;
     try {
@@ -206,7 +207,7 @@ const PoseStudioView = forwardRef<PoseStudioHandle, PoseStudioProps>(function Po
       const url = URL.createObjectURL(await s.exportMap(kind, { ...opts.current, width: w, height: h }));
       const a = document.createElement('a');
       a.href = url;
-      a.download = `pose-${kind}-${w}x${h}.png`;
+      a.download = `${prefix}-${kind}-${w}x${h}.png`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -343,6 +344,7 @@ const PoseStudioView = forwardRef<PoseStudioHandle, PoseStudioProps>(function Po
           </div>
           <div className={styles.actions}>
             {onExport && <button type="button" className={styles.primary} disabled={busy} onClick={() => void runExport()}>{busy ? <LoaderCircle className={styles.spin} size={15} /> : <Download size={15} />} Export maps</button>}
+            <button type="button" className={styles.primary} onClick={() => void download('mesh', 'pose-scene')}><Camera size={15} /> Screenshot</button>
             <button type="button" className={styles.ghost} onClick={() => void copyJson()}><Copy size={14} /> Copy pose JSON</button>
             <button type="button" className={styles.ghost} aria-expanded={pasteOpen} onClick={() => setPasteOpen((v) => !v)}><ClipboardPaste size={14} /> Paste pose JSON</button>
             <span className={`${styles.msg} ${msg?.bad ? styles.bad : ''}`} role="status" aria-live="polite">{msg ? <>{!msg.bad && <Check size={13} />}{msg.text}</> : null}</span>
@@ -371,6 +373,37 @@ const PoseStudioView = forwardRef<PoseStudioHandle, PoseStudioProps>(function Po
                 </button>
               );
             })}
+          </div>
+        </section>
+
+        <section>
+          <h3>Characters</h3>
+          <div className={styles.presets} role="group" aria-label="Add character">
+            <button type="button" disabled={(st?.people.length ?? 0) >= MAX_PEOPLE} onClick={() => act((s) => { if (s.addPerson() !== null) s.setBodyType('genman'); })}>+ man</button>
+            <button type="button" disabled={(st?.people.length ?? 0) >= MAX_PEOPLE} onClick={() => act((s) => { if (s.addPerson() !== null) s.setBodyType('genwoman'); })}>+ woman</button>
+          </div>
+          <div className={styles.presets} role="group" aria-label="Body type of the selected figure">
+            {BODY_TYPE_NAMES.map((n) => <button key={n} type="button" onClick={() => act((s) => s.setBodyType(n as BodyType))}>{n}</button>)}
+          </div>
+        </section>
+
+        <section>
+          <h3>Move selected</h3>
+          {(['x', 'z'] as const).map((axis) => {
+            const f = studioRef.current?.getFigure() ?? { x: 0, z: 0 };
+            const v = f[axis];
+            return (
+              <div key={axis} className={styles.range}>
+                <label htmlFor={`ps-move-${axis}`}><span>{axis === 'x' ? 'Left / right' : 'Toward camera'}</span><output>{v.toFixed(2)}</output></label>
+                <input id={`ps-move-${axis}`} type="range" min={-3} max={3} step={0.05} value={v} onChange={(e) => act((s) => s.transformFigure({ [axis]: Number(e.target.value) }))} />
+              </div>
+            );
+          })}
+          <div className={styles.presets} role="group" aria-label="Turn selected figure">
+            <button type="button" onClick={() => act((s) => s.transformFigure({ yawDeg: -15 }))}><RotateCw size={13} style={{ transform: 'scaleX(-1)' }} /> turn -15</button>
+            <button type="button" onClick={() => act((s) => s.transformFigure({ yawDeg: 15 }))}><RotateCw size={13} /> turn +15</button>
+            <button type="button" onClick={() => act((s) => s.transformFigure({ yawDeg: 90 }))}>turn 90</button>
+            <button type="button" onClick={() => act((s) => s.transformFigure({ yawDeg: 180 }))}>turn 180</button>
           </div>
         </section>
 

@@ -45,6 +45,7 @@ mkdir -p /tmp/www; ln -sfn /tmp/pub/{token} /tmp/www/{token}; (python3 -c "impor
 exec >> /tmp/pub/{token}/boot.log 2>&1
 curl -sfL --retry 5 '{kit_url}' -o /tmp/kit.tgz && mkdir -p /tmp/kit && tar -xzf /tmp/kit.tgz -C /tmp/kit
 cp /tmp/kit/src/*.py /src/ && mkdir -p /tmp/bench && cp -r /tmp/kit/bench/* /tmp/bench/
+(apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc g++ >/dev/null) || true
 nvidia-smi; free -g; df -h / /runpod-volume; cat /sys/fs/cgroup/memory.max
 BENCH_PUB=/tmp/pub/{token} python3 -u /tmp/bench/pod_bench.py
 sleep infinity

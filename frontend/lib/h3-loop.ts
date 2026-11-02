@@ -1,5 +1,5 @@
 export type H3Aspect = '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9';
-export type H3Size = 'preview' | 'balanced' | 'native' | 'hd';
+export type H3Size = 'preview' | 'balanced' | 'native' | 'hd' | 'uhd';
 
 type ImageGenerationResponse = {
   saved_image_url?: string;
@@ -25,6 +25,7 @@ const SIZE_AREA_SCALE: Record<H3Size, number> = {
   balanced: 0.78,
   native: 1,
   hd: 2.03, // 1920x1088 at 16:9; flex lane only, up to 10 s
+  uhd: 3.5, // 2528x1440 at 16:9; flex lane only, 5 s
 };
 
 // Keep this in lockstep with lee101/h3-cog's dimensions() function. H3 scales

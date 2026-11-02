@@ -37,6 +37,20 @@ type VideoSearchEngine struct {
 	nsfw      bool
 }
 
+func childPromptFlagged(prompt string) bool { return isChildPrompt(prompt) }
+
+// searchIndexClass picks the semantic index for a prompt: the safe one, the
+// NSFW one, or neither.
+func searchIndexClass(prompt string, nsfw bool) (safe, flagged bool) {
+	if !nsfw {
+		return true, false
+	}
+	if childPromptFlagged(prompt) {
+		return false, false
+	}
+	return false, true
+}
+
 // AudioSearchEngine indexes generated audio prompts while retaining enough
 // metadata to return useful, provider-neutral search results.
 type AudioSearchEngine struct {
@@ -160,6 +174,10 @@ func (ps *PromptSearchEngine) loadAndIndex() {
 	var imageIDs, prompts []string
 	if dbConn != nil {
 		err = dbConn.StreamAllImagePrompts(ps.nsfw, func(id, prompt string) error {
+			// Child-described prompts never reach the NSFW index.
+			if ps.nsfw && childPromptFlagged(prompt) {
+				return nil
+			}
 			imageIDs = append(imageIDs, id)
 			prompts = append(prompts, prompt)
 			return nil
@@ -206,11 +224,13 @@ func indexImagePrompt(img *GeneratedImage) {
 	if img.IsNSFW == nil && (img.Model == "smart-resize" || img.Model == "birefnet") {
 		return
 	}
-	if img.IsNSFW != nil && *img.IsNSFW {
+	safe, flagged := searchIndexClass(img.Prompt, img.IsNSFW != nil && *img.IsNSFW)
+	if flagged {
 		promptSearchNSFW.IndexIncremental(img.ID, img.Prompt)
-		return
 	}
-	promptSearch.IndexIncremental(img.ID, img.Prompt)
+	if safe {
+		promptSearch.IndexIncremental(img.ID, img.Prompt)
+	}
 }
 
 func searchImagePrompts(query string, topK, offset int, includeNSFW bool) ([]SearchResult, bool, error) {
@@ -340,6 +360,10 @@ func (vs *VideoSearchEngine) loadAndIndex() {
 	var jobIDs, prompts, urls, services []string
 	if dbConn != nil {
 		err = dbConn.StreamCompletedVideoPrompts(vs.nsfw, func(jobID, prompt, videoURL, service string) error {
+			// Child-described prompts never reach the NSFW index.
+			if vs.nsfw && childPromptFlagged(prompt) {
+				return nil
+			}
 			jobIDs = append(jobIDs, jobID)
 			prompts = append(prompts, prompt)
 			urls = append(urls, videoURL)
@@ -423,11 +447,13 @@ func indexVideoPrompt(job *VideoJob, videoURL string) {
 	if job == nil {
 		return
 	}
-	engine := videoSearch
-	if job.IsNSFW {
-		engine = videoSearchNSFW
+	safe, flagged := searchIndexClass(job.Prompt, job.IsNSFW)
+	if flagged {
+		videoSearchNSFW.IndexIncremental(job.ID, job.Prompt, videoURL, job.Service)
 	}
-	engine.IndexIncremental(job.ID, job.Prompt, videoURL, job.Service)
+	if safe {
+		videoSearch.IndexIncremental(job.ID, job.Prompt, videoURL, job.Service)
+	}
 }
 
 var searchVideoPrompts = func(query string, topK int, includeNSFW bool) ([]SearchResult, error) {

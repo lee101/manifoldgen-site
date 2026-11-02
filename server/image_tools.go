@@ -37,12 +37,15 @@ var imageAspectPresets = map[string]string{
 // Public prices track the OpenPaths cost table with the same markup convention
 // as servicePricesUSD["gpt_image"] ($0.211 upstream -> $0.24 public).
 var allowedImageModels = map[string]imageModelSpec{
-	"gpt-image-2":   {upstream: "gpt-image-2", usd: 0.24, edit: true},
-	"nano-banana-2": {upstream: "or/gemini-3.1-flash-image", usd: 0.16, edit: true, useAspect: true, aspects: imageAspectPresets, resolution: true},
-	"grok-imagine":  {upstream: "grok-imagine-image", usd: 0.04, edit: true, useAspect: true, aspects: imageAspectPresets, resolution: true},
-	"flux-2-klein":  {upstream: "klein", usd: 0.03, useAspect: false},
-	"flux-2-dev":    {upstream: "flux-dev", usd: 0.04, useAspect: false},
-	"flux-pro":      {upstream: "flux-pro", usd: 0.06, useAspect: false},
+	"gpt-image-2":      {upstream: "gpt-image-2", usd: 0.24, edit: true},
+	"nano-banana-2":    {upstream: "or/gemini-3.1-flash-image", usd: 0.16, edit: true, useAspect: true, aspects: imageAspectPresets, resolution: true},
+	"grok-imagine":     {upstream: "grok-imagine-image", usd: 0.04, edit: true, useAspect: true, aspects: imageAspectPresets, resolution: true},
+	"seedream-5-flash": {upstream: "seedream-5.0-flash", usd: 0.03, edit: true, useAspect: false},
+	"seedream-5-pro":   {upstream: "seedream-5.0-pro", usd: 0.07, edit: true, useAspect: false},
+	"seedream-4.5":     {upstream: "seedream-4.5", usd: 0.06, edit: true, useAspect: false},
+	"flux-2-klein":     {upstream: "klein", usd: 0.03, useAspect: false},
+	"flux-2-dev":       {upstream: "flux-dev", usd: 0.04, useAspect: false},
+	"flux-pro":         {upstream: "flux-pro", usd: 0.06, useAspect: false},
 }
 
 func normalizeImageModel(model string) string {
@@ -101,7 +104,7 @@ func proxyOpenPathsModelImage(req ServiceUsageRequest) ([]byte, error) {
 		if aspect, ok := spec.aspects[strings.ToLower(strings.TrimSpace(firstNonEmpty(req.AspectRatio, sizeToAspect(req.Width, req.Height))))]; ok {
 			payload["aspect_ratio"] = aspect
 		}
-	} else if req.Width > 0 && req.Height > 0 {
+	} else if req.Width >= 64 && req.Height >= 64 && req.Width <= 4096 && req.Height <= 4096 {
 		payload["size"] = fmt.Sprintf("%dx%d", req.Width, req.Height)
 	} else {
 		payload["size"] = "1024x1024"
@@ -287,7 +290,7 @@ func proxyFalRelight(req ServiceUsageRequest) ([]byte, error) {
 		"lowres_denoise":        0.98,
 		"highres_denoise":       0.95,
 		"hr_downscale":          0.5,
-		"enable_safety_checker": true,
+		"enable_safety_checker": false,
 		"output_format":         "jpeg",
 	}
 	result, err := runFalQueuedJob("fal-ai/iclight-v2", payload)

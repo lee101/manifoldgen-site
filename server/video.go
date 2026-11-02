@@ -1304,8 +1304,12 @@ type h3RunpodStatus struct {
 	Error         string `json:"error"`
 	ExecutionTime int64  `json:"executionTime"`
 	Output        struct {
-		Outputs []h3RunpodArtifact     `json:"outputs"`
-		Metrics map[string]interface{} `json:"metrics"`
+		Outputs    []h3RunpodArtifact     `json:"outputs"`
+		Metrics    map[string]interface{} `json:"metrics"`
+		Moderation struct {
+			Status  string `json:"status"`
+			IsChild bool   `json:"is_child"`
+		} `json:"moderation"`
 	} `json:"output"`
 }
 

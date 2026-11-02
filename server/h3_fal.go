@@ -34,7 +34,7 @@ func h3FalMode(req ServiceUsageRequest) string {
 
 func h3FalCanHandle(req ServiceUsageRequest) bool {
 	wantsLocalRefine := req.LatentUpscale != nil && *req.LatentUpscale
-	return !wantsLocalRefine && req.Size != "audio" && req.Size != "hd" && req.AudioURL == "" && !req.Loop &&
+	return !wantsLocalRefine && req.Size != "audio" && req.Size != "hd" && req.Size != "uhd" && req.AudioURL == "" && !req.Loop &&
 		len(req.Keyframes) <= 2 && req.Duration >= 5 && req.Duration <= 15
 }
 
@@ -66,7 +66,7 @@ func h3FalModel(req ServiceUsageRequest) string {
 func h3FalPayload(req ServiceUsageRequest) map[string]interface{} {
 	payload := map[string]interface{}{
 		"prompt": strings.TrimSpace(req.Prompt), "duration": req.Duration,
-		"resolution": h3FalResolution(req), "enable_safety_checker": true,
+		"resolution": h3FalResolution(req), "enable_safety_checker": false,
 		"prompt_expansion_mode": h3FalExpansion(req),
 	}
 	if req.Seed != 0 {

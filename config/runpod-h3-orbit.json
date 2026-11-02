@@ -1,8 +1,7 @@
 {
-  "image": "ghcr.io/lee101/h3-orbit:cu130-20261005-r1",
+  "image": "ghcr.io/lee101/h3-orbit:cu130-20261031-r2",
   "dockerStartCmd": ["python", "-u", "/src/orbit_handler.py"],
   "env": {
-    "H3_MODERATION_DEVICE": "cpu",
     "MINIMAX_H3_LICENSE_ACCEPTED": "1",
     "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     "NVIDIA_DRIVER_CAPABILITIES": "all"

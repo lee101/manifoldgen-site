@@ -24,7 +24,13 @@ ARMS = {
     "turbo6": ({"H3_ACCEL_PROFILE": "turbo-6", "H3_TURBO_REMAP_STEPS": "1"}, "balanced", 5, None),
     "pika6": ({"H3_ACCEL_PROFILE": "pika-6", "H3_TURBO_REMAP_STEPS": "1"}, "balanced", 5, None),
     "pika6_native": ({"H3_ACCEL_PROFILE": "pika-6", "H3_TURBO_REMAP_STEPS": "1"}, "native", 5, None),
+    "pika6_vae": ({"H3_ACCEL_PROFILE": "pika-6-vae", "H3_TURBO_REMAP_STEPS": "1"}, "native", 5, None),
+    "pika6_sol": ({"H3_ACCEL_PROFILE": "pika-6-sol", "H3_TURBO_REMAP_STEPS": "1"}, "native", 5, None),
+    "pika6_solvae": ({"H3_ACCEL_PROFILE": "pika-6-sol-vae", "H3_TURBO_REMAP_STEPS": "1"}, "native", 5, None),
     "pika6_hd": ({"H3_ACCEL_PROFILE": "pika-6", "H3_TURBO_REMAP_STEPS": "1"}, "hd", 5, ["dancer", "tram"]),
+    "pika6_sol_hd": ({"H3_ACCEL_PROFILE": "pika-6-sol", "H3_TURBO_REMAP_STEPS": "1"}, "hd", 5, ["dancer", "tram"]),
+    "pika6_uhd": ({"H3_ACCEL_PROFILE": "pika-6", "H3_TURBO_REMAP_STEPS": "1"}, "uhd", 5, ["dancer", "tram"]),
+    "pika6_sol_uhd": ({"H3_ACCEL_PROFILE": "pika-6-sol", "H3_TURBO_REMAP_STEPS": "1"}, "uhd", 5, ["dancer", "tram"]),
     "pika6_15s": ({"H3_ACCEL_PROFILE": "pika-6", "H3_TURBO_REMAP_STEPS": "1"}, "native", 15, ["fox"]),
     "pink_pika6": ({"H3_ACCEL_PROFILE": "pika-6", "H3_TURBO_REMAP_STEPS": "1", **PINK}, "balanced", 5, ["dancer", "potter"]),
 }

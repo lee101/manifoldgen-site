@@ -1,6 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import { Body, DEFAULT_PROPS, JOINT_NAMES, J, MIRROR, N, PIN_KEYS, mirrorQuat, sanitizeProps, type PinKey, type Props } from './rig';
-import { DEFAULT_PRESET, applyPreset } from './poses';
+import { DEFAULT_PRESET, applyPreset, buildSpec, type Spec } from './poses';
 
 export const MAX_PEOPLE = 4;
 export const HISTORY_LIMIT = 100;
@@ -12,7 +12,7 @@ export interface PoseFigureJSON {
   r: number[];
   j: Record<string, number[]>;
   pin?: Record<string, { p: number[]; r: number[] }>;
-  pr: { h: number; H: number; s: number; w: number; l: number };
+  pr: { h: number; H: number; s: number; w: number; l: number; x?: number };
 }
 
 export interface PoseJSON {
@@ -117,6 +117,14 @@ export class PoseModel {
     return applyPreset(p.body, name);
   }
 
+  applySpec(spec: Spec, id?: number) {
+    const p = this.get(id);
+    if (!p) return false;
+    this.push();
+    buildSpec(p.body, spec);
+    return true;
+  }
+
   resetPose(id?: number) {
     const p = this.get(id);
     if (!p) return;
@@ -217,7 +225,7 @@ export class PoseModel {
         p: [r4(body.rootP.x), r4(body.rootP.y), r4(body.rootP.z)],
         r: packQ(body.rootQ),
         j,
-        pr: { h: r3(body.rig.props.headsTall), H: r3(body.rig.props.height), s: r3(body.rig.props.shoulder), w: r3(body.rig.props.hip), l: r3(body.rig.props.limb) },
+        pr: { h: r3(body.rig.props.headsTall), H: r3(body.rig.props.height), s: r3(body.rig.props.shoulder), w: r3(body.rig.props.hip), l: r3(body.rig.props.limb), x: r3(body.rig.props.sex) },
       };
       const pins: Record<string, { p: number[]; r: number[] }> = {};
       for (const k of PIN_KEYS) {
@@ -236,7 +244,7 @@ export class PoseModel {
     const persons: Person[] = [];
     let maxId = 0;
     for (const f of data.fig.slice(0, MAX_PEOPLE)) {
-      const body = new Body(sanitizeProps({ headsTall: f.pr?.h, height: f.pr?.H, shoulder: f.pr?.s, hip: f.pr?.w, limb: f.pr?.l }));
+      const body = new Body(sanitizeProps({ headsTall: f.pr?.h, height: f.pr?.H, shoulder: f.pr?.s, hip: f.pr?.w, limb: f.pr?.l, sex: f.pr?.x }));
       const p = f.p || [0, 0, 0];
       body.rootP.set(p[0] || 0, p[1] || 0, p[2] || 0);
       unpackQ(f.r, body.rootQ);

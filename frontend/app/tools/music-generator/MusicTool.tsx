@@ -201,7 +201,7 @@ export default function MusicTool() {
       </div>
     </section>
     <section className={styles.notes}>
-      <div><ShieldCheck size={17} /><span><strong>No voice cloning</strong>Requests that target a real person&apos;s voice are refused.</span></div>
+      <div><ShieldCheck size={17} /><span><strong>Any style prompt</strong>Every prompt renders; results are marked NSFW instead of refused.</span></div>
       <div><Waves size={17} /><span><strong>48 kHz stereo</strong>Full song audio, not a stem or a loop.</span></div>
       <div><Sparkles size={17} /><span><strong>Usage-based</strong>You pay per finished track, only when it succeeds.</span></div>
     </section>

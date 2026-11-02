@@ -6,6 +6,8 @@ import { CHEST_CHAIN, HEAD_CHAIN, HEAD_WEIGHTS, LIMBS, PIN_LIMB, aimChild, apply
 import { PRESET_NAMES, applyHand, resolvePreset, type HandShape } from './poses';
 import { keypointsOf, rasterSkeleton, type PersonKeypoints } from './skeleton2d';
 
+import { BODY_TYPES, type BodyType } from './bodies';
+import type { Spec } from './poses';
 export type Mode = 'ik' | 'fk';
 export type EventName = 'change' | 'select' | 'ready' | 'state' | 'contextlost' | 'contextrestored' | 'error';
 
@@ -300,6 +302,32 @@ export class PoseStudio {
     this.model.preset(name);
     this.changed();
     return true;
+  }
+  applySpec(spec: Spec) { const ok = this.model.applySpec(spec); if (ok) this.changed(); return ok; }
+  setBodyType(name: BodyType) { this.setProportions(BODY_TYPES[name]); }
+  getFigure() { const b = this.sel().body; return { x: b.rootP.x, z: b.rootP.z }; }
+  transformFigure(t: { x?: number; z?: number; yawDeg?: number }) {
+    const b = this.sel().body;
+    this.model.push();
+    const ox = b.rootP.x, oz = b.rootP.z;
+    if (t.yawDeg) {
+      const q = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), (t.yawDeg * Math.PI) / 180);
+      b.rootQ.premultiply(q);
+      for (const k of PIN_KEYS) {
+        const pin = b.pins[k];
+        if (!pin) continue;
+        const d = new Vector3(pin.p.x - ox, 0, pin.p.z - oz).applyQuaternion(q);
+        pin.p.x = ox + d.x;
+        pin.p.z = oz + d.z;
+        pin.q.premultiply(q);
+      }
+    }
+    const nx = t.x ?? ox, nz = t.z ?? oz;
+    b.rootP.x = nx;
+    b.rootP.z = nz;
+    for (const k of PIN_KEYS) { const pin = b.pins[k]; if (pin) { pin.p.x += nx - ox; pin.p.z += nz - oz; } }
+    b.fk();
+    this.changed();
   }
   mirror() { this.model.mirror(); this.changed(); }
   reset() { this.model.resetPose(); this.changed(); }

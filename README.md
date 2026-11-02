@@ -180,8 +180,9 @@ python3 scripts/backfill_seed.py --images 0 --videos 8 \
 
 The scripts are deliberately bounded by `--limit`; schedule repeated batches
 after confirming the first set looks good. Unclassified files are held out of
-semantic search and the public gallery, and NSFW/child content is excluded from
-the public gallery. Multiple local workers can safely share the same database:
+semantic search and the public gallery, NSFW content stays out of the public
+gallery, and prompts describing children never enter either semantic index.
+Multiple local workers can safely share the same database:
 each prompt is protected by a PostgreSQL advisory claim, so DAISY, Leetop, and
 the production GPU can consume different slices without duplicate renders.
 Catalog rows carry a deterministic mix of square, portrait, and landscape

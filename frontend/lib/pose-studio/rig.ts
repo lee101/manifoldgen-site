@@ -1,10 +1,10 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 
-export interface Props { headsTall: number; height: number; shoulder: number; hip: number; limb: number }
+export interface Props { headsTall: number; height: number; shoulder: number; hip: number; limb: number; sex: number }
 
-export const DEFAULT_PROPS: Props = { headsTall: 7.5, height: 1.7, shoulder: 1, hip: 1, limb: 1 };
+export const DEFAULT_PROPS: Props = { headsTall: 7.5, height: 1.7, shoulder: 1, hip: 1, limb: 1, sex: 0.5 };
 export const PROP_LIMITS: Record<keyof Props, [number, number]> = {
-  headsTall: [6.5, 9], height: [1.2, 2.1], shoulder: [0.7, 1.4], hip: [0.7, 1.4], limb: [0.8, 1.25],
+  headsTall: [6.5, 9], height: [1.2, 2.1], shoulder: [0.7, 1.4], hip: [0.7, 1.4], limb: [0.8, 1.25], sex: [0, 1],
 };
 
 export function sanitizeProps(p?: Partial<Props>): Props {

@@ -119,7 +119,7 @@ func TestExecuteMCPGenerateRequiresBearerWithoutCallingBackend(t *testing.T) {
 	ctx := mcpTestContext(`{}`)
 	response, status := executeMCPTool(ctx, "generate_media", json.RawMessage(`{"service":"image","prompt":"glass torus"}`))
 
-	if status != http.StatusUnauthorized || response["error"] != "authorization required: use Authorization header with API key or wallet_address in body" {
+	if status != http.StatusUnauthorized || response["error"] != "authorization required: use Authorization header with your API key" {
 		t.Fatalf("status = %d, response = %#v", status, response)
 	}
 }

@@ -54,6 +54,7 @@
     "node_modules",
     "tests",
     "pose-studio-standalone/build.ts",
-    "scripts/render-pose-samples.ts"
+    "scripts/render-pose-samples.ts",
+    "scripts/render-pose-library.ts"
   ]
 }

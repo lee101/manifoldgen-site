@@ -126,7 +126,7 @@ func TestProxyOpenPathsModelImageRejectsUnknownModelAndEditOnFlux(t *testing.T) 
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"data":[]}`))
 	})
-	if _, err := proxyOpenPathsModelImage(ServiceUsageRequest{Service: "openpaths_image", Model: "seedream-5", Prompt: "x"}); err == nil || !strings.Contains(err.Error(), "unsupported image model") {
+	if _, err := proxyOpenPathsModelImage(ServiceUsageRequest{Service: "openpaths_image", Model: "seedream-9", Prompt: "x"}); err == nil || !strings.Contains(err.Error(), "unsupported image model") {
 		t.Fatalf("unknown model error = %v", err)
 	}
 	if _, err := proxyOpenPathsModelImage(ServiceUsageRequest{
@@ -229,5 +229,14 @@ func TestProxyFalUpscaleImageReturnsNormalizedRow(t *testing.T) {
 	urls := extractPayloadImageURLs(result)
 	if len(urls) != 1 || !strings.HasSuffix(urls[0], "big.png") {
 		t.Fatalf("upscale urls = %v", urls)
+	}
+}
+
+func TestSeedreamImageModelsAllowed(t *testing.T) {
+	for m, upstream := range map[string]string{"seedream-5-flash": "seedream-5.0-flash", "seedream-5-pro": "seedream-5.0-pro", "seedream-4.5": "seedream-4.5"} {
+		spec, ok := allowedImageModels[m]
+		if !ok || spec.upstream != upstream || !spec.edit || spec.usd <= 0 {
+			t.Errorf("%s spec = %+v ok=%v", m, spec, ok)
+		}
 	}
 }

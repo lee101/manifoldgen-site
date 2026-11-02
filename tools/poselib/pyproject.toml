@@ -1,0 +1,16 @@
+[project]
+name = "poselib"
+version = "0.1.0"
+description = "Pose library: import shisei CC0 mannequin poses, depth maps, search manifest"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26", "pillow>=10", "opencv-python-headless>=4.9", "torch", "transformers>=4.50"]
+
+[project.scripts]
+poselib = "poselib.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["poselib"]

@@ -23,6 +23,7 @@ var kling4VideoModels = map[string]bool{
 
 var videoRequiredVideoModels = map[string]bool{
 	"kling-4.0-video-edit": true,
+	"p-video-edit":         true,
 }
 
 func isKling4Model(model string) bool {

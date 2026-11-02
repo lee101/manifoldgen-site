@@ -140,3 +140,38 @@ func TestKling4Pricing(t *testing.T) {
 		}
 	}
 }
+
+func TestPrunaVideoPricingAndValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		req  ServiceUsageRequest
+		want float64
+	}{
+		{"p-video 720p", ServiceUsageRequest{Model: "p-video", Duration: 5, Resolution: "720p"}, 0.02 * 5 * 1.10},
+		{"p-video 1080p", ServiceUsageRequest{Model: "p-video", Duration: 10, Resolution: "1080p"}, 0.04 * 10 * 1.10},
+		{"p-video clamps to 10s", ServiceUsageRequest{Model: "p-video", Duration: 99}, 0.02 * 10 * 1.10},
+		{"p-video-edit", ServiceUsageRequest{Model: "p-video-edit", Duration: 8, VideoURL: "https://x/v.mp4"}, 0.045 * 8 * 1.10},
+	}
+	for _, tc := range cases {
+		if got := prunaPriceUSD(tc.req); got < tc.want-1e-9 || got > tc.want+1e-9 {
+			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
+		}
+	}
+	if !allowedVideoModels["p-video"] || !allowedVideoModels["p-video-edit"] {
+		t.Error("pruna models should be allowed")
+	}
+	if validatePrunaRequest("p-video-edit", ServiceUsageRequest{Model: "p-video-edit"}) == nil {
+		t.Error("p-video-edit should require video_url")
+	}
+}
+
+func TestSeedance25RoutesDirectToModelArk(t *testing.T) {
+	for _, m := range []string{"seedance-2.5-text-to-video", "seedance-2.5-image-to-video", "seedance-2.5-reference-to-video"} {
+		if got := upstreamVideoModel(m); got != "seedream/seedance-2.5" {
+			t.Errorf("%s upstream = %s", m, got)
+		}
+	}
+	if upstreamVideoModel("p-video") != "p-video" {
+		t.Error("non-seedance models must pass through")
+	}
+}

@@ -1,0 +1,13 @@
+{
+  "name": "captionburn",
+  "module": "src/cli.ts",
+  "type": "module",
+  "private": true,
+  "description": "Headless burn-in of the ManifoldGen caption engine (frontend/lib/captions) onto a video.",
+  "scripts": {
+    "fonts": "bun run src/fonts.ts"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.11"
+  }
+}

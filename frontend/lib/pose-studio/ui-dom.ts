@@ -48,6 +48,7 @@ const PROP_ROWS: { key: keyof Props; label: string; step: number; fmt: (v: numbe
   { key: 'shoulder', label: 'Shoulder width', step: 0.01, fmt: (v) => `${v.toFixed(2)}x` },
   { key: 'hip', label: 'Hip width', step: 0.01, fmt: (v) => `${v.toFixed(2)}x` },
   { key: 'limb', label: 'Limb length', step: 0.01, fmt: (v) => `${v.toFixed(2)}x` },
+  { key: 'sex', label: 'Build', step: 0.05, fmt: (v) => v.toFixed(2), hint: '0 feminine, 0.5 neutral, 1 masculine' },
 ];
 
 type Child = Node | string | null | false | undefined;

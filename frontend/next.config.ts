@@ -25,6 +25,7 @@ const nextConfig: NextConfig = {
           return [
             { source: '/api/:path*', destination: `${apiOrigin}/api/:path*` },
             { source: '/images/:path*', destination: `${apiOrigin}/images/:path*` },
+            { source: '/pose-assets/:path*', destination: `${apiOrigin}/pose-assets/:path*` },
           ];
         },
       }),
