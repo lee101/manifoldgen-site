@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -291,6 +292,8 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 		model := normalizeVideoModel(req.Model)
 		if isKling4Model(model) {
 			usdPrice = kling4PriceUSD(req)
+		} else if isPrunaVideoModel(model) {
+			usdPrice = prunaPriceUSD(req)
 		} else if price, exists := videoModelPricesUSD[model]; exists {
 			usdPrice = price * downstreamVideoPriceMultiplier
 		} else if price, exists := videoModelPricesPerSecondUSD[model]; exists {
@@ -446,10 +449,14 @@ func h3VideoPricingTiers() []h3VideoPricingTier {
 	if _, ok := h3FlexLane(); ok {
 		lane = h3FlexVariant
 		tiers = append(tiers, h3VideoPricingTier{Size: "hd", Label: "1080p", Width16x9: 1920, Height16x9: 1088, Resolution16x9: "1920 × 1088"})
+		tiers = append(tiers, h3VideoPricingTier{Size: "uhd", Label: "1440p", Width16x9: 2528, Height16x9: 1440, Resolution16x9: "2528 × 1440"})
 	}
 	for tierIndex := range tiers {
 		for _, duration := range []int{5, 10, 15, 30, 60} {
 			if tiers[tierIndex].Size == "hd" && duration > h3FlexHDMaxDuration {
+				continue
+			}
+			if tiers[tierIndex].Size == "uhd" && duration > h3FlexUHDMaxDuration {
 				continue
 			}
 			req := ServiceUsageRequest{Service: "h3_video", Size: tiers[tierIndex].Size, Duration: duration, NumSteps: 20, H3Lane: lane}
@@ -1231,12 +1238,46 @@ func firstPayloadImageURL(payload map[string]interface{}) string {
 	return ""
 }
 
+// assertPublicFetchURL blocks SSRF: the host must resolve only to public
+// addresses (no loopback / private / link-local / cloud-metadata). Applied to
+// user-supplied image/mask URLs fed to the editor proxies.
+func assertPublicFetchURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("a public http(s) URL is required")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".local") {
+		return fmt.Errorf("URL must be public")
+	}
+	addrs, err := net.LookupIP(host)
+	if err != nil || len(addrs) == 0 {
+		return fmt.Errorf("URL host could not be resolved")
+	}
+	for _, a := range addrs {
+		if a.IsLoopback() || a.IsPrivate() || a.IsUnspecified() || a.IsLinkLocalUnicast() || !a.IsGlobalUnicast() {
+			return fmt.Errorf("URL must resolve to a public address")
+		}
+	}
+	return nil
+}
+
 func downloadRemoteImage(imageURL string) ([]byte, error) {
+	if err := assertPublicFetchURL(imageURL); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequest(http.MethodGet, imageURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := backendClient.Do(req)
+	client := *backendClient
+	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+		if len(via) >= 4 {
+			return fmt.Errorf("too many redirects")
+		}
+		return assertPublicFetchURL(r.URL.String())
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

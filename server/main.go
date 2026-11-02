@@ -98,6 +98,7 @@ func main() {
 	// Background work starts only after the listener is bound so a process
 	// that cannot take the port fails immediately instead of loading models
 	// and training indexes before dying on the bind error.
+	initPoseLibrary(!lightDev)
 	if lightDev {
 		log.Printf("Light dev mode: email drip scheduler and gobed search disabled (DEV_FULL=true to enable)")
 	} else {
@@ -183,6 +184,11 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 
 	if path == "/unsubscribe" && (method == "GET" || method == "POST") {
 		handleUnsubscribe(ctx)
+		return
+	}
+
+	if strings.HasPrefix(path, "/pose-assets/") && (method == "GET" || method == "HEAD") {
+		handlePoseAsset(ctx, strings.TrimPrefix(path, "/pose-assets/"))
 		return
 	}
 
@@ -529,6 +535,15 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	// Semantic prompt search (gobed) — returns prompts + similarity scores
 	case path == "/api/search" && method == "GET":
 		handleSemanticSearch(ctx)
+
+	case path == "/api/poses/search" && method == "GET":
+		handlePoseSearch(ctx)
+
+	case path == "/api/poses/facets" && method == "GET":
+		handlePoseFacets(ctx)
+
+	case strings.HasPrefix(path, "/api/poses/") && method == "GET":
+		handlePoseGet(ctx, strings.TrimPrefix(path, "/api/poses/"))
 
 	case path == "/api/videos/featured" && method == "GET":
 		handleFeaturedVideos(ctx)
@@ -884,11 +899,12 @@ func handleEmailLogin(ctx *fasthttp.RequestCtx) {
 	}
 	if !created {
 		if user.PasswordHash == "" {
-			if err := dbConn.SetUserPasswordHash(user.ID, passwordHash); err != nil {
-				jsonError(ctx, 500, "failed to set password")
-				return
-			}
-			user.PasswordHash = passwordHash
+			// Do NOT silently adopt the submitted password for an existing
+			// passwordless account: that let anyone claim a wallet-created
+			// account by "logging in" with any password. Require wallet
+			// sign-in (or a verified recovery flow) to set the first password.
+			jsonError(ctx, 401, "this account has no password set - sign in with your wallet, then set a password from account settings")
+			return
 		} else if !checkPassword(req.Password, user.PasswordHash) {
 			jsonError(ctx, 401, "invalid email or password")
 			return

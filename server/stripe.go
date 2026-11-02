@@ -768,13 +768,18 @@ func handleStripeWebhook(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	payload := ctx.PostBody()
-	if stripeWebhookSecret != "" {
-		sig := string(ctx.Request.Header.Peek("Stripe-Signature"))
-		if err := verifyStripeWebhookSignature(payload, sig, stripeWebhookSecret, 5*time.Minute); err != nil {
-			log.Printf("stripe webhook signature error: %v", err)
-			jsonError(ctx, 400, "invalid stripe signature")
-			return
-		}
+	// Fail closed: an unset signing secret must not mean "accept unsigned
+	// webhooks" - that allows forged checkout.session.completed credit grants.
+	if stripeWebhookSecret == "" {
+		log.Printf("stripe webhook rejected: STRIPE_WEBHOOK_SECRET not configured")
+		jsonError(ctx, 503, "stripe webhook not configured")
+		return
+	}
+	sig := string(ctx.Request.Header.Peek("Stripe-Signature"))
+	if err := verifyStripeWebhookSignature(payload, sig, stripeWebhookSecret, 5*time.Minute); err != nil {
+		log.Printf("stripe webhook signature error: %v", err)
+		jsonError(ctx, 400, "invalid stripe signature")
+		return
 	}
 
 	var evt stripeWebhookEvent
