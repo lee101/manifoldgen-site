@@ -718,7 +718,9 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 		}
 	}
 
-	// Authenticate: API key (Authorization header) or wallet_address in body
+	// Authenticate with the API key only. The former wallet_address-in-body
+	// branch let anyone spend another account's credits by naming its public
+	// wallet; billing must be tied to the bearer api_key.
 	var user *User
 	var err error
 	authHeader := string(ctx.Request.Header.Peek("Authorization"))
@@ -729,14 +731,8 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 			servicePaywallError(ctx, http.StatusUnauthorized, paywallCodeAuthRequired, "invalid API key")
 			return
 		}
-	} else if req.WalletAddress != "" {
-		user, err = dbConn.GetUserByWallet(req.WalletAddress)
-		if err != nil {
-			servicePaywallError(ctx, http.StatusUnauthorized, paywallCodeAuthRequired, "wallet not registered - deposit $MANIFOLD first")
-			return
-		}
 	} else {
-		servicePaywallError(ctx, http.StatusUnauthorized, paywallCodeAuthRequired, "authorization required: use Authorization header with API key or wallet_address in body")
+		servicePaywallError(ctx, http.StatusUnauthorized, paywallCodeAuthRequired, "authorization required: use Authorization header with your API key")
 		return
 	}
 	if req.Service == "h3_video" {
@@ -2677,21 +2673,11 @@ func handleUploadTrainingDataset(ctx *fasthttp.RequestCtx) {
 
 // handleGetBalance returns wallet balance and credit info
 func handleGetBalance(ctx *fasthttp.RequestCtx) {
-	wallet := string(ctx.QueryArgs().Peek("wallet"))
-	if wallet == "" {
-		jsonError(ctx, 400, "wallet query param required")
-		return
-	}
-
-	user, err := dbConn.GetUserByWallet(wallet)
+	// Was keyed by a public wallet query param, leaking another user's
+	// Stripe customer id, deposits and subscription. Require the api_key.
+	user, err := studioUser(ctx)
 	if err != nil {
-		// Return zero balance for unknown wallets
-		jsonResponse(ctx, 200, WalletBalanceResponse{
-			WalletAddress: wallet,
-			Credits:       0,
-			CreditsUSD:    0,
-			CutePrice:     getCUTEPriceUSD(),
-		})
+		jsonError(ctx, 401, "sign in required")
 		return
 	}
 
@@ -2717,15 +2703,11 @@ func handleGetBalance(ctx *fasthttp.RequestCtx) {
 
 // handleGetBillingHistory returns billing events for a wallet
 func handleGetBillingHistory(ctx *fasthttp.RequestCtx) {
-	wallet := string(ctx.QueryArgs().Peek("wallet"))
-	if wallet == "" {
-		jsonError(ctx, 400, "wallet query param required")
-		return
-	}
-
-	user, err := dbConn.GetUserByWallet(wallet)
+	// Was keyed by a public wallet query param, leaking another user's billing
+	// history. Require the api_key.
+	user, err := studioUser(ctx)
 	if err != nil {
-		jsonResponse(ctx, 200, map[string]interface{}{"events": []interface{}{}})
+		jsonError(ctx, 401, "sign in required")
 		return
 	}
 

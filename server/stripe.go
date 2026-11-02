@@ -972,32 +972,25 @@ type autotopupRequest struct {
 }
 
 func handleGetAutotopupSettings(ctx *fasthttp.RequestCtx) {
-	wallet := string(ctx.QueryArgs().Peek("wallet"))
-	if wallet == "" {
-		jsonError(ctx, 400, "wallet query param required")
-		return
-	}
-	user, err := dbConn.GetUserByWallet(wallet)
+	// Was identified by a public wallet query param (anyone could read/alter
+	// another user's billing auto-top-up). Require the api_key.
+	user, err := studioUser(ctx)
 	if err != nil {
-		jsonError(ctx, 404, "wallet not registered")
+		jsonError(ctx, 401, "sign in required")
 		return
 	}
 	jsonResponse(ctx, 200, autotopupSettingsResponse(user))
 }
 
 func handleSaveAutotopupSettings(ctx *fasthttp.RequestCtx) {
+	user, err := studioUser(ctx)
+	if err != nil {
+		jsonError(ctx, 401, "sign in required")
+		return
+	}
 	var req autotopupRequest
 	if err := json.Unmarshal(ctx.PostBody(), &req); err != nil {
 		jsonError(ctx, 400, "invalid json")
-		return
-	}
-	if req.WalletAddress == "" {
-		jsonError(ctx, 400, "wallet_address required")
-		return
-	}
-	user, err := dbConn.GetUserByWallet(req.WalletAddress)
-	if err != nil {
-		jsonError(ctx, 404, "wallet not registered")
 		return
 	}
 	if req.ThresholdUSD == 0 {

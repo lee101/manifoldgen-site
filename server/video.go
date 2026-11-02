@@ -1863,9 +1863,9 @@ func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
 	authHeader := string(ctx.Request.Header.Peek("Authorization"))
 	if strings.HasPrefix(authHeader, "Bearer ") {
 		user, err = dbConn.GetUserByAPIKey(strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer ")))
-	} else if wallet := strings.TrimSpace(string(ctx.QueryArgs().Peek("wallet_address"))); wallet != "" {
-		user, err = dbConn.GetUserByWallet(wallet)
 	} else {
+		// Dropped the wallet_address query fallback: a public wallet + a job id
+		// let a stranger read another user's generated media. Require api_key.
 		jsonError(ctx, http.StatusUnauthorized, "authorization required")
 		return
 	}

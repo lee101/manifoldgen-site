@@ -805,6 +805,16 @@ func handleWalletAuth(ctx *fasthttp.RequestCtx) {
 			jsonError(ctx, 500, "failed to register wallet")
 			return
 		}
+		if !created {
+			// SECURITY: a wallet address is public (on-chain). Returning an
+			// existing account's api_key to an unauthenticated caller who just
+			// names the wallet allowed full account takeover. Only hand back a
+			// freshly minted key for a brand-new wallet; an existing account
+			// must present its api_key (handled in the branch above) to be
+			// retrieved or linked.
+			jsonError(ctx, 401, "wallet already registered - sign in with your API key to access this account")
+			return
+		}
 	}
 
 	// If email provided (on signup or update), set it and start drip
@@ -1024,10 +1034,18 @@ func looksLikeEmail(email string) bool {
 
 // handleUpdateEmail updates a user's email address
 func handleUpdateEmail(ctx *fasthttp.RequestCtx) {
+	// SECURITY: this previously resolved the account by an unauthenticated
+	// wallet_address body param and would set its email+password, allowing
+	// anyone who named a (public) wallet to hijack that account. The email and
+	// password now mutate ONLY the api-key-authenticated caller's own account.
+	user, err := studioUser(ctx)
+	if err != nil {
+		jsonError(ctx, 401, "sign in required")
+		return
+	}
 	var req struct {
-		WalletAddress string `json:"wallet_address"`
-		Email         string `json:"email"`
-		Password      string `json:"password,omitempty"`
+		Email    string `json:"email"`
+		Password string `json:"password,omitempty"`
 	}
 	if err := json.Unmarshal(ctx.PostBody(), &req); err != nil {
 		jsonError(ctx, 400, "invalid request")
@@ -1035,8 +1053,8 @@ func handleUpdateEmail(ctx *fasthttp.RequestCtx) {
 	}
 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	if req.Email == "" || req.WalletAddress == "" {
-		jsonError(ctx, 400, "wallet_address and email required")
+	if req.Email == "" {
+		jsonError(ctx, 400, "email required")
 		return
 	}
 
@@ -1046,18 +1064,11 @@ func handleUpdateEmail(ctx *fasthttp.RequestCtx) {
 	}
 	passwordHash := ""
 	if req.Password != "" {
-		var err error
 		passwordHash, err = hashPassword(req.Password)
 		if err != nil {
 			jsonError(ctx, 400, err.Error())
 			return
 		}
-	}
-
-	user, err := dbConn.GetUserByWallet(req.WalletAddress)
-	if err != nil {
-		jsonError(ctx, 404, "wallet not found")
-		return
 	}
 
 	wasEmpty := user.Email == ""
@@ -1408,9 +1419,11 @@ func handleImageSearch(ctx *fasthttp.RequestCtx) {
 	}
 
 	if wallet != "" {
-		user, err := dbConn.GetUserByWallet(wallet)
+		// Per-user gallery (including private images): require the api_key, not
+		// a public wallet query param.
+		user, err := studioUser(ctx)
 		if err != nil {
-			jsonError(ctx, 404, "wallet not registered")
+			jsonError(ctx, 401, "sign in required")
 			return
 		}
 		result, err := dbConn.SearchImagesByUser(user.ID, page, perPage, allowNSFW)
