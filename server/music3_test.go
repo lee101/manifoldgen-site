@@ -89,8 +89,11 @@ func TestMusic3PromptGuard(t *testing.T) {
 	if err := music3PromptGuard("cinematic synthwave", "[Verse]\nNeon on the water"); err != nil {
 		t.Fatalf("safe prompt rejected: %v", err)
 	}
-	if err := music3PromptGuard("sound exactly like a named singer", ""); err == nil {
-		t.Fatal("voice imitation request should be rejected")
+	if err := music3PromptGuard("sound exactly like a named singer", ""); err != nil {
+		t.Fatalf("voice style request rejected: %v", err)
+	}
+	if err := music3PromptGuard("child sexual song", ""); err == nil {
+		t.Fatal("child sexual request should be rejected")
 	}
 }
 

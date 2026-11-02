@@ -14,3 +14,16 @@ func TestChildPromptGate(t *testing.T) {
 		}
 	}
 }
+
+func TestMinorSexualPromptGate(t *testing.T) {
+	for _, p := range []string{"nude child", "explicit scene with a 15 years old"} {
+		if !isMinorSexualPrompt(p) {
+			t.Fatalf("expected gate for %q", p)
+		}
+	}
+	for _, p := range []string{"a child playing", "baby dragon", "explicit adult scene", "two children in rain"} {
+		if isMinorSexualPrompt(p) {
+			t.Fatalf("unexpected gate for %q", p)
+		}
+	}
+}

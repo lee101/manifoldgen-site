@@ -60,7 +60,7 @@ func TestNormalizeVoiceEnhancerRequest(t *testing.T) {
 		{"unknown tier", ServiceUsageRequest{Service: lyricMusicService, Lyrics: strings.Repeat("word ", 20), Quality: "ultra"}, "quality must be"},
 		{"voice outside tier", ServiceUsageRequest{Service: lyricMusicService, Lyrics: strings.Repeat("word ", 20), Quality: "lite", Voice: "Fenrir"}, "unknown voice"},
 		{"bad tracks", ServiceUsageRequest{Service: voiceEnhancerService, AudioURL: upload, Tracks: []string{"karaoke"}}, "tracks must include"},
-		{"guard", ServiceUsageRequest{Service: lyricMusicService, Lyrics: strings.Repeat("word ", 20), Prompt: "voice clone of a star"}, "safeguards"},
+		{"guard", ServiceUsageRequest{Service: lyricMusicService, Lyrics: strings.Repeat("word ", 20), Prompt: "child sexual song"}, "safeguards"},
 	}
 	for _, c := range cases {
 		_, err := normalizeVoiceEnhancerRequest(c.req)

@@ -223,10 +223,7 @@ func music3PublicPriceUSDForTier(duration int, tier string) float64 {
 
 func music3PromptGuard(prompt, lyrics string) error {
 	combined := strings.ToLower(prompt + "\n" + lyrics)
-	for _, phrase := range []string{
-		"child sexual", "sexual minor", "terrorist propaganda", "kill myself",
-		"impersonate ", "deepfake voice", "sound exactly like ", "voice clone",
-	} {
+	for _, phrase := range []string{"child sexual", "sexual minor"} {
 		if strings.Contains(combined, phrase) {
 			return fmt.Errorf("the music request conflicts with generation safeguards")
 		}

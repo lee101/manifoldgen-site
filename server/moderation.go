@@ -12,3 +12,11 @@ var childPromptPattern = regexp.MustCompile(`(?i)\b(?:child(?:ren)?|kid(?:s)?|ba
 func isChildPrompt(prompt string) bool {
 	return childPromptPattern.MatchString(strings.TrimSpace(prompt))
 }
+
+var sexualPromptPattern = regexp.MustCompile(`(?i)\b(?:sex(?:ual|y)?|nude|naked|nsfw|explicit|porn\w*|erotic\w*|nipples?|genital\w*|lewd|topless|undress\w*|fetish|hentai|cum|orgasm\w*|masturbat\w*|blowjob|penetrat\w*)\b`)
+
+// isMinorSexualPrompt is the only generation-time refusal: a minor term together with a sexual term.
+func isMinorSexualPrompt(prompt string) bool {
+	p := strings.TrimSpace(prompt)
+	return childPromptPattern.MatchString(p) && sexualPromptPattern.MatchString(p)
+}

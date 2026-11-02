@@ -35,10 +35,9 @@ func TestNormalizeAnimaRequestRejectsOversizedCanvas(t *testing.T) {
 	}
 }
 
-func TestNormalizeAnimaRequestRejectsMinorPromptsAndBatches(t *testing.T) {
+func TestNormalizeAnimaRequestRejectsMinorSexualPromptsAndBatches(t *testing.T) {
 	for _, req := range []ServiceUsageRequest{
-		{Prompt: "anime child character"},
-		{Prompt: "adult character", NegativePrompt: "minor"},
+		{Prompt: "nude child character"},
 		{Prompt: "adult character", NumImages: 2},
 		{Prompt: "adult character", N: 2},
 	} {
@@ -53,5 +52,17 @@ func TestAnimaWorkerContract(t *testing.T) {
 	input := animaWorkerInput(req)
 	if input["num_inference_steps"] != 28 || input["guidance_scale"] != float64(4) || input["output_format"] != "webp" {
 		t.Fatalf("unexpected worker input: %#v", input)
+	}
+}
+
+func TestNormalizeAnimaRequestAllowsBenignChildPrompts(t *testing.T) {
+	for _, req := range []ServiceUsageRequest{
+		{Prompt: "anime child character"},
+		{Prompt: "adult character", NegativePrompt: "minor"},
+		{Prompt: "two children on a flooded mill bank, rain"},
+	} {
+		if err := normalizeAnimaRequest(&req); err != nil {
+			t.Fatalf("benign request rejected: %+v: %v", req, err)
+		}
 	}
 }
