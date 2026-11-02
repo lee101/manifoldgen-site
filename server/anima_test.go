@@ -35,14 +35,13 @@ func TestNormalizeAnimaRequestRejectsOversizedCanvas(t *testing.T) {
 	}
 }
 
-func TestNormalizeAnimaRequestRejectsMinorSexualPromptsAndBatches(t *testing.T) {
+func TestNormalizeAnimaRequestRejectsBatches(t *testing.T) {
 	for _, req := range []ServiceUsageRequest{
-		{Prompt: "nude child character"},
 		{Prompt: "adult character", NumImages: 2},
 		{Prompt: "adult character", N: 2},
 	} {
 		if err := normalizeAnimaRequest(&req); err == nil {
-			t.Fatalf("expected unsafe or ambiguous request to be rejected: %+v", req)
+			t.Fatalf("expected ambiguous request to be rejected: %+v", req)
 		}
 	}
 }

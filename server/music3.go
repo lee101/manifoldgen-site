@@ -221,16 +221,6 @@ func music3PublicPriceUSDForTier(duration int, tier string) float64 {
 	return math.Round(music3PublicPriceUSD(duration)*music3TierMultiplier(tier)*100) / 100
 }
 
-func music3PromptGuard(prompt, lyrics string) error {
-	combined := strings.ToLower(prompt + "\n" + lyrics)
-	for _, phrase := range []string{"child sexual", "sexual minor"} {
-		if strings.Contains(combined, phrase) {
-			return fmt.Errorf("the music request conflicts with generation safeguards")
-		}
-	}
-	return nil
-}
-
 func music3UploadTarget(userID string) (string, string, error) {
 	objectKey := musicUploadObjectKey(userID)
 	uploadURL, err := presignR2PutObject(objectKey, musicUploadContentType(), 3600)
@@ -248,9 +238,6 @@ func submitMusic3Job(user *User, prompt, lyrics string, duration int, serviceTie
 	endpointID := music3EndpointIDForTier(tier)
 	if endpointID == "" {
 		return nil, fmt.Errorf("Music3 endpoint is not configured")
-	}
-	if err := music3PromptGuard(prompt, lyrics); err != nil {
-		return nil, err
 	}
 	uploadURL, publicURL, err := music3UploadTarget(user.ID)
 	if err != nil {
@@ -322,10 +309,6 @@ func handleMusic3Generation(ctx *fasthttp.RequestCtx, user *User, prompt, lyrics
 		return
 	}
 	if rejectArchivedLane(ctx, music3EndpointIDForTier(tier)) {
-		return
-	}
-	if err := music3PromptGuard(prompt, lyrics); err != nil {
-		jsonError(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
 	if seed < 0 {

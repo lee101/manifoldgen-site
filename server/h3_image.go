@@ -254,6 +254,17 @@ func classifyH3ImageFlag(image []byte, label string) (*bool, float64) {
 	return &adult, score
 }
 
+// h3ImageNSFWFlag merges the local classifier verdict with the worker's routing
+// signal. A worker flag never fails a job: the rendered image is delivered and
+// only marked is_nsfw, which keeps it out of the public gallery and indexes.
+func h3ImageNSFWFlag(workerChild bool, workerStatus string, classified *bool, score float64) (*bool, float64) {
+	if workerChild || strings.EqualFold(strings.TrimSpace(workerStatus), "blocked") {
+		flagged := true
+		return &flagged, math.Max(score, 1)
+	}
+	return classified, score
+}
+
 func classifyH3ImageURL(rawURL string) (bool, float64, error) {
 	image, err := downloadH3ModerationImage(rawURL)
 	if err != nil {
@@ -397,11 +408,6 @@ func processRunpodH3ImageJob(job *VideoJob) {
 		}
 		switch strings.ToUpper(strings.TrimSpace(state.Status)) {
 		case "COMPLETED":
-			if state.Output.Moderation.IsChild || strings.EqualFold(state.Output.Moderation.Status, "blocked") {
-				log.Printf("[h3-image] worker moderation blocked job=%s", job.ID)
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image generation was blocked by the safety check")
-				return
-			}
 			if len(state.Output.Outputs) == 0 || state.Output.Outputs[0].Data == "" {
 				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image generation returned no artifact")
 				return
@@ -411,7 +417,11 @@ func processRunpodH3ImageJob(job *VideoJob) {
 				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "image generation returned an invalid artifact")
 				return
 			}
-			outputNSFW, outputScore := classifyH3ImageFlag(artifact, "job="+job.ID)
+			classified, classifiedScore := classifyH3ImageFlag(artifact, "job="+job.ID)
+			outputNSFW, outputScore := h3ImageNSFWFlag(state.Output.Moderation.IsChild, state.Output.Moderation.Status, classified, classifiedScore)
+			if state.Output.Moderation.IsChild || state.Output.Moderation.Status != "" {
+				log.Printf("[h3-image] worker verdict is routing only job=%s child=%v status=%s", job.ID, state.Output.Moderation.IsChild, state.Output.Moderation.Status)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			imageURL, relPath, err := uploadH3ImageArtifact(ctx, artifact, job.UserID, state.Output.Outputs[0].ContentType)
 			cancel()

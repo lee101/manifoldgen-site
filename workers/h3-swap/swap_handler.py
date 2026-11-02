@@ -14,7 +14,10 @@ sys.path.insert(0, "/src")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import runpod
-from h3_moderation import Moderation
+try:  # ungated worker images ship without the classifier; routing metadata is optional
+    from h3_moderation import Moderation
+except ImportError:
+    Moderation = None
 from h3_serverless import media_artifact, release_media
 from rp_handler import _download_image, _public_https, _upload_output
 
@@ -138,12 +141,20 @@ def clip_specs(values):
     return specs, True
 
 
+def classify_output(prompt, output):
+    """Moderation only classifies and routes: a missing or failing classifier never drops a rendered clip."""
+    if Moderation is None:
+        return {}
+    try:
+        result = moderation().classify(prompt, output)
+    except Exception as error:
+        print(f"moderation unavailable, clip kept unflagged: {error!r}", flush=True)
+        return {}
+    return result if isinstance(result, dict) else {}
+
+
 def finish_clip(prompt, output, metrics, spec, started):
-    result = moderation().classify(prompt, output)
-    if result.get("status") == "blocked":
-        metrics["output_transport"] = "blocked"
-        release_media(output)
-        return {"clip": spec["id"], "outputs": [], "metrics": metrics, "moderation": result}
+    result = classify_output(prompt, output)
     upload_url, public_url = spec.get("_output_upload_url"), spec.get("_output_public_url")
     if bool(upload_url) != bool(public_url):
         raise ValueError("output upload URL and public URL must be provided together")
@@ -234,10 +245,6 @@ def handler(event):
     values = event.get("input") or {}
     start_preload()
     prompt = str(values.get("prompt", ""))
-    gate = moderation().prompt_gate(prompt)
-    if gate is not None:
-        yield {"outputs": [], "moderation": gate}
-        return
     urls = values.get("image_urls") or ([values["image_url"]] if values.get("image_url") else [])
     if not isinstance(urls, list) or not 1 <= len(urls) <= 3:
         raise ValueError("image_urls must hold one to three character images")

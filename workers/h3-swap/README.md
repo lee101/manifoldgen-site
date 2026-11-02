@@ -26,7 +26,7 @@ Batch (one job, clips run one after another on the warm ComfyUI graph, each uplo
 `/stream/<job>` delivers items while the job runs, `/status/<job>` returns the aggregated list at the end. `metrics` carries `gpu`, `profile`, `profile_path` (`fast`, `safe`, `safe-retry`), `fast_path_error`,
 `stage_seconds` {prep, comfy, load, encode, sample, decode, save}, `generation_seconds`, `worker_boot_seconds`.
 
-What a batch saves per clip: handler start and RunPod job scheduling, the prompt moderation gate, the shared video/reference downloads (done once; the next clip's source is prefetched during generation), the upload (overlaps the next clip), and model reloads.
+What a batch saves per clip: handler start and RunPod job scheduling, the shared video/reference downloads (done once; the next clip's source is prefetched during generation), the upload (overlaps the next clip), and model reloads.
 What it cannot save: `encode` (about 10 s warm) is Qwen3-VL reading the reference video frames inside `MiniMaxH3ReferenceToVideo`, so the text conditioning differs for every clip and is not cacheable.
 Real handler on an RTX PRO 6000, 3 clips of 5 s at 480p: results arrived 91.8 s, 174.8 s and 258.4 s after the job started (81, 86 and 84 s of generation each), clip 1 available while clip 2 was generating.
 

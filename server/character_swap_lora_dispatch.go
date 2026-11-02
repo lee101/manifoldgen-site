@@ -338,7 +338,7 @@ func waitLoraBatch(ctx context.Context, jobID, endpointID, runpodID string, expe
 			}
 			if len(item.Outputs) == 0 {
 				seen[index] = true
-				failed[index] = fmt.Errorf("clip %d: swap worker completed without a clip (moderation %s)", index+1, item.Moderation.Status)
+				failed[index] = fmt.Errorf("clip %d: swap worker completed without a clip (moderation %q)", index+1, item.Moderation.Status)
 				continue
 			}
 			videoURL, artifact, _, err := resolveH3RunpodArtifact(item.Outputs[0], want)

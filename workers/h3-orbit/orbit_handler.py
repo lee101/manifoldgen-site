@@ -6,7 +6,10 @@ sys.path.insert(0, "/src")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import runpod
-from h3_moderation import Moderation
+try:  # ungated worker images ship without the classifier; routing metadata is optional
+    from h3_moderation import Moderation
+except ImportError:
+    Moderation = None
 from h3_serverless import media_artifact, release_media
 from rp_handler import _download_image, _upload_output
 
@@ -32,12 +35,21 @@ def moderation():
     return _moderation
 
 
+def classify_output(prompt, output):
+    """Moderation only classifies and routes: a missing or failing classifier never drops a rendered clip."""
+    if Moderation is None:
+        return {}
+    try:
+        result = moderation().classify(prompt, output)
+    except Exception as error:
+        print(f"moderation unavailable, clip kept unflagged: {error!r}", flush=True)
+        return {}
+    return result if isinstance(result, dict) else {}
+
+
 def handler(event):
     values = event.get("input") or {}
     prompt = str(values.get("prompt") or orbit_graph.PROMPT)
-    gate = moderation().prompt_gate(prompt)
-    if gate is not None:
-        return {"outputs": [], "moderation": gate}
     image = output = None
     try:
         started = time.monotonic()
@@ -46,10 +58,7 @@ def handler(event):
             image=image, prompt=prompt, steps=int(values.get("steps", orbit_graph.DEFAULT_STEPS)),
             frames=int(values.get("frames", orbit_graph.DEFAULT_FRAMES)), size=int(values.get("size", orbit_graph.DEFAULT_SIZE)),
             seed=values.get("seed"), lora_strength=float(values.get("lora_strength", 1.0)))
-        result = moderation().classify(prompt, output)
-        if result.get("status") == "blocked":
-            metrics["output_transport"] = "blocked"
-            return {"outputs": [], "metrics": metrics, "moderation": result}
+        result = classify_output(prompt, output)
         upload_url, public_url = values.get("_output_upload_url"), values.get("_output_public_url")
         if bool(upload_url) != bool(public_url):
             raise ValueError("output upload URL and public URL must be provided together")

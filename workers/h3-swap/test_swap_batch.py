@@ -71,11 +71,8 @@ def batch_handler(monkeypatch, tmp_path, runtime):
     handler = stub_handler_deps(monkeypatch, lambda url: tmp_path / "img.png")
 
     class Mod:
-        def prompt_gate(self, prompt):
-            return None
-
         def classify(self, prompt, output):
-            return {"status": "ok"}
+            return {"status": "blocked"}
 
     uploads = []
     monkeypatch.setattr(handler, "start_preload", lambda: None)
@@ -99,6 +96,22 @@ def test_batch_streams_each_clip_and_isolates_failures(monkeypatch, tmp_path):
     assert set(by_clip) == {"c0", "c1", "c2"}
     assert "error" in by_clip["c1"] and by_clip["c0"]["outputs"][0]["url"] == "pc0" and by_clip["c2"]["outputs"][0]["url"] == "pc2"
     assert sorted(uploads) == ["pc0", "pc2"]
+
+
+def test_classified_output_is_still_delivered_with_its_verdict(monkeypatch, tmp_path):
+    handler, uploads = batch_handler(monkeypatch, tmp_path, fake_runtime([tmp_path / "a"]))
+    event = {"input": {"prompt": "swap", "image_urls": ["https://x/a.png"], "clips": [clip("c0", 1)]}}
+    (result,) = handler.handler(event)
+    assert result["outputs"][0]["url"] == "pc0" and uploads == ["pc0"]
+    assert result["moderation"] == {"status": "blocked"}
+
+
+def test_missing_classifier_never_drops_a_clip(monkeypatch, tmp_path):
+    handler, uploads = batch_handler(monkeypatch, tmp_path, fake_runtime([tmp_path / "a"]))
+    monkeypatch.setattr(handler, "Moderation", None)
+    event = {"input": {"prompt": "swap", "image_urls": ["https://x/a.png"], "clips": [clip("c0", 1)]}}
+    (result,) = handler.handler(event)
+    assert result["outputs"][0]["url"] == "pc0" and result["moderation"] == {}
 
 
 def test_batch_cuts_clips_from_one_shared_video(monkeypatch, tmp_path):

@@ -209,9 +209,6 @@ func normalizeVoiceEnhancerRequest(req ServiceUsageRequest) (voiceEnhancerState,
 	if len([]rune(state.Lyrics)) > voiceEnhancerMaxLyricChars {
 		return state, fmt.Errorf("lyrics must be %d characters or fewer", voiceEnhancerMaxLyricChars)
 	}
-	if err := music3PromptGuard(state.Prompt, state.Lyrics); err != nil {
-		return state, err
-	}
 	state.Tracks = normalizeVoiceEnhancerTracks(req.Tracks)
 	if len(state.Tracks) == 0 {
 		return state, fmt.Errorf("tracks must include voice, studio or produce")

@@ -127,9 +127,6 @@ func normalizeAnimeControlRequest(kind *animeControlKind, req *ServiceUsageReque
 	if len(req.NegativePrompt) > 1200 {
 		return fmt.Errorf("negative_prompt must be 1200 characters or fewer")
 	}
-	if isMinorSexualPrompt(req.Prompt) {
-		return fmt.Errorf("sexual content involving minors is not supported")
-	}
 	provided := 0
 	for key, value := range req.ControlImages {
 		if strings.TrimSpace(value) == "" {

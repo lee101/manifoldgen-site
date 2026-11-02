@@ -68,3 +68,19 @@ func TestH3ImageEstimateUsesConfiguredServiceFloor(t *testing.T) {
 		t.Fatalf("quality edit estimate = %v", price)
 	}
 }
+
+func TestH3ImageNSFWFlagKeepsWorkerFlaggedImage(t *testing.T) {
+	safe := false
+	flagged, score := h3ImageNSFWFlag(false, "blocked", &safe, 0.1)
+	if flagged == nil || !*flagged || score < 1 {
+		t.Fatalf("worker-blocked image was not flagged: %v %v", flagged, score)
+	}
+	child, _ := h3ImageNSFWFlag(true, "", nil, 0)
+	if child == nil || !*child {
+		t.Fatal("worker child verdict did not flag the image")
+	}
+	keep, keepScore := h3ImageNSFWFlag(false, "ok", &safe, 0.2)
+	if keep == nil || *keep || keepScore != 0.2 {
+		t.Fatalf("clean verdict was altered: %v %v", keep, keepScore)
+	}
+}

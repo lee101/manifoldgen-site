@@ -213,7 +213,7 @@ func processOrbitVideoJob(job *VideoJob) {
 		switch strings.ToUpper(strings.TrimSpace(state.Status)) {
 		case "COMPLETED", "SUCCEEDED":
 			if strings.TrimSpace(state.Output.VideoURL) == "" {
-				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "orbit video was blocked or returned no playable video")
+				_ = dbConn.UpdateVideoJob(job.ID, "failed", nil, "orbit video returned no playable video")
 				return
 			}
 			providerUSD := orbitGPUUSDPerSecond() * float64(state.ExecutionTime) / 1000

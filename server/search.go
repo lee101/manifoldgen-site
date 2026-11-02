@@ -531,6 +531,10 @@ func (as *AudioSearchEngine) loadAndIndex() {
 	assets := make([]GeneratedAudio, 0)
 	if dbConn != nil {
 		err = dbConn.StreamAllAudioPrompts(func(asset *GeneratedAudio) error {
+			// Child-described prompts stay out of the public semantic index.
+			if childPromptFlagged(asset.Prompt) {
+				return nil
+			}
 			assets = append(assets, *asset)
 			return nil
 		})
@@ -571,7 +575,7 @@ func (as *AudioSearchEngine) loadAndIndex() {
 }
 
 func (as *AudioSearchEngine) IndexIncremental(asset *GeneratedAudio) {
-	if as == nil || asset == nil || asset.ID == "" || asset.Prompt == "" {
+	if as == nil || asset == nil || asset.ID == "" || asset.Prompt == "" || childPromptFlagged(asset.Prompt) {
 		return
 	}
 	as.mu.Lock()

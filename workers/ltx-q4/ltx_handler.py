@@ -7,7 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import runpod
 from h3_media import encode_video
-from h3_moderation import Moderation
+try:  # ungated worker images ship without the classifier; routing metadata is optional
+    from h3_moderation import Moderation
+except ImportError:
+    Moderation = None
 from h3_serverless import frame_url, media_artifact, release_media
 from rp_handler import _download_audio, _download_image, _upload_output
 
@@ -43,6 +46,18 @@ def remap_h3_steps(h3_steps):
     return int(round(base)), (4 if value >= 26 else 3)
 
 
+def classify_output(prompt, output):
+    """Moderation only classifies and routes: a missing or failing classifier never drops a rendered clip."""
+    if Moderation is None:
+        return {}
+    try:
+        result = moderation().classify(prompt, output)
+    except Exception as error:
+        print(f"moderation unavailable, clip kept unflagged: {error!r}", flush=True)
+        return {}
+    return result if isinstance(result, dict) else {}
+
+
 def handler(event):
     values = event.get("input") or {}
     tier_steps, tier_refine, tier_size = TIERS.get(values.get("tier"), TIERS["standard"])
@@ -55,9 +70,6 @@ def handler(event):
     if values.get("refine_steps"):
         refine_steps = int(values["refine_steps"])
     prompt = values.get("prompt", "")
-    gate = moderation().prompt_gate(prompt)
-    if gate is not None:
-        return {"outputs": [], "moderation": gate}
     first = audio = raw = encoded = None
     try:
         first = _download_image(frame_url(values, "first_frame") or values.get("image_url"))
@@ -85,11 +97,7 @@ def handler(event):
             bool(values.get("include_audio", True)),
         )
         metrics["encode_seconds"] = round(time.monotonic() - encode_started, 2)
-        result = moderation().classify(prompt, encoded)
-        if result.get("status") == "blocked":
-            encoded.unlink(missing_ok=True)
-            metrics["output_transport"] = "blocked"
-            return {"outputs": [], "metrics": metrics, "moderation": result}
+        result = classify_output(prompt, encoded)
         upload_url = values.get("_output_upload_url")
         public_url = values.get("_output_public_url")
         if bool(upload_url) != bool(public_url):

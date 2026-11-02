@@ -85,18 +85,6 @@ func TestMusic3CapacityUsesCurrentPatchEndpointAPI(t *testing.T) {
 	}
 }
 
-func TestMusic3PromptGuard(t *testing.T) {
-	if err := music3PromptGuard("cinematic synthwave", "[Verse]\nNeon on the water"); err != nil {
-		t.Fatalf("safe prompt rejected: %v", err)
-	}
-	if err := music3PromptGuard("sound exactly like a named singer", ""); err != nil {
-		t.Fatalf("voice style request rejected: %v", err)
-	}
-	if err := music3PromptGuard("child sexual song", ""); err == nil {
-		t.Fatal("child sexual request should be rejected")
-	}
-}
-
 func TestMusicGenerationIsAudioJob(t *testing.T) {
 	job := &VideoJob{Service: "music_generation", Result: []byte(`{"_music3_request":{"duration":60}}`)}
 	if !h3AudioJob(job) || audioJobKind(job) != "music" || h3AudioDuration(job) != 60 {

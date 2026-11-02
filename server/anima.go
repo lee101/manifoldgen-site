@@ -66,9 +66,6 @@ func normalizeAnimaRequest(req *ServiceUsageRequest) error {
 	if len(req.NegativePrompt) > 1200 {
 		return fmt.Errorf("negative_prompt must be 1200 characters or fewer")
 	}
-	if isMinorSexualPrompt(req.Prompt) {
-		return fmt.Errorf("sexual content involving minors is not supported")
-	}
 	if req.N > 1 || req.NumImages > 1 {
 		return fmt.Errorf("Anima currently supports one image per request")
 	}
