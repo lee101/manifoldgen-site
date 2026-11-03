@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -270,6 +271,13 @@ func sanitizeUploadName(s string) string {
 		out = out[:200]
 	}
 	return out
+}
+
+func safeJoin(base, rel string) (string, error) {
+	if strings.ContainsAny(rel, "\\\x00") || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("unsafe path %q", rel)
+	}
+	return filepath.Join(base, rel), nil
 }
 
 // handleStartLoraTraining accepts a list of public R2 URLs (the just-uploaded

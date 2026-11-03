@@ -46,7 +46,10 @@ func trailerResizeStill(ctx context.Context, src, dest string) error {
 }
 
 func trailerStillDataURL(ctx context.Context, workDir, name, sourceURL string) (string, error) {
-	raw := filepath.Join(workDir, name+"-src")
+	raw, err := safeJoin(workDir, name+"-src")
+	if err != nil {
+		return "", err
+	}
 	if err := downloadToFile(ctx, sourceURL, raw); err != nil {
 		return "", err
 	}
