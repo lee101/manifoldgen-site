@@ -4512,8 +4512,8 @@ export default function StudioPage() {
           if (!videoResponse.ok) throw new Error('Could not download the upscaled clip');
           const blob = await videoResponse.blob();
           const extension = blob.type.includes('webm') || url.includes('.webm') ? 'webm' : 'mp4';
-          await addGeneratedFile(new File([blob], `${sourceName}-${upscaleScale}x-esrgan.${extension}`, { type: blob.type || (extension === 'webm' ? 'video/webm' : 'video/mp4') }), 'video', 'Real-ESRGAN');
-          setNotice(`Real-ESRGAN ${upscaleScale}× clip added to the timeline`);
+          await addGeneratedFile(new File([blob], `${sourceName}-${upscaleScale}x-upscaled.${extension}`, { type: blob.type || (extension === 'webm' ? 'video/webm' : 'video/mp4') }), 'video', 'Upscale');
+          setNotice(`${upscaleScale}× upscaled clip added to the timeline`);
           return;
         }
         setNotice(status === 'processing' ? `Upscaling every frame ${upscaleScale}×…` : 'Upscale queued…');
@@ -5312,7 +5312,7 @@ export default function StudioPage() {
             <div className={styles.panelHeader}><div><span className={styles.eyebrow}>ASSIST</span><h2>AI tools</h2></div></div>
             <div className={styles.aiStack}>
               <button className={styles.aiCard} disabled={selected?.kind !== 'image'} onClick={() => void removeBackground()}><span className={styles.aiIcon}><ImageIcon size={19} /></span><span><b>Remove background</b><small>WebP · 1 credit</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
-              <button data-testid="studio-upscale-open" className={styles.aiCard} disabled={!canOpenUpscale} onClick={() => setUpscaleOpen(true)}><span className={styles.aiIcon}><Maximize size={19} /></span><span><b>Upscale video</b><small>{selected?.kind === 'video' && !canOpenUpscale ? 'Use a clip under 60s' : 'Real-ESRGAN · 2× or 4×'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
+              <button data-testid="studio-upscale-open" className={styles.aiCard} disabled={!canOpenUpscale} onClick={() => setUpscaleOpen(true)}><span className={styles.aiIcon}><Maximize size={19} /></span><span><b>Upscale video</b><small>{selected?.kind === 'video' && !canOpenUpscale ? 'Use a clip under 60s' : 'Video upscale · 2× or 4×'}</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-retime-open" className={styles.aiCard} disabled={!selected || selected.kind === 'image'} onClick={() => selected && selected.kind !== 'image' && openRetime(selected)}><span className={styles.aiIcon}><Gauge size={19} /></span><span><b>Speed, reverse, stabilize</b><small>Free · −1× reverses</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-restyle-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openRestyle(selected)}><span className={styles.aiIcon}><WandSparkles size={19} /></span><span><b>Restyle video</b><small>Keep motion · change look</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
               <button data-testid="studio-motion-open" className={styles.aiCard} disabled={selected?.kind !== 'video'} onClick={() => selected?.kind === 'video' && openMotionFx(selected)}><span className={styles.aiIcon}><Zap size={19} /></span><span><b>Motion FX</b><small>Auras, impacts, slow-mo · from $0.15</small></span><ArrowLeft className={styles.arrowRight} size={14} /></button>
@@ -5667,7 +5667,7 @@ export default function StudioPage() {
           })}
         </div>
         <div className={styles.priceLine}><span>Price</span><b>${customerUpscaleUSD.toFixed(2)}</b></div>
-        <p className={styles.billingNote}>Real-ESRGAN restores each frame with tiled GPU inference, preserves audio, and adds the durable upscaled result to your timeline. Output: {selected ? `${selected.width * upscaleScale} × ${selected.height * upscaleScale}` : 'Not set'}.</p>
+        <p className={styles.billingNote}>The upscaler restores each frame with tiled GPU inference, preserves audio, and adds the durable upscaled result to your timeline. Output: {selected ? `${selected.width * upscaleScale} × ${selected.height * upscaleScale}` : 'Not set'}.</p>
         <button data-testid="studio-upscale-submit" className={styles.modalPrimary} disabled={!canUpscaleSelected} onClick={() => void upscaleVideo()}><Maximize size={16} /> Upscale {upscaleScale}×</button>
       </Modal>}
 

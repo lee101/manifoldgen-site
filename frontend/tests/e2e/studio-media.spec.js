@@ -1908,7 +1908,7 @@ test('export dialog offers renderer presets and remembers them across reloads', 
   await expect(page.getByRole('heading', { name: 'Export' })).toBeVisible();
 });
 
-test('video upscale previews price, queues Real-ESRGAN, and adds the result', async ({ page }) => {
+test('video upscale previews price, queues the upscaler, and adds the result', async ({ page }) => {
   test.setTimeout(120_000);
   await installMocks(page);
   let upscaleRequest;
@@ -1934,7 +1934,7 @@ test('video upscale previews price, queues Real-ESRGAN, and adds the result', as
   await page.getByTestId('studio-upscale-scales').getByRole('button', { name: '4×' }).click();
   await expect(page.getByRole('dialog', { name: 'Upscale video' }).getByText('Price', { exact: true })).toBeVisible();
   await page.getByTestId('studio-upscale-submit').click();
-  await expect(page.getByText('Real-ESRGAN 4× clip added to the timeline')).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByText('4× upscaled clip added to the timeline')).toBeVisible({ timeout: 90_000 });
   expect(upscaleRequest).toMatchObject({ video_url: 'https://media.example/upscale-source.mp4', scale: 4 });
   expect(upscaleRequest.width).toBeGreaterThan(0);
   expect(upscaleRequest.height).toBeGreaterThan(0);

@@ -1129,7 +1129,7 @@ func handleStudioUpscaleVideo(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, http.StatusPaymentRequired, fmt.Sprintf("insufficient credits: need %.0f credits", credits))
 		return
 	}
-	job, err := dbConn.CreateVideoJobForService(user.ID, "local:sync", "studio_upscale", fmt.Sprintf("Real-ESRGAN %dx upscale", input.Scale))
+	job, err := dbConn.CreateVideoJobForService(user.ID, "local:sync", "studio_upscale", fmt.Sprintf("%dx video upscale", input.Scale))
 	if err != nil {
 		_, _ = dbConn.AddUserCredits(user.ID, credits)
 		jsonError(ctx, http.StatusInternalServerError, "could not save upscale job")
@@ -1146,7 +1146,7 @@ func handleStudioUpscaleVideo(ctx *fasthttp.RequestCtx) {
 	}
 	_ = dbConn.CreateBillingEvent(&BillingEvent{
 		UserID: user.ID, EventType: "video_upscale", Amount: -credits, CuteAmount: credits,
-		USDAmount: priceUSD, Description: fmt.Sprintf("Studio Real-ESRGAN %dx video upscale", input.Scale), CreditsAfter: balance,
+		USDAmount: priceUSD, Description: fmt.Sprintf("Studio %dx video upscale", input.Scale), CreditsAfter: balance,
 	})
 	launchVideoJob(job.ID)
 	maybeTriggerAutoTopup(user.ID)

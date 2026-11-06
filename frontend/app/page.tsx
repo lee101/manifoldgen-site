@@ -1536,7 +1536,7 @@ export default function HomePage() {
                       ? 'bg-[var(--color-accent-solid)] text-white'
                       : 'bg-white/5 text-[var(--color-mute)] hover:text-white'
                   }`}
-                  title="Post-upscale the finished video with Real-ESRGAN"
+                  title="Post-upscale the finished video with the video upscaler"
                 >
                   <Maximize2 size={14} />
                   {upscaleMode ? `${upscaleScale}× upscale` : 'Upscale'}
@@ -1951,7 +1951,7 @@ export default function HomePage() {
                 className="mt-0.5"
               />
               <span>
-                Real-ESRGAN post-upscale
+                Post-upscale
                 <span className="mt-1 flex items-center gap-2 text-xs text-[var(--color-mute)]">
                   Restore after render
                   <select value={upscaleScale} disabled={!upscaleMode} onChange={(e) => setUpscaleScale(Number(e.target.value) as 2 | 4)} className="dark-select rounded-md px-2 py-1">
