@@ -1512,7 +1512,7 @@ export default function StudioPage() {
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [gptImagePriceUSD, setGPTImagePriceUSD] = useState(0.24);
   const [extendRates, setExtendRates] = useState({ input: 0.012, output: 0.084 });
-  const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
+  const [upscaleRates, setUpscaleRates] = useState({ base: 0.05, outputMPSecond: 0.005, base4: 0.10, outputMPSecond4: 0.008 });
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [stageZoom, setStageZoom] = useState(1);
@@ -1830,7 +1830,7 @@ export default function StudioPage() {
   const customerUpscaleUSD = useMemo(() => {
     if (!selected || selected.kind !== 'video') return upscaleRates.base;
     const outputMP = selected.width * selected.height * upscaleScale * upscaleScale / 1_000_000;
-    return Math.ceil((upscaleRates.base + outputMP * selected.duration * upscaleRates.outputMPSecond) * 100 - 1e-8) / 100;
+    return Math.ceil(((upscaleScale >= 4 ? upscaleRates.base4 : upscaleRates.base) + outputMP * selected.duration * (upscaleScale >= 4 ? upscaleRates.outputMPSecond4 : upscaleRates.outputMPSecond)) * 100 - 1e-8) / 100;
   }, [selected, upscaleRates, upscaleScale]);
   const videoGeneratePrompts = useMemo(() => videoGeneratePrompt
     .split(/\r?\n/)
@@ -2195,7 +2195,7 @@ export default function StudioPage() {
         setExtendRates({ input: data.studio.extend_input_second_usd, output: data.studio.extend_output_second_usd });
       }
       if (data.studio?.upscale_base_usd && data.studio?.upscale_output_mp_second_usd) {
-        setUpscaleRates({ base: data.studio.upscale_base_usd, outputMPSecond: data.studio.upscale_output_mp_second_usd });
+        setUpscaleRates({ base: data.studio.upscale_base_usd, outputMPSecond: data.studio.upscale_output_mp_second_usd, base4: data.studio.upscale_4x_base_usd || data.studio.upscale_base_usd, outputMPSecond4: data.studio.upscale_4x_output_mp_second_usd || data.studio.upscale_output_mp_second_usd });
       }
       if (data.video_estimate?.estimated_cost_usd) setH3AudioEstimateUSD(data.video_estimate.estimated_cost_usd);
       const sfxPrice = Array.isArray(data.pricing) ? data.pricing.find((item: { service?: string }) => item.service === 'sfx')?.price_usd : 0;

@@ -229,8 +229,10 @@ async function installMocks(page, hooks = {}) {
     studio: {
       extend_input_second_usd: 0.012,
       extend_output_second_usd: 0.084,
-      upscale_base_usd: 0.10,
-      upscale_output_mp_second_usd: 0.012,
+      upscale_base_usd: 0.05,
+      upscale_output_mp_second_usd: 0.005,
+      upscale_4x_base_usd: 0.10,
+      upscale_4x_output_mp_second_usd: 0.008,
     },
   } }));
   await page.route('**/api/auth/session', (route) => route.fulfill({ status: 200, json: {

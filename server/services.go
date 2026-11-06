@@ -685,11 +685,13 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 				"fast":     map[string]interface{}{"multiplier": 1.5, "lane": "higher burst capacity"},
 				"xfast":    map[string]interface{}{"multiplier": 2.0, "lane": "isolated priority queue"},
 			},
-			"music_generation_capacity":    music3CapacitySnapshot(),
-			"extend_input_second_usd":      studioExtendInputPerSec,
-			"extend_output_second_usd":     studioExtendOutputPerSec,
-			"upscale_base_usd":             studioUpscaleBaseUSD,
-			"upscale_output_mp_second_usd": studioUpscaleOutputMPUSD,
+			"music_generation_capacity":       music3CapacitySnapshot(),
+			"extend_input_second_usd":         studioExtendInputPerSec,
+			"extend_output_second_usd":        studioExtendOutputPerSec,
+			"upscale_base_usd":                studioUpscaleBaseUSD,
+			"upscale_output_mp_second_usd":    studioUpscaleOutputMPUSD,
+			"upscale_4x_base_usd":             studioUpscale4xBaseUSD,
+			"upscale_4x_output_mp_second_usd": studioUpscale4xOutputMPUSD,
 		},
 	})
 }

@@ -270,7 +270,7 @@ export default function HomePage() {
   const [h3TierPrices, setH3TierPrices] = useState<Partial<Record<Size, Array<{ duration_seconds: number; price_usd: number }>>>>({});
   const [creditPrice, setCreditPrice] = useState(0.01);
   const [imageCredits, setImageCredits] = useState(4);
-  const [upscaleRates, setUpscaleRates] = useState({ base: 0.10, outputMPSecond: 0.012 });
+  const [upscaleRates, setUpscaleRates] = useState({ base: 0.05, outputMPSecond: 0.005, base4: 0.10, outputMPSecond4: 0.008 });
   const [gallery, setGallery] = useState<GalleryImage[]>([]);
   const [galleryCursor, setGalleryCursor] = useState<number | null>(null);
   const [galleryWrapped, setGalleryWrapped] = useState(false);
@@ -338,7 +338,7 @@ export default function HomePage() {
     if (!upscaleMode) return 0;
     const [width, height] = h3Dimensions(aspect, size);
     const outputMP = width * height * upscaleScale * upscaleScale / 1_000_000;
-    return Math.ceil((upscaleRates.base + outputMP * duration * upscaleRates.outputMPSecond) * 100 - 1e-8) / 100;
+    return Math.ceil(((upscaleScale >= 4 ? upscaleRates.base4 : upscaleRates.base) + outputMP * duration * (upscaleScale >= 4 ? upscaleRates.outputMPSecond4 : upscaleRates.outputMPSecond)) * 100 - 1e-8) / 100;
   }, [aspect, duration, size, upscaleMode, upscaleRates, upscaleScale]);
 
   const applyUser = useCallback((next: StoredUser) => {
@@ -401,7 +401,7 @@ export default function HomePage() {
         if (data.credit_price_usd) setCreditPrice(data.credit_price_usd);
         if (data.image_credits) setImageCredits(data.image_credits);
         if (data.studio?.upscale_base_usd && data.studio?.upscale_output_mp_second_usd) {
-          setUpscaleRates({ base: data.studio.upscale_base_usd, outputMPSecond: data.studio.upscale_output_mp_second_usd });
+          setUpscaleRates({ base: data.studio.upscale_base_usd, outputMPSecond: data.studio.upscale_output_mp_second_usd, base4: data.studio.upscale_4x_base_usd || data.studio.upscale_base_usd, outputMPSecond4: data.studio.upscale_4x_output_mp_second_usd || data.studio.upscale_output_mp_second_usd });
         }
         if (data.video_estimate?.estimated_cost_usd) {
           setH3BaseEstimateUSD(data.video_estimate.estimated_cost_usd);

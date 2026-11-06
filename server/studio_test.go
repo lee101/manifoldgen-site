@@ -240,11 +240,11 @@ func TestStudioXAIUserError(t *testing.T) {
 }
 
 func TestStudioUpscaleCustomerPriceTracksOutputPixels(t *testing.T) {
-	if got := studioUpscalePriceUSD(1280, 720, 5, 2); got != 0.33 {
-		t.Fatalf("2x upscale price = %.2f, want 0.33", got)
+	if got := studioUpscalePriceUSD(1280, 720, 5, 2); got != 0.15 {
+		t.Fatalf("2x upscale price = %.2f, want 0.15", got)
 	}
-	if got := studioUpscalePriceUSD(1280, 720, 5, 4); got != 0.99 {
-		t.Fatalf("4x upscale price = %.2f, want 0.99", got)
+	if got := studioUpscalePriceUSD(1280, 720, 5, 4); got != 0.69 {
+		t.Fatalf("4x upscale price = %.2f, want 0.69", got)
 	}
 }
 

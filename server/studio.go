@@ -23,14 +23,16 @@ import (
 )
 
 const (
-	studioBackgroundCredits  = 1.0
-	studioExtendInputPerSec  = 0.012
-	studioExtendOutputPerSec = 0.084
-	studioUpscaleBaseUSD     = 0.10
-	studioUpscaleOutputMPUSD = 0.012
-	studioAudioSearchLimit   = 24
-	studioMusicCredits       = 80.0
-	studioAudioLibraryHost   = "netwrckstatic.netwrck.com"
+	studioBackgroundCredits    = 1.0
+	studioExtendInputPerSec    = 0.012
+	studioExtendOutputPerSec   = 0.084
+	studioUpscaleBaseUSD       = 0.05
+	studioUpscaleOutputMPUSD   = 0.005
+	studioUpscale4xBaseUSD     = 0.10
+	studioUpscale4xOutputMPUSD = 0.008
+	studioAudioSearchLimit     = 24
+	studioMusicCredits         = 80.0
+	studioAudioLibraryHost     = "netwrckstatic.netwrck.com"
 )
 
 var studioHTTPClient = &http.Client{Timeout: 4 * time.Minute}
@@ -379,7 +381,11 @@ func studioExtensionPriceUSD(inputSeconds float64, outputSeconds int) float64 {
 
 func studioUpscalePriceUSD(width, height int, duration float64, scale int) float64 {
 	outputMegapixels := float64(width*height*scale*scale) / 1_000_000
-	return math.Ceil((studioUpscaleBaseUSD+outputMegapixels*duration*studioUpscaleOutputMPUSD)*100-1e-9) / 100
+	base, perMP := studioUpscaleBaseUSD, studioUpscaleOutputMPUSD
+	if scale >= 4 {
+		base, perMP = studioUpscale4xBaseUSD, studioUpscale4xOutputMPUSD
+	}
+	return math.Ceil((base+outputMegapixels*duration*perMP)*100-1e-9) / 100
 }
 
 func studioRemoteVideoURL(raw string) error {
