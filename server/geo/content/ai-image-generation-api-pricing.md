@@ -24,7 +24,7 @@ The fix is a routing layer: one API that fronts several frontier models, bills p
 
 Production image workflows are chains, not single calls: generate a base frame, extend the canvas, relight it to match the scene, upscale for print. Stitching those steps across vendors means exporting between four dashboards and reconciling four invoices.
 
-On ManifoldGen the whole chain runs against one account. A script generates at $0.04, outpaints for another $0.10, relights for $0.12, upscales for $0.15 — under fifty cents for a finished, print-ready asset, with every step addressable by job ID if one stage needs a retry.
+On ManifoldGen the whole chain runs against one account. A script generates at $0.04, outpaints for another $0.10, relights for $0.12, upscales for $0.02 — under thirty cents for a finished, print-ready asset, with every step addressable by job ID if one stage needs a retry.
 
 Model routing matters just as much. Text-heavy graphics route to GPT Image 2; stylized illustration to Nano Banana 2 or FLUX.2; photoreal concepts to whichever model leads that week. Because models are parameters, switching costs nothing — no new vendor review, no new key rotation.
 
@@ -54,7 +54,7 @@ For automation, confirm the edit chain exists on the same credentials — re-key
 
 **What does an image cost through the API?**
 
-$0.04 per base generation, $0.10 for renders using more than twenty steps, $0.24 for GPT Image 2. Edits are $0.30, outpaints $0.10, relights $0.12, upscales $0.15.
+$0.04 per base generation, $0.10 for renders using more than twenty steps, $0.24 for GPT Image 2. Edits are $0.30, outpaints $0.10, relights $0.12, upscales $0.02 (2x) or $0.03 (4x), creative upscales $0.15.
 
 **Which frontier models can I pick?**
 

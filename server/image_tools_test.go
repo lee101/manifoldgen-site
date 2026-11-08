@@ -51,8 +51,8 @@ func TestImageModelPriceUSDTiers(t *testing.T) {
 	if got := getRequestServicePriceUSD(ServiceUsageRequest{Service: "relight", NumImages: 2}); got != 0.24 {
 		t.Fatalf("relight x2 = %v, want 0.24", got)
 	}
-	if got := getRequestServicePriceUSD(ServiceUsageRequest{Service: "upscale_image"}); got != 0.15 {
-		t.Fatalf("upscale_image = %v, want 0.15", got)
+	if got := getRequestServicePriceUSD(ServiceUsageRequest{Service: "upscale_image"}); got != 0.02 {
+		t.Fatalf("upscale_image = %v, want 0.02", got)
 	}
 	if got := getRequestServicePriceUSD(ServiceUsageRequest{Service: "extend_image"}); got != 0.10 {
 		t.Fatalf("extend_image = %v, want 0.10", got)
@@ -206,7 +206,7 @@ func TestProxyFalRelightPollsQueueUntilComplete(t *testing.T) {
 	}
 }
 
-func TestProxyFalUpscaleImageReturnsNormalizedRow(t *testing.T) {
+func TestProxyUpscaleImageCreativeUsesFal(t *testing.T) {
 	withFalQueueStub(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
@@ -219,8 +219,8 @@ func TestProxyFalUpscaleImageReturnsNormalizedRow(t *testing.T) {
 		}
 		w.Write([]byte(`{"image":{"url":"https://cdn.example/big.png"}}`))
 	})
-	result, err := proxyFalUpscaleImage(ServiceUsageRequest{
-		Service: "upscale_image", Prompt: "sharpen",
+	result, err := proxyUpscaleImage(ServiceUsageRequest{
+		Service: "upscale_image", Prompt: "sharpen", Model: "creative",
 		ImageURL: "https://static.example/small.png",
 	})
 	if err != nil {

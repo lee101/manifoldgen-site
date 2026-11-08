@@ -52,5 +52,18 @@ test('upscale tool sends a flat-rate upscale-image request and shows the result'
   await expect(page.getByText('IMAGE UPSCALE', { exact: true })).toBeVisible();
   await page.getByTestId('image-upscale-run').click();
   await expect(page.getByTestId('image-upscale-result').getByAltText('Upscaled result')).toBeVisible();
-  expect(requests[0]).toMatchObject({ service: 'upscale-image', image_url: EXAMPLE });
+  expect(requests[0]).toMatchObject({ service: 'upscale-image', image_url: EXAMPLE, scale: 2 });
+  expect(requests[0].model).toBeUndefined();
+  await expect(page.getByText('~2 credits · $0.02')).toBeVisible();
+
+  await page.getByTestId('image-upscale-mode-4x').click();
+  await expect(page.getByText('~3 credits · $0.03')).toBeVisible();
+  await page.getByTestId('image-upscale-run').click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1]).toMatchObject({ service: 'upscale-image', scale: 4 });
+
+  await page.getByTestId('image-upscale-mode-creative').click();
+  await page.getByTestId('image-upscale-run').click();
+  await expect.poll(() => requests.length).toBe(3);
+  expect(requests[2]).toMatchObject({ service: 'upscale-image', scale: 2, model: 'creative' });
 });

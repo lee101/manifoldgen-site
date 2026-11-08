@@ -66,7 +66,7 @@ var servicePricesUSD = map[string]float64{
 	"smart_resize":             0.24,
 	"remove_background":        0.03,
 	"relight":                  0.12, // per relit image through fal IC-Light v2
-	"upscale_image":            0.15, // per 2x creative upscale through fal
+	"upscale_image":            0.02, // native 2x; 4x and creative priced in getRequestServicePriceUSD
 	"lofi_loop":                0.12, // per looping video: cover still + motion + visualizer + loop mux
 	"reference_video":          3.72, // 15 s Seedance 2.0 Mini 720p with a 15 s reference video, 1.5x
 	"character_swap_video":     6.24, // 30 s source at 768P: $0.16 per source second plus one GPT Image 2 frame
@@ -315,6 +315,9 @@ func getRequestServicePriceUSD(req ServiceUsageRequest) float64 {
 	}
 	if req.Service == "smart_resize" {
 		return 0.06 + 0.18*float64(len(req.TargetSizes))
+	}
+	if req.Service == "upscale_image" && usdPrice == imageUpscale2xUSD {
+		return imageUpscalePriceUSD(req.Scale, req.Model)
 	}
 	if req.Service == "relight" {
 		usdPrice *= float64(clampImageCount(getImageCount(req)))
@@ -599,7 +602,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"smart_resize":             "$0.06 per request + $0.18 per target size (64-2048 px, up to 6 sizes)",
 		"remove_background":        "per transparent PNG cutout",
 		"relight":                  "per relit image",
-		"upscale_image":            "per 2x creative upscale",
+		"upscale_image":            "per upscale ($0.02 2x, $0.03 4x, $0.15 model=creative)",
 		"voice_enhancer":           "per song, quoted from the recording's length (about $0.31 for 3 minutes, from $0.29); charged on success",
 		"lyric_music":              "per song, quoted from the lyrics' length and voice quality (about $0.52 studio, $0.30 standard, $0.29 lite for 3 minutes; from $0.19)",
 		"lofi_loop":                "per looping video (cover still, motion, visualizer, loop mux); add music at the track rate",
@@ -1179,7 +1182,10 @@ func persistGeneratedZImage(req ServiceUsageRequest, user *User, result []byte) 
 		modelName = "iclight-v2"
 		steps = 28
 	case "upscale_image":
-		modelName = "creative-upscaler"
+		modelName = "upscaler"
+		if normalizeUpscaleModel(req.Model) == "creative" {
+			modelName = "creative-upscaler"
+		}
 		steps = 0
 	}
 	img := &GeneratedImage{
@@ -1550,7 +1556,7 @@ func proxyToBackend(req ServiceUsageRequest, backendURL string) ([]byte, error) 
 		return proxyFalRelight(req)
 
 	case "upscale_image":
-		return proxyFalUpscaleImage(req)
+		return proxyUpscaleImage(req)
 	case "chronos2":
 		endpoint = fmt.Sprintf("%s/forecast", backendURL)
 		payload := map[string]interface{}{

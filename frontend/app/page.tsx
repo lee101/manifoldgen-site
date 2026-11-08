@@ -915,15 +915,17 @@ export default function HomePage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  function openGalleryImageInStudio(img: GalleryImage, source = img.image_url || img.thumb_url) {
+  function openGalleryImageInStudio(img: GalleryImage, source = img.image_url || img.thumb_url, upscale?: 2 | 4) {
     if (!source) return;
     const query = new URLSearchParams({ image_url: new URL(source, window.location.origin).toString(), name: img.prompt.slice(0, 80) || 'Gallery image' });
+    if (upscale) query.set('upscale', String(upscale));
     window.location.assign(`/studio?${query}`);
   }
 
-  function openGalleryVideoInStudio(video: VideoHit) {
+  function openGalleryVideoInStudio(video: VideoHit, upscale = false) {
     if (!video.video_url) return;
     const query = new URLSearchParams({ video_url: new URL(video.video_url, window.location.origin).toString(), name: video.prompt.slice(0, 80) || 'Gallery video' });
+    if (upscale) query.set('upscale', '1');
     window.location.assign(`/studio?${query}`);
   }
 
@@ -970,6 +972,7 @@ export default function HomePage() {
           icon: <WandSparkles size={15} />,
           onClick: () => window.location.assign(`/studio?video_url=${encodeURIComponent(new URL(video.video_url!, window.location.origin).toString())}&name=${encodeURIComponent(video.prompt || 'Gallery video')}&restyle=1`),
         });
+        actions.push({ label: 'Upscale video', detail: '2× or 4× in the editor', icon: <Maximize2 size={15} />, onClick: () => openGalleryVideoInStudio(video, true) });
         actions.push({ label: 'Download video', detail: 'Save the original file', icon: <Download size={15} />, onClick: () => downloadMedia(video.video_url!) });
         if (videoExtension(video.video_url) !== 'mp4') actions.push({ label: 'Download MP4', detail: 'Converted on your device', icon: <Download size={15} />, onClick: () => void downloadVideo(video.video_url!, video.prompt || 'manifoldgen-video', 'mp4').catch(() => undefined) });
       }
@@ -990,6 +993,8 @@ export default function HomePage() {
       { label: 'Generate video', detail: 'Animate this image', icon: <Sparkles size={15} />, onClick: () => { selectGalleryImage(img); void generate({ prompt: img.prompt, image: img.image_url || img.thumb_url }); } },
       { label: 'Use as start frame', detail: 'Anchor your own shot on it', icon: <ImageIcon size={15} />, onClick: () => useGalleryImageAsStartFrame(img) },
       { label: 'Prompt for similar', detail: 'Reuse the prompt text', icon: <Sparkles size={15} />, onClick: () => promptForSimilar(item.prompt) },
+      { label: 'Upscale 2×', detail: 'Sharper copy in the editor · 2 credits', icon: <Maximize2 size={15} />, onClick: () => openGalleryImageInStudio(img, undefined, 2) },
+      { label: 'Upscale 4×', detail: 'Large print size · 3 credits', icon: <Maximize2 size={15} />, onClick: () => openGalleryImageInStudio(img, undefined, 4) },
       backgroundRemovingID === img.id
         ? { label: 'Removing background…', icon: <Loader2 className="animate-spin" size={15} /> }
         : { label: 'Remove BG', detail: 'Transparent cutout copy', icon: <WandSparkles size={15} />, onClick: () => void removeGalleryBackground(img) },

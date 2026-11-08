@@ -173,6 +173,7 @@ type ServiceUsageRequest struct {
 	Lyrics               string          `json:"lyrics,omitempty"`
 	Kind                 string          `json:"kind,omitempty"`
 	ImageURL             string          `json:"image_url,omitempty"`
+	Scale                int             `json:"scale,omitempty"`
 	ModelURL             string          `json:"model_url,omitempty"`
 	ModelURLs            []string        `json:"model_urls,omitempty"`
 	Params               json.RawMessage `json:"params,omitempty"`

@@ -30,7 +30,7 @@ The economics compound too. Subscriptions punish spiky usage — idle months bur
 
 ## Key Capabilities
 
-Images: base generations $0.04 ($0.10 above 20 steps), GPT Image 2 at $0.24 always metered, Nano Banana 2 / Grok Imagine / FLUX.2 selectable per call; edits $0.30, outpaint $0.10, relight $0.12, upscale $0.15.
+Images: base generations $0.04 ($0.10 above 20 steps), GPT Image 2 at $0.24 always metered, Nano Banana 2 / Grok Imagine / FLUX.2 selectable per call; edits $0.30, outpaint $0.10, relight $0.12, upscale $0.02 (2x) or $0.03 (4x), creative upscale $0.15.
 
 Video: text-to-video settled from measured GPU time (average $1.71), Wan 2.2 restyle from $0.48, fixed-price character animation $1.00/five-second clip, background removal $0.10/source-second returning true-alpha WebM.
 

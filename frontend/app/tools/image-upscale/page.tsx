@@ -4,7 +4,7 @@ import ImageUpscaleTool from './ImageUpscaleTool';
 
 export const metadata: Metadata = {
   title: 'AI Image Upscaler — ManifoldGen',
-  description: 'Upload an image and get a 2x creative upscale that recovers texture and edge detail for a flat $0.15 per run.',
+  description: 'Upscale any image 2x or 4x from $0.02 per run, or use Creative mode to redraw texture and edge detail.',
   alternates: { canonical: '/tools/image-upscale' },
 };
 

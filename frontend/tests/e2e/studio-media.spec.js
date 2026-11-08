@@ -2240,3 +2240,35 @@ test('comma and period jump between cuts and S splits the clip under the playhea
   await expect(clips).toHaveCount(3);
   expect(boundary).toMatch(/^\d\d:\d\d\.\d\d$/);
 });
+
+test('image and video clips offer upscale from the context menu', async ({ page }) => {
+  test.setTimeout(120_000);
+  await installMocks(page);
+  let upscaleRequest;
+  await page.route('**/api/uploads/presign**', async (route) => route.fulfill({ status: 200, json: {
+    upload_url: 'https://upload.example/upscale-source.png?signature=test',
+    public_url: 'https://media.example/upscale-source.png',
+  } }));
+  await page.route('https://upload.example/**', (route) => route.fulfill({ status: 200 }));
+  await page.route('**/api/studio/upscale-image', async (route) => {
+    upscaleRequest = route.request().postDataJSON();
+    await route.fulfill({ status: 200, json: { image_url: 'https://studio-result.example/upscaled.png', credits_used: 3, credits_remain: 9997 } });
+  });
+  await page.route('https://studio-result.example/upscaled.png', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: PNG_FIXTURE }));
+
+  await page.goto('/studio');
+  await page.locator('input[type=file]').setInputFiles({ name: 'opal-conservatory.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
+  const imageCard = page.getByTestId('studio-panel').getByRole('button', { name: /opal-conservatory\.png/ }).first();
+  await imageCard.click({ button: 'right' });
+  await page.getByTestId('studio-context-upscale-4x').click();
+  await expect(page.getByText(/Upscaled 4× · added to the timeline/)).toBeVisible({ timeout: 30_000 });
+  expect(upscaleRequest.scale).toBe(4);
+  expect(upscaleRequest.image_url).toMatch(/^https:\/\/.*opal-conservatory\.png$|upscale-source\.png$/);
+  await expect(page.getByTestId('studio-panel').getByRole('button', { name: /opal-conservatory-4x\.png/ }).first()).toBeVisible();
+
+  await page.locator('input[type=file]').setInputFiles(VIDEO);
+  const videoCard = page.getByTestId('studio-panel').getByRole('button', { name: /h3-loop-glass-torus\.webm/ }).first();
+  await videoCard.click({ button: 'right' });
+  await page.getByTestId('studio-context-upscale-video').click();
+  await expect(page.getByRole('heading', { name: 'Upscale video' })).toBeVisible();
+});

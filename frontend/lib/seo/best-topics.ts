@@ -441,7 +441,7 @@ const ENTRIES: Entry[] = [
       },
       {
         claim: 'Upscaling stays affordable.',
-        support: 'Creative upscale costs $0.15 per image on the same key and credit balance.',
+        support: 'Faithful upscale costs $0.02 (2x) or $0.03 (4x) per image, creative upscale $0.15, on the same key and credit balance.',
       },
     ],
     table: {

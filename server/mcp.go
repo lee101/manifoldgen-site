@@ -218,8 +218,12 @@ func manifoldGenerateSchema() map[string]interface{} {
 			"description": "Sung lyrics for music generation. Put [Verse], [Chorus], [Bridge] or [Outro] on their own line; " +
 				"text sharing a line with a tag is dropped. Omit for an instrumental.",
 		},
-		"image_url":       map[string]string{"type": "string"},
-		"video_url":       map[string]string{"type": "string"},
+		"image_url": map[string]string{"type": "string"},
+		"video_url": map[string]string{"type": "string"},
+		"scale": map[string]interface{}{
+			"type": "integer", "enum": []int{2, 4},
+			"description": "upscale-image factor: 2 ($0.02) or 4 ($0.03), faithful upscale; model=creative runs the $0.15 creative 2x upscaler, model=anime the anime weights.",
+		},
 		"negative_prompt": map[string]string{"type": "string"},
 		"width":           map[string]interface{}{"type": "integer", "minimum": 64},
 		"height":          map[string]interface{}{"type": "integer", "minimum": 64},

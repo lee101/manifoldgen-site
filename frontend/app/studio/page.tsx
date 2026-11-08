@@ -2581,6 +2581,9 @@ export default function StudioPage() {
         const projectID = mediaHandoffProjectIDRef.current;
         window.history.replaceState({}, '', projectID ? `/studio?project=${encodeURIComponent(projectID)}` : '/studio');
         if (isVideo && params.get('restyle') === '1' && first?.kind === 'video') openRestyle(first);
+        const upscaleParam = params.get('upscale');
+        if (upscaleParam && first?.kind === 'video') openUpscaleVideo(first);
+        else if (upscaleParam && first?.kind === 'image') void upscaleImageFromFile(first.file, first.name, upscaleParam === '4' ? 4 : 2, first);
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : `Could not load the ${mediaKind}`));
   // importFiles is intentionally declared below this effect; it is stable enough
@@ -4407,6 +4410,53 @@ export default function StudioPage() {
     }
   }
 
+  async function upscaleImageFromFile(sourceFile: File | string, sourceName: string, scale: 2 | 4, sourceAsset?: StudioAsset) {
+    setContextMenu(null);
+    const activityID = startBackgroundActivity(`Upscaling ${scale}×`);
+    setError(''); setNotice(`Upscaling ${scale}×…`);
+    try {
+      const imageURL = typeof sourceFile === 'string' ? sourceFile : sourceAsset?.cloudURL && !sourceAsset.cloudURL.startsWith('blob:') ? sourceAsset.cloudURL : await uploadPublic(sourceFile);
+      const response = await fetch('/api/studio/upscale-image', {
+        method: 'POST', headers: authHeaders(user?.api_key || ''), body: JSON.stringify({ image_url: imageURL, scale }),
+      });
+      const data = await parseJSONResponse<{ image_url?: string; credits_used?: number; credits_remain?: number }>(response, 'Upscale failed');
+      if (!data.image_url) throw new Error('Upscale returned no image');
+      const blob = await fetch(data.image_url).then((item) => item.blob());
+      const extension = blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+      const file = new File([blob], `${sourceName.replace(/\.[^.]+$/, '')}-${scale}x.${extension}`, { type: blob.type || 'image/png' });
+      if (sourceAsset) {
+        const metadata = await readDimensions(file, 'image');
+        const id = uid();
+        const upscaled: StudioAsset = { ...sourceAsset, id, mediaID: id, name: file.name, file, url: URL.createObjectURL(file), cloudURL: data.image_url, ...metadata };
+        rememberEdit();
+        setAssets((items) => [...items, upscaled]);
+        selectOnly(upscaled.id);
+      } else {
+        await addGeneratedFile(file, 'image', `Upscaled ${scale}×`);
+      }
+      if (user && typeof data.credits_remain === 'number') {
+        const next = { ...user, credits: data.credits_remain };
+        setUser(next); saveUser(next);
+      }
+      setNotice(`Upscaled ${scale}× · added to ${sourceAsset ? 'the timeline' : 'Media'} · ${data.credits_used ?? ''} credits`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Upscale failed');
+    } finally {
+      finishBackgroundActivity(activityID);
+    }
+  }
+
+  function upscaleLibraryImage(source: LibraryMediaContext, scale: 2 | 4) {
+    void upscaleImageFromFile(new URL(source.url, window.location.origin).toString(), source.name, scale);
+  }
+
+  function openUpscaleVideo(asset: StudioAsset) {
+    setContextMenu(null);
+    if (asset.kind !== 'video') return;
+    selectOnly(asset.id);
+    setUpscaleOpen(true);
+  }
+
   async function removeBackground() {
     if (!selected || selected.kind !== 'image') return;
     setContextMenu(null);
@@ -5815,6 +5865,11 @@ export default function StudioPage() {
             <button data-testid="studio-context-similar" onClick={() => openSimilarAsset(asset)}><Sparkles size={15} /><span><b>Make similar {asset.kind === 'audio' ? audioFlavor : asset.kind}</b><small>Open a prompt window with this starting point</small></span></button>
             {asset.kind === 'audio' && <button data-testid="studio-context-audio-video" disabled={clipDuration(asset) < 4} onClick={() => openAudioVideoDialog(asset)}><Film size={15} /><span><b>Create video from audio</b><small>Choose a 4–15 second H3 reference interval</small></span></button>}
             {asset.kind === 'video' && <button data-testid="studio-context-animation-transfer" onClick={() => openAnimationTransfer(asset)}><Clapperboard size={15} /><span><b>Animation Transfer</b><small>Drive a reference character with this performance</small></span></button>}
+            {asset.kind === 'image' && <div className={styles.contextMenuRow}>
+              <button data-testid="studio-context-upscale-2x" onClick={() => void upscaleImageFromFile(asset.file, asset.name, 2, asset)}><Maximize size={15} /><span><b>Upscale 2×</b><small>Faithful · 2 credits</small></span></button>
+              <button data-testid="studio-context-upscale-4x" onClick={() => void upscaleImageFromFile(asset.file, asset.name, 4, asset)}><Maximize size={15} /><span><b>Upscale 4×</b><small>3 credits</small></span></button>
+            </div>}
+            {asset.kind === 'video' && <button data-testid="studio-context-upscale-video" disabled={clipDuration(asset) > 60} onClick={() => openUpscaleVideo(asset)}><Maximize size={15} /><span><b>Upscale video…</b><small>{clipDuration(asset) > 60 ? 'Clips up to 60 s' : '2× or 4× · priced by output pixels'}</small></span></button>}
             {asset.kind === 'image' && <button onClick={() => void removeBackground()}><ImageIcon size={15} /><span><b>Remove background</b><small>Add a transparent cutout to Media</small></span></button>}
             {asset.kind === 'image' && <button onClick={() => openImageStyleTransfer({ url: asset.url, thumbURL: asset.url, name: asset.name, prompt: promptForAsset(asset), kind: 'image', file: asset.file, cloudURL: asset.cloudURL })}><WandSparkles size={15} /><span><b>Style transfer</b><small>Create a styled image variation</small></span></button>}
             {asset.kind === 'video' && <button data-testid="studio-context-video-remove-background" onClick={() => void removeVideoBackground(asset)}><ImageIcon size={15} /><span><b>Remove video background</b><small>Create a transparent video and add it to Media</small></span></button>}
@@ -5834,6 +5889,7 @@ export default function StudioPage() {
             <span className={styles.contextMenuLabel}>CONTENT LIBRARY {contextMenu.remoteMedia.kind.toUpperCase()}</span>
             <button data-testid="studio-library-add" onClick={() => void addDiscoveredMedia(contextMenu.remoteMedia!.url, contextMenu.remoteMedia!.prompt, contextMenu.remoteMedia!.kind)}><Plus size={15} /><span><b>Add to Media</b><small>Download to this project</small></span></button>
             {contextMenu.remoteMedia.kind === 'image' && <button data-testid="studio-library-remove-background" onClick={() => void removeBackgroundFromLibrary(contextMenu.remoteMedia!)}><ImageIcon size={15} /><span><b>Remove background</b><small>Add a transparent cutout to Media</small></span></button>}
+            {contextMenu.remoteMedia.kind === 'image' && <button data-testid="studio-library-upscale" onClick={() => upscaleLibraryImage(contextMenu.remoteMedia!, 2)}><Maximize size={15} /><span><b>Upscale 2×</b><small>Add a sharper copy to Media · 2 credits</small></span></button>}
             {contextMenu.remoteMedia.kind === 'image' && <button data-testid="studio-library-style-transfer" onClick={() => openImageStyleTransfer(contextMenu.remoteMedia!)}><WandSparkles size={15} /><span><b>Style transfer</b><small>Create a styled image variation</small></span></button>}
             <button onClick={() => openPromptGenerator(contextMenu.promptKind || contextMenu.remoteMedia!.kind, contextMenu.remoteMedia!.prompt)}><Sparkles size={15} /><span><b>Make similar {contextMenu.remoteMedia.kind}</b><small>Open a new prompt from this result</small></span></button>
           </> : contextMenu.promptKind && contextMenu.prompt !== undefined ? <>

@@ -387,6 +387,8 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 		handleServiceRequest(ctx)
 	case path == "/api/music-compose" && method == "POST":
 		handleMusicCompose(ctx)
+	case path == "/api/studio/upscale-image" && method == "POST":
+		handleStudioUpscaleImage(ctx)
 	case path == "/api/studio/remove-background" && method == "POST":
 		handleStudioRemoveBackground(ctx)
 	case path == "/api/image-editor/background" && method == "POST":

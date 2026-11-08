@@ -2,7 +2,7 @@ package main
 
 // Model-level image tools: an OpenPaths passthrough that exposes the premium
 // image model catalog (GPT Image 2, Nano Banana 2, Grok Imagine, FLUX.2) plus
-// FAL-backed relight (IC-Light v2) and creative upscale. Every route here is
+// FAL-backed relight (IC-Light v2). Every route here is
 // metered per image at the configured rate and refunded when the provider
 // fails, exactly like the existing gpt_image / image_edit services.
 
@@ -303,43 +303,6 @@ func proxyFalRelight(req ServiceUsageRequest) ([]byte, error) {
 	}
 	normalized, _ := json.Marshal(map[string]interface{}{
 		"engine": "fal-ai/iclight-v2",
-		"prompt": req.Prompt,
-		"data":   urlsToDataRows(urls),
-	})
-	return normalized, nil
-}
-
-// proxyFalUpscaleImage runs fal creative-upscaler at 2x with the same mild
-// creativity netwrck uses in production.
-func proxyFalUpscaleImage(req ServiceUsageRequest) ([]byte, error) {
-	if strings.TrimSpace(falAPIKey) == "" {
-		return nil, fmt.Errorf("image upscale requires FAL_KEY")
-	}
-	imageURL := strings.TrimSpace(req.ImageURL)
-	if imageURL == "" {
-		return nil, fmt.Errorf("image_url is required for upscale")
-	}
-	if err := validateHTTPURL(imageURL); err != nil {
-		return nil, err
-	}
-	// Pinned at the same 2x / creativity 0.35 profile netwrck runs in
-	// production so the flat price stays accurate.
-	const scale = 2
-	result, err := runFalQueuedJob("fal-ai/creative-upscaler", map[string]interface{}{
-		"image_url":     imageURL,
-		"scale":         int(scale),
-		"creativity":    0.35,
-		"output_format": "png",
-	})
-	if err != nil {
-		return nil, err
-	}
-	urls := extractPayloadImageURLs(result)
-	if len(urls) == 0 {
-		return nil, fmt.Errorf("upscale returned no images")
-	}
-	normalized, _ := json.Marshal(map[string]interface{}{
-		"engine": "fal-ai/creative-upscaler",
 		"prompt": req.Prompt,
 		"data":   urlsToDataRows(urls),
 	})

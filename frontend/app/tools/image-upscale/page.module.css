@@ -25,3 +25,4 @@
 .preview.split{grid-template-columns:1fr}
 .footer{min-height:52px}
 }
+.modes{margin-top:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.modes button{padding:8px;display:grid;gap:2px;text-align:left;color:#9fbfb3;border:1px solid #2c483e;border-radius:8px;background:#0d1411;cursor:pointer}.modes button b{color:#ddf3ea;font-size:12px}.modes button span{font-size:9px}.modes button.modeOn{border-color:#86d8ff;background:#10202a}.modes button:disabled{opacity:.5;cursor:not-allowed}

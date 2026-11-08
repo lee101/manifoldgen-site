@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight, Clapperboard, Copy, Download, ExternalLink, RotateCw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Clapperboard, Copy, Download, ExternalLink, Maximize2, RotateCw } from 'lucide-react';
 import { loadStoredUser, nsfwAuthHeaders } from '../../lib/auth';
 import { ContextMenuItem, MediaContextMenu, copyImageToClipboard, copyText, createLongPressRegistry, downloadMedia } from '../media-action-sheet';
 
@@ -240,6 +240,8 @@ export default function SearchGallery({ query, initial }: { query: string; initi
         imageItems.push(
           { label: 'Copy prompt', detail: 'Paste it into any generator', icon: <Copy size={15} />, onClick: () => void copyText(menuImage.img.prompt) },
           { label: 'Open in Studio', detail: 'Edit this image on a timeline', icon: <Clapperboard size={15} />, onClick: () => window.location.assign(studioHref(menuImage.img)) },
+          { label: 'Upscale 2×', detail: 'Sharper copy in the editor · 2 credits', icon: <Maximize2 size={15} />, onClick: () => window.location.assign(`${studioHref(menuImage.img)}&upscale=2`) },
+          { label: 'Upscale 4×', detail: 'Large print size · 3 credits', icon: <Maximize2 size={15} />, onClick: () => window.location.assign(`${studioHref(menuImage.img)}&upscale=4`) },
         );
         return (
           <MediaContextMenu
