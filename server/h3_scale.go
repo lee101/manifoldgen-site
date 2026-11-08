@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -201,7 +202,30 @@ func h3EndpointSettings(endpointID string) (executionTimeoutMs int, flashboot bo
 	return 2 * 60 * 60 * 1000, true
 }
 
+var h3WorkerQuotaAtMost = regexp.MustCompile(`at most (\d+)`)
+
+// h3SetWorkersMax raises or lowers an endpoint's max workers. When the RunPod
+// account worker quota would be exceeded, RunPod says how many this endpoint can
+// still have ("... to at most N"); retry once with that so generation still runs
+// (slower under load) instead of failing every request.
 func h3SetWorkersMax(endpointID string, workersMax int) error {
+	err := h3SetWorkersMaxExact(endpointID, workersMax)
+	if err == nil || workersMax < 2 || !strings.Contains(err.Error(), "worker quota") {
+		return err
+	}
+	match := h3WorkerQuotaAtMost.FindStringSubmatch(err.Error())
+	if match == nil {
+		return err
+	}
+	allowed, convErr := strconv.Atoi(match[1])
+	if convErr != nil || allowed < 1 || allowed >= workersMax {
+		return err
+	}
+	log.Printf("[h3] RunPod worker quota caps %s at %d workers (wanted %d)", endpointID, allowed, workersMax)
+	return h3SetWorkersMaxExact(endpointID, allowed)
+}
+
+func h3SetWorkersMaxExact(endpointID string, workersMax int) error {
 	executionTimeoutMs, flashboot := h3EndpointSettings(endpointID)
 	return h3NoteWorkersMax(endpointID, workersMax, h3ControlRequest(
 		http.MethodPost,

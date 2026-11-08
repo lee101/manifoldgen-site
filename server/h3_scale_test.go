@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -192,5 +193,32 @@ func TestH3MeanCosine(t *testing.T) {
 	got := h3MeanCosine([]float32{1, 0}, [][]float32{{1, 0}, {0, 1}})
 	if got < 0.49 || got > 0.51 {
 		t.Fatalf("mean cosine = %v", got)
+	}
+}
+
+func TestH3SetWorkersMaxRetriesWithinQuota(t *testing.T) {
+	var requested []int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		max := int(body["workersMax"].(float64))
+		requested = append(requested, max)
+		if max > 2 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"input validation error: Max workers across all endpoints will exceed your worker quota of 20. Reduce the max workers for other endpoints or lower the max worker count for this endpoint to at most 2","status":400}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	t.Setenv("H3_RUNPOD_API_KEY", "test")
+	t.Setenv("H3_RUNPOD_CONTROL_URL", server.URL)
+	t.Setenv("H3_RUNPOD_BASE_URL", server.URL)
+	t.Setenv("RUNPOD_SPEND_CAP_FILE", t.TempDir()+"/none.json")
+	if err := h3SetWorkersMax("ep1", 3); err != nil {
+		t.Fatalf("expected retry within quota to succeed: %v", err)
+	}
+	if len(requested) != 2 || requested[0] != 3 || requested[1] != 2 {
+		t.Fatalf("requested workersMax = %v, want [3 2]", requested)
 	}
 }
