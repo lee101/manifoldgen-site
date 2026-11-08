@@ -199,6 +199,7 @@ if [ "$build_ok" -ne 1 ]; then
   echo "ERROR: frontend static export failed after $build_attempts attempt(s)"
   exit 1
 fi
+(cd frontend && bun scripts/normalize-runtime.ts out)
 cd ..
 echo "  ✓ Frontend built"
 
@@ -215,6 +216,7 @@ i18n_run() {
   fi
 }
 if i18n_run; then
+  (cd frontend && bun scripts/normalize-runtime.ts out)
   echo "  ✓ Localized pages generated"
 else
   echo "  ⚠ i18n-build failed; shipping English-only"
