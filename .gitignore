@@ -99,3 +99,7 @@ testvid
 .claude
 testvids/
 downloader/
+
+# agent/video-creation test output
+results/
+vampirewellington/
