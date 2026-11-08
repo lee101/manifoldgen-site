@@ -36,7 +36,7 @@ export const FOOTER_TOOL_GROUPS: { title: string; links: FooterLink[]; more?: Fo
   },
   {
     title: 'Action FX',
-    links: byHref(['/tools/motion-fx', '/tools/anime-fight-fx', '/tools/ki-aura-fx', '/tools/lightning-fx', '/tools/fight-game-hud', '/tools/motion-exaggerate-fx', '/tools/afterimage-fx', '/tools/fight-reel-reframe', '/tools/beat-drop-fx', '/tools/motion-tracker', '/tools/motion-score']),
+    links: byHref(['/tools/motion-fx', '/tools/anime-fight-fx', '/tools/ki-aura-fx', '/tools/lightning-fx', '/tools/fight-game-hud', '/tools/motion-exaggerate-fx', '/tools/afterimage-fx', '/tools/fight-reel-reframe', '/tools/beat-drop-fx', '/tools/motion-tracker', '/tools/motion-score', '/tools/track-blur', '/tools/sticky-overlay', '/tools/flow-fx', '/tools/reactive-fx', '/tools/mask-propagate']),
   },
 ];
 

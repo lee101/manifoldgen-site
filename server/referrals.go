@@ -175,14 +175,8 @@ func awardReferralAfterPurchase(userID string) {
 }
 
 func handleReferrals(ctx *fasthttp.RequestCtx) {
-	apiKey := strings.TrimSpace(strings.TrimPrefix(string(ctx.Request.Header.Peek("Authorization")), "Bearer "))
-	if apiKey == "" {
-		jsonError(ctx, 401, "api key required")
-		return
-	}
-	user, err := dbConn.GetUserByAPIKey(apiKey)
-	if err != nil {
-		jsonError(ctx, 401, "invalid API key")
+	user, ok := requireScope(ctx, scopeCreditsRead)
+	if !ok {
 		return
 	}
 	stats, err := dbConn.ReferralStats(user.ID)

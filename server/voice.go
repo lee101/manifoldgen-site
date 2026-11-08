@@ -232,20 +232,6 @@ func voiceStyle(input voiceGenerationInput) string {
 	return strings.Join(parts, " ")
 }
 
-func elevenOutputFormat(format string, sampleRate int) string {
-	switch format {
-	case "wav":
-		return fmt.Sprintf("pcm_%d", sampleRate)
-	case "opus":
-		return fmt.Sprintf("opus_%d_128", sampleRate)
-	default:
-		if sampleRate != 44100 && sampleRate != 22050 {
-			sampleRate = 44100
-		}
-		return fmt.Sprintf("mp3_%d_128", sampleRate)
-	}
-}
-
 func voiceFalPayload(input voiceGenerationInput, model voiceModel, seed int) map[string]interface{} {
 	style := voiceStyle(input)
 	switch model.ID {
@@ -260,7 +246,8 @@ func voiceFalPayload(input voiceGenerationInput, model voiceModel, seed int) map
 		if input.Mood != "neutral" {
 			text = "[" + input.Mood + "] " + text
 		}
-		return map[string]interface{}{"text": text, "voice": input.Voice, "speed": input.Speed, "seed": seed, "output_format": elevenOutputFormat(input.OutputFormat, input.SampleRate)}
+		// fal eleven-v3 accepts only text, voice, stability, language_code; pace comes from inline tags.
+		return map[string]interface{}{"text": text, "voice": input.Voice}
 	case "qwen3-tts":
 		return map[string]interface{}{"text": input.Text, "prompt": style, "voice": input.Voice, "language": "Auto"}
 	case "minimax-2.8-hd":

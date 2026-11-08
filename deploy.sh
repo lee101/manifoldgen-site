@@ -310,6 +310,10 @@ else
     --exclude .venv/ --exclude .home/ --exclude tests/ --exclude __pycache__/ --exclude '*.egg-info/' \
     --exclude .pytest_cache/ --exclude .coverage --exclude '*.tracks.json' \
     "$ROOT/workers/motiontrack/" "$DEPLOY_ROOT/workers/motiontrack/"
+  "${SUDO[@]}" install -d -o www-data -g www-data -m 755 "$DEPLOY_ROOT/workers/ptfx"
+  "${SUDO[@]}" rsync -a --chown=www-data:www-data \
+    --exclude .venv/ --exclude .home/ --exclude __pycache__/ --exclude '*.log' \
+    "$ROOT/workers/ptfx/" "$DEPLOY_ROOT/workers/ptfx/"
   "${SUDO[@]}" find "$DEPLOY_ROOT/frontend/out" \
     \( -name '*.fasthttp.gz' -o -name '*.fasthttp.br' \) -delete
 

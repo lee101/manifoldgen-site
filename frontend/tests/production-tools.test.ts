@@ -279,7 +279,7 @@ describe('motion tools: edge cases and server parity', () => {
   });
 
   test('audio slots: beat-drop requires, score is optional, others have none', () => {
-    expect(MOTION_TOOLS.filter((tool) => tool.audio).map((tool) => [tool.slug, tool.audio])).toEqual([['motion-fx', 'optional'], ['beat-drop-fx', 'required'], ['motion-score', 'optional']]);
+    expect(MOTION_TOOLS.filter((tool) => tool.audio).map((tool) => [tool.slug, tool.audio])).toEqual([['motion-fx', 'optional'], ['beat-drop-fx', 'required'], ['motion-score', 'optional'], ['reactive-fx', 'optional']]);
     expect(snippets({ service: 'motion-score', video_url: 'https://x/a.mp4', params: { keep_audio: true } }, 'score_motion_video').mcp).toBe('score_motion_video({"video_url":"https://x/a.mp4","keep_audio":true})');
   });
 

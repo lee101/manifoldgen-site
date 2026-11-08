@@ -375,6 +375,21 @@ func (db *DB) migrate() error {
 	-- Full-text search via pg_trgm (fast ILIKE with GIN index)
 	CREATE EXTENSION IF NOT EXISTS pg_trgm;
 	CREATE INDEX IF NOT EXISTS idx_images_prompt_trgm ON generated_images USING GIN (prompt gin_trgm_ops);
+
+	CREATE TABLE IF NOT EXISTS api_keys (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		prefix TEXT NOT NULL,
+		key_hash TEXT UNIQUE NOT NULL,
+		scopes TEXT[] NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		last_used_at TIMESTAMPTZ,
+		expires_at TIMESTAMPTZ,
+		revoked_at TIMESTAMPTZ,
+		rotated_from TEXT
+	);
+	CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id, created_at DESC);
 	`
 
 	_, err := db.conn.Exec(schema)

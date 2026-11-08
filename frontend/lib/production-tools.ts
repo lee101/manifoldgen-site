@@ -1,4 +1,7 @@
-export type MotionService = 'motion-fx' | 'beat-drop' | 'motion-track' | 'motion-score';
+export type TrackedService = 'track-blur' | 'sticky-overlay' | 'flow-fx' | 'reactive-fx' | 'mask-propagate';
+export type MotionService = 'motion-fx' | 'beat-drop' | 'motion-track' | 'motion-score' | TrackedService;
+export const TRACKED_SERVICES: readonly TrackedService[] = ['track-blur', 'sticky-overlay', 'flow-fx', 'reactive-fx', 'mask-propagate'];
+export const isTrackedService = (service: string): service is TrackedService => (TRACKED_SERVICES as readonly string[]).includes(service);
 export type ProductionService = 'destruction-studio' | 'exploded-view' | 'toon-shader' | 'blender-scene' | 'image-to-3d' | 'vectorize' | 'shot-cleanup' | MotionService;
 
 export type ProductionParams = Record<string, unknown>;
@@ -33,6 +36,8 @@ export type ProductionControl = {
   | { type: 'seed'; default: string }
   | { type: 'names'; default: string; placeholder?: string }
   | { type: 'tri'; default: string }
+  | { type: 'text'; default: string; placeholder?: string; maxLength?: number }
+  | { type: 'multi'; options: readonly Option[]; default: string[] }
 );
 
 export type ProductionDemo = { caption: string };
@@ -68,6 +73,9 @@ export type ProductionTool = {
   demoSlug?: string;
   demoIndexes?: readonly number[];
   extraCopy?: string;
+  picker?: 'box' | 'point';
+  pickerLabel?: string;
+  imageSlot?: { label: string; hint: string; accept: string };
 };
 
 export const MOTION_PRICING: Record<MotionService, { rate: number; min: number; max: number }> = {
@@ -75,12 +83,17 @@ export const MOTION_PRICING: Record<MotionService, { rate: number; min: number; 
   'beat-drop': { rate: 0.04, min: 0.10, max: 30 },
   'motion-track': { rate: 0.02, min: 0.05, max: 60 },
   'motion-score': { rate: 0.05, min: 0.20, max: 30 },
+  'track-blur': { rate: 0.06, min: 0.15, max: 20 },
+  'sticky-overlay': { rate: 0.06, min: 0.15, max: 20 },
+  'flow-fx': { rate: 0.08, min: 0.20, max: 15 },
+  'reactive-fx': { rate: 0.08, min: 0.20, max: 20 },
+  'mask-propagate': { rate: 0.05, min: 0.12, max: 20 },
 };
 
 export const isMotionService = (service: string): service is MotionService => service in MOTION_PRICING;
 
 export const PRODKIT_PRICES = {
-  base: { 'destruction-studio': 0.40, 'exploded-view': 0.40, 'toon-shader': 0.30, 'blender-scene': 0.30, 'image-to-3d': 0.06, vectorize: 0.02, 'shot-cleanup': 0.24, 'motion-fx': 0.06, 'beat-drop': 0.04, 'motion-track': 0.02, 'motion-score': 0.05 } as Record<ProductionService, number>,
+  base: { 'destruction-studio': 0.40, 'exploded-view': 0.40, 'toon-shader': 0.30, 'blender-scene': 0.30, 'image-to-3d': 0.06, vectorize: 0.02, 'shot-cleanup': 0.24, 'motion-fx': 0.06, 'beat-drop': 0.04, 'motion-track': 0.02, 'motion-score': 0.05, 'track-blur': 0.06, 'sticky-overlay': 0.06, 'flow-fx': 0.08, 'reactive-fx': 0.08, 'mask-propagate': 0.05 } as Record<ProductionService, number>,
   photoTo3D: 0.06,
   highQuality: 0.20,
   image3DHigh: 0.45,
@@ -263,6 +276,91 @@ export const MOTION_TOOLS: readonly ProductionTool[] = [
     extraCopy: 'cues.json lists every detected hit with its time and power, the tempo, and a music prompt you can use to generate a matching track elsewhere.',
     demos: motionDemos('Kung fu · generated drum score', 'Sparring · your track, tempo-fitted'), runLabel: 'Score the video',
   },
+  {
+    slug: 'track-blur', service: 'track-blur', mcp: 'blur_tracked_region', name: 'Tracked Blur', kicker: 'FACE · LOGO · PLATE BLUR THAT STAYS PUT',
+    headline: 'Blur it once. It follows the shot.', blurb: 'Draw a box on the first frame and the blur, pixelation or solid cover locks onto what is underneath as the subject and the camera move. Hide faces, logos, plates and screens in one pass, or blur everything except the box.',
+    metaTitle: 'Tracked Blur for Video: Blur or Pixelate Faces and Logos That Follow Motion — ManifoldGen', metaDescription: 'Blur, pixelate or black out a face, logo or number plate that stays locked to the object as it moves. Draw a box on the first frame. From $0.15, API included.',
+    kind: 'video', input: 'video', picker: 'box', pickerLabel: 'Drag a box over what to hide on the first frame',
+    imageSlot: { label: 'Exact mask (optional)', hint: 'PNG or JPG, white = hide. Overrides the box and follows the exact outline.', accept: 'image/png,image/jpeg,image/webp' },
+    controls: [
+      { key: 'style', label: 'Cover', type: 'select', options: [['blur', 'Blur'], ['pixelate', 'Pixelate'], ['solid', 'Solid color']], default: 'blur' },
+      { key: 'shape', label: 'Shape', type: 'select', options: [['ellipse', 'Ellipse'], ['rect', 'Rectangle']], default: 'ellipse' },
+      { key: 'mode', label: 'Follow', type: 'select', options: [['region', 'The box · fast'], ['mask', 'The exact shape · cleaner edges']], default: 'region' },
+      { key: 'strength', label: 'Strength', type: 'range', min: 0.3, max: 3, step: 0.1, default: 1 },
+      { key: 'feather', label: 'Edge softness', type: 'range', min: 0, max: 0.05, step: 0.002, default: 0.012 },
+      { key: 'grow', label: 'Grow the cover', type: 'range', min: 0, max: 0.05, step: 0.002, default: 0 },
+      { key: 'invert', label: 'Blur everything except the box', type: 'toggle', default: false },
+      { key: 'color', label: 'Solid color', type: 'color', default: '#000000', advanced: true },
+      { key: 'persp', label: 'Perspective follow', type: 'range', min: 0, max: 1, step: 0.1, default: 0.5, advanced: true },
+      { key: 'track_pad', label: 'Tracking margin', type: 'range', min: 1, max: 3, step: 0.1, default: 1.4, advanced: true, hint: 'Wider reads more of the scene around the box' },
+    ],
+    outputs: 'video_url, poster_url', inputsDoc: 'video_url, params.region | params.point | image_url (mask)', priceDoc: '$0.06 / s (min $0.15, max 20 s)', demoInputExt: 'mp4', demoSlug: 'track-blur',
+    extraCopy: 'Points on and around the box are tracked through the clip, then a perspective-aware cover is fitted to them. When they are hidden for a moment the cover coasts on the others and returns when they do. Exact-shape mode tracks every pixel instead, so a mask keeps its outline.',
+    demos: motionDemos('Sparring · pixelate a face', 'Sparring · blur a whole fighter'), runLabel: 'Track and blur',
+  },
+  {
+    slug: 'sticky-overlay', service: 'sticky-overlay', mcp: 'add_sticky_overlay', name: 'Sticky Overlay', kicker: 'TEXT AND STICKERS PINNED TO THE SCENE',
+    headline: 'Pin it to the shot. It follows.', blurb: 'Click a spot on the first frame and a title, label or PNG sticker sticks to it, scaling and turning with the scene as the camera and subject move. It pops in, fades out when the spot is hidden and comes back when it returns.',
+    metaTitle: 'Sticky Text and Sticker Overlays for Video That Follow Motion — ManifoldGen', metaDescription: 'Pin text or a PNG sticker to a point in your video so it moves with the scene, with scale, rotation and perspective. Click the first frame. From $0.15, API included.',
+    kind: 'video', input: 'video', picker: 'point', pickerLabel: 'Click where the overlay should stick on the first frame',
+    imageSlot: { label: 'Sticker (optional)', hint: 'Transparent PNG, used instead of the text.', accept: 'image/png,image/webp' },
+    controls: [
+      { key: 'text', label: 'Text', type: 'text', default: 'K.O.', placeholder: 'Type a label', maxLength: 40 },
+      { key: 'color', label: 'Text color', type: 'color', default: '#ffd21f' },
+      { key: 'width', label: 'Size', type: 'range', min: 0.05, max: 0.6, step: 0.01, default: 0.15, hint: 'Share of the frame width' },
+      { key: 'rotation', label: 'Tilt', type: 'range', min: -45, max: 45, step: 1, default: 0, unit: '°' },
+      { key: 'pop', label: 'Pop-in animation', type: 'toggle', default: true },
+      { key: 'fade', label: 'Fade time', type: 'range', min: 0, max: 2, step: 0.05, default: 0.25, unit: 's', advanced: true },
+      { key: 'persp', label: 'Perspective follow', type: 'range', min: 0, max: 1, step: 0.1, default: 0.5, advanced: true },
+      { key: 'track_pad', label: 'Tracking margin', type: 'range', min: 1, max: 4, step: 0.1, default: 1.8, advanced: true },
+    ],
+    outputs: 'video_url, poster_url', inputsDoc: 'video_url, params.text | image_url (sticker), params.x, params.y', priceDoc: '$0.06 / s (min $0.15, max 20 s)', demoInputExt: 'mp4', demoSlug: 'sticky-overlay',
+    extraCopy: 'The scene around your click is tracked and a perspective warp is fitted to it every frame, so the overlay sits on the surface instead of floating over it.',
+    demos: motionDemos('Sparring · K.O. pinned to a fighter'), runLabel: 'Pin the overlay',
+  },
+  {
+    slug: 'flow-fx', service: 'flow-fx', mcp: 'apply_flow_fx', name: 'Flow FX', kicker: 'REAL MOTION BLUR · JELLY · LIGHT TRAILS',
+    headline: 'Effects driven by every pixel\'s motion.', blurb: 'Per-pixel motion is measured across the clip, then drives true directional motion blur, jelly wobble, glowing light trails and flow-color grading. Works on any footage: people, vehicles, water, camera moves.',
+    metaTitle: 'Video Motion Blur, Jelly and Light Trail Effects from Real Motion — ManifoldGen', metaDescription: 'Add real motion blur, jelly wobble, light trails and flow-color effects to video, driven by measured per-pixel motion. Any footage, no people needed. From $0.20.',
+    kind: 'video', input: 'video',
+    controls: [
+      { key: 'effects', label: 'Effects', type: 'multi', options: [['motion-blur', 'Motion blur'], ['jelly', 'Jelly wobble'], ['trails', 'Light trails'], ['flow-color', 'Flow color']], default: ['motion-blur'] },
+      { key: 'strength', label: 'Strength', type: 'range', min: 0.3, max: 2.5, step: 0.1, default: 1 },
+      { key: 'palette', label: 'Trail palette', type: 'select', options: PALETTE_OPTIONS, default: '' },
+    ],
+    outputs: 'video_url, poster_url', inputsDoc: 'video_url, params.effects', priceDoc: '$0.08 / s (min $0.20, max 15 s)', demoInputExt: 'mp4', demoSlug: 'flow-fx',
+    extraCopy: 'Unlike a filter that guesses, the blur streaks follow the way each part of the picture really moved between frames, and the trails stay on the moving subject instead of the background.',
+    demos: motionDemos('Kung fu · motion blur', 'Sparring · neon light trails', 'Solo form · jelly wobble', 'Kung fu · flow color'), runLabel: 'Apply flow effects',
+  },
+  {
+    slug: 'reactive-fx', service: 'reactive-fx', mcp: 'apply_reactive_fx', name: 'Music Reactive FX', kicker: 'GLOW · SPARKS · WARP ON THE BEAT',
+    headline: 'Visuals that dance to your song.', blurb: 'Points on the moving parts of your video glow, trail and throw sparks, and the picture warps and flashes on the kicks and snares. The song becomes the soundtrack, or use the clip\'s own sound.',
+    metaTitle: 'Music Reactive Video Effects: Glow, Sparks and Warp Synced to the Beat — ManifoldGen', metaDescription: 'Make video visuals react to music: tracked glow, trails and sparks that pulse on kicks and snares with beat-synced warp and flash. Upload a clip and a song. From $0.20.',
+    kind: 'video', input: 'video', audio: 'optional', audioLabel: 'Song (optional)', audioHint: 'Effects pulse with this track and it becomes the soundtrack. Leave empty to react to the clip\'s own sound.',
+    controls: [
+      { key: 'effects', label: 'Effects', type: 'multi', options: [['glow', 'Glow'], ['trails', 'Trails'], ['sparks', 'Sparks on kicks'], ['warp', 'Beat warp'], ['flash', 'Flash']], default: ['glow', 'trails', 'sparks', 'warp', 'flash'] },
+      { key: 'intensity', label: 'Intensity', type: 'range', min: 0.3, max: 1.6, step: 0.1, default: 1 },
+      { key: 'palette', label: 'Color palette', type: 'select', options: PALETTE_OPTIONS, default: '' },
+      { key: 'seed', label: 'Seed', type: 'seed', default: '', advanced: true, hint: 'Blank = default' },
+    ],
+    outputs: 'video_url, poster_url', inputsDoc: 'video_url, audio_url?, params.effects', priceDoc: '$0.08 / s (min $0.20, max 20 s)', demoInputExt: 'mp4', demoSlug: 'reactive-fx',
+    extraCopy: 'Kicks, snares and energy are read from the song itself. Only the parts of the picture that are moving get the glow, so it follows the action.',
+    demos: motionDemos('Sparring · neon reactive', 'Kung fu · gold reactive'), runLabel: 'Make it react',
+  },
+  {
+    slug: 'mask-propagate', service: 'mask-propagate', mcp: 'propagate_mask', name: 'Mask Propagate', kicker: 'FIRST-FRAME MASK TO EVERY FRAME · INPAINT BUILDING BLOCK',
+    headline: 'Mask one frame. Get them all.', blurb: 'Drag a shape on the first frame, or upload an exact mask, and it is carried through the whole clip by per-pixel tracking. Download the mask video and a tinted preview to drive inpainting, relighting or any per-frame edit.',
+    metaTitle: 'Video Mask Propagation: Carry a First-Frame Mask Through the Whole Clip — ManifoldGen', metaDescription: 'Turn one mask on the first frame into a mask video that follows the object through the clip. Download the mask and a preview for inpainting and compositing. From $0.12.',
+    kind: 'video', input: 'video', picker: 'box', pickerLabel: 'Drag a box over the object on the first frame',
+    imageSlot: { label: 'Exact mask (optional)', hint: 'PNG or JPG, white = object. Overrides the box.', accept: 'image/png,image/jpeg,image/webp' },
+    controls: [
+      { key: 'shape', label: 'Shape', type: 'select', options: [['ellipse', 'Ellipse'], ['rect', 'Rectangle']], default: 'ellipse' },
+      { key: 'segment', label: 'Re-anchor every', type: 'range', min: 8, max: 96, step: 8, default: 40, unit: ' frames', advanced: true, hint: 'Shorter limits drift on long clips' },
+    ],
+    outputs: 'video_url, mask_url, poster_url', inputsDoc: 'video_url, params.region | params.point | image_url (mask)', priceDoc: '$0.05 / s (min $0.12, max 20 s)', demoInputExt: 'mp4', demoSlug: 'mask-propagate',
+    extraCopy: 'The mask video is lossless black and white, one frame per source frame. The preview tints the masked area so you can check it before using it.',
+    demos: motionDemos('Sparring · fighter mask carried through the clip'), runLabel: 'Propagate the mask',
+  },
 ];
 
 export const PRODUCTION_TOOLS: readonly ProductionTool[] = [
@@ -391,6 +489,12 @@ export function controlParams(controls: readonly ProductionControl[], values: Pr
     } else if (control.type === 'names') {
       const names = String(value ?? '').split(',').map((item) => item.trim().slice(0, 16)).filter(Boolean).slice(0, 4);
       if (names.length) out.names = names;
+    } else if (control.type === 'multi') {
+      const picked = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && control.options.some(([option]) => option === item)) : [];
+      if (picked.length) out[control.key] = picked;
+    } else if (control.type === 'text') {
+      const text = String(value ?? '').trim().slice(0, control.maxLength ?? 80);
+      if (text) out[control.key] = text;
     } else if (control.type === 'tri') {
       if (value === 'true' || value === 'false') out[control.key] = value === 'true';
     } else if (value !== undefined && value !== '') {

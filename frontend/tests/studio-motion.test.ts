@@ -88,7 +88,7 @@ describe('studio motion window and price', () => {
         expect(quoteMotion(service, seconds)).toBe(productionPriceUSD({ service, duration: seconds, params: {} }));
       }
     }
-    expect(MOTION_SERVICES.sort()).toEqual(Object.keys(MOTION_PRICING).sort());
+    expect(MOTION_SERVICES.sort()).toEqual(['beat-drop', 'motion-fx', 'motion-score', 'motion-track']);
   });
 });
 

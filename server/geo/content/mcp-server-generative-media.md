@@ -70,7 +70,7 @@ Yes — generation draws down prepaid credits ($0.01 each), so exposure is bound
 
 **Does the same key work outside MCP?**
 
-Yes. The sk-mg- key authenticates the full REST API; MCP is an additional interface, not a separate account system.
+Yes. The sk-mg- key authenticates the full REST API; MCP is an additional interface, not a separate account system. Keys can be limited to scopes: MCP needs the mcp scope plus the scope of each tool's operation (for example jobs:read for get_job and list_jobs), and a missing scope returns 403 insufficient_scope naming it. See /blog/api-keys-scopes-rotation.md.
 
 ## Conclusion
 

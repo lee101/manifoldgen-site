@@ -292,3 +292,114 @@ func TestTrailerResizeStillWebp(t *testing.T) {
 		t.Fatalf("webp missing: %v", err)
 	}
 }
+
+func TestNormalizeTrailerRequestScoreAndPoster(t *testing.T) {
+	req := dramatizeRequest{Prompt: "brief", ScoreProvider: "MUSIC3", Tagline: "  Two oaths in the dark  ", Poster: true}
+	if err := normalizeTrailerRequest(&req); err != nil {
+		t.Fatal(err)
+	}
+	if req.ScoreProvider != "house" || req.Tagline != "Two oaths in the dark" {
+		t.Fatalf("normalized = %+v", req)
+	}
+	if !trailerCutToMusic(req) {
+		t.Fatal("cut to music defaults on")
+	}
+	off := false
+	if trailerCutToMusic(dramatizeRequest{CutToMusic: &off}) {
+		t.Fatal("cut to music can be turned off")
+	}
+	with := trailerEstimate(req)
+	req.Poster = false
+	if without := trailerEstimate(req); with.EstimatedCostUSD <= without.EstimatedCostUSD || with.BaseImages != without.BaseImages+1 {
+		t.Fatalf("poster estimate %+v vs %+v", with, without)
+	}
+}
+
+func TestTrailerScoreProvider(t *testing.T) {
+	t.Setenv("TRAILER_SCORE_PROVIDER", "")
+	if trailerScoreProvider(dramatizeRequest{}) != "studio" || trailerScoreProvider(dramatizeRequest{Lyrics: "[verse]\nla"}) != "house" {
+		t.Fatal("auto: lyrics pick the house generators")
+	}
+	if trailerScoreProvider(dramatizeRequest{Lyrics: "x", ScoreProvider: "studio"}) != "studio" {
+		t.Fatal("explicit provider wins")
+	}
+	t.Setenv("TRAILER_SCORE_PROVIDER", "house")
+	if trailerScoreProvider(dramatizeRequest{ScoreProvider: "auto"}) != "house" {
+		t.Fatal("setting chooses house")
+	}
+}
+
+func TestTrailerCraftNarrationAndGuidance(t *testing.T) {
+	reply := trailerCraftReply{Title: "Vampire Wellington", EmotionalPromise: "promise", Shots: []trailerCraftShot{
+		{ID: "shot_002", VO: "One of them came for blood."}, {ID: "x", VO: " \"They crossed the world.\" "}, {ID: "shot_003"},
+	}}
+	meta := trailerCraftMetaFrom(reply, []string{"shot_001", "shot_002", "shot_003"})
+	if meta.Title != "Vampire Wellington" || meta.Tagline != "promise" || len(meta.Narration) != 2 {
+		t.Fatalf("meta = %+v", meta)
+	}
+	if meta.Narration[0].ShotID != "shot_002" || meta.Narration[1] != (trailerNarrationLine{ShotID: "shot_002", Text: "They crossed the world."}) {
+		t.Fatalf("narration = %+v", meta.Narration)
+	}
+	if g := trailerGuidance(dramatizeRequest{Narrator: true}); !strings.Contains(g, "Off-screen narrator") || !strings.Contains(trailerCraftSchema(dramatizeRequest{Narrator: true}), `"vo"`) {
+		t.Fatal("narrator guidance missing")
+	}
+	if g := trailerGuidance(dramatizeRequest{}); !strings.Contains(g, "There is no narrator") || strings.Contains(trailerCraftSchema(dramatizeRequest{}), `"vo"`) {
+		t.Fatal("no-narrator guidance wrong")
+	}
+	shots := []DramatizeShot{{ID: "shot_001", MotionPrompt: "crane"}, {ID: "shot_002", MotionPrompt: "talk", DialogueTranscript: "Speaker 1: hi"}}
+	trailerSilenceNarratedShots(shots, []trailerNarrationLine{{ShotID: "shot_001"}, {ShotID: "shot_002"}})
+	trailerSilenceNarratedShots(shots, []trailerNarrationLine{{ShotID: "shot_001"}})
+	if strings.Count(shots[0].MotionPrompt, "off-screen narration") != 1 || shots[1].MotionPrompt != "talk" {
+		t.Fatalf("silenced = %+v", shots)
+	}
+}
+
+func TestTrailerPosterPromptAndImageSize(t *testing.T) {
+	refs := []RemakeReferenceAsset{{Kind: "setting", ImageURL: "w"}, {Kind: "character", Name: "Huia", ImageURL: "h"}, {Kind: "character", Name: "Bad", ImageURL: "b", Error: "x"}}
+	primary, urls, names := trailerPosterRefs(refs)
+	if primary != "h" || len(urls) != 2 || urls[1] != "w" || len(names) != 1 {
+		t.Fatalf("refs = %s %v %v", primary, urls, names)
+	}
+	p := trailerPosterPrompt("ANCHOR", "Vampire Wellington", "Two oaths in the dark", names)
+	for _, want := range []string{"2:3 portrait", `"Vampire Wellington"`, `"Two oaths in the dark"`, "Huia"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("poster prompt missing %q: %s", want, p)
+		}
+	}
+	if w, h := trailerGPTImageSize("2:3"); w != 1024 || h != 1536 {
+		t.Fatalf("poster size = %dx%d", w, h)
+	}
+	if w, h := trailerGPTImageSize("16:9"); w != 1536 || h != 1024 {
+		t.Fatalf("frame size = %dx%d", w, h)
+	}
+	if trailerAspectPreset("2:3") != "3:4" || trailerAspectPreset("16:9") != "16:9" {
+		t.Fatal("aspect presets")
+	}
+}
+
+func TestTrailerDriveAudioFitPadsToClip(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg")
+	}
+	dir := t.TempDir()
+	src, music := filepath.Join(dir, "s.wav"), filepath.Join(dir, "m.wav")
+	for path, spec := range map[string]string{src: "sine=frequency=440:duration=6.8", music: "sine=frequency=110:duration=30"} {
+		if out, err := exec.Command("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", spec, path).CombinedOutput(); err != nil {
+			t.Fatalf("%v %s", err, out)
+		}
+	}
+	dest := filepath.Join(dir, "drive.wav")
+	if err := mixTrailerDriveAudioFit(context.Background(), src, music, 4.5, 6.2, trailerH3Seconds(6.2), dest); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := probeAudioSeconds(context.Background(), dest); err != nil || math.Abs(d-7) > 0.08 {
+		t.Fatalf("drive = %v %v", d, err)
+	}
+}
+
+func TestTrailerSilentPrompt(t *testing.T) {
+	got := trailerSilentPrompt(trailerMotionPrompt("Ship drifts into the harbour."))
+	if strings.Contains(got, "lip sync if anyone speaks") || !strings.Contains(got, "Nobody speaks") {
+		t.Fatalf("silent prompt = %q", got)
+	}
+}

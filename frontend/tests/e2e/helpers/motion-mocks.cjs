@@ -36,6 +36,11 @@ const RESULTS = {
     video_url: `${CDN}/preview.mp4`, preview_url: `${CDN}/preview.mp4`, guide_url: `${CDN}/guide.mp4`, tracks_url: `${CDN}/tracks.json`, signals_url: `${CDN}/signals.json`,
     poster_url: `${CDN}/poster.jpg`, tracks_count: 2, events_count: 7, bpm: 84.7, duration_seconds: 5, charged_usd: 0.1, seconds: 5, stats: STATS,
   },
+  'track-blur': { video_url: `${CDN}/result.mp4`, poster_url: `${CDN}/poster.jpg`, duration_seconds: 5, charged_usd: 0.3, seconds: 5, tracked_visible: 0.97 },
+  'sticky-overlay': { video_url: `${CDN}/result.mp4`, poster_url: `${CDN}/poster.jpg`, duration_seconds: 5, charged_usd: 0.3, seconds: 5, tracked_visible: 0.95 },
+  'flow-fx': { video_url: `${CDN}/result.mp4`, poster_url: `${CDN}/poster.jpg`, duration_seconds: 5, charged_usd: 0.4, seconds: 5 },
+  'reactive-fx': { video_url: `${CDN}/result.mp4`, poster_url: `${CDN}/poster.jpg`, duration_seconds: 5, charged_usd: 0.4, seconds: 5, bpm: 120 },
+  'mask-propagate': { video_url: `${CDN}/preview.mp4`, mask_url: `${CDN}/mask.mp4`, poster_url: `${CDN}/poster.jpg`, duration_seconds: 5, charged_usd: 0.25, seconds: 5 },
   'motion-score': { video_url: `${CDN}/score.mp4`, audio_url: `${CDN}/score.wav`, cues_url: `${CDN}/cues.json`, poster_url: `${CDN}/poster.jpg`, tracks_count: 2, events_count: 14, bpm: 144, duration_seconds: 5, charged_usd: 0.25, music_prompt: '144 BPM martial arts action score, tense, building', seconds: 5 },
 };
 

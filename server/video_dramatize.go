@@ -68,6 +68,15 @@ type dramatizeRequest struct {
 	// replaces the generated score; the lyric-video path.
 	SoundtrackURL string `json:"soundtrack_url,omitempty"`
 	Sketch        bool   `json:"sketch,omitempty"`
+	// Trailer: off-screen narrator (never H3 drive audio), score provider, cut-to-music, poster.
+	Narrator        bool                  `json:"narrator,omitempty"`
+	NarrationScript string                `json:"narration_script,omitempty"`
+	Narration       []trailerNarrationCue `json:"narration,omitempty"`
+	NarratorVoice   string                `json:"narrator_voice,omitempty"`
+	ScoreProvider   string                `json:"score_provider,omitempty"`
+	CutToMusic      *bool                 `json:"cut_to_music,omitempty"`
+	Poster          bool                  `json:"poster,omitempty"`
+	Tagline         string                `json:"tagline,omitempty"`
 }
 
 // dramatizeStep is one entry in the user-visible agent timeline.
@@ -126,6 +135,10 @@ type dramatizeJobState struct {
 	CreditsUsed  float64 `json:"credits_used,omitempty"`
 	Provider     string  `json:"planner,omitempty"`
 	ReferenceUSD float64 `json:"reference_cost_usd,omitempty"`
+
+	Narration     []trailerNarrationLine `json:"narration,omitempty"`
+	PosterURL     string                 `json:"poster_url,omitempty"`
+	ScoreProvider string                 `json:"score_provider,omitempty"`
 }
 
 func (s *dramatizeJobState) marshal() []byte {

@@ -15,6 +15,7 @@ from .signals import analyze, fight_stats, intensity_curve
 from .track import TrackSet, read_meta
 
 PALETTES = {"gold-blue", "fire", "neon", "ice"}
+PT_TOOLS = ("track-blur", "sticky-overlay", "flow-fx", "reactive-fx", "mask-propagate")
 
 
 class BadInput(Exception):
@@ -66,6 +67,17 @@ def run(args: dict) -> dict:
     device = args.get("device", "cpu")
     tracks_path = str(out / "tracks.json")
     result: dict = {"ok": True, "tool": tool}
+
+    if tool in PT_TOOLS:
+        from . import ptfx
+
+        pp = {**p, "device": device, "max_seconds": seconds}
+        if args.get("image"):
+            pp["image_path" if tool == "sticky-overlay" else "mask_path"] = args["image"]
+        try:
+            return ptfx.run(tool, video, out, pp, audio=args.get("audio"))
+        except ptfx.BadInput as e:
+            raise BadInput(str(e))
 
     if tool in ("motion-fx", "beat-drop"):
         preset = str(p.get("preset") or ("beat-drop" if tool == "beat-drop" else "anime-fight"))

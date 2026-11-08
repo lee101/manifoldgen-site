@@ -504,14 +504,8 @@ func handleStripePortal(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	apiKey := strings.TrimSpace(strings.TrimPrefix(string(ctx.Request.Header.Peek("Authorization")), "Bearer "))
-	if apiKey == "" {
-		jsonError(ctx, 401, "api key required")
-		return
-	}
-	user, err := dbConn.GetUserByAPIKey(apiKey)
-	if err != nil {
-		jsonError(ctx, 401, "invalid API key")
+	user, ok := requireScope(ctx, scopeAccountWrite)
+	if !ok {
 		return
 	}
 
@@ -521,6 +515,7 @@ func handleStripePortal(ctx *fasthttp.RequestCtx) {
 			jsonError(ctx, 400, "email required before accessing the billing portal")
 			return
 		}
+		var err error
 		customerID, err = stripeSvc.createCustomer(user.Email, user.WalletAddress)
 		if err != nil {
 			log.Printf("stripe portal customer error: %v", err)
@@ -549,13 +544,9 @@ func stripeAuthenticatedCustomer(ctx *fasthttp.RequestCtx) (*User, string, error
 	if stripeSvc == nil {
 		return nil, "", errors.New("stripe payments not configured")
 	}
-	apiKey := strings.TrimSpace(strings.TrimPrefix(string(ctx.Request.Header.Peek("Authorization")), "Bearer "))
-	if apiKey == "" {
-		return nil, "", errors.New("api key required")
-	}
-	user, err := dbConn.GetUserByAPIKey(apiKey)
+	user, err := scopedUser(ctx, scopeAccountWrite)
 	if err != nil {
-		return nil, "", errors.New("invalid API key")
+		return nil, "", err
 	}
 	if user.StripeCustomerID == "" {
 		return nil, "", errors.New("no subscription found")
@@ -635,11 +626,10 @@ func handleStripeCheckout(ctx *fasthttp.RequestCtx) {
 
 	var user *User
 	var err error
-	apiKey := strings.TrimSpace(strings.TrimPrefix(string(ctx.Request.Header.Peek("Authorization")), "Bearer "))
-	if apiKey != "" {
-		user, err = dbConn.GetUserByAPIKey(apiKey)
-		if err != nil {
-			jsonError(ctx, 401, "invalid API key")
+	if requestAPISecret(ctx) != "" {
+		var ok bool
+		user, ok = requireScope(ctx, scopeAccountWrite)
+		if !ok {
 			return
 		}
 		if req.WalletAddress == "" {

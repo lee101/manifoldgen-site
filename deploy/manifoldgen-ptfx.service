@@ -1,0 +1,24 @@
+[Unit]
+Description=ManifoldGen tracked-fx warm worker
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/manifoldgen-site/workers/motiontrack
+Environment=PYTHONPATH=/opt/manifoldgen-site/workers/motiontrack
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=MOTIONTRACK_HOME=/opt/manifoldgen-site/workers/ptfx/.home
+Environment=MOTIONTRACK_CKPT_DIR=/opt/manifoldgen-site/workers/ptfx/.home/ckpt
+Environment=MOTIONTRACK_TAPNET_SRC=/opt/manifoldgen-site/workers/ptfx/.home/src/tapnet
+Environment=MOTIONTRACK_ALLTRACKER_SRC=/opt/manifoldgen-site/workers/ptfx/.home/src/alltracker
+RuntimeDirectory=manifoldgen-ptfx
+ExecStart=/opt/manifoldgen-site/workers/ptfx/.venv/bin/python -m motiontrack.cli serve --socket /run/manifoldgen-ptfx/worker.sock --preload
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=300
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

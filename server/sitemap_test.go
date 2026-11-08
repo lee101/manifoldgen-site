@@ -22,7 +22,7 @@ func TestSitemapPagesIncludesMotionTools(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	handleSitemapPages(ctx)
 	body := string(ctx.Response.Body())
-	for _, slug := range []string{"motion-fx", "anime-fight-fx", "ki-aura-fx", "lightning-fx", "fight-game-hud", "motion-exaggerate-fx", "afterimage-fx", "fight-reel-reframe", "beat-drop-fx", "motion-tracker", "motion-score"} {
+	for _, slug := range []string{"motion-fx", "anime-fight-fx", "ki-aura-fx", "lightning-fx", "fight-game-hud", "motion-exaggerate-fx", "afterimage-fx", "fight-reel-reframe", "beat-drop-fx", "motion-tracker", "motion-score", "track-blur", "sticky-overlay", "flow-fx", "reactive-fx", "mask-propagate"} {
 		if got := strings.Count(body, sitemapSiteURL+"/tools/"+slug+"<"); got != 1 {
 			t.Fatalf("sitemap lists /tools/%s %d times, want once", slug, got)
 		}

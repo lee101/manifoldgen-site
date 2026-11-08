@@ -21,7 +21,7 @@ Develop: `cd cli && bun install && bun test && bun run build`.
 
 ## Agent skills
 
-`skills/<name>/SKILL.md` follows the skills CLI layout (`npx skills add <owner>/<repo>`; publish this folder as its own repo root `skills/`, or install from this repo). `manifoldgen` is the core skill (setup, spend rules, generate, jobs, MCP) and holds the single production-tool table; workflow skills defer to it: `destruction-studio`, `exploded-view`, `scene-builder`, `toon-shader`, `vectorize`, `shot-cleanup`, `image-fixer`, `shot-composer`, `motion-fx`, `beat-drop`, `motion-track`, `motion-score`, `color-grade`, `shader-fx`, `footage-sorter` (coming soon). The motion tools run a CPU Python worker (`workers/motiontrack`); see `docs/motion-tools.md`.
+`skills/<name>/SKILL.md` follows the skills CLI layout (`npx skills add <owner>/<repo>`; publish this folder as its own repo root `skills/`, or install from this repo). `manifoldgen` is the core skill (setup, spend rules, generate, jobs, MCP) and holds the single production-tool table; workflow skills defer to it: `destruction-studio`, `exploded-view`, `scene-builder`, `toon-shader`, `vectorize`, `shot-cleanup`, `image-fixer`, `shot-composer`, `motion-fx`, `beat-drop`, `motion-track`, `motion-score`, `tracked-fx`, `color-grade`, `shader-fx`, `footage-sorter` (coming soon). The motion tools run a CPU Python worker (`workers/motiontrack`); see `docs/motion-tools.md`.
 
 ## Configure Claude Code and Cursor
 
@@ -39,7 +39,7 @@ ManifoldGen exposes a stateless Streamable HTTP MCP server at:
 https://manifoldgen.com/api/mcp
 ```
 
-It uses the same account API key and credit balance as the REST API. Public pricing and media search do not require a key; generation and account jobs use `Authorization: Bearer $MANIFOLDGEN_API_KEY`.
+It uses the same account API key and credit balance as the REST API. Public pricing and media search do not require a key; generation and account jobs use `Authorization: Bearer $MANIFOLDGEN_API_KEY`. A scoped key needs the `mcp` scope plus each tool's scope (`generate:image|video|audio|tools`, `jobs:read`); a 403 `insufficient_scope` names the missing one. `GET /api/keys/scopes` lists scopes.
 
 ## Configure Codex
 

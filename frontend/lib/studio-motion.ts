@@ -1,8 +1,8 @@
-import { MOTION_PRICING, type MotionService } from './production-tools';
+import { MOTION_PRICING, isTrackedService, type MotionService } from './production-tools';
 
 export type { MotionService };
 
-export const MOTION_SERVICES = Object.keys(MOTION_PRICING) as MotionService[];
+export const MOTION_SERVICES = Object.keys(MOTION_PRICING).filter((service) => !isTrackedService(service)) as MotionService[];
 
 export const MOTION_PALETTES = ['gold-blue', 'fire', 'neon', 'ice'] as const;
 export type MotionPalette = (typeof MOTION_PALETTES)[number];

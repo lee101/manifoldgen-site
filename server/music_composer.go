@@ -197,13 +197,7 @@ func handleMusicCompose(ctx *fasthttp.RequestCtx) {
 		jsonError(ctx, http.StatusBadRequest, "invalid json")
 		return
 	}
-	auth := strings.TrimPrefix(string(ctx.Request.Header.Peek("Authorization")), "Bearer ")
-	if auth == "" || auth == string(ctx.Request.Header.Peek("Authorization")) {
-		jsonError(ctx, http.StatusUnauthorized, "authorization required")
-		return
-	}
-	if _, err := dbConn.GetUserByAPIKey(auth); err != nil {
-		jsonError(ctx, http.StatusUnauthorized, "invalid API key")
+	if _, ok := requireScope(ctx, scopeAudio); !ok {
 		return
 	}
 	result, err := composeMusic3(context.Background(), input.Description, input.Duration, input.Instrumental)

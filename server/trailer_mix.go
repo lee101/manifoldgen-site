@@ -114,3 +114,88 @@ func trailerScoreVolumeExpr(windows []trailerScoreWindow) string {
 	}
 	return expr
 }
+
+// trailerSubtractWindows removes narrator VO (padded by guard) from the swell windows so the score never swells over
+// the narrator; leftover pieces shorter than trailerScoreMinSwell are dropped.
+func trailerSubtractWindows(gaps, cuts []trailerScoreWindow, guard float64) []trailerScoreWindow {
+	out := append([]trailerScoreWindow(nil), gaps...)
+	for _, c := range cuts {
+		cs, ce := c.Start-guard, c.End+guard
+		var next []trailerScoreWindow
+		for _, g := range out {
+			if ce <= g.Start || cs >= g.End {
+				next = append(next, g)
+				continue
+			}
+			if cs > g.Start {
+				next = append(next, trailerScoreWindow{g.Start, cs})
+			}
+			if ce < g.End {
+				next = append(next, trailerScoreWindow{ce, g.End})
+			}
+		}
+		out = next
+	}
+	kept := out[:0]
+	for _, g := range out {
+		if g.End-g.Start >= trailerScoreMinSwell {
+			kept = append(kept, g)
+		}
+	}
+	return kept
+}
+
+const (
+	trailerDuckDepth = 0.45 // picture audio (with the baked-in drive bed) dips to 55% under narration
+	trailerDuckRamp  = 0.25
+)
+
+// trailerDuckExpr is a volume expression that dips by depth inside each window with short linear ramps.
+func trailerDuckExpr(windows []trailerScoreWindow, depth float64) string {
+	expr := "1"
+	for _, w := range windows {
+		expr += fmt.Sprintf("-%.2f*clip(min((t-%.3f)/%.2f,(%.3f-t)/%.2f),0,1)", depth, w.Start-trailerDuckRamp, trailerDuckRamp, w.End+trailerDuckRamp, trailerDuckRamp)
+	}
+	return expr
+}
+
+// trailerMasterFilter mixes input 0 (picture dialogue/ambience) with an optional score (next input, swell expression)
+// and an optional narrator stem (last input). Without a separate score the picture itself ducks under the narrator.
+func trailerMasterFilter(hasMusic, hasVO bool, swells, vo []trailerScoreWindow) string {
+	const af = "aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo"
+	picture := "[0:a]loudnorm=I=-20:TP=-2:LRA=9," + af
+	if hasVO && !hasMusic {
+		picture += ",volume='" + trailerDuckExpr(vo, trailerDuckDepth) + "':eval=frame"
+	}
+	parts := []string{picture + "[a]"}
+	labels := "[a]"
+	in := 1
+	if hasMusic {
+		parts = append(parts, fmt.Sprintf("[%d:a]%s,volume='%s':eval=frame,afade=t=in:st=0:d=1.2[m]", in, af, trailerScoreVolumeExpr(swells)))
+		labels += "[m]"
+		in++
+	}
+	if hasVO {
+		parts = append(parts, fmt.Sprintf("[%d:a]%s[vo]", in, af))
+		labels += "[vo]"
+	}
+	n := strings.Count(labels, "[")
+	parts = append(parts, fmt.Sprintf("%samix=inputs=%d:duration=first:dropout_transition=2:normalize=0,alimiter=limit=0.95[mix]", labels, n))
+	return strings.Join(parts, ";")
+}
+
+func mixTrailerMaster(ctx context.Context, videoPath, musicPath, voPath, dest string, swells, vo []trailerScoreWindow) error {
+	args := []string{"-y", "-v", "error", "-i", videoPath}
+	if musicPath != "" {
+		args = append(args, "-i", musicPath)
+	}
+	if voPath != "" {
+		args = append(args, "-i", voPath)
+	}
+	args = append(args, "-filter_complex", trailerMasterFilter(musicPath != "", voPath != "", swells, vo),
+		"-map", "0:v:0", "-map", "[mix]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", dest)
+	if combined, err := exec.CommandContext(ctx, "ffmpeg", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("mix master: %w: %s", err, tailOutput(combined))
+	}
+	return nil
+}

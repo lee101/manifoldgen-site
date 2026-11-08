@@ -84,6 +84,11 @@ var servicePricesUSD = map[string]float64{
 	prodkitBeatDrop:            prodkitBeatDropMin,
 	prodkitMotionTrack:         prodkitMotionTrackMin,
 	prodkitMotionScore:         prodkitMotionScoreMin,
+	prodkitTrackBlur:           prodkitTrackBlurMin,
+	prodkitStickyOverlay:       prodkitStickyMin,
+	prodkitFlowFX:              prodkitFlowFXMin,
+	prodkitReactiveFX:          prodkitReactiveFXMin,
+	prodkitMaskPropagate:       prodkitMaskPropagateMin,
 	prodkitTimeline:            timelineMinUSD,
 }
 
@@ -534,6 +539,11 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "beat-drop", Internal: prodkitBeatDrop},
 	{Public: "motion-track", Internal: prodkitMotionTrack},
 	{Public: "motion-score", Internal: prodkitMotionScore},
+	{Public: "track-blur", Internal: prodkitTrackBlur},
+	{Public: "sticky-overlay", Internal: prodkitStickyOverlay},
+	{Public: "flow-fx", Internal: prodkitFlowFX},
+	{Public: "reactive-fx", Internal: prodkitReactiveFX},
+	{Public: "mask-propagate", Internal: prodkitMaskPropagate},
 	{Public: "timeline-render", Internal: prodkitTimeline},
 }
 
@@ -729,20 +739,23 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	// Authenticate with the API key only. The former wallet_address-in-body
 	// branch let anyone spend another account's credits by naming its public
 	// wallet; billing must be tied to the bearer api_key.
-	var user *User
-	var err error
-	authHeader := string(ctx.Request.Header.Peek("Authorization"))
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
-		user, err = dbConn.GetUserByAPIKey(apiKey)
-		if err != nil {
-			servicePaywallError(ctx, http.StatusUnauthorized, paywallCodeAuthRequired, "invalid API key")
-			return
-		}
-	} else {
+	if requestAPISecret(ctx) == "" {
 		servicePaywallError(ctx, http.StatusUnauthorized, paywallCodeAuthRequired, "authorization required: use Authorization header with your API key")
+		ctx.Response.Header.Set("WWW-Authenticate", "Bearer")
 		return
 	}
+	principal, failure := authorizeScope(ctx, serviceScope(req.Service))
+	if failure != nil {
+		if failure.Status == http.StatusUnauthorized {
+			servicePaywallError(ctx, failure.Status, paywallCodeAuthRequired, failure.Message)
+			ctx.Response.Header.Set("WWW-Authenticate", "Bearer")
+		} else {
+			failure.write(ctx)
+		}
+		return
+	}
+	user := principal.User
+	var err error
 	if req.Service == "h3_video" {
 		handleH3VideoService(ctx, req, user)
 		return
@@ -2651,14 +2664,7 @@ func handleListTrainingDatasets(ctx *fasthttp.RequestCtx) {
 // handleUploadTrainingDataset accepts multipart upload and forwards to inference.
 // Auth: Bearer API key. Does not deduct credits — that happens at /api/service POST when training starts.
 func handleUploadTrainingDataset(ctx *fasthttp.RequestCtx) {
-	authHeader := string(ctx.Request.Header.Peek("Authorization"))
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		jsonError(ctx, 401, "API key required (Authorization: Bearer ...)")
-		return
-	}
-	apiKey := strings.TrimPrefix(authHeader, "Bearer ")
-	if _, err := dbConn.GetUserByAPIKey(apiKey); err != nil {
-		jsonError(ctx, 401, "invalid API key")
+	if _, ok := requireScope(ctx, scopeTrainLoRA); !ok {
 		return
 	}
 

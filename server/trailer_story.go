@@ -15,11 +15,65 @@ import (
 const trailerStoryModelDefault = "grok-4.6"
 
 const trailerCraftGuidance = `You are writing a cinematic trailer, not a plot summary.
-Preserve the user's story, world, and character bible. Do not invent a different premise, narrator, or ending.
+Preserve the user's story, world, and character bible. Do not invent a different premise or ending.
 Useful tendencies, not rules: the audience should know who we follow, what they want, what just broke, and what it might cost them; withhold the solution.
 Each shot earns its place with one dominant visual idea. Dialogue is in-world, specific to these people, never generic save-the-world lines. Cut into conflict; do not show who wins a swing.
 Sound can arrive before the image. Silence can sit before a title. Mystery is a clear question without an answer; confusion is not knowing what to ask.
 If the user already listed SHOT lines, keep that order and those events. Tighten camera, performance, and prompts.`
+
+const trailerNarratorGuidance = `
+Off-screen narrator: give a few silent establishing or transition shots (empty dialogue_transcript) one short narrator line in "vo": at most 8 words, 3 to 5 lines across the whole trailer, classic trailer cadence, a question or a promise, never a plot summary.
+The narrator is never on screen: nobody in image_prompt or motion_prompt speaks or mouths the vo line. A shot with on-camera dialogue gets "vo":"".`
+
+const trailerNoNarratorGuidance = `
+There is no narrator. All speech is in-world and on camera.`
+
+type trailerCraftMeta struct {
+	Title     string
+	Tagline   string
+	Narration []trailerNarrationLine
+}
+
+func trailerGuidance(req dramatizeRequest) string {
+	switch {
+	case trailerPlannerNarrates(req):
+		return trailerCraftGuidance + trailerNarratorGuidance
+	case len(req.Narration) > 0:
+		return trailerCraftGuidance + "\nSome shots carry scripted off-screen narration (listed as narration by shot). Keep those shots visually strong and free of on-camera dialogue unless the brief gives them lines. Do not write more narration."
+	}
+	return trailerCraftGuidance + trailerNoNarratorGuidance
+}
+
+func trailerCraftSchema(req dramatizeRequest) string {
+	vo := ""
+	if trailerPlannerNarrates(req) {
+		vo = `,"vo":"off-screen narrator line or empty"`
+	}
+	return `Return JSON: {"title":"...","tagline":"poster tagline, at most 8 words","emotional_promise":"one sentence","shots":[{
+  "id":"shot_001","visual_description":"...","camera":"...","lighting":"...","emotion":"...","characters":["..."],
+  "image_prompt":"self-contained production still with canonical visible traits, no captions",
+  "motion_prompt":"camera and performance for image-to-video, lip sync if speaking, no subtitles",
+  "dialogue_transcript":"Speaker 1: [tag] line or empty","director_note":"optional"` + vo + `
+}]}`
+}
+
+func trailerCraftMetaFrom(reply trailerCraftReply, ids []string) trailerCraftMeta {
+	meta := trailerCraftMeta{Title: strings.TrimSpace(reply.Title), Tagline: strings.TrimSpace(firstNonEmpty(reply.Tagline, reply.EmotionalPromise))}
+	for i, item := range reply.Shots {
+		vo := trailerCleanNarration(item.VO)
+		if vo == "" || i >= len(ids) {
+			continue
+		}
+		id := ids[i]
+		for _, known := range ids {
+			if known == strings.TrimSpace(item.ID) {
+				id = known
+			}
+		}
+		meta.Narration = append(meta.Narration, trailerNarrationLine{ShotID: id, Text: vo})
+	}
+	return meta
+}
 
 func trailerStoryModel() string {
 	return firstNonEmpty(strings.TrimSpace(getEnv("TRAILER_STORY_MODEL", "")), trailerStoryModelDefault)
@@ -72,6 +126,7 @@ func callTrailerGrokJSON(ctx context.Context, system, user string) ([]byte, erro
 
 type trailerCraftReply struct {
 	Title            string             `json:"title"`
+	Tagline          string             `json:"tagline"`
 	EmotionalPromise string             `json:"emotional_promise"`
 	Shots            []trailerCraftShot `json:"shots"`
 }
@@ -87,30 +142,27 @@ type trailerCraftShot struct {
 	MotionPrompt       string   `json:"motion_prompt"`
 	DialogueTranscript string   `json:"dialogue_transcript"`
 	DirectorNote       string   `json:"director_note"`
+	VO                 string   `json:"vo"`
 }
 
-func craftTrailerShots(ctx context.Context, req dramatizeRequest, shots []DramatizeShot) ([]DramatizeShot, error) {
+func craftTrailerShots(ctx context.Context, req dramatizeRequest, shots []DramatizeShot) ([]DramatizeShot, trailerCraftMeta, error) {
 	if len(shots) == 0 {
-		return shots, fmt.Errorf("no shots to craft")
+		return shots, trailerCraftMeta{}, fmt.Errorf("no shots to craft")
 	}
-	payload, _ := json.Marshal(map[string]interface{}{
+	input := map[string]interface{}{
 		"brief": req.Prompt, "setting_bible": req.SettingPrompt, "character_bible": req.CharacterBible, "shots": shots,
-	})
-	blob, err := callTrailerGrokJSON(ctx, trailerCraftGuidance+`
-
-Return JSON: {"title":"...","emotional_promise":"one sentence","shots":[{
-  "id":"shot_001","visual_description":"...","camera":"...","lighting":"...","emotion":"...","characters":["..."],
-  "image_prompt":"self-contained production still with canonical visible traits, no captions",
-  "motion_prompt":"camera and performance for image-to-video, lip sync if speaking, no subtitles",
-  "dialogue_transcript":"Speaker 1: [tag] line or empty","director_note":"optional"
-}]}
-Keep the same shot ids and count. Seconds stay as supplied.`, string(payload))
+	}
+	if len(req.Narration) > 0 {
+		input["narration"] = req.Narration
+	}
+	payload, _ := json.Marshal(input)
+	blob, err := callTrailerGrokJSON(ctx, trailerGuidance(req)+"\n\n"+trailerCraftSchema(req)+"\nKeep the same shot ids and count. Seconds stay as supplied.", string(payload))
 	if err != nil {
-		return shots, err
+		return shots, trailerCraftMeta{}, err
 	}
 	var reply trailerCraftReply
 	if json.Unmarshal(blob, &reply) != nil || len(reply.Shots) == 0 {
-		return shots, fmt.Errorf("grok returned no crafted shots")
+		return shots, trailerCraftMeta{}, fmt.Errorf("grok returned no crafted shots")
 	}
 	byID := map[string]trailerCraftShot{}
 	for _, item := range reply.Shots {
@@ -153,28 +205,26 @@ Keep the same shot ids and count. Seconds stay as supplied.`, string(payload))
 	if promise := strings.TrimSpace(reply.EmotionalPromise); promise != "" && out[0].DirectorNote == "" {
 		out[0].DirectorNote = promise
 	}
-	return out, nil
+	ids := make([]string, len(out))
+	for i := range out {
+		ids[i] = out[i].ID
+	}
+	return out, trailerCraftMetaFrom(reply, ids), nil
 }
 
-func planTrailerShotsGrok(ctx context.Context, req dramatizeRequest) ([]DramatizeShot, error) {
-	user := fmt.Sprintf(`Plan exactly %d shots, each %.0f seconds, 16:9, in-world dialogue only.
+func planTrailerShotsGrok(ctx context.Context, req dramatizeRequest) ([]DramatizeShot, trailerCraftMeta, error) {
+	user := fmt.Sprintf(`Plan exactly %d shots, each %.0f seconds, 16:9.
 Brief: %s
 Setting: %s
 Character bible: %s
 Return the craft JSON with that many shots.`, req.MaxShots, req.Seconds, req.Prompt, firstNonEmpty(req.SettingPrompt, "Infer one coherent world."), firstNonEmpty(req.CharacterBible, "Infer recurring people."))
-	blob, err := callTrailerGrokJSON(ctx, trailerCraftGuidance+`
-Return JSON: {"title":"...","emotional_promise":"one sentence","shots":[{
-  "id":"shot_001","visual_description":"...","camera":"...","lighting":"...","emotion":"...","characters":["..."],
-  "image_prompt":"self-contained production still with canonical visible traits, no captions",
-  "motion_prompt":"camera and performance for image-to-video, lip sync if speaking, no subtitles",
-  "dialogue_transcript":"Speaker 1: [tag] line or empty","director_note":"optional"
-}]}`, user)
+	blob, err := callTrailerGrokJSON(ctx, trailerGuidance(req)+"\n"+trailerCraftSchema(req), user)
 	if err != nil {
-		return nil, err
+		return nil, trailerCraftMeta{}, err
 	}
 	var reply trailerCraftReply
 	if json.Unmarshal(blob, &reply) != nil || len(reply.Shots) == 0 {
-		return nil, fmt.Errorf("grok returned no trailer shots")
+		return nil, trailerCraftMeta{}, fmt.Errorf("grok returned no trailer shots")
 	}
 	shots := make([]DramatizeShot, 0, len(reply.Shots))
 	for i, item := range reply.Shots {
@@ -197,9 +247,13 @@ Return JSON: {"title":"...","emotional_promise":"one sentence","shots":[{
 		shots = append(shots, shot)
 	}
 	if len(shots) == 0 {
-		return nil, fmt.Errorf("grok returned no usable trailer shots")
+		return nil, trailerCraftMeta{}, fmt.Errorf("grok returned no usable trailer shots")
 	}
-	return shots, nil
+	ids := make([]string, len(shots))
+	for i := range shots {
+		ids[i] = shots[i].ID
+	}
+	return shots, trailerCraftMetaFrom(reply, ids), nil
 }
 
 func trailerSamePerson(a, b string) bool {

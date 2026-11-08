@@ -12,6 +12,7 @@ import {
 } from '../../lib/auth';
 import { friendlyError, parseJSONResponse } from '../../lib/http';
 import VideoDownload from '../../components/video-download';
+import ApiKeysPanel from '../../components/api-keys-panel';
 import type { SubscriptionPlanKind } from '../../lib/payments';
 
 const API = '/api';
@@ -595,6 +596,8 @@ export default function AccountPage() {
                 Copy API key
               </button>
             </div>
+
+            <ApiKeysPanel apiKey={apiKey} />
 
             <section className="mt-6" data-testid="account-remake-jobs">
               <div className="flex items-end justify-between gap-3">

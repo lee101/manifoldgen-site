@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 const (
@@ -104,7 +105,8 @@ func trailerVoiceForName(name string) trailerVoice {
 
 func trailerLooksLikeSpeaker(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "shot", "scene", "note", "style", "pace", "speaker", "speaker 1", "speaker 2", "context", "transcript":
+	case "shot", "scene", "note", "style", "pace", "speaker", "speaker 1", "speaker 2", "context", "transcript",
+		"vo", "v.o", "narrator", "narration", "voiceover", "voice over", "voice-over":
 		return false
 	}
 	return strings.TrimSpace(name) != ""
@@ -399,7 +401,14 @@ func trailerSpeechFilter(idx int, speechDur, target float64) string {
 }
 
 func mixTrailerDriveAudio(ctx context.Context, speechPath, musicPath string, musicStart, seconds float64, dest string) error {
-	seconds = float64(trailerSnapSeconds(seconds))
+	return mixTrailerDriveAudioFit(ctx, speechPath, musicPath, musicStart, seconds, trailerSnapSeconds(seconds), dest)
+}
+
+// mixTrailerDriveAudioFit builds an H3 drive bed of clip seconds: speech fitted into the cut (fit seconds, the part of
+// the clip that survives the edit) then padded, over the score slice that plays under this cut in the master.
+func mixTrailerDriveAudioFit(ctx context.Context, speechPath, musicPath string, musicStart, fit float64, clip int, dest string) error {
+	seconds := float64(clip)
+	fit = clampFloat(fit, 0.5, seconds)
 	dur := fmt.Sprintf("%.3f", seconds)
 	args := []string{"-y", "-v", "error"}
 	var filters []string
@@ -408,7 +417,7 @@ func mixTrailerDriveAudio(ctx context.Context, speechPath, musicPath string, mus
 	if strings.TrimSpace(speechPath) != "" {
 		args = append(args, "-i", speechPath)
 		speechDur, _ := probeAudioSeconds(ctx, speechPath)
-		filters = append(filters, trailerSpeechFilter(in, speechDur, seconds))
+		filters = append(filters, strings.TrimSuffix(trailerSpeechFilter(in, speechDur, fit), "[s]")+fmt.Sprintf(",apad=pad_dur=%s,atrim=0:%s,asetpts=PTS-STARTPTS[s]", dur, dur))
 		speechIdx = in
 		in++
 	}
@@ -482,7 +491,7 @@ func persistTrailerAudioBytes(userID, preferredName string, audio []byte, conten
 }
 
 func writeTrailerSpeech(ctx context.Context, shot DramatizeShot, destPrefix string) (path string, usd float64, err error) {
-	seconds := trailerSnapSeconds(shot.Seconds)
+	seconds := trailerSnapSeconds(math.Floor(shot.Seconds))
 	transcript, voices, profiles := trailerCastFromShot(shot)
 	if strings.TrimSpace(transcript) == "" {
 		return "", 0, nil
@@ -500,32 +509,37 @@ func writeTrailerSpeech(ctx context.Context, shot DramatizeShot, destPrefix stri
 		return "", 0, err
 	}
 	usd = trailerSpeechUSD(blob, prompt)
+	path, err = writeTrailerGeminiAudio(ctx, blob, destPrefix)
+	return path, usd, err
+}
+
+func writeTrailerGeminiAudio(ctx context.Context, blob []byte, destPrefix string) (string, error) {
 	var payload struct {
 		AudioBase64 string `json:"audio_base64"`
 		AudioURL    string `json:"audio_url"`
 		Format      string `json:"format"`
 	}
 	if err := json.Unmarshal(blob, &payload); err != nil {
-		return "", usd, err
+		return "", err
 	}
 	if strings.TrimSpace(payload.AudioURL) != "" {
 		ext := strings.ToLower(filepath.Ext(payload.AudioURL))
-		if ext == "" {
+		if ext == "" || len(ext) > 6 {
 			ext = ".wav"
 		}
-		path = destPrefix + ext
-		return path, usd, downloadToFile(ctx, payload.AudioURL, path)
+		path := destPrefix + ext
+		return path, downloadToFile(ctx, payload.AudioURL, path)
 	}
 	raw, err := base64.StdEncoding.DecodeString(payload.AudioBase64)
 	if err != nil || len(raw) == 0 {
-		return "", usd, fmt.Errorf("trailer speech returned no audio")
+		return "", fmt.Errorf("trailer speech returned no audio")
 	}
 	format := strings.ToLower(strings.TrimSpace(payload.Format))
 	if format == "" {
 		format = "wav"
 	}
-	path = destPrefix + "." + format
-	return path, usd, os.WriteFile(path, raw, 0o644)
+	path := destPrefix + "." + format
+	return path, os.WriteFile(path, raw, 0o644)
 }
 
 func prepareTrailerDriveAudio(ctx context.Context, user *User, results []dramatizeShotResult, musicPath, workDir string) ([]dramatizeShotResult, float64, error) {
@@ -537,41 +551,49 @@ func prepareTrailerDriveAudio(ctx context.Context, user *User, results []dramati
 	if user != nil {
 		userID = user.ID
 	}
-	var cursor float64
+	starts := trailerCutStarts(results)
+	var mu sync.Mutex
 	var speechUSD float64
-	for i := range results {
-		select {
-		case <-ctx.Done():
-			return results, speechUSD, ctx.Err()
-		default:
+	trailerParallel(len(results), dramatizeShotConcurrency, func(i int) {
+		if ctx.Err() != nil || results[i].ImageURL == "" {
+			return
 		}
-		seconds := float64(trailerSnapSeconds(results[i].Shot.Seconds))
-		results[i].Shot.Seconds = seconds
+		cut := results[i].Shot.Seconds
 		speechPath := ""
 		if strings.TrimSpace(results[i].Shot.DialogueTranscript) != "" {
-			path, usd, err := writeTrailerSpeech(ctx, results[i].Shot, filepath.Join(driveDir, fmt.Sprintf("speech_%03d", i)))
-			if err == nil {
+			if path, usd, err := writeTrailerSpeech(ctx, results[i].Shot, filepath.Join(driveDir, fmt.Sprintf("speech_%03d", i))); err == nil {
 				speechPath = path
+				mu.Lock()
 				speechUSD += usd
+				mu.Unlock()
 			}
 		}
 		mixPath := filepath.Join(driveDir, fmt.Sprintf("drive_%03d.wav", i))
-		if err := mixTrailerDriveAudio(ctx, speechPath, musicPath, cursor, seconds, mixPath); err != nil {
-			cursor += seconds
-			continue
+		if mixTrailerDriveAudioFit(ctx, speechPath, musicPath, starts[i], cut, trailerH3Seconds(cut), mixPath) != nil {
+			return
 		}
 		blob, err := os.ReadFile(mixPath)
 		if err != nil {
-			cursor += seconds
-			continue
+			return
 		}
-		url, err := persistTrailerAudioBytes(userID, fmt.Sprintf("trailer-drive-%03d.wav", i+1), blob, "audio/wav")
-		if err == nil {
+		if url, err := persistTrailerAudioBytes(userID, fmt.Sprintf("trailer-drive-%03d.wav", i+1), blob, "audio/wav"); err == nil {
 			results[i].DriveAudioURL = url
 		}
-		cursor += seconds
+	})
+	return results, speechUSD, ctx.Err()
+}
+
+// trailerCutStarts is where each shot will start in the master: only shots with a start frame make the cut.
+func trailerCutStarts(results []dramatizeShotResult) []float64 {
+	starts := make([]float64, len(results))
+	var cursor float64
+	for i, r := range results {
+		starts[i] = cursor
+		if r.ImageURL != "" {
+			cursor += r.Shot.Seconds
+		}
 	}
-	return results, speechUSD, nil
+	return starts
 }
 
 func trailerShotsHaveDriveAudio(results []dramatizeShotResult) bool {

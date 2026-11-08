@@ -54,3 +54,39 @@ func TestTrailerSpeechGapsFindsLongSilencesOnly(t *testing.T) {
 		t.Fatalf("gaps = %+v", gaps)
 	}
 }
+
+func TestTrailerSubtractWindowsKeepsScoreOffNarrator(t *testing.T) {
+	gaps := []trailerScoreWindow{{0, 12}, {20, 23}}
+	got := trailerSubtractWindows(gaps, []trailerScoreWindow{{4, 6}, {20.5, 21}}, 0.5)
+	if len(got) != 2 || got[0] != (trailerScoreWindow{0, 3.5}) || got[1] != (trailerScoreWindow{6.5, 12}) {
+		t.Fatalf("got = %+v", got)
+	}
+	if got := trailerSubtractWindows(gaps, nil, 0.5); len(got) != 2 {
+		t.Fatalf("no narration must keep gaps: %+v", got)
+	}
+}
+
+func TestTrailerDuckExpr(t *testing.T) {
+	if got := trailerDuckExpr(nil, 0.45); got != "1" {
+		t.Fatalf("expr = %q", got)
+	}
+	if got := trailerDuckExpr([]trailerScoreWindow{{2, 4}}, 0.45); got != "1-0.45*clip(min((t-1.750)/0.25,(4.250-t)/0.25),0,1)" {
+		t.Fatalf("expr = %q", got)
+	}
+}
+
+func TestTrailerMasterFilterInputs(t *testing.T) {
+	vo := []trailerScoreWindow{{1, 2}}
+	both := trailerMasterFilter(true, true, nil, vo)
+	if !strings.Contains(both, "[1:a]") || !strings.Contains(both, "[2:a]") || !strings.Contains(both, "[a][m][vo]amix=inputs=3") || strings.Contains(both, "-0.45*") {
+		t.Fatalf("music+vo = %s", both)
+	}
+	voOnly := trailerMasterFilter(false, true, nil, vo)
+	if !strings.Contains(voOnly, "[1:a]") || !strings.Contains(voOnly, "[a][vo]amix=inputs=2") || !strings.Contains(voOnly, "1-0.45*") {
+		t.Fatalf("vo only must duck the picture: %s", voOnly)
+	}
+	musicOnly := trailerMasterFilter(true, false, []trailerScoreWindow{{6, 11}}, nil)
+	if !strings.Contains(musicOnly, "[a][m]amix=inputs=2") || !strings.Contains(musicOnly, "0.30+0.65*") {
+		t.Fatalf("music only = %s", musicOnly)
+	}
+}

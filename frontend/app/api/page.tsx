@@ -146,7 +146,10 @@ const mcpSetup = `claude mcp add --transport http manifoldgen https://manifoldge
 
 const llmMarkdown = `# ManifoldGen API integration
 
-Use \`Authorization: Bearer $MANIFOLDGEN_API_KEY\` on every protected request. Never expose the key in browser code.
+Use \`Authorization: Bearer $MANIFOLDGEN_API_KEY\` (or \`X-API-Key\`) on every protected request. Never expose the key in browser code.
+
+## Scoped keys
+Keys can be limited to scopes (generate:image, generate:video, generate:audio, generate:tools, train:lora, gallery:read, jobs:read, jobs:write, credits:read, account:write, mcp) and expire. \`GET /api/keys/scopes\` lists them; \`GET /api/keys/me\` describes the calling key. A key with \`keys:manage\` can \`GET /api/keys\`, \`POST /api/keys\` {name, scopes, expires_in_days?}, \`POST /api/keys/{id}/rotate\` {grace_seconds?} and \`DELETE /api/keys/{id}\`; secrets are returned once. 403 insufficient_scope responses carry error.required_scope and a WWW-Authenticate header. Details: https://geo.manifoldgen.com/blog/api-keys-scopes-rotation.md
 
 ## CLI and agents
 \`npm i -g manifoldgen-cli\`, \`mg auth login\` (browser approval; \`--no-browser\` for remote shells), then \`mg generate <service> --prompt ... [--image file|url] [--param k=v] --wait --out dir --json\`. Check cost with \`mg pricing <service>\` or \`--dry-run\`. Agent skills: \`npx skills add manifoldgen/skills\`. MCP: \`https://manifoldgen.com/api/mcp\` with the same bearer key; \`mg mcp config\` prints Claude Code, Codex and Cursor snippets.
@@ -220,6 +223,7 @@ export default function ApiDocsPage() {
         <aside className="hidden lg:block">
           <nav className="sticky top-24 space-y-1 text-sm text-white/55">
             <a href="#quickstart" className="block py-1.5 hover:text-white">Quickstart</a>
+            <a href="#keys" className="block py-1.5 hover:text-white">Scoped keys</a>
             <a href="#cli" className="block py-1.5 hover:text-white">CLI &amp; agents</a>
             <a href="#video" className="block py-1.5 hover:text-white">Generate video</a>
             <a href="#jobs" className="block py-1.5 hover:text-white">Poll a job</a>
@@ -268,6 +272,24 @@ export default function ApiDocsPage() {
             <p className="mt-6 text-sm leading-6 text-white/60">
               Send your key as <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">Authorization: Bearer …</code>.
               Keep it on your server; never ship it in public browser code.
+            </p>
+          </section>
+
+          <section id="keys" className="scroll-mt-28 border-t border-white/10 py-10">
+            <h2 className="font-display text-2xl font-700">Scoped keys</h2>
+            <p className="mt-4 text-sm leading-6 text-white/60">
+              Create keys limited to the scopes a job needs, with an optional expiry, on the Account page or through the API.
+              Send them as <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">Authorization: Bearer …</code> or{' '}
+              <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">X-API-Key</code>. <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">GET /api/keys/scopes</code> lists
+              the scopes: generate:image, generate:video, generate:audio, generate:tools, train:lora, gallery:read, jobs:read, jobs:write, credits:read, account:write and mcp.
+            </p>
+            <p className="mt-3 text-sm leading-6 text-white/60">
+              A key with <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">keys:manage</code> is the management key: it calls{' '}
+              <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">GET/POST /api/keys</code>,{' '}
+              <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">POST /api/keys/&#123;id&#125;/rotate</code> (optional grace_seconds up to 86400) and{' '}
+              <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">DELETE /api/keys/&#123;id&#125;</code>. Secrets are returned once. A missing scope returns
+              403 <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">insufficient_scope</code> with <code className="rounded bg-white/10 px-1.5 py-0.5 text-white">error.required_scope</code>.
+              Your original account key keeps working with every scope except keys:manage.
             </p>
           </section>
 

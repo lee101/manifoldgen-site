@@ -1866,17 +1866,7 @@ func shouldRelaunchVideoJob(job *VideoJob) bool {
 // handleVideoJobStatus lets a caller recover a paid result after the original
 // request disconnects. Pending jobs are relaunched after a process restart.
 func handleVideoJobStatus(ctx *fasthttp.RequestCtx, jobID string) {
-	var user *User
-	var err error
-	authHeader := string(ctx.Request.Header.Peek("Authorization"))
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		user, err = dbConn.GetUserByAPIKey(strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer ")))
-	} else {
-		// Dropped the wallet_address query fallback: a public wallet + a job id
-		// let a stranger read another user's generated media. Require api_key.
-		jsonError(ctx, http.StatusUnauthorized, "authorization required")
-		return
-	}
+	user, err := videoJobUser(ctx)
 	if err != nil {
 		jsonError(ctx, http.StatusUnauthorized, "invalid credentials")
 		return
@@ -2081,11 +2071,7 @@ func publicJobStatusURL(job *VideoJob) string {
 }
 
 func videoJobUser(ctx *fasthttp.RequestCtx) (*User, error) {
-	authHeader := string(ctx.Request.Header.Peek("Authorization"))
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		return nil, fmt.Errorf("authorization required")
-	}
-	return dbConn.GetUserByAPIKey(strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer ")))
+	return studioUser(ctx)
 }
 
 func handleListVideoJobs(ctx *fasthttp.RequestCtx) {

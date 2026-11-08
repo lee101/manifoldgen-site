@@ -345,15 +345,7 @@ var lookupUserByAPIKey = func(apiKey string) (*User, error) { return dbConn.GetU
 var setUserAllowNSFW = func(userID string, allow bool) error { return dbConn.SetUserAllowNSFW(userID, allow) }
 
 func studioUser(ctx *fasthttp.RequestCtx) (*User, error) {
-	auth := strings.TrimSpace(string(ctx.Request.Header.Peek("Authorization")))
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return nil, fmt.Errorf("sign in required")
-	}
-	user, err := lookupUserByAPIKey(strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")))
-	if err != nil {
-		return nil, fmt.Errorf("invalid API key")
-	}
-	return user, nil
+	return scopedUser(ctx, routeScope(string(ctx.Path()), string(ctx.Method())))
 }
 
 func studioPublicMediaURL(raw string) error {

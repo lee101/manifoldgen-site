@@ -46,6 +46,12 @@ func handleMCPWithExecutor(ctx *fasthttp.RequestCtx, execute mcpToolExecutor) {
 		return
 	}
 
+	if requestAPISecret(ctx) != "" {
+		if _, ok := requireScope(ctx, scopeMCP); !ok {
+			return
+		}
+	}
+
 	var request mcpRequest
 	decoder := json.NewDecoder(bytes.NewReader(ctx.PostBody()))
 	if err := decoder.Decode(&request); err != nil {
@@ -80,7 +86,7 @@ func handleMCPWithExecutor(ctx *fasthttp.RequestCtx, execute mcpToolExecutor) {
 				"title":   "ManifoldGen",
 				"version": "1.0.0",
 			},
-			"instructions": "Search public ManifoldGen media without a key. Pricing, generation, production (hosted Blender, vectorize, video cleanup) and job tools use the current API; generation and private jobs require Authorization: Bearer with a ManifoldGen API key and may spend account credits. Upload local files with create_upload, poll with wait_for_job, edit video as JSON with get_studio_schema, create_studio_project and render_timeline, and see prompts/list for guided production workflows.",
+			"instructions": "Search public ManifoldGen media without a key. Pricing, generation, production (hosted Blender, vectorize, video cleanup) and job tools use the current API; generation and private jobs require Authorization: Bearer (or X-API-Key) with a ManifoldGen API key and may spend account credits. The key needs the mcp scope plus the scope of each tool: generate:image, generate:video, generate:audio or generate:tools for generate_media by service, jobs:read for get_job and list_jobs, generate:tools for create_upload and create_studio_project. A 403 insufficient_scope error names the missing scope; GET /api/keys/scopes lists scopes. Upload local files with create_upload, poll with wait_for_job, edit video as JSON with get_studio_schema, create_studio_project and render_timeline, and see prompts/list for guided production workflows.",
 		})
 	case "ping":
 		writeMCPResult(ctx, request.ID, map[string]interface{}{})
@@ -136,7 +142,7 @@ func manifoldMCPTools() []map[string]interface{} {
 		{
 			"name":        "search_media",
 			"title":       "Search ManifoldGen media",
-			"description": "Semantically search public images, videos, or audio. A bearer key also includes that account's private audio in audio searches.",
+			"description": "Semantically search public images, videos, or audio. A bearer key with gallery:read also includes that account's private audio in audio searches.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -155,14 +161,14 @@ func manifoldMCPTools() []map[string]interface{} {
 		{
 			"name":        "generate_media",
 			"title":       "Generate ManifoldGen media",
-			"description": "Generate an image, video, music track, sound effect, edit, or background-removed video. Requires a ManifoldGen bearer API key and spends credits. Call get_pricing first unless the user already approved the cost.",
+			"description": "Generate an image, video, music track, sound effect, edit, or background-removed video. Requires a ManifoldGen bearer API key with the mcp scope and the scope for the service (generate:image, generate:video, generate:audio or generate:tools, train:lora for lora_training), and spends credits. Call get_pricing first unless the user already approved the cost.",
 			"inputSchema": manifoldGenerateSchema(),
 			"annotations": writeTool,
 		},
 		{
 			"name":        "get_job",
 			"title":       "Get a ManifoldGen job",
-			"description": "Return current status and output for an asynchronous video or audio job owned by the authenticated account.",
+			"description": "Return current status and output for an asynchronous video or audio job owned by the authenticated account. Requires scope jobs:read.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -176,7 +182,7 @@ func manifoldMCPTools() []map[string]interface{} {
 		{
 			"name":        "list_jobs",
 			"title":       "List ManifoldGen jobs",
-			"description": "List recent video or asynchronous audio jobs owned by the authenticated account.",
+			"description": "List recent video or asynchronous audio jobs owned by the authenticated account. Requires scope jobs:read.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -386,6 +392,7 @@ func executeMCPTool(parent *fasthttp.RequestCtx, name string, arguments json.Raw
 		if strings.TrimSpace(args.JobID) == "" {
 			return map[string]interface{}{"error": "job_id is required"}, http.StatusBadRequest
 		}
+		internal.Request.SetRequestURI("/api/video-jobs/" + url.PathEscape(strings.TrimSpace(args.JobID)))
 		handleVideoJobStatus(internal, args.JobID)
 	case "list_jobs":
 		var args struct {
@@ -396,8 +403,10 @@ func executeMCPTool(parent *fasthttp.RequestCtx, name string, arguments json.Raw
 		}
 		switch args.Kind {
 		case "", "video":
+			internal.Request.SetRequestURI("/api/video-jobs")
 			handleListVideoJobs(internal)
 		case "audio":
+			internal.Request.SetRequestURI("/api/audio-jobs")
 			handleListAudioJobs(internal)
 		default:
 			return map[string]interface{}{"error": "kind must be video or audio"}, http.StatusBadRequest
@@ -421,6 +430,9 @@ func newMCPInternalContext(parent *fasthttp.RequestCtx) *fasthttp.RequestCtx {
 	internal.Request.Header.SetMethod(http.MethodGet)
 	if authorization := parent.Request.Header.Peek("Authorization"); len(authorization) > 0 {
 		internal.Request.Header.SetBytesV("Authorization", authorization)
+	}
+	if apiKey := parent.Request.Header.Peek("X-API-Key"); len(apiKey) > 0 {
+		internal.Request.Header.SetBytesV("X-API-Key", apiKey)
 	}
 	return internal
 }

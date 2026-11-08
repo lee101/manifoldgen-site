@@ -92,3 +92,14 @@ func TestVoiceR2ObjectKey(t *testing.T) {
 		t.Fatal("accepted foreign storage host")
 	}
 }
+
+func TestVoiceElevenPayloadSendsOnlyAcceptedFields(t *testing.T) {
+	input, model, err := normalizeVoiceInput(voiceGenerationInput{Model: "eleven-v3", Text: "Hello", Voice: "George", Mood: "happy", Speed: 0.9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := voiceFalPayload(input, model, 7)
+	if len(payload) != 2 || payload["text"] != "[happy] Hello" || payload["voice"] != "George" {
+		t.Fatalf("payload = %#v", payload)
+	}
+}

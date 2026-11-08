@@ -118,7 +118,7 @@ func buildGeoLanding() string {
 	var b strings.Builder
 	b.WriteString("# ManifoldGen\n\n> " + geoBrandLine + "\n\n")
 	b.WriteString("This site serves clean markdown for AI agents and assistants. Every page exists as HTML at its canonical URL and as raw markdown by appending `.md`. Prices quoted across these pages are machine-readable at https://manifoldgen.com/api/pricing.\n\n")
-	b.WriteString("Agents can act on this platform directly through the hosted MCP endpoint `https://manifoldgen.com/api/mcp` (tools: get_pricing, search_media, generate_media, get_job, list_jobs) or the REST API with an `sk-mg-` key.\n\n## Pages\n\n")
+	b.WriteString("Agents can act on this platform directly through the hosted MCP endpoint `https://manifoldgen.com/api/mcp` (tools: get_pricing, search_media, generate_media, get_job, list_jobs) or the REST API with an `sk-mg-` key (`Authorization: Bearer` or `X-API-Key`; least-privilege scopes, rotation and a management key are described in [Scoped API keys](/blog/api-keys-scopes-rotation.md)).\n\n## Pages\n\n")
 	for i := range geoArticles {
 		a := &geoArticles[i]
 		fmt.Fprintf(&b, "- [%s](/blog/%s.md): %s\n", a.title, a.slug, a.description)

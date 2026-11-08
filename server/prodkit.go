@@ -83,6 +83,16 @@ var prodkitTools = []prodkitTool{
 		[]string{}},
 	{prodkitMotionScore, "motion-score", "Motion Score", "motion", prodkitMotionScoreMin, "per second of video (max 30 s, min $0.20): beat-locked drums and impact sound design from the motion, optional audio_url music fitted to the beat",
 		[]string{"keep_audio"}},
+	{prodkitTrackBlur, "track-blur", "Tracked Blur", "motion", prodkitTrackBlurMin, "per second of video (max 20 s, min $0.15): blur, pixelate or black out a region, point or mask that stays locked to what it covers as subject and camera move; optional image_url mask",
+		[]string{"region", "point", "mode", "shape", "style", "strength", "feather", "grow", "invert", "color", "persp", "track_pad"}},
+	{prodkitStickyOverlay, "sticky-overlay", "Sticky Overlay", "motion", prodkitStickyMin, "per second of video (max 20 s, min $0.15): text or a PNG sticker (image_url) pinned to a point in the scene that follows its motion, scale and perspective",
+		[]string{"text", "x", "y", "width", "rotation", "color", "persp", "track_pad", "pop", "fade"}},
+	{prodkitFlowFX, "flow-fx", "Flow FX", "motion", prodkitFlowFXMin, "per second of video (max 15 s, min $0.20): motion blur, jelly wobble, light trails and flow colours driven by measured per-pixel motion",
+		[]string{"effects", "strength", "palette"}},
+	{prodkitReactiveFX, "reactive-fx", "Music Reactive FX", "motion", prodkitReactiveFXMin, "per second of video (max 20 s, min $0.20): glow, trails, sparks and warp on tracked points that pulse with the kicks, snares and energy of audio_url (or the clip's own sound)",
+		[]string{"effects", "intensity", "palette", "seed", "audio_start"}},
+	{prodkitMaskPropagate, "mask-propagate", "Mask Propagate", "motion", prodkitMaskPropagateMin, "per second of video (max 20 s, min $0.12): carry a first-frame mask (image_url) or shape through the video; returns a mask video and an overlay preview, the building block for inpainting",
+		[]string{"region", "point", "shape", "segment"}},
 	{prodkitTimeline, "timeline-render", "Timeline Render", "timeline", 0.01, "per output second up to 1920x1080 ($0.02 above, $0.05 minimum); renders a Studio timeline JSON exactly like the Studio export and saves it as an editable project",
 		[]string{"document", "project_id", "name", "format", "quality", "resolution", "fps"}},
 }
@@ -465,7 +475,7 @@ func handleProdkitService(ctx *fasthttp.RequestCtx, req ServiceUsageRequest, use
 		return
 	}
 	tool, _ := prodkitToolFor(req.Service)
-	if (tool.Engine == "blender" && prodkitBlenderBinary() == "") || (tool.Engine == "timeline" && !timelineRendererAvailable()) || (tool.Engine == "motion" && !prodkitMotionAvailable()) {
+	if (tool.Engine == "blender" && prodkitBlenderBinary() == "") || (tool.Engine == "timeline" && !timelineRendererAvailable()) || (tool.Engine == "motion" && !prodkitMotionAvailableFor(tool.Service)) {
 		jsonError(ctx, http.StatusServiceUnavailable, tool.Title+" is not available on this server")
 		return
 	}

@@ -40,14 +40,35 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--max-side", type=int, default=1280)
     f.add_argument("--device", default="cpu")
     f.add_argument("--manifest")
+    pt = sub.add_parser("pt", help="tracker-driven fx (needs a GPU tracker interpreter)")
+    pt.add_argument("tool", choices=["track-blur", "sticky-overlay", "flow-fx", "reactive-fx", "mask-propagate"])
+    pt.add_argument("video")
+    pt.add_argument("out")
+    pt.add_argument("--params", default="{}", help="json params")
+    pt.add_argument("--audio")
     j = sub.add_parser("job", help="run a job args.json (server contract)")
     j.add_argument("args")
+    sv = sub.add_parser("serve", help="keep the tracker models warm and run jobs sent over a unix socket")
+    sv.add_argument("--socket", required=True)
+    sv.add_argument("--preload", action="store_true")
     sub.add_parser("presets")
     a = ap.parse_args(argv)
     if a.cmd == "job":
         from . import job
 
         return job.main([a.args])
+    if a.cmd == "serve":
+        from . import serve
+
+        serve.serve(a.socket, a.preload)
+        return 0
+    if a.cmd == "pt":
+        from . import ptfx
+
+        m = ptfx.run(a.tool, a.video, a.out, json.loads(a.params), audio=a.audio, progress=_progress)
+        print()
+        print(json.dumps(m))
+        return 0
     if a.cmd == "presets":
         print(json.dumps({k: {"title": v["title"], "blurb": v["blurb"], "fx": v["fx"]} for k, v in R.PRESETS.items() if not v.get("hidden")}, indent=1))
         return 0

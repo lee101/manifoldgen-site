@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -85,6 +86,14 @@ func normalizeTrailerRequest(req *dramatizeRequest) error {
 	if req.ConsistencyPasses > remakeMaxConsistencyPasses {
 		req.ConsistencyPasses = remakeMaxConsistencyPasses
 	}
+	req.ScoreProvider = normalizeTrailerScoreProvider(req.ScoreProvider)
+	req.Tagline = strings.TrimSpace(req.Tagline)
+	if len(req.Tagline) > 160 {
+		return fmt.Errorf("the tagline must be 160 characters or fewer")
+	}
+	if err := normalizeTrailerNarration(req); err != nil {
+		return err
+	}
 	req.Mode = "trailer"
 	return nil
 }
@@ -142,8 +151,20 @@ func trailerEstimate(req dramatizeRequest) RemakeEstimate {
 	if !req.Sketch {
 		speechUSD = estimateGeminiTTSCostUSD(strings.Repeat("n", trailerTTSCharsGuess)) * float64(shots)
 	}
+	posterUSD := 0.0
+	if req.Poster && !req.Sketch {
+		posterUSD = imageUSD
+		baseImages++
+	}
+	if !req.Sketch {
+		lines := len(req.Narration)
+		if lines == 0 && req.Narrator {
+			lines = 4
+		}
+		speechUSD += estimateGeminiTTSCostUSD(strings.Repeat("n", 900)) * trailerNarratorTakes * float64(lines)
+	}
 	agentUSD := remakeAgentUSDPerShot * float64(shots)
-	imageCost := imageUSD * float64(baseImages)
+	imageCost := imageUSD*float64(shots) + posterUSD
 	refUSD := imageUSD * float64(references)
 	repairUSD := imageUSD * float64(repairs)
 	total := imageCost + refUSD + repairUSD + h3USD + musicUSD + speechUSD + agentUSD
@@ -169,7 +190,7 @@ func parseTrailerShotList(prompt string, seconds float64, maxShots int) []Dramat
 			continue
 		}
 		dur := seconds
-		desc := strings.TrimSpace(match[3])
+		desc, _ := trailerSplitVO(strings.TrimSpace(match[3]))
 		if match[2] != "" {
 			if parsed := parseTrailerFloat(match[2]); parsed >= trailerMinShotSeconds {
 				dur = float64(trailerSnapSeconds(parsed))
@@ -321,12 +342,15 @@ func trailerRenderedUSD(state *dramatizeJobState) float64 {
 			total += imageUSD * float64(1+shot.Regenerations)
 		}
 		if !req.Sketch && shot.Error == "" && strings.TrimSpace(shot.ClipURL) != "" {
-			clip, _, _ := h3Estimate(ServiceUsageRequest{Service: "h3_video", Size: "native", Duration: int(shot.Shot.Seconds), NumSteps: 20})
+			clip, _, _ := h3Estimate(ServiceUsageRequest{Service: "h3_video", Size: "native", Duration: trailerH3Seconds(shot.Shot.Seconds), NumSteps: 20})
 			total += clip
 		}
 	}
 	if strings.TrimSpace(state.AudioURL) != "" && req.SoundtrackURL == "" {
 		total += music3PublicPriceUSD(trailerMusicDuration(planShotsFromResults(state.Shots)))
+	}
+	if strings.TrimSpace(state.PosterURL) != "" {
+		total += imageUSD
 	}
 	total += state.SpeechUSD
 	return total
@@ -346,19 +370,22 @@ func runTrailerAgent(ctx context.Context, job *VideoJob, user *User, state *dram
 
 	started := state.begin(job.ID, "plan", "Locking style, characters, and shot list")
 	shots := parseTrailerShotList(req.Prompt, req.Seconds, req.MaxShots)
+	briefVO := trailerNarrationFromBrief(req.Prompt, req.MaxShots)
 	styleBible := RemakeStyleBible{}
 	var characterSpecs []RemakeCharacterSpec
+	var meta trailerCraftMeta
 	if len(shots) == 0 {
-		planned, err := planTrailerShots(ctx, req)
+		planned, plannedMeta, err := planTrailerShots(ctx, req)
 		if err != nil {
 			state.fail(job.ID, started, err.Error())
 			return err
 		}
-		shots = planned
+		shots, meta = planned, plannedMeta
 	}
 	if !req.Sketch {
-		if crafted, craftErr := craftTrailerShots(ctx, req, shots); craftErr == nil {
+		if crafted, craftMeta, craftErr := craftTrailerShots(ctx, req, shots); craftErr == nil {
 			shots = crafted
+			meta = trailerMergeMeta(meta, craftMeta)
 			state.Provider = "Grok 4.6"
 		} else if style, specs, harmonized, err := harmonizeRemakePrompts(ctx, req, shots); err == nil {
 			styleBible, characterSpecs, shots = style, specs, harmonized
@@ -393,9 +420,23 @@ func runTrailerAgent(ctx context.Context, job *VideoJob, user *User, state *dram
 	if !req.Sketch {
 		shots = planTrailerDialogue(ctx, req, shots)
 	}
-	plan := &DramatizePlan{Title: "Cinematic trailer", Concept: req.Prompt, Provider: state.Provider, Width: trailerCanvasWidth, Height: trailerCanvasHeight, Shots: shots, StyleBible: styleBible, CharacterSpecs: characterSpecs}
-	state.Plan = plan
-	state.finish(job.ID, started, fmt.Sprintf("%d shots · %s", len(shots), state.Provider))
+	var narration []trailerNarrationLine
+	if !req.Sketch {
+		narration = trailerMergeNarration(req.Narration, briefVO, meta.Narration, shots)
+		trailerSilenceNarratedShots(shots, narration)
+	}
+	title := trailerTitleFromText(req.Prompt)
+	posterTitle := firstNonEmpty(title, meta.Title)
+	tagline := firstNonEmpty(req.Tagline, meta.Tagline)
+	plan := &DramatizePlan{Title: firstNonEmpty(posterTitle, "Cinematic trailer"), Concept: req.Prompt, Provider: state.Provider, Width: trailerCanvasWidth, Height: trailerCanvasHeight, Shots: shots, StyleBible: styleBible, CharacterSpecs: characterSpecs}
+	state.Plan, state.Narration = plan, narration
+	state.finish(job.ID, started, fmt.Sprintf("%d shots · %d narrator lines · %s", len(shots), len(narration), state.Provider))
+
+	var scoreCh chan trailerScoreResult
+	if !req.Sketch {
+		scoreCh = make(chan trailerScoreResult, 1)
+		go func(duration int) { scoreCh <- generateTrailerScore(ctx, user, req, duration, workDir) }(trailerMusicDuration(shots))
+	}
 
 	started = state.begin(job.ID, "references", "World board and character sheets")
 	references := buildTrailerReferences(ctx, req, shots, styleBible, characterSpecs, anchor)
@@ -438,31 +479,44 @@ func runTrailerAgent(ctx context.Context, job *VideoJob, user *User, state *dram
 		return nil
 	}
 
-	started = state.begin(job.ID, "score", "Composing the trailer score")
-	musicPrompt := req.MusicPrompt
-	if musicPrompt == "" {
-		musicPrompt = "Intimate dark-fantasy trailer score, low cello, wet-wood percussion, close female alto, funeral choir through rain, no pop beat, no heroic brass fanfare"
+	started = state.begin(job.ID, "score", "Joining the score composed alongside the frames")
+	var score trailerScoreResult
+	select {
+	case score = <-scoreCh:
+	case <-ctx.Done():
+		state.fail(job.ID, started, ctx.Err().Error())
+		return ctx.Err()
 	}
-	if req.Lyrics != "" {
-		musicPrompt = musicPrompt + "\n\n" + req.Lyrics
-	}
-	musicPath := ""
-	if req.SoundtrackURL != "" {
-		state.AudioURL = req.SoundtrackURL
-		musicPath = filepath.Join(workDir, "score.audio")
-		if downloadToFile(ctx, req.SoundtrackURL, musicPath) != nil {
-			musicPath = ""
-		}
-		state.finish(job.ID, started, "using the supplied song")
-	} else if url, musicErr := studioGenerateMusic(musicPrompt, trailerMusicDuration(planShotsFromResults(rendered))); musicErr == nil {
-		state.AudioURL = url
-		musicPath = filepath.Join(workDir, "score.audio")
-		if downloadToFile(ctx, url, musicPath) != nil {
-			musicPath = ""
-		}
-		state.finish(job.ID, started, "score ready")
+	musicPath := score.Path
+	if score.Err != nil {
+		state.finish(job.ID, started, "score unavailable: "+score.Err.Error())
 	} else {
-		state.finish(job.ID, started, "score unavailable: "+musicErr.Error())
+		state.AudioURL, state.ScoreProvider = score.URL, score.Provider
+		state.finish(job.ID, started, score.Detail)
+	}
+
+	if musicPath != "" && trailerCutToMusic(req) {
+		started = state.begin(job.ID, "cut", "Snapping cuts to the score's beats and onsets")
+		hold := 0.0
+		if title != "" {
+			hold = trailerTitleHold
+		}
+		if cuts, cutErr := snapTrailerShotsToScore(ctx, musicPath, rendered, hold); cutErr != nil {
+			state.finish(job.ID, started, "kept planned lengths: "+cutErr.Error())
+		} else {
+			var total float64
+			for i := range rendered {
+				rendered[i].Shot.Seconds, rendered[i].Duration = cuts[i], cuts[i]
+				if i < len(plan.Shots) {
+					plan.Shots[i].Seconds = cuts[i]
+				}
+				if rendered[i].ImageURL != "" {
+					total += cuts[i]
+				}
+			}
+			state.Shots = rendered
+			state.finish(job.ID, started, fmt.Sprintf("%d cuts on the beat · %.1fs", countTrailerImages(rendered), total))
+		}
 	}
 
 	started = state.begin(job.ID, "voices", "Directing Gemini speech and mixing drive audio")
@@ -480,6 +534,38 @@ func runTrailerAgent(ctx context.Context, job *VideoJob, user *User, state *dram
 		}
 	}
 	state.finish(job.ID, started, fmt.Sprintf("%d/%d drive beds · $%.3f speech", driven, len(rendered), speechUSD))
+
+	// Narrator VO, the end card, and the poster never feed H3, so they render while the clips animate.
+	slots := map[string]float64{trailerTitleShotID: trailerTitleHold}
+	for _, shot := range rendered {
+		slots[shot.Shot.ID] = shot.Shot.Seconds
+	}
+	var side sync.WaitGroup
+	var narrated []trailerNarrationLine
+	var narrationUSD float64
+	var titleImage, posterURL string
+	var posterErr error
+	if len(narration) > 0 {
+		side.Add(1)
+		go func() {
+			defer side.Done()
+			narrated, narrationUSD = synthesizeTrailerNarration(ctx, user, req.NarratorVoice, narration, slots, workDir)
+		}()
+	}
+	if title != "" {
+		side.Add(1)
+		go func() {
+			defer side.Done()
+			titleImage = trailerTitleCard(req, references, anchor, title)
+		}()
+	}
+	if req.Poster {
+		side.Add(1)
+		go func() {
+			defer side.Done()
+			posterURL, posterErr = generateTrailerPoster(req, references, anchor, posterTitle, tagline)
+		}()
+	}
 
 	started = state.begin(job.ID, "animate", "Animating accepted start frames on H3 with drive audio")
 	rendered, err = animateTrailerShots(ctx, user, rendered)
@@ -501,38 +587,52 @@ func runTrailerAgent(ctx context.Context, job *VideoJob, user *User, state *dram
 	}
 	state.finish(job.ID, started, fmt.Sprintf("%d/%d H3 clips", okClips, len(rendered)))
 
+	if len(narration) > 0 || title != "" || req.Poster {
+		started = state.begin(job.ID, "narration", "Narrator VO, end card, and poster")
+		side.Wait()
+		state.SpeechUSD += narrationUSD
+		voiced := 0
+		for _, line := range narrated {
+			if line.path != "" {
+				voiced++
+			}
+		}
+		if len(narrated) > 0 {
+			state.Narration = narrated
+		}
+		state.PosterURL = posterURL
+		detail := fmt.Sprintf("%d/%d narrator lines", voiced, len(narration))
+		if req.Poster {
+			if posterErr != nil {
+				detail += " · poster unavailable: " + posterErr.Error()
+			} else if posterURL != "" {
+				detail += " · poster ready"
+			}
+		}
+		state.finish(job.ID, started, detail)
+	}
+
 	started = state.begin(job.ID, "assemble", "Cutting the 16:9 master")
 	finalPath := filepath.Join(workDir, "trailer.mp4")
 	assembleMusic := ""
 	if !trailerShotsHaveDriveAudio(rendered) {
-		assembleMusic = state.AudioURL
+		assembleMusic = musicPath
 	}
-	titleImage := ""
-	if title := trailerTitleFromText(req.Prompt); title != "" {
-		world := ""
-		for _, ref := range references {
-			if ref.Kind == "setting" && ref.ImageURL != "" {
-				world = ref.ImageURL
-				break
-			}
-		}
-		prompt := fmt.Sprintf("%s Cinematic end-card still only. Physically set title type reading %q as carved or gilt type in the world. No website, no extra words, no logos, no credits roll.", anchor, title)
-		if url, genErr := trailerGenerateImage(false, req.ImageModel, prompt, world, nil, "16:9"); genErr == nil {
-			titleImage = url
-		}
-	}
-	timeline, err := assembleTrailer(ctx, rendered, workDir, finalPath, assembleMusic, titleImage)
+	timeline, placed, err := assembleTrailer(ctx, rendered, workDir, finalPath, assembleMusic, titleImage, narrated)
 	if err != nil {
 		state.fail(job.ID, started, err.Error())
 		return err
 	}
 	state.Shots = timeline
+	if len(narrated) > 0 {
+		state.Narration = trailerApplyPlacement(narrated, placed)
+	}
 	probe, err := probeVideoFile(ctx, finalPath)
 	if err != nil {
 		return err
 	}
 	state.Duration, state.Width, state.Height = probe.Duration, probe.Width, probe.Height
-	state.finish(job.ID, started, fmt.Sprintf("%.1fs master", probe.Duration))
+	state.finish(job.ID, started, fmt.Sprintf("%.1fs master · %d narrator lines placed", probe.Duration, len(placed)))
 
 	started = state.begin(job.ID, "publish", "Publishing the trailer and Studio timeline")
 	state.VideoURL, err = publishFinalVideo(ctx, finalPath, user.ID, func() (string, error) {
@@ -541,6 +641,11 @@ func runTrailerAgent(ctx context.Context, job *VideoJob, user *User, state *dram
 	if err != nil {
 		state.fail(job.ID, started, err.Error())
 		return err
+	}
+	if state.PosterURL != "" {
+		if published, pubErr := publishTrailerPoster(ctx, state.PosterURL, user.ID, workDir); pubErr == nil {
+			state.PosterURL = published
+		}
 	}
 	state.ProjectID, state.ProjectURL, err = publishDramatizeStudioProject(ctx, user, plan, timeline, workDir)
 	if err != nil {
@@ -551,12 +656,87 @@ func runTrailerAgent(ctx context.Context, job *VideoJob, user *User, state *dram
 	return nil
 }
 
-func planTrailerShots(ctx context.Context, req dramatizeRequest) ([]DramatizeShot, error) {
-	if shots, err := planTrailerShotsGrok(ctx, req); err == nil {
-		return shots, nil
+func trailerMergeMeta(base, next trailerCraftMeta) trailerCraftMeta {
+	base.Title = firstNonEmpty(next.Title, base.Title)
+	base.Tagline = firstNonEmpty(next.Tagline, base.Tagline)
+	if len(next.Narration) > 0 {
+		base.Narration = next.Narration
+	}
+	return base
+}
+
+// trailerSilenceNarratedShots keeps H3 from inventing mouth movement on shots that only carry off-screen narration.
+func trailerSilenceNarratedShots(shots []DramatizeShot, narration []trailerNarrationLine) {
+	const note = "No one on screen speaks; any voice is off-screen narration."
+	voiced := map[string]bool{}
+	for _, line := range narration {
+		voiced[line.ShotID] = true
+	}
+	for i := range shots {
+		if voiced[shots[i].ID] && strings.TrimSpace(shots[i].DialogueTranscript) == "" && !strings.Contains(shots[i].MotionPrompt, note) {
+			shots[i].MotionPrompt = strings.TrimSpace(shots[i].MotionPrompt + " " + note)
+		}
+	}
+}
+
+func trailerApplyPlacement(lines, placed []trailerNarrationLine) []trailerNarrationLine {
+	starts := map[string]float64{}
+	for _, line := range placed {
+		starts[line.ShotID] = line.Start
+	}
+	out := append([]trailerNarrationLine(nil), lines...)
+	for i := range out {
+		out[i].Start = 0
+		if start, ok := starts[out[i].ShotID]; ok {
+			out[i].Start = start
+		} else if out[i].Error == "" && out[i].path != "" {
+			out[i].Error = "not placed: shot missing from the cut"
+		}
+	}
+	return out
+}
+
+func trailerTitleCard(req dramatizeRequest, references []RemakeReferenceAsset, anchor, title string) string {
+	world := ""
+	for _, ref := range references {
+		if ref.Kind == "setting" && ref.ImageURL != "" {
+			world = ref.ImageURL
+			break
+		}
+	}
+	prompt := fmt.Sprintf("%s Cinematic end-card still only. Physically set title type reading %q as carved or gilt type in the world. No website, no extra words, no logos, no credits roll.", anchor, title)
+	url, err := trailerGenerateImage(false, req.ImageModel, prompt, world, nil, "16:9")
+	if err != nil {
+		return ""
+	}
+	return url
+}
+
+func publishTrailerPoster(ctx context.Context, posterURL, userID, workDir string) (string, error) {
+	path := filepath.Join(workDir, "poster.img")
+	if err := downloadToFile(ctx, posterURL, path); err != nil {
+		return "", err
+	}
+	head := make([]byte, 512)
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	n, _ := f.Read(head)
+	f.Close()
+	contentType := http.DetectContentType(head[:n])
+	if !strings.HasPrefix(contentType, "image/") {
+		return "", fmt.Errorf("poster is not an image")
+	}
+	return uploadDramatizeArtifact(ctx, path, userID, contentType)
+}
+
+func planTrailerShots(ctx context.Context, req dramatizeRequest) ([]DramatizeShot, trailerCraftMeta, error) {
+	if shots, meta, err := planTrailerShotsGrok(ctx, req); err == nil {
+		return shots, meta, nil
 	}
 	content := []map[string]interface{}{{"type": "input_text", "text": fmt.Sprintf(`Plan a cinematic game trailer of exactly %d shots. Each shot is %.0f seconds, 16:9.
-Craft like a finished publisher trailer: one coherent world, locked character designs, one camera move, at most one or two spoken in-world lines (no narrator). Silent establishing shots are allowed.
+Craft like a finished publisher trailer: one coherent world, locked character designs, one camera move, at most one or two spoken in-world lines (no on-screen narrator). Silent establishing shots are allowed.
 Each image_prompt is a self-contained production still: repeat the rendering language, name only visible characters with their canonical traits, no captions or logos.
 Each motion_prompt describes camera and performance for image-to-video, asks for precise lip sync when someone speaks, native room tone, and forbids subtitles, captions, and logos. Do not restate the still.
 Overall brief: %s
@@ -564,11 +744,11 @@ Setting bible: %s
 Character bible: %s`, req.MaxShots, req.Seconds, req.Prompt, firstNonEmpty(req.SettingPrompt, "Infer one coherent world."), firstNonEmpty(req.CharacterBible, "Infer recurring people."))}}
 	blob, err := callRemakeOpenAIJSON(ctx, remakeLunaModel, "You are a trailer director. Preserve the user's story beats. Do not invent a different genre.", content, "trailer_shot_plan", remakeVisionReplySchema())
 	if err != nil {
-		return nil, err
+		return nil, trailerCraftMeta{}, err
 	}
 	var reply remakeVisionReply
 	if err := json.Unmarshal(blob, &reply); err != nil || len(reply.Shots) == 0 {
-		return nil, fmt.Errorf("trailer planner returned no shots")
+		return nil, trailerCraftMeta{}, fmt.Errorf("trailer planner returned no shots")
 	}
 	shots := make([]DramatizeShot, 0, len(reply.Shots))
 	for i, item := range reply.Shots {
@@ -580,9 +760,9 @@ Character bible: %s`, req.MaxShots, req.Seconds, req.Prompt, firstNonEmpty(req.S
 		shots = append(shots, shot)
 	}
 	if len(shots) == 0 {
-		return nil, fmt.Errorf("trailer planner returned no usable shots")
+		return nil, trailerCraftMeta{}, fmt.Errorf("trailer planner returned no usable shots")
 	}
-	return shots, nil
+	return shots, trailerCraftMeta{}, nil
 }
 
 func trailerGenerateImage(sketch bool, model, prompt, imageURL string, refs []string, aspect string) (string, error) {
@@ -601,11 +781,33 @@ func trailerGenerateImage(sketch bool, model, prompt, imageURL string, refs []st
 	if model == "" {
 		model = "gpt-image-2"
 	}
-	blob, err := proxyOpenPathsModelImage(ServiceUsageRequest{Service: "openpaths_image", Model: model, Prompt: prompt, ImageURL: imageURL, ReferenceImageURLs: refs, AspectRatio: aspect, N: 1})
+	req := ServiceUsageRequest{Service: "openpaths_image", Model: model, Prompt: prompt, ImageURL: imageURL, ReferenceImageURLs: refs, AspectRatio: trailerAspectPreset(aspect), N: 1}
+	if strings.HasPrefix(model, "gpt-image") {
+		req.Width, req.Height = trailerGPTImageSize(aspect)
+	}
+	blob, err := proxyOpenPathsModelImage(req)
 	if err != nil {
 		return "", err
 	}
 	return extractImageURL(blob)
+}
+
+// gpt-image-2 ignores aspect_ratio and takes an explicit size; without one it renders 1024x1024.
+func trailerGPTImageSize(aspect string) (int, int) {
+	switch aspect {
+	case "2:3", "9:16", "3:4":
+		return 1024, 1536
+	case "1:1":
+		return 1024, 1024
+	}
+	return 1536, 1024
+}
+
+func trailerAspectPreset(aspect string) string {
+	if aspect == "2:3" {
+		return "3:4"
+	}
+	return aspect
 }
 
 func buildTrailerReferences(ctx context.Context, req dramatizeRequest, shots []DramatizeShot, style RemakeStyleBible, specs []RemakeCharacterSpec, anchor string) []RemakeReferenceAsset {
@@ -622,12 +824,10 @@ func buildTrailerReferences(ctx context.Context, req dramatizeRequest, shots []D
 		return references
 	}
 	characters := trailerCharactersFromBible(req.CharacterBible, specs, shots)
-	for i := range characters {
-		select {
-		case <-ctx.Done():
+	trailerParallel(len(characters), dramatizeShotConcurrency, func(i int) {
+		if ctx.Err() != nil {
 			characters[i].Error = ctx.Err().Error()
-			continue
-		default:
+			return
 		}
 		description := characters[i].Description
 		if spec := characterSpecByID(specs, characters[i].ID); spec != nil {
@@ -642,59 +842,84 @@ func buildTrailerReferences(ctx context.Context, req dramatizeRequest, shots []D
 		} else {
 			characters[i].ImageURL = url
 		}
-	}
+	})
 	return append(references, characters...)
+}
+
+func trailerSheetScore(ctx context.Context, workDir string, world, character RemakeReferenceAsset) (float64, []string, string, bool) {
+	score, issues, correction, err := reviewTrailerSheetFlash(ctx, workDir, world, character)
+	if err == nil {
+		return score, issues, correction, true
+	}
+	content := []map[string]interface{}{
+		{"type": "input_text", "text": fmt.Sprintf("Image 1 is the world/style board. Image 2 is the identity sheet for %s. Score 0-1 whether the sheet matches the world rendering language AND is a distinct, stable identity matching: %s. Below 0.84 needs regeneration. Write a surgical correction prompt.", character.ID, character.Description)},
+	}
+	if world.ImageURL != "" {
+		content = append(content, map[string]interface{}{"type": "input_image", "image_url": world.ImageURL, "detail": "original"})
+	}
+	content = append(content, map[string]interface{}{"type": "input_image", "image_url": character.ImageURL, "detail": "original"})
+	schema := map[string]interface{}{"type": "object", "additionalProperties": false, "properties": map[string]interface{}{
+		"score": map[string]string{"type": "number"}, "identity_issues": stringArraySchema(), "correction_prompt": map[string]string{"type": "string"},
+	}, "required": []string{"score", "identity_issues", "correction_prompt"}}
+	blob, err := callRemakeOpenAIJSON(ctx, remakeLunaModel, "You are a strict character-continuity grader for a trailer identity sheet.", content, "trailer_sheet_consistency", schema)
+	if err != nil {
+		return 0, nil, "", false
+	}
+	var reply struct {
+		Score            float64  `json:"score"`
+		IdentityIssues   []string `json:"identity_issues"`
+		CorrectionPrompt string   `json:"correction_prompt"`
+	}
+	if json.Unmarshal(blob, &reply) != nil {
+		return 0, nil, "", false
+	}
+	return reply.Score, reply.IdentityIssues, reply.CorrectionPrompt, true
 }
 
 func refineTrailerSheets(ctx context.Context, references []RemakeReferenceAsset, anchor, workDir string) ([]RemakeReferenceAsset, []RemakeConsistencyAudit) {
 	world := RemakeReferenceAsset{}
-	for _, reference := range references {
+	var sheets []int
+	for i, reference := range references {
 		if reference.Kind == "setting" {
 			world = reference
 		}
+		if reference.Kind == "character" {
+			sheets = append(sheets, i)
+		}
+	}
+	type sheetOut struct {
+		score *RemakeConsistencyScore
+		url   string
 	}
 	var audits []RemakeConsistencyAudit
 	for pass := 1; pass <= trailerSheetPasses; pass++ {
 		audit := RemakeConsistencyAudit{Pass: pass}
-		for i, character := range references {
-			if character.Kind != "character" || character.ImageURL == "" {
-				continue
+		outs := make([]sheetOut, len(sheets))
+		trailerParallel(len(sheets), dramatizeShotConcurrency, func(k int) {
+			character := references[sheets[k]]
+			if character.ImageURL == "" || ctx.Err() != nil {
+				return
 			}
-			score, issues, correction, flashErr := reviewTrailerSheetFlash(ctx, workDir, world, character)
-			if flashErr != nil {
-				content := []map[string]interface{}{
-					{"type": "input_text", "text": fmt.Sprintf("Image 1 is the world/style board. Image 2 is the identity sheet for %s. Score 0-1 whether the sheet matches the world rendering language AND is a distinct, stable identity matching: %s. Below 0.84 needs regeneration. Write a surgical correction prompt.", character.ID, character.Description)},
-				}
-				if world.ImageURL != "" {
-					content = append(content, map[string]interface{}{"type": "input_image", "image_url": world.ImageURL, "detail": "original"})
-				}
-				content = append(content, map[string]interface{}{"type": "input_image", "image_url": character.ImageURL, "detail": "original"})
-				schema := map[string]interface{}{"type": "object", "additionalProperties": false, "properties": map[string]interface{}{
-					"score": map[string]string{"type": "number"}, "identity_issues": stringArraySchema(), "correction_prompt": map[string]string{"type": "string"},
-				}, "required": []string{"score", "identity_issues", "correction_prompt"}}
-				blob, err := callRemakeOpenAIJSON(ctx, remakeLunaModel, "You are a strict character-continuity grader for a trailer identity sheet.", content, "trailer_sheet_consistency", schema)
-				if err != nil {
-					continue
-				}
-				var reply struct {
-					Score            float64  `json:"score"`
-					IdentityIssues   []string `json:"identity_issues"`
-					CorrectionPrompt string   `json:"correction_prompt"`
-				}
-				if json.Unmarshal(blob, &reply) != nil {
-					continue
-				}
-				score, issues, correction = reply.Score, reply.IdentityIssues, reply.CorrectionPrompt
+			score, issues, correction, ok := trailerSheetScore(ctx, workDir, world, character)
+			if !ok {
+				return
 			}
-			audit.Scores = append(audit.Scores, RemakeConsistencyScore{ShotID: character.ID, CharacterID: character.ID, Score: score, IdentityIssues: issues, CorrectionPrompt: correction})
+			outs[k].score = &RemakeConsistencyScore{ShotID: character.ID, CharacterID: character.ID, Score: score, IdentityIssues: issues, CorrectionPrompt: correction}
 			if score >= trailerSheetThreshold {
-				continue
+				return
 			}
 			prompt := anchor + " CONSISTENCY REPAIR for identity sheet " + character.Name + ": " + correction + " Keep this one person. Use the world board for rendering language only."
-			url, genErr := trailerGenerateImage(false, "gpt-image-2", prompt, world.ImageURL, nil, "16:9")
-			if genErr == nil && url != "" {
-				references[i].ImageURL = url
-				audit.Regenerated = append(audit.Regenerated, character.ID)
+			if url, err := trailerGenerateImage(false, "gpt-image-2", prompt, world.ImageURL, nil, "16:9"); err == nil && url != "" {
+				outs[k].url = url
+			}
+		})
+		for k, out := range outs {
+			if out.score != nil {
+				audit.Scores = append(audit.Scores, *out.score)
+			}
+			if out.url != "" {
+				references[sheets[k]].ImageURL = out.url
+				audit.Regenerated = append(audit.Regenerated, references[sheets[k]].ID)
 			}
 		}
 		audits = append(audits, audit)
@@ -782,26 +1007,35 @@ func refineTrailerFrames(ctx context.Context, req dramatizeRequest, results []dr
 	if passes <= 0 {
 		return results, nil
 	}
+	var characters []RemakeReferenceAsset
+	for _, character := range references {
+		if character.Kind == "character" && character.Error == "" {
+			characters = append(characters, character)
+		}
+	}
 	var audits []RemakeConsistencyAudit
 	for pass := 1; pass <= passes+1; pass++ {
 		audit := RemakeConsistencyAudit{Pass: pass}
-		for _, character := range references {
-			if character.Kind != "character" || character.Error != "" {
-				continue
+		sets := make([][]RemakeConsistencyScore, len(characters))
+		trailerParallel(len(characters), dramatizeShotConcurrency, func(k int) {
+			if ctx.Err() != nil {
+				return
 			}
-			scores, err := auditTrailerCharacterFlash(ctx, workDir, character, results)
+			scores, err := auditTrailerCharacterFlash(ctx, workDir, characters[k], results)
 			if err != nil {
-				scores, err = auditRemakeCharacter(ctx, character, results)
+				scores, err = auditRemakeCharacter(ctx, characters[k], results)
 			}
-			if err != nil {
-				continue
+			if err == nil {
+				sets[k] = scores
 			}
+		})
+		for _, scores := range sets {
 			audit.Scores = append(audit.Scores, scores...)
 		}
-		worst := map[string]RemakeConsistencyScore{}
 		for i := range results {
 			results[i].ConsistencyScore = 0
 		}
+		worst := map[string]RemakeConsistencyScore{}
 		for _, score := range audit.Scores {
 			if index := resultIndexByShotID(results, score.ShotID); index >= 0 && (results[index].ConsistencyScore == 0 || score.Score < results[index].ConsistencyScore) {
 				results[index].ConsistencyScore = score.Score
@@ -811,21 +1045,40 @@ func refineTrailerFrames(ctx context.Context, req dramatizeRequest, results []dr
 				worst[score.CharacterID] = score
 			}
 		}
-		for _, score := range worst {
-			if pass > passes || score.Score >= remakeConsistencyThreshold {
-				continue
+		corrections := map[int][]string{}
+		if pass <= passes {
+			for _, score := range worst {
+				if score.Score >= remakeConsistencyThreshold {
+					continue
+				}
+				if index := resultIndexByShotID(results, score.ShotID); index >= 0 {
+					corrections[index] = append(corrections[index], score.CorrectionPrompt)
+				}
 			}
-			index := resultIndexByShotID(results, score.ShotID)
-			if index < 0 {
-				continue
+		}
+		indices := make([]int, 0, len(corrections))
+		for index := range corrections {
+			indices = append(indices, index)
+		}
+		sort.Ints(indices)
+		urls := make([]string, len(indices))
+		trailerParallel(len(indices), dramatizeShotConcurrency, func(k int) {
+			index := indices[k]
+			if ctx.Err() != nil {
+				return
 			}
+			sort.Strings(corrections[index])
 			primary, refs := remakeShotCharacterRefs(results[index].Shot, references)
-			prompt := results[index].Shot.ImagePrompt + " CONSISTENCY REPAIR: " + score.CorrectionPrompt + " The authoritative character sheet overrides conflicting details. Preserve action, composition, camera, and environment."
-			url, err := trailerGenerateImage(false, req.ImageModel, prompt, primary, refs, "16:9")
-			if err == nil && url != "" {
-				results[index].ImageURL = url
+			prompt := results[index].Shot.ImagePrompt + " CONSISTENCY REPAIR: " + strings.Join(corrections[index], " ") + " The authoritative character sheet overrides conflicting details. Preserve action, composition, camera, and environment."
+			if url, err := trailerGenerateImage(false, req.ImageModel, prompt, primary, refs, "16:9"); err == nil && url != "" {
+				urls[k] = url
+			}
+		})
+		for k, index := range indices {
+			if urls[k] != "" {
+				results[index].ImageURL = urls[k]
 				results[index].Regenerations++
-				audit.Regenerated = append(audit.Regenerated, score.ShotID)
+				audit.Regenerated = append(audit.Regenerated, results[index].Shot.ID)
 			}
 		}
 		audits = append(audits, audit)
@@ -856,10 +1109,13 @@ func animateTrailerShots(ctx context.Context, user *User, results []dramatizeSho
 			prompt := results[index].Shot.MotionPrompt
 			if results[index].DriveAudioURL != "" {
 				prompt = strings.TrimSpace(prompt + " Perform in sync with the driving soundtrack. Mouth, breath, and blocking follow the attached audio.")
+			} else if strings.TrimSpace(results[index].Shot.DialogueTranscript) == "" {
+				prompt = trailerSilentPrompt(prompt)
 			}
-			url, err := runH3ClipFromFrame(ctx, user, prompt, results[index].ImageURL, results[index].DriveAudioURL, int(results[index].Shot.Seconds))
+			clip := trailerH3Seconds(results[index].Shot.Seconds)
+			url, err := runH3ClipFromFrame(ctx, user, prompt, results[index].ImageURL, results[index].DriveAudioURL, clip)
 			if err != nil && results[index].DriveAudioURL != "" {
-				url, err = runH3ClipFromFrame(ctx, user, results[index].Shot.MotionPrompt, results[index].ImageURL, "", int(results[index].Shot.Seconds))
+				url, err = runH3ClipFromFrame(ctx, user, results[index].Shot.MotionPrompt, results[index].ImageURL, "", clip)
 			}
 			if err != nil {
 				results[index].Error = err.Error()
@@ -1000,89 +1256,98 @@ func waitH3LocalClip(ctx context.Context, cogURL string, input map[string]interf
 	return videoURL, nil
 }
 
-func assembleTrailer(ctx context.Context, shots []dramatizeShotResult, workDir, dest, musicURL, titleImageURL string) ([]dramatizeShotResult, error) {
+func assembleTrailer(ctx context.Context, shots []dramatizeShotResult, workDir, dest, musicPath, titleImageURL string, narration []trailerNarrationLine) ([]dramatizeShotResult, []trailerNarrationLine, error) {
 	segmentDir := filepath.Join(workDir, "segments")
 	if err := os.MkdirAll(segmentDir, 0o755); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	rendered := make([]string, len(shots))
+	trailerParallel(len(shots), dramatizeShotConcurrency, func(i int) {
+		if shots[i].ClipURL == "" {
+			return
+		}
+		raw := filepath.Join(segmentDir, fmt.Sprintf("raw_%03d.mp4", i))
+		segmentPath := filepath.Join(segmentDir, fmt.Sprintf("seg_%03d.mp4", i))
+		err := downloadToFile(ctx, shots[i].ClipURL, raw)
+		var probe dramatizeProbe
+		if err == nil {
+			probe, err = probeVideoFile(ctx, raw)
+		}
+		if err == nil {
+			err = renderTrailerSegment(ctx, raw, shots[i].Shot.Seconds, probe.HasAudio, segmentPath)
+		}
+		if err == nil {
+			rendered[i] = segmentPath
+		}
+	})
 	segments := make([]string, 0, len(shots))
 	timeline := make([]dramatizeShotResult, 0, len(shots))
 	var cursor float64
 	for i, shot := range shots {
-		if shot.ClipURL == "" {
-			continue
-		}
-		raw := filepath.Join(segmentDir, fmt.Sprintf("raw_%03d.mp4", i))
-		if err := downloadToFile(ctx, shot.ClipURL, raw); err != nil {
-			shot.Error = err.Error()
-			continue
-		}
-		segmentPath := filepath.Join(segmentDir, fmt.Sprintf("seg_%03d.mp4", i))
-		probe, err := probeVideoFile(ctx, raw)
-		if err != nil {
-			shot.Error = err.Error()
-			continue
-		}
-		if err := renderTrailerSegment(ctx, raw, shot.Shot.Seconds, probe.HasAudio, segmentPath); err != nil {
-			shot.Error = err.Error()
+		if rendered[i] == "" {
 			continue
 		}
 		shot.Start, shot.Duration = cursor, shot.Shot.Seconds
 		cursor += shot.Shot.Seconds
-		shot.AssetURL = segmentPath
+		shot.AssetURL = rendered[i]
 		timeline = append(timeline, shot)
-		segments = append(segments, segmentPath)
+		segments = append(segments, rendered[i])
 	}
 	if title := strings.TrimSpace(titleImageURL); title != "" {
 		still := filepath.Join(segmentDir, "title-still.png")
 		if downloadToFile(ctx, title, still) == nil {
 			hold := filepath.Join(segmentDir, "title-hold.mp4")
-			if err := renderTrailerTitleHold(ctx, still, hold, 3); err == nil {
-				shot := dramatizeShotResult{Shot: DramatizeShot{ID: "title", Kind: dramatizeShotKindGenerated, Seconds: 3}, ImageURL: title, Start: cursor, Duration: 3, AssetURL: hold}
-				cursor += 3
+			if err := renderTrailerTitleHold(ctx, still, hold, trailerTitleHold); err == nil {
+				shot := dramatizeShotResult{Shot: DramatizeShot{ID: trailerTitleShotID, Kind: dramatizeShotKindGenerated, Seconds: trailerTitleHold}, ImageURL: title, Start: cursor, Duration: trailerTitleHold, AssetURL: hold}
+				cursor += trailerTitleHold
 				timeline = append(timeline, shot)
 				segments = append(segments, hold)
 			}
 		}
 	}
 	if len(segments) == 0 {
-		return nil, fmt.Errorf("no clips to assemble")
+		return nil, nil, fmt.Errorf("no clips to assemble")
 	}
 	joined := filepath.Join(workDir, "picture.mp4")
 	if err := concatSegments(ctx, segments, joined); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if strings.TrimSpace(musicURL) == "" {
-		if err := os.Rename(joined, dest); err != nil {
-			return nil, copyFile(joined, dest)
+	var placed []trailerNarrationLine
+	voPath := ""
+	var voiced []trailerNarrationLine
+	for _, line := range narration {
+		if line.path != "" && line.Error == "" {
+			voiced = append(voiced, line)
 		}
-		return timeline, nil
 	}
-	musicPath := filepath.Join(workDir, "score.audio")
-	if err := downloadToFile(ctx, musicURL, musicPath); err != nil {
-		_ = os.Rename(joined, dest)
-		return timeline, nil
+	if placed = trailerPlaceNarration(voiced, timeline, cursor); len(placed) > 0 {
+		voPath = filepath.Join(workDir, "vo-stem.wav")
+		if buildTrailerVOStem(ctx, placed, cursor, voPath) != nil {
+			voPath, placed = "", nil
+		}
 	}
-	swells, err := analyzeTrailerSpeech(ctx, joined)
-	if err != nil {
-		swells = trailerScoreWindows(timeline)
+	if musicPath == "" && voPath == "" {
+		if err := os.Rename(joined, dest); err != nil {
+			return timeline, nil, copyFile(joined, dest)
+		}
+		return timeline, nil, nil
 	}
-	if err := mixTrailerScore(ctx, joined, musicPath, dest, swells); err != nil {
-		_ = os.Rename(joined, dest)
+	voWindows := trailerNarrationWindows(placed)
+	var swells []trailerScoreWindow
+	if musicPath != "" {
+		var err error
+		if swells, err = analyzeTrailerSpeech(ctx, joined); err != nil {
+			swells = trailerScoreWindows(timeline)
+		}
+		swells = trailerSubtractWindows(swells, voWindows, 0.5)
 	}
-	return timeline, nil
-}
-
-func mixTrailerScore(ctx context.Context, videoPath, musicPath, dest string, swells []trailerScoreWindow) error {
-	// Score at ~30% under the characters; procedural swells to ~full volume in dialogue-free runs (trailer_mix.go).
-	filter := "[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume='" + trailerScoreVolumeExpr(swells) + "':eval=frame,afade=t=in:st=0:d=1.2[m];[0:a]loudnorm=I=-20:TP=-2:LRA=9,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a];[a][m]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,alimiter=limit=0.95[mix]"
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-v", "error", "-i", videoPath, "-i", musicPath,
-		"-filter_complex", filter, "-map", "0:v:0", "-map", "[mix]",
-		"-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", dest)
-	if combined, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("mix score: %w: %s", err, tailOutput(combined))
+	if err := mixTrailerMaster(ctx, joined, musicPath, voPath, dest, swells, voWindows); err != nil {
+		if renameErr := os.Rename(joined, dest); renameErr != nil {
+			return timeline, nil, copyFile(joined, dest)
+		}
+		return timeline, nil, nil
 	}
-	return nil
+	return timeline, placed, nil
 }
 
 func copyFile(src, dest string) error {
@@ -1110,6 +1375,11 @@ func trailerMotionPrompt(prompt string) string {
 		return prompt
 	}
 	return strings.TrimSpace(prompt + " " + lock)
+}
+
+func trailerSilentPrompt(prompt string) string {
+	prompt = strings.Replace(prompt, "Precise natural lip sync if anyone speaks. ", "", 1)
+	return strings.TrimSpace(prompt + " Nobody speaks; mouths stay closed. No voices, no names spoken, no narrator; natural ambience and foley only.")
 }
 
 func trailerTitleFromText(text string) string {

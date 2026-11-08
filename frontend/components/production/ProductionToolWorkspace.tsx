@@ -1,14 +1,14 @@
 'use client';
 
 import { downloadVideo, videoExtension } from '../../lib/video-export';
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SyntheticEvent } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { ArrowLeft, Box, Clapperboard, Download, LoaderCircle, Minus, Music, Plus, Settings2, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { loadStoredUser, refreshUser, saveUser, type StoredUser } from '@/lib/auth';
 import { ensurePaidAccess, errorFields, isPaywallError, paywallFromResponse } from '@/lib/paywall';
 import {
-  MODEL_EXTENSIONS, MOTION_PRICING, PRODKIT_PRICES, formatSpec, SCENE_SCHEMA, SCENE_TEMPLATES, apiBody, controlDefaults, controlParams, isBlenderService, isMotionService, modelContentType,
+  MODEL_EXTENSIONS, MOTION_PRICING, PRODKIT_PRICES, formatSpec, SCENE_SCHEMA, SCENE_TEMPLATES, apiBody, controlDefaults, controlParams, isBlenderService, isMotionService, isTrackedService, modelContentType,
   productionPriceUSD, productionTool, validateSceneSpec, type ProductionControl, type ProductionParams, type ProductionRequest, type SourceMode,
 } from '@/lib/production-tools';
 import { ApiPanel, BeforeAfter, DemoGallery, FightStatsCard, ShareRow, SvgCompare } from './ProductionViews';
@@ -21,10 +21,13 @@ type JobResult = {
   video_url?: string; poster_url?: string; blend_url?: string; glb_url?: string; source_model_url?: string; svg_url?: string;
   palette?: string[]; layers?: number; paths?: number; duration_seconds?: number; render_seconds?: number;
   charged_usd?: number; credits_used?: number; width?: number; height?: number;
-  tracks_url?: string; signals_url?: string; preview_url?: string; guide_url?: string; audio_url?: string; cues_url?: string;
+  tracks_url?: string; signals_url?: string; preview_url?: string; guide_url?: string; audio_url?: string; cues_url?: string; mask_url?: string;
   stats?: unknown; bpm?: number; events_count?: number; tracks_count?: number; seconds?: number; music_prompt?: string; preset?: string;
 };
 type Point = { x: number; y: number; type: 'positive' | 'negative' };
+type Box = { x: number; y: number; w: number; h: number };
+const round3 = (value: number) => Math.round(value * 1000) / 1000;
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 type Uploaded = { url: string; name: string };
 const SITE = 'https://manifoldgen.com';
 type VideoMeta = { duration: number; width: number; height: number };
@@ -68,6 +71,18 @@ function ControlField({ control, value, onChange }: { control: ProductionControl
   }
   if (control.type === 'seed') {
     return <label className={styles.field}>{control.label}<input className={styles.input} inputMode="numeric" placeholder={control.hint} value={String(value ?? '')} onChange={(event) => onChange(event.target.value.replace(/[^0-9]/g, '').slice(0, 9))} /></label>;
+  }
+  if (control.type === 'text') {
+    return <label className={styles.field} style={{ gridColumn: '1 / -1' }}>{control.label}<input className={styles.input} maxLength={control.maxLength ?? 80} placeholder={control.placeholder} value={String(value ?? '')} onChange={(event) => onChange(event.target.value)} />{control.hint && <small>{control.hint}</small>}</label>;
+  }
+  if (control.type === 'multi') {
+    const picked = Array.isArray(value) ? value as string[] : [];
+    return <div className={styles.field} style={{ gridColumn: '1 / -1' }}>{control.label}
+      <div className={styles.chips}>
+        {control.options.map(([option, label]) => <button key={option} type="button" className={styles.chip} aria-pressed={picked.includes(option)} onClick={() => onChange(picked.includes(option) ? picked.filter((item) => item !== option) : [...picked, option])}>{label}</button>)}
+      </div>
+      {control.hint && <small>{control.hint}</small>}
+    </div>;
   }
   const palette = Array.isArray(value) ? value as string[] : [];
   return <div className={styles.field} style={{ gridColumn: '1 / -1' }}>{control.label}
@@ -114,6 +129,9 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
   const [prompt, setPrompt] = useState('person');
   const [points, setPoints] = useState<Point[]>([]);
   const [pointType, setPointType] = useState<Point['type']>('positive');
+  const [region, setRegion] = useState<Box | null>(null);
+  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
+  const drag = useRef<{ x: number; y: number } | null>(null);
   const [clipSeconds, setClipSeconds] = useState(5);
   const [values, setValues] = useState<ProductionParams>(() => controlDefaults(tool.controls));
   const [uploading, setUploading] = useState('');
@@ -175,7 +193,10 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
       if (video) req.video_url = video.url;
       req.duration = clipSeconds;
       if (audio) req.audio_url = audio.url;
-      if (audio && audioStart > 0 && (tool.service === 'beat-drop' || tool.service === 'motion-fx')) params.audio_start = audioStart;
+      if (audio && audioStart > 0 && (tool.service === 'beat-drop' || tool.service === 'motion-fx' || tool.service === 'reactive-fx')) params.audio_start = audioStart;
+      if (tool.picker === 'box' && region) params.region = region;
+      if (tool.picker === 'point' && anchor) { params.x = anchor.x; params.y = anchor.y; }
+      if (tool.imageSlot && image) req.image_url = image.url;
       if (!cleanup) Object.assign(params, tool.fixedParams || {});
       else if (target === 'prompt') req.prompt = prompt.trim();
       else {
@@ -184,7 +205,7 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
       }
     }
     return req;
-  }, [tool, cleanup, values, source, subject, subjectText, demoModel, model, image, sceneCheck.spec, sceneModels, video, audio, audioStart, clipSeconds, target, prompt, points, meta]);
+  }, [tool, cleanup, values, source, subject, subjectText, demoModel, model, image, sceneCheck.spec, sceneModels, video, audio, audioStart, clipSeconds, target, prompt, points, meta, region, anchor]);
 
   const priceUSD = productionPriceUSD(source === 'photo' && !request.image_url ? { ...request, image_url: 'pending' } : request);
   const credits = Math.ceil(priceUSD / (user?.credit_price_usd || 0.01) - 1e-9);
@@ -194,6 +215,8 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
     if (tool.input === 'model' && source === 'upload' && !filled.model_url) filled.model_url = 'https://…/model.glb';
     if ((tool.input === 'image' || (tool.input === 'model' && source === 'photo')) && !filled.image_url) filled.image_url = 'https://…/photo.png';
     if (tool.input === 'video' && !filled.video_url) filled.video_url = 'https://…/clip.mp4';
+    if (tool.picker === 'box' && !filled.params.region && !filled.image_url) filled.params.region = { x: 0.4, y: 0.3, w: 0.2, h: 0.2 };
+    if (tool.picker === 'point' && filled.params.x === undefined) { filled.params.x = 0.5; filled.params.y = 0.3; }
     if (tool.audio === 'required' && !filled.audio_url) filled.audio_url = 'https://…/song.mp3';
     if (tool.input === 'scene' && !filled.params.spec) filled.params.spec = { objects: [] };
     return filled;
@@ -211,6 +234,9 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
     if (tool.input === 'video') {
       if (!video) return 'Add a video';
       if (tool.audio === 'required' && !audio) return 'Add a song';
+      if (tool.picker === 'box' && !region && !image) return 'Drag a box over the target on the first frame';
+      if (tool.picker === 'point' && !anchor) return 'Click the spot on the first frame';
+      if (tool.service === 'sticky-overlay' && !image && !String(values.text ?? '').trim()) return 'Type the text or add a sticker';
       if (cleanup && target === 'prompt' && !prompt.trim()) return 'Name what to remove';
       if (cleanup && target === 'points' && !points.some((point) => point.type === 'positive')) return 'Click the object on the first frame';
       if (cleanup && target === 'points' && !pointsAllowed) return 'Points need 4.8 s or less: lower the duration or use a name';
@@ -243,7 +269,7 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
     uploadTarget.current = kind;
     const input = fileInput.current;
     if (!input) return;
-    input.accept = kind === 'image' ? 'image/png,image/jpeg,image/webp' : kind === 'audio' ? 'audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac' : kind === 'video' ? 'video/mp4,video/quicktime,video/webm' : MODEL_EXTENSIONS.map((ext) => `.${ext}`).join(',');
+    input.accept = kind === 'image' ? (tool.imageSlot?.accept || 'image/png,image/jpeg,image/webp') : kind === 'audio' ? 'audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac' : kind === 'video' ? 'video/mp4,video/quicktime,video/webm' : MODEL_EXTENSIONS.map((ext) => `.${ext}`).join(',');
     input.multiple = kind === 'scene';
     input.click();
   }
@@ -280,7 +306,7 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
       } else {
         const file = files[0];
         if (!file.type.startsWith('video/') || file.size > 300 * 1024 * 1024) throw new Error('Choose a video up to 300 MB');
-        setMeta(null); setPoints([]);
+        setMeta(null); setPoints([]); setRegion(null); setAnchor(null);
         setVideoPreview(URL.createObjectURL(file));
         setUploading('Uploading video…');
         setVideo({ url: await uploadFile(file, file.type || 'video/mp4', current.api_key), name: file.name });
@@ -341,6 +367,45 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
     const x = Math.max(0, Math.min(meta.width, (event.clientX - rect.left) / rect.width * meta.width));
     const y = Math.max(0, Math.min(meta.height, (event.clientY - rect.top) / rect.height * meta.height));
     setPoints((list) => [...list, { x, y, type: pointType }]);
+  }
+
+  function onMeta(event: SyntheticEvent<HTMLVideoElement>) {
+    const element = event.currentTarget;
+    const next = { duration: element.duration || 0, width: element.videoWidth || 1280, height: element.videoHeight || 720 };
+    setMeta(next);
+    setClipSeconds(Math.max(1, Math.min(clipCap, Math.ceil(next.duration - 0.01))));
+  }
+
+  function pickFrac(event: ReactPointerEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return { x: clamp01((event.clientX - rect.left) / rect.width), y: clamp01((event.clientY - rect.top) / rect.height) };
+  }
+
+  function pickDown(event: ReactPointerEvent<HTMLDivElement>) {
+    const at = pickFrac(event);
+    if (tool.picker === 'point') { setAnchor({ x: round3(at.x), y: round3(at.y) }); return; }
+    drag.current = at;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setRegion({ x: round3(at.x), y: round3(at.y), w: 0.01, h: 0.01 });
+  }
+
+  function pickMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = drag.current;
+    if (!start) return;
+    const at = pickFrac(event);
+    setRegion({ x: round3(Math.min(start.x, at.x)), y: round3(Math.min(start.y, at.y)), w: round3(Math.max(0.01, Math.abs(at.x - start.x))), h: round3(Math.max(0.01, Math.abs(at.y - start.y))) });
+  }
+
+  function pickUp() {
+    const start = drag.current;
+    drag.current = null;
+    if (!start) return;
+    setRegion((current) => {
+      if (!current || current.w >= 0.02 || current.h >= 0.02) return current;
+      const w = 0.14;
+      const h = Math.min(0.5, round3(w * (meta ? meta.width / meta.height : 16 / 9)));
+      return { x: round3(Math.min(1 - w, Math.max(0, start.x - w / 2))), y: round3(Math.min(1 - h, Math.max(0, start.y - h / 2))), w, h };
+    });
   }
 
   const busy = phase === 'running';
@@ -409,20 +474,25 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
     }
     return <>
       <Section label="01 · Video">
-        {videoPreview
+        {videoPreview && tool.picker
+          ? <div className={styles.picker} style={{ aspectRatio: meta ? `${meta.width}/${meta.height}` : '16/9', touchAction: 'none', cursor: 'crosshair' }} onPointerDown={pickDown} onPointerMove={pickMove} onPointerUp={pickUp} onPointerCancel={pickUp} data-testid="region-picker">
+            <video src={videoPreview.startsWith('blob:') ? videoPreview : `${videoPreview}#t=0.001`} muted playsInline preload="auto" onLoadedMetadata={onMeta} />
+            {region && tool.picker === 'box' && <span data-testid="region-box" style={{ position: 'absolute', left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.w * 100}%`, height: `${region.h * 100}%`, border: '2px solid #8b6cff', background: 'rgba(139,108,255,0.22)', borderRadius: 3, pointerEvents: 'none' }} />}
+            {anchor && tool.picker === 'point' && <span className={`${styles.dot} ${styles.dotPos}`} data-testid="anchor-dot" style={{ left: `${anchor.x * 100}%`, top: `${anchor.y * 100}%` }} />}
+          </div>
+          : videoPreview
           ? target === 'points' && meta
             ? <div className={styles.picker} style={{ aspectRatio: `${meta.width}/${meta.height}` }} onClick={addPoint} data-testid="point-picker">
               <video src={videoPreview.startsWith('blob:') ? videoPreview : `${videoPreview}#t=0.001`} muted playsInline preload="auto" />
               {points.map((point, index) => <span key={index} className={`${styles.dot} ${point.type === 'positive' ? styles.dotPos : styles.dotNeg}`} style={{ left: `${point.x / meta.width * 100}%`, top: `${point.y / meta.height * 100}%` }} />)}
             </div>
             : <video className={styles.sourceVideo} src={videoPreview} controls muted playsInline preload="metadata"
-              onLoadedMetadata={(event) => {
-                const element = event.currentTarget;
-                const next = { duration: element.duration || 0, width: element.videoWidth || 1280, height: element.videoHeight || 720 };
-                setMeta(next);
-                setClipSeconds(Math.max(1, Math.min(clipCap, Math.ceil(next.duration - 0.01))));
-              }} />
+              onLoadedMetadata={onMeta} />
           : null}
+        {tool.picker && videoPreview && <div className={styles.chips} style={{ marginTop: 8 }}>
+          <span className={styles.hint} style={{ margin: 0 }}>{tool.pickerLabel}</span>
+          <button type="button" className={styles.chip} disabled={!region && !anchor} onClick={() => { setRegion(null); setAnchor(null); }}><Trash2 size={12} /> Clear</button>
+        </div>}
         <button type="button" className={styles.drop} style={{ marginTop: videoPreview ? 8 : 0, minHeight: videoPreview ? 0 : 120 }} disabled={busy} onClick={() => pick('video')} data-testid="video-drop">
           {videoPreview ? <span>{video?.name || 'Video'}{meta ? ` · ${meta.duration.toFixed(1)} s · ${meta.width}×${meta.height}` : ''} · click to replace</span> : <><Upload size={22} /><b>Upload a video</b><span>MP4 · MOV · WebM · up to {clipCap} s processed</span></>}
         </button>
@@ -432,11 +502,17 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
           {audio ? <><Music size={18} /><b>{audio.name}</b><span>Click to replace{tool.audio === 'optional' ? '' : ''}</span></> : <><Music size={20} /><b>{tool.audio === 'required' ? 'Add a song' : 'Add a track'}</b><span>{tool.audioHint}</span></>}
         </button>
         {audio && tool.audio === 'optional' && <button type="button" className={styles.chip} style={{ marginTop: 8 }} onClick={() => setAudio(null)}><Trash2 size={12} /> Remove track</button>}
-        {audio && (tool.service === 'beat-drop' || tool.service === 'motion-fx') && <label className={styles.field} style={{ marginTop: 10 }}>
+        {audio && (tool.service === 'beat-drop' || tool.service === 'motion-fx' || tool.service === 'reactive-fx') && <label className={styles.field} style={{ marginTop: 10 }}>
           <span className={styles.fieldHead}>Start song at<output>{audioStart}s</output></span>
           <input className={styles.input} type="number" min={0} max={3600} step={1} inputMode="numeric" value={audioStart} aria-label="Start song at (seconds)" onChange={(event) => setAudioStart(Math.max(0, Math.min(3600, Math.floor(Number(event.target.value) || 0))))} />
           <small>Skip the intro: the effects and soundtrack start from this second of the song.</small>
         </label>}
+      </Section>}
+      {tool.imageSlot && <Section label={`0${tool.audio ? 3 : 2} · ${tool.imageSlot.label}`}>
+        <button type="button" className={styles.drop} style={{ minHeight: 0 }} disabled={busy} onClick={() => pick('image')} data-testid="image-drop">
+          {imagePreview ? <img src={imagePreview} alt={tool.imageSlot.label} style={{ maxHeight: 120, objectFit: 'contain' }} /> : <><Upload size={20} /><b>{tool.imageSlot.label}</b><span>{tool.imageSlot.hint}</span></>}
+        </button>
+        {image && <button type="button" className={styles.chip} style={{ marginTop: 8 }} onClick={() => { setImage(null); setImagePreview(''); }}><Trash2 size={12} /> Remove</button>}
       </Section>}
       {cleanup && <Section label="02 · What to remove">
         <div className={styles.tabs} role="group" aria-label="Selection">
@@ -457,7 +533,7 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
             <div className={pointsAllowed ? styles.hint : styles.error}>{!videoPreview ? 'Add a video, then click the object on its first frame.' : pointsAllowed ? 'Click the object on the first frame. Green = remove, red = keep. Max 12.' : `Points work on up to ${PRODKIT_PRICES.eraserChunkSeconds} s. Lower the duration to 4 s or name the object instead.`}</div>
           </>}
       </Section>}
-      <Section label={`0${cleanup ? 3 : tool.audio ? 3 : 2} · Duration`}>
+      <Section label={`0${(cleanup ? 3 : tool.audio ? 3 : 2) + (tool.imageSlot ? 1 : 0)} · Duration`}>
         <label className={styles.field}>
           <span className={styles.fieldHead}>Seconds from start<output>{clipSeconds}s</output></span>
           <input className={styles.range} type="range" min={1} max={maxClip} step={1} value={Math.min(clipSeconds, maxClip)} onChange={(event) => setClipSeconds(Number(event.target.value))} />
@@ -482,6 +558,16 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
         </div>
       </div>;
     }
+    if (tool.service === 'mask-propagate' && result.video_url) {
+      const src = trackView === 'guide' && result.mask_url ? result.mask_url : result.video_url;
+      return <div className={styles.resultBody}>
+        <video key={src} data-testid="production-result" src={src} poster={trackView === 'preview' ? result.poster_url : undefined} controls loop autoPlay muted playsInline />
+        <div className={styles.tabs} role="group" aria-label="Mask view" style={{ marginTop: 8 }}>
+          <button type="button" aria-pressed={trackView === 'preview'} onClick={() => setTrackView('preview')}>Tinted preview</button>
+          <button type="button" aria-pressed={trackView === 'guide'} disabled={!result.mask_url} onClick={() => setTrackView('guide')}>Mask video</button>
+        </div>
+      </div>;
+    }
     if (result.video_url) return <video data-testid="production-result" src={result.video_url} poster={result.poster_url} controls loop autoPlay muted playsInline />;
     return null;
   })();
@@ -489,13 +575,13 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
   const downloads: [string, string | undefined, string][] = [
     ['MP4', result?.video_url, 'video'], ['Poster', result?.poster_url, 'poster'], ['.blend', result?.blend_url, 'blend'],
     ['.glb', result?.glb_url, 'glb'], ['Source .glb', result?.source_model_url, 'source-glb'], ['.svg', result?.svg_url, 'svg'],
-    ['Skeleton MP4', result?.preview_url, 'skeleton'], ['Guide MP4', result?.guide_url, 'guide'], ['tracks.json', result?.tracks_url, 'tracks'],
+    ['Mask MP4', result?.mask_url, 'mask'], ['Skeleton MP4', result?.preview_url, 'skeleton'], ['Guide MP4', result?.guide_url, 'guide'], ['tracks.json', result?.tracks_url, 'tracks'],
     ['signals.json', result?.signals_url, 'signals'], ['Audio', result?.audio_url, 'audio'], ['cues.json', result?.cues_url, 'cues'],
   ];
   const shareURL = result?.video_url || result?.preview_url;
-  const chainVideo = tool.service === 'motion-track' ? resultVideo : result?.video_url;
+  const chainVideo = tool.service === 'motion-track' || tool.service === 'mask-propagate' ? resultVideo : result?.video_url;
   const chain: [string, string][] = !chainVideo || !motion ? [] : ([
-    ['motion-fx', 'Add FX'], ['beat-drop-fx', 'Beat Drop'], ['motion-score', 'Score it'], ['shot-cleanup', 'Clean up'],
+    ['motion-fx', 'Add FX'], ['beat-drop-fx', 'Beat Drop'], ['motion-score', 'Score it'], ['shot-cleanup', 'Clean up'], ['flow-fx', 'Flow FX'], ['reactive-fx', 'Music FX'], ['track-blur', 'Blur'],
   ] as const).filter(([slug]) => (productionTool(slug)?.service || slug) !== tool.service).map(([slug, label]) => [`/tools/${slug}?video_url=${encodeURIComponent(chainVideo)}`, label] as [string, string])
     .concat(tool.service === 'motion-track' ? [] : [[`/tools/crazy-captions?src=${encodeURIComponent(chainVideo)}`, 'Captions']]);
   const sendTargets = [['destruction-studio', 'Destruction'], ['exploded-view', 'Exploded'], ['toon-shader', 'Toon']] as const;
@@ -517,7 +603,7 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
         <input ref={fileInput} type="file" hidden onChange={(event) => { const files = Array.from(event.target.files || []); event.target.value = ''; void onFiles(files); }} />
         <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           {sourcePanel}
-          {basic.length > 0 && <Section label={tool.input === 'video' ? `0${cleanup || tool.audio ? 4 : 3} · Options` : tool.input === 'scene' ? '03 · Render' : '02 · Settings'}>
+          {basic.length > 0 && <Section label={tool.input === 'video' ? `0${(cleanup || tool.audio ? 4 : 3) + (tool.imageSlot ? 1 : 0)} · Options` : tool.input === 'scene' ? '03 · Render' : '02 · Settings'}>
             {controlGrid(basic)}
           </Section>}
           {advanced.length > 0 && <details className={styles.advanced}>
@@ -545,7 +631,7 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
         </div>
         <div className={styles.preview} style={result ? { borderRadius: 0 } : undefined}>
           {resultView || <div className={styles.empty}>
-            {busy ? <><LoaderCircle size={26} className={styles.spin} /><b style={{ textTransform: 'capitalize' }}>{stage || 'Queued'}</b><div className={styles.progress}><i /></div><span>{blender ? 'Renders take about 1-4 minutes. You can keep this tab open.' : motion ? 'Pose tracking and rendering take about 1-3 minutes for a 10 s clip.' : 'Usually under a minute.'}</span></>
+            {busy ? <><LoaderCircle size={26} className={styles.spin} /><b style={{ textTransform: 'capitalize' }}>{stage || 'Queued'}</b><div className={styles.progress}><i /></div><span>{blender ? 'Renders take about 1-4 minutes. You can keep this tab open.' : isTrackedService(tool.service) ? 'Tracking and rendering take about 30-90 seconds for a 10 s clip.' : motion ? 'Pose tracking and rendering take about 1-3 minutes for a 10 s clip.' : 'Usually under a minute.'}</span></>
               : <><Sparkles size={28} /><b>Your result appears here</b><span>{tool.outputs.split(', ').filter((field) => field.endsWith('_url')).map((field) => field.replace('_url', '').toUpperCase()).join(' · ')}</span></>}
           </div>}
         </div>
@@ -581,7 +667,7 @@ export function ProductionToolWorkspace({ slug }: { slug: string }) {
     <section className={styles.extra}>
       <div><b>{tool.extraCopy ? 'How it works' : 'Editable outputs'}</b>{tool.extraCopy ? tool.extraCopy : blender ? 'Every render ships with the baked .blend so you can keep editing in Blender.' : tool.service === 'vectorize' ? 'One SVG group per color, ready for Illustrator, Inkscape and Figma.' : tool.service === 'image-to-3d' ? 'Standard GLB with textures; works in Blender, three.js and game engines.' : 'Cleaned MP4 at source resolution (up to 1920 px wide), audio kept on request.'}</div>
       <div><b>Pay on success</b>Price shown before you run. Failed jobs are not charged.</div>
-      <div><b>More production tools</b>{motion && <><Link href="/tools/motion-fx">Motion FX</Link><Link href="/tools/beat-drop-fx">Beat Drop FX</Link><Link href="/tools/motion-tracker">Motion Tracker</Link><Link href="/tools/motion-score">Motion Score</Link></>}<Link href="/tools/production">Production suite</Link><Link href="/api#production">API reference</Link></div>
+      <div><b>More production tools</b>{motion && <><Link href="/tools/motion-fx">Motion FX</Link><Link href="/tools/beat-drop-fx">Beat Drop FX</Link><Link href="/tools/motion-tracker">Motion Tracker</Link><Link href="/tools/motion-score">Motion Score</Link><Link href="/tools/track-blur">Tracked Blur</Link><Link href="/tools/sticky-overlay">Sticky Overlay</Link><Link href="/tools/flow-fx">Flow FX</Link><Link href="/tools/reactive-fx">Music Reactive FX</Link><Link href="/tools/mask-propagate">Mask Propagate</Link></>}<Link href="/tools/production">Production suite</Link><Link href="/api#production">API reference</Link></div>
     </section>
   </main>;
 }

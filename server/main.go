@@ -287,7 +287,7 @@ func setCORSHeaders(ctx *fasthttp.RequestCtx) {
 		ctx.Response.Header.Set("Access-Control-Allow-Origin", origin)
 	}
 	ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	ctx.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Wallet-Address")
+	ctx.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Wallet-Address")
 	ctx.Response.Header.Set("Access-Control-Allow-Credentials", "true")
 	ctx.Response.Header.Set("Access-Control-Max-Age", "86400")
 }
@@ -507,6 +507,9 @@ func routeAPI(ctx *fasthttp.RequestCtx, path, method string) {
 	// Rotate (regenerate) the user's API key
 	case path == "/api/auth/rotate-api-key" && method == "POST":
 		handleRotateAPIKey(ctx)
+
+	case path == "/api/keys" || strings.HasPrefix(path, "/api/keys/"):
+		handleAPIKeys(ctx, path, method)
 
 	case path == "/api/admin/api-keys" && method == "POST":
 		handleAdminMintAPIKey(ctx)
@@ -1107,20 +1110,16 @@ func handleUpdateEmail(ctx *fasthttp.RequestCtx) {
 // Clients call this on load so a key left over from a rotated/removed account
 // can be cleared instead of failing every later request with 401.
 func handleSession(ctx *fasthttp.RequestCtx) {
-	apiKey := strings.TrimSpace(strings.TrimPrefix(string(ctx.Request.Header.Peek("Authorization")), "Bearer "))
+	apiKey := requestAPISecret(ctx)
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(string(ctx.QueryArgs().Peek("api_key")))
 	}
-	if apiKey == "" {
-		jsonError(ctx, 401, "api key required")
+	principal, failure := authenticateSecret(apiKey)
+	if failure != nil {
+		failure.write(ctx)
 		return
 	}
-	user, err := dbConn.GetUserByAPIKey(apiKey)
-	if err != nil {
-		jsonError(ctx, 401, "invalid API key")
-		return
-	}
-	jsonResponse(ctx, 200, sessionPayload(user))
+	jsonResponse(ctx, 200, sessionPayload(principal.User))
 }
 
 func sessionPayload(user *User) map[string]interface{} {
@@ -1371,6 +1370,10 @@ func jsonResponse(ctx *fasthttp.RequestCtx, status int, data interface{}) {
 }
 
 func jsonError(ctx *fasthttp.RequestCtx, status int, msg string) {
+	if failure, ok := ctx.UserValue(authFailureUserKey).(*apiFailure); ok && (status == fasthttp.StatusUnauthorized || status == fasthttp.StatusForbidden) {
+		failure.write(ctx)
+		return
+	}
 	ctx.SetStatusCode(status)
 	ctx.Response.Header.Set("Content-Type", "application/json")
 	body, _ := json.Marshal(map[string]string{"error": msg})
@@ -1617,7 +1620,7 @@ func handleSemanticAudioSearch(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	userID := ""
-	if len(ctx.Request.Header.Peek("Authorization")) > 0 {
+	if requestAPISecret(ctx) != "" {
 		if user, err := studioUser(ctx); err == nil {
 			userID = user.ID
 		}

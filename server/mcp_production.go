@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,6 +27,14 @@ func mcpEnum(values ...string) map[string]interface{} {
 
 func mcpNumber(lo, hi float64, description string) map[string]interface{} {
 	return map[string]interface{}{"type": "number", "minimum": lo, "maximum": hi, "description": description}
+}
+
+func mcpPTObject(description string, fields ...string) map[string]interface{} {
+	props := map[string]interface{}{}
+	for _, field := range fields {
+		props[field] = map[string]string{"type": "number"}
+	}
+	return map[string]interface{}{"type": "object", "description": description, "properties": props, "additionalProperties": false}
 }
 
 func mcpRenderProps() map[string]interface{} {
@@ -230,6 +239,86 @@ func mcpProductionTools() []mcpProductionTool {
 			Required: []string{"video_url"},
 		},
 		{
+			Name: "blur_tracked_region", Title: "Blur, pixelate or hide a tracked region", Service: "track-blur",
+			Description: "Blur, pixelate or black out a region, point or mask that stays locked to what it covers while the subject and camera move (faces, logos, plates, screens, or everything except one area with invert). Give region (x, y, w, h as fractions of the frame, top-left origin) or point (x, y, radius) as it appears at the first frame, or image_url with a white-on-black mask of the first frame. mode region follows rigid areas; mode mask follows deforming ones such as a whole person. $0.06 per second, minimum $0.15, max 20 s.",
+			Properties: map[string]interface{}{
+				"video_url": map[string]string{"type": "string", "description": "Source clip."},
+				"image_url": map[string]string{"type": "string", "description": "Optional first-frame mask image (white = area to cover)."},
+				"region":    mcpPTObject("Box at the first frame, fractions of the frame.", "x", "y", "w", "h"),
+				"point":     mcpPTObject("Circle at the first frame: x, y centre fractions and radius as a fraction of frame width.", "x", "y", "radius"),
+				"mode":      mcpEnum("region", "mask"),
+				"shape":     mcpEnum("rect", "ellipse"),
+				"style":     mcpEnum("blur", "pixelate", "solid"),
+				"strength":  mcpNumber(0.3, 3, "Blur or pixel size multiplier."),
+				"feather":   mcpNumber(0, 0.05, "Edge softness as a fraction of frame width."),
+				"grow":      mcpNumber(0, 0.05, "Expand the covered area, fraction of frame width."),
+				"invert":    map[string]string{"type": "boolean", "description": "Blur everything except the area."},
+				"color":     map[string]string{"type": "string", "description": "Hex colour for style solid, e.g. #000000."},
+				"duration":  map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 20, "description": "Seconds from the start (defaults to the clip up to 20 s)."},
+			},
+			Required: []string{"video_url"},
+		},
+		{
+			Name: "add_sticky_overlay", Title: "Pin text or a sticker to a moving point", Service: "sticky-overlay",
+			Description: "Attach text or a PNG sticker to a point in the scene so it follows that point's motion, scale and perspective (name tags, callouts, stickers on a moving subject). x and y are the overlay centre as fractions of the first frame, width a fraction of frame width. It fades out while the anchor is hidden. $0.06 per second, minimum $0.15, max 20 s.",
+			Properties: map[string]interface{}{
+				"video_url": map[string]string{"type": "string", "description": "Source clip."},
+				"image_url": map[string]string{"type": "string", "description": "Optional PNG sticker with transparency (used instead of text)."},
+				"text":      map[string]interface{}{"type": "string", "maxLength": 40, "description": "Overlay text."},
+				"x":         mcpNumber(0, 1, "Centre x at the first frame."),
+				"y":         mcpNumber(0, 1, "Centre y at the first frame."),
+				"width":     mcpNumber(0.03, 0.9, "Overlay width as a fraction of frame width."),
+				"rotation":  mcpNumber(-180, 180, "Initial rotation in degrees."),
+				"color":     map[string]string{"type": "string", "description": "Hex text colour, e.g. #ffd21f."},
+				"persp":     mcpNumber(0, 1, "0 follows position, scale and rotation only; 1 follows full perspective."),
+				"track_pad": mcpNumber(1, 4, "Size of the tracked area around the overlay; raise it when the spot has little texture."),
+				"pop":       map[string]string{"type": "boolean", "description": "Pop-in animation."},
+				"duration":  map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 20, "description": "Seconds from the start (defaults to the clip up to 20 s)."},
+			},
+			Required: []string{"video_url"},
+		},
+		{
+			Name: "apply_flow_fx", Title: "Motion blur and trails from measured motion", Service: "flow-fx",
+			Description: "Effects driven by per-pixel motion measured across the clip: motion-blur (real shutter blur along the motion), jelly (springy wobble that lags and overshoots moving areas), trails (light trails that follow what moves), flow-color (motion direction painted as colour). Combine several in effects. $0.08 per second, minimum $0.20, max 15 s.",
+			Properties: map[string]interface{}{
+				"video_url": map[string]string{"type": "string", "description": "Source clip."},
+				"effects":   map[string]interface{}{"type": "array", "items": mcpEnum("motion-blur", "jelly", "trails", "flow-color"), "maxItems": 4},
+				"strength":  mcpNumber(0.3, 2.5, "Effect strength."),
+				"palette":   mcpEnum("gold-blue", "fire", "neon", "ice"),
+				"duration":  map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 15, "description": "Seconds from the start (defaults to the clip up to 15 s)."},
+			},
+			Required: []string{"video_url"},
+		},
+		{
+			Name: "apply_reactive_fx", Title: "Music-reactive visuals on tracked motion", Service: "reactive-fx",
+			Description: "Glowing points, light trails, sparks and a motion-following warp that pulse with the music: bass drives glow and warp, kicks throw sparks from the fastest-moving points, snares add a colour split, onsets flash the picture. Uses audio_url, or the clip's own sound when omitted. $0.08 per second, minimum $0.20, max 20 s.",
+			Properties: map[string]interface{}{
+				"video_url":   map[string]string{"type": "string", "description": "Source clip."},
+				"audio_url":   map[string]string{"type": "string", "description": "Music to react to (defaults to the clip's own audio)."},
+				"effects":     map[string]interface{}{"type": "array", "items": mcpEnum("glow", "trails", "sparks", "warp", "flash"), "maxItems": 5},
+				"intensity":   mcpNumber(0.3, 1.6, "Overall strength."),
+				"palette":     mcpEnum("gold-blue", "fire", "neon", "ice"),
+				"seed":        map[string]string{"type": "integer"},
+				"audio_start": mcpNumber(0, 3600, "Start the song this many seconds in."),
+				"duration":    map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 20, "description": "Seconds from the start (defaults to the clip up to 20 s)."},
+			},
+			Required: []string{"video_url"},
+		},
+		{
+			Name: "propagate_mask", Title: "Carry a first-frame mask through a video", Service: "mask-propagate",
+			Description: "Track a mask drawn on the first frame (image_url, or a region/point shape) through the clip using dense motion, and return a mask video plus an overlay preview. Feed the mask to inpainting, removal, grading or compositing steps. $0.05 per second, minimum $0.12, max 20 s.",
+			Properties: map[string]interface{}{
+				"video_url": map[string]string{"type": "string", "description": "Source clip."},
+				"image_url": map[string]string{"type": "string", "description": "First-frame mask image (white = object)."},
+				"region":    mcpPTObject("Box at the first frame, fractions of the frame.", "x", "y", "w", "h"),
+				"point":     mcpPTObject("Circle at the first frame: x, y centre fractions and radius as a fraction of frame width.", "x", "y", "radius"),
+				"shape":     mcpEnum("rect", "ellipse"),
+				"segment":   mcpNumber(8, 96, "Frames per re-anchored segment; lower resists drift, higher is smoother."),
+				"duration":  map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 20, "description": "Seconds from the start (defaults to the clip up to 20 s)."},
+			},
+			Required: []string{"video_url"},
+		},
+		{
 			Name: "render_timeline", Title: "Render a Studio timeline to video", Service: "timeline-render",
 			Description: "Render a PortableStudioDocument (call get_studio_schema first) or a saved Studio project with the exact Studio export pipeline: trims, layers, transforms, crops, blend modes, transitions, grades, LUTs, shader FX, title cards and audio mix. Returns video_url, poster_url and studio_url (an editable copy in ManifoldGen Studio). $0.01 per output second up to 1080p, $0.02 above, $0.05 minimum, charged on success.",
 			Properties: map[string]interface{}{
@@ -247,7 +336,7 @@ func mcpProductionTools() []mcpProductionTool {
 
 var mcpTopLevelFields = map[string]bool{"image_url": true, "model_url": true, "model_urls": true, "video_url": true, "audio_url": true, "prompt": true, "duration": true}
 
-var mcpTopLevelDuration = map[string]bool{"remove_video_objects": true, "composite_shot": true, "apply_motion_fx": true, "beat_drop_video": true, "track_motion": true, "score_motion_video": true}
+var mcpTopLevelDuration = map[string]bool{"remove_video_objects": true, "composite_shot": true, "apply_motion_fx": true, "beat_drop_video": true, "track_motion": true, "score_motion_video": true, "blur_tracked_region": true, "add_sticky_overlay": true, "apply_flow_fx": true, "apply_reactive_fx": true, "propagate_mask": true}
 
 func mcpProductionToolDefs() []map[string]interface{} {
 	writeTool := map[string]bool{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true}
@@ -261,7 +350,7 @@ func mcpProductionToolDefs() []map[string]interface{} {
 		},
 		{
 			"name": "create_upload", "title": "Create an upload URL",
-			"description": "Get a presigned PUT URL for a local image, video, audio or 3D model, then upload with: curl -X PUT -H 'Content-Type: <content_type>' --data-binary @file '<upload_url>'. Pass public_url to other tools.",
+			"description": "Get a presigned PUT URL for a local image, video, audio or 3D model, then upload with: curl -X PUT -H 'Content-Type: <content_type>' --data-binary @file '<upload_url>'. Pass public_url to other tools. Requires scopes mcp and generate:tools.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -275,7 +364,7 @@ func mcpProductionToolDefs() []map[string]interface{} {
 		},
 		{
 			"name": "wait_for_job", "title": "Wait for a ManifoldGen job",
-			"description": "Poll an asynchronous job until it completes, fails or the timeout passes, then return its status and outputs.",
+			"description": "Poll an asynchronous job until it completes, fails or the timeout passes, then return its status and outputs. Requires scopes mcp and jobs:read.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -294,7 +383,7 @@ func mcpProductionToolDefs() []map[string]interface{} {
 		},
 		{
 			"name": "create_studio_project", "title": "Open a timeline in ManifoldGen Studio",
-			"description": "Save a PortableStudioDocument as a Studio project the user can keep editing in the browser. Media is copied to ManifoldGen storage and probed for duration and size. Free; returns project_id and studio_url.",
+			"description": "Save a PortableStudioDocument as a Studio project the user can keep editing in the browser. Media is copied to ManifoldGen storage and probed for duration and size. Free; returns project_id and studio_url. Requires scopes mcp and generate:tools.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -311,7 +400,7 @@ func mcpProductionToolDefs() []map[string]interface{} {
 			"wait_seconds": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 600, "default": 0, "description": "Block until done up to this many seconds."},
 		})
 		defs = append(defs, map[string]interface{}{
-			"name": tool.Name, "title": tool.Title, "description": tool.Description + " Requires a bearer key; call get_pricing or list_services if cost is unknown.",
+			"name": tool.Name, "title": tool.Title, "description": tool.Description + " Requires a bearer key with scopes mcp and generate:tools; call get_pricing or list_services if cost is unknown.",
 			"inputSchema": map[string]interface{}{"type": "object", "properties": props, "required": append([]string{}, tool.Required...), "additionalProperties": false},
 			"annotations": writeTool,
 		})
@@ -435,6 +524,7 @@ func mcpWaitForJob(parent *fasthttp.RequestCtx, jobID string, timeout time.Durat
 	deadline := time.Now().Add(timeout)
 	for {
 		internal := newMCPInternalContext(parent)
+		internal.Request.SetRequestURI("/api/video-jobs/" + url.PathEscape(jobID))
 		handleVideoJobStatus(internal, jobID)
 		response, status := mcpInternalJSON(internal)
 		if status >= 300 {

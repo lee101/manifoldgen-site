@@ -143,6 +143,9 @@ func normalizeProdkitMotion(req *ServiceUsageRequest, params map[string]interfac
 	if req.VideoURL == "" {
 		return fmt.Errorf("video_url is required")
 	}
+	if prodkitMotionIsPT(req.Service) {
+		return normalizeProdkitMotionPT(req, params)
+	}
 	req.AudioURL = strings.TrimSpace(req.AudioURL)
 	if req.AudioURL != "" {
 		if err := validateProdkitURL(req.AudioURL); err != nil {
@@ -229,7 +232,9 @@ func prodkitMotionEnv(workDir string) []string {
 		path = dir + ":" + path
 	}
 	env := []string{"HOME=" + home, "TMPDIR=" + workDir, "PATH=" + path, "PYTHONDONTWRITEBYTECODE=1", "MPLBACKEND=Agg"}
-	for _, key := range []string{"LD_LIBRARY_PATH", "CUDA_VISIBLE_DEVICES", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "ORT_NUM_THREADS"} {
+	for _, key := range []string{"LD_LIBRARY_PATH", "CUDA_VISIBLE_DEVICES", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "ORT_NUM_THREADS",
+		"MOTIONTRACK_HOME", "MOTIONTRACK_CKPT_DIR", "MOTIONTRACK_TAPNET_SRC", "MOTIONTRACK_ALLTRACKER_SRC",
+		"MOTIONTRACK_AMP", "MOTIONTRACK_CACHE", "MOTIONTRACK_CACHE_DIR", "MOTIONTRACK_CACHE_MB", "MOTIONTRACK_CPU_FX"} {
 		if value := os.Getenv(key); value != "" {
 			env = append(env, key+"="+value)
 		}
@@ -239,7 +244,24 @@ func prodkitMotionEnv(workDir string) []string {
 
 // prodkitMotionWorker runs the motiontrack job contract; the exit code is returned for bad-input handling.
 var prodkitMotionWorker = func(ctx context.Context, workDir, argsPath string) (int, error) {
-	cmd := exec.CommandContext(ctx, prodkitMotionPython(), "-m", "motiontrack.cli", "job", argsPath)
+	python := prodkitMotionPython()
+	if blob, err := os.ReadFile(argsPath); err == nil {
+		var head struct {
+			Tool string `json:"tool"`
+		}
+		if json.Unmarshal(blob, &head) == nil && prodkitPTPython() != "" {
+			for service, spec := range prodkitMotionSpecs {
+				if spec.Worker == head.Tool && prodkitMotionIsPT(service) {
+					python = prodkitPTPython()
+					if code, ok := prodkitPTSocketRun(ctx, argsPath); ok {
+						return code, nil
+					}
+					break
+				}
+			}
+		}
+	}
+	cmd := exec.CommandContext(ctx, python, "-m", "motiontrack.cli", "job", argsPath)
 	cmd.Dir = prodkitMotionRoot()
 	cmd.Env = prodkitMotionEnv(workDir)
 	cmd.Env = append(cmd.Env, "PYTHONPATH="+prodkitMotionRoot())
@@ -281,9 +303,13 @@ type prodkitMotionManifest struct {
 	SlowmoHits  int                      `json:"slowmo_hits"`
 	Events      []map[string]interface{} `json:"events"`
 	Stats       map[string]interface{}   `json:"stats"`
+	Mask        string                   `json:"mask"`
 }
 
 func prodkitMotionParams(req ServiceUsageRequest, seconds float64) map[string]interface{} {
+	if prodkitMotionIsPT(req.Service) {
+		return prodkitMotionPTParams(req, seconds)
+	}
 	params := prodkitParams(req)
 	out := map[string]interface{}{"max_seconds": seconds}
 	for _, key := range []string{"preset", "intensity", "palette", "slowmo", "sfx", "text", "target", "names", "extra", "seed", "keep_audio", "audio_start", "aspect"} {
@@ -317,8 +343,19 @@ func runProdkitMotion(ctx context.Context, job *VideoJob, req ServiceUsageReques
 		limit = math.Min(limit, float64(req.Duration))
 	}
 	seconds := math.Min(probe.Duration, limit)
-	args := map[string]interface{}{"tool": spec.Worker, "video": source, "out": filepath.Join(workDir, "motion-out"), "device": "cpu",
+	device := "cpu"
+	if prodkitMotionIsPT(req.Service) {
+		device = "cuda"
+	}
+	args := map[string]interface{}{"tool": spec.Worker, "video": source, "out": filepath.Join(workDir, "motion-out"), "device": device,
 		"params": prodkitMotionParams(req, seconds)}
+	if prodkitMotionIsPT(req.Service) && req.ImageURL != "" {
+		image := filepath.Join(workDir, "image"+prodkitMediaExt(req.ImageURL))
+		if err := prodkitFetchMedia(ctx, req.ImageURL, image, prodkitMaxImage); err != nil {
+			return nil, 0, 0, prodkitUserError{err.Error()}
+		}
+		args["image"] = image
+	}
 	if req.AudioURL != "" {
 		audio := filepath.Join(workDir, "audio"+prodkitMediaExt(req.AudioURL))
 		if err := prodkitFetchMedia(ctx, req.AudioURL, audio, prodkitMotionMaxAudio); err != nil {
@@ -364,7 +401,7 @@ func runProdkitMotion(ctx context.Context, job *VideoJob, req ServiceUsageReques
 	if code != 0 {
 		return nil, 0, 0, fmt.Errorf("motion worker exit %d", code)
 	}
-	if req.Service != prodkitBeatDrop && manifest.TracksCount == 0 {
+	if req.Service != prodkitBeatDrop && !prodkitMotionIsPT(req.Service) && manifest.TracksCount == 0 {
 		return nil, 0, 0, prodkitUserError{prodkitMotionNoPeopleMs}
 	}
 	setStage("uploading")
@@ -388,6 +425,9 @@ func runProdkitMotion(ctx context.Context, job *VideoJob, req ServiceUsageReques
 	if manifest.Stats != nil {
 		result["stats"] = manifest.Stats
 	}
+	if prodkitMotionIsPT(req.Service) {
+		prodkitPTResult(blob, result)
+	}
 	if manifest.SlowmoHits > 0 {
 		result["slowmo_hits"] = manifest.SlowmoHits
 	}
@@ -402,7 +442,7 @@ func runProdkitMotion(ctx context.Context, job *VideoJob, req ServiceUsageReques
 		{manifest.Video, "video_url", "video/mp4"}, {manifest.Poster, "poster_url", "image/jpeg"},
 		{manifest.Tracks, "tracks_url", "application/json"}, {manifest.Signals, "signals_url", "application/json"},
 		{manifest.Preview, "preview_url", "video/mp4"}, {manifest.Guide, "guide_url", "video/mp4"},
-		{manifest.Audio, "audio_url", "audio/wav"}, {manifest.Cues, "cues_url", "application/json"},
+		{manifest.Audio, "audio_url", "audio/wav"}, {manifest.Cues, "cues_url", "application/json"}, {manifest.Mask, "mask_url", "video/mp4"},
 	}
 	for _, file := range files {
 		if file.name == "" {
@@ -429,5 +469,8 @@ func runProdkitMotion(ctx context.Context, job *VideoJob, req ServiceUsageReques
 		}
 	}
 	elapsed := time.Since(started).Seconds()
+	if prodkitMotionIsPT(req.Service) {
+		return result, seconds, prodkitGPUUSDPerSecond * elapsed, nil
+	}
 	return result, seconds, prodkitMotionCPUUSDPerSecond * elapsed, nil
 }

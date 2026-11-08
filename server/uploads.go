@@ -195,15 +195,8 @@ func awsURIEncode(s string, encodeSlash bool) string {
 // Auth: Bearer API key.
 // Query params: filename, content_type (optional), dataset (optional, default "default")
 func handlePresignUpload(ctx *fasthttp.RequestCtx) {
-	authHeader := string(ctx.Request.Header.Peek("Authorization"))
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		jsonError(ctx, 401, "API key required")
-		return
-	}
-	apiKey := strings.TrimPrefix(authHeader, "Bearer ")
-	user, err := dbConn.GetUserByAPIKey(apiKey)
-	if err != nil {
-		jsonError(ctx, 401, "invalid API key")
+	user, ok := requireScope(ctx, scopeTrainLoRA)
+	if !ok {
 		return
 	}
 
@@ -277,15 +270,8 @@ func sanitizeUploadName(s string) string {
 // Auth: Bearer API key. Deducts credits via the existing /api/service flow,
 // but here we proxy directly to inference's /train so we can pass image URLs.
 func handleStartLoraTraining(ctx *fasthttp.RequestCtx) {
-	authHeader := string(ctx.Request.Header.Peek("Authorization"))
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		jsonError(ctx, 401, "API key required")
-		return
-	}
-	apiKey := strings.TrimPrefix(authHeader, "Bearer ")
-	user, err := dbConn.GetUserByAPIKey(apiKey)
-	if err != nil {
-		jsonError(ctx, 401, "invalid API key")
+	user, ok := requireScope(ctx, scopeTrainLoRA)
+	if !ok {
 		return
 	}
 	if err := validateLoraTrainingURLs(ctx.PostBody()); err != nil {
