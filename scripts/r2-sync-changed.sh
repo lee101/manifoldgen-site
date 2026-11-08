@@ -22,6 +22,15 @@ dest="s3://$bucket/${prefix:+${prefix%/}/}"
 work=$(mktemp -d "$out_dir/../.r2sync.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
+# ~30k small objects: the CLI default of 10 concurrent requests is latency-bound, not bandwidth-bound.
+cat > "$work/awsconfig" <<CFG
+[default]
+s3 =
+  max_concurrent_requests = ${R2_CONCURRENCY:-64}
+  max_queue_size = 10000
+CFG
+export AWS_CONFIG_FILE="$work/awsconfig"
+
 # Manifest of every candidate file: "<sha256>  <relative path>", sorted for comm.
 (
   cd "$out_dir"
