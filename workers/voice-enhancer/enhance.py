@@ -104,11 +104,11 @@ def analyse(args, work: Path) -> dict:
 
 
 def yue(lyric_text: str, style: str, out: Path, seeds: list[int], tokens: int, abc: str | None = None,
-        vocal_seconds: float = 0) -> list[Path]:
+        vocal_seconds: float = 0, cot: str = "full") -> list[Path]:
     out.mkdir(parents=True, exist_ok=True)
     (out / "lyrics.txt").write_text(lyric_text)
     cmd = [YUE_PYTHON, str(HERE / "yue_render.py"), "--lyrics", str(out / "lyrics.txt"), "--style", style,
-           "--out", str(out), "--seeds", ",".join(map(str, seeds)), "--tokens", str(tokens)]
+           "--out", str(out), "--seeds", ",".join(map(str, seeds)), "--tokens", str(tokens), "--cot", cot]
     if abc:
         (out / "plan.abc").write_text(abc)
         cmd += ["--abc", str(out / "plan.abc")]

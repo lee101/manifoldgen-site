@@ -52,7 +52,7 @@ func buildSitemapIndex(ctx *fasthttp.RequestCtx) {
 }
 
 var staticSitemapPages = []string{
-	"/", "/tools", "/tools/h3-image", "/tools/music-generator", "/tools/voice-enhancer", "/tools/lyric-music", "/tools/lofi-loop", "/tools/lyria", "/tools/gemini-tts", "/tools/make-image",
+	"/", "/tools", "/tools/h3-image", "/tools/music-generator", "/tools/voice-enhancer", "/tools/lyric-music", "/tools/music-restyle", "/tools/lofi-loop", "/tools/lyria", "/tools/gemini-tts", "/tools/make-image",
 	"/tools/style-transfer", "/tools/h3-image-editor", "/tools/character-animator",
 	"/tools/video-background-remover", "/tools/video-dramatizer", "/tools/video-remake", "/tools/character-swap", "/tools/character-swap-exact", "/tools/character-swap-lora", "/tools/character-recast", "/tools/orbit-video", "/tools/flux-3-max-video", "/tools/pose-library", "/tools/pose-puppet", "/tools/anime-pose-control", "/tools/anime-scene-control", "/tools/anime-depth-control", "/tools/anime-sketch-control", "/tools/reference-video", "/tools/trailer-agent",
 	"/tools/production", "/tools/destruction-studio", "/tools/exploded-view", "/tools/toon-shader", "/tools/blender-scene", "/tools/image-to-3d", "/tools/vectorize", "/tools/shot-cleanup",

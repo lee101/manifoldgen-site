@@ -57,7 +57,7 @@ func TestMCPToolsListIncludesGenerationAnnotations(t *testing.T) {
 	if err := json.Unmarshal(ctx.Response.Body(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Result.Tools) != 5+len(mcpProductionToolDefs()) {
+	if len(response.Result.Tools) != 6+len(mcpProductionToolDefs()) {
 		t.Fatalf("tool count = %d", len(response.Result.Tools))
 	}
 	for _, tool := range response.Result.Tools {

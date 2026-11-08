@@ -13,3 +13,9 @@ standard-aifc==3.13.0
 standard-sunau==3.13.0
 rotary-embedding-torch==0.6.5
 runpod==1.7.9
+# music restyle (basic-pitch is installed --no-deps in the Dockerfile)
+onnxruntime==1.20.1
+pretty_midi==0.2.10
+mir_eval==0.8.2
+resampy==0.4.3
+librosa==0.11.0

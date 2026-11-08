@@ -276,6 +276,12 @@ type ServiceUsageRequest struct {
 	Tracks       []string `json:"tracks,omitempty"`
 	VoiceConsent bool     `json:"voice_consent,omitempty"`
 	QuoteOnly    bool     `json:"quote_only,omitempty"`
+	// music_restyle: harmony "melody" re-harmonises for the new style, "full"
+	// keeps the source chords; bpm 0 keeps the source tempo; rights_confirmed
+	// is the caller's statement that they may arrange the uploaded recording.
+	Harmony         string `json:"harmony,omitempty"`
+	BPM             int    `json:"bpm,omitempty"`
+	RightsConfirmed bool   `json:"rights_confirmed,omitempty"`
 	// SoundtrackURL hands the trailer agent a finished song (lyric music video).
 	SoundtrackURL string `json:"soundtrack_url,omitempty"`
 	// chronos2 fields

@@ -89,6 +89,11 @@ func TestNormalizeAnimeControlRejections(t *testing.T) {
 			t.Errorf("%s: expected rejection", name)
 		}
 	}
+	unGated := poseKindRequest()
+	unGated.Prompt, unGated.NegativePrompt = "anime child character", "minor"
+	if err := normalizeAnimeControlRequest(pose, &unGated); err != nil {
+		t.Errorf("prompt was gated on subject age: %v", err)
+	}
 	photo := ServiceUsageRequest{Prompt: "p", ImageURL: "https://example.com/a.png"}
 	if err := normalizeAnimeControlRequest(scene, &photo); err == nil {
 		t.Error("scene control must not accept a photo")

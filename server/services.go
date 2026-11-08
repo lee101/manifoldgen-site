@@ -62,6 +62,7 @@ var servicePricesUSD = map[string]float64{
 	"lyria_generation":         0.08,   // per render; Clip overrides to $0.04
 	"voice_enhancer":           0.31,   // 3-minute take, all three tracks; quoted from length
 	"lyric_music":              0.52,   // 3-minute lyric song, studio voice; quoted from length
+	"music_restyle":            0.19,   // 3-minute instrumental, one render; quoted from length
 	"extend_image":             0.10,   // per outpaint expansion through OpenPaths extend-image
 	"smart_resize":             0.24,
 	"remove_background":        0.03,
@@ -517,6 +518,7 @@ var publicServiceAliases = []publicServiceAlias{
 	{Public: "lofi_loop", Internal: "lofi_loop"},
 	{Public: "voice-enhancer", Internal: "voice_enhancer"},
 	{Public: "lyric-music", Internal: "lyric_music"},
+	{Public: "music-restyle", Internal: "music_restyle"},
 	{Public: "character_swap_video", Internal: "character_swap_video"},
 	{Public: "reference-video", Internal: "reference_video"},
 	{Public: "destruction-studio", Internal: prodkitDestruction},
@@ -605,6 +607,7 @@ func handleGetPricing(ctx *fasthttp.RequestCtx) {
 		"upscale_image":            "per upscale ($0.02 2x, $0.03 4x, $0.15 model=creative)",
 		"voice_enhancer":           "per song, quoted from the recording's length (about $0.31 for 3 minutes, from $0.29); charged on success",
 		"lyric_music":              "per song, quoted from the lyrics' length and voice quality (about $0.52 studio, $0.30 standard, $0.29 lite for 3 minutes; from $0.19)",
+		"music_restyle":            "per restyled track, quoted from the source length (from $0.19, about $0.29 for 6 minutes with two renders); charged on success",
 		"lofi_loop":                "per looping video (cover still, motion, visualizer, loop mux); add music at the track rate",
 		"reference_video":          "Seedance 2.0 reference-to-video: Mini $0.23/s output + $0.14/s reference video at 720p ($0.11 + $0.07 at 480p); Pro $0.46 + $0.27 at 720p, $1.02 + $0.61 at 1080p",
 		"character_swap_video":     "per second of source video ($0.20/s at 768P, $0.36/s at 2K), plus $0.30 per detected shot after the first for per-shot reference frames, plus one GPT Image 2 frame when no image_url is supplied; kind=recast (H3 Max recast from reference photos, 5-30 s) is $0.66/s at 768P and $0.75/s at 1080P with no image fee; kind=lora is $0.15/s at 480p ($0.13/s fast tier, 4x at 768p) plus a small character-image fee when no image_url is supplied",
@@ -766,6 +769,10 @@ func handleServiceRequest(ctx *fasthttp.RequestCtx) {
 	}
 	if req.Service == voiceEnhancerService || req.Service == lyricMusicService {
 		handleVoiceEnhancerService(ctx, req, user)
+		return
+	}
+	if req.Service == musicRestyleService {
+		handleMusicRestyleService(ctx, req, user)
 		return
 	}
 	if isProdkitService(req.Service) {

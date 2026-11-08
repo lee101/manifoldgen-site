@@ -28,15 +28,26 @@ async function analyzeWithGo(): Promise<AudioAnalysis> {
   const outputDir = await mkdtemp(join(tmpdir(), 'manifold-audio-parity-'));
   const outputPath = join(outputDir, 'analysis.json');
   try {
-    const proc = Bun.spawn(['go', 'test', '-count=1', '-run', '^TestAudioParityPCM$', '.'], {
+    const proc = Bun.spawn([
+      'go', 'test', '-mod=readonly', '-p=1', '-timeout=90s', '-count=1',
+      '-run', '^TestAudioParityPCM$', 'audio_understanding.go', 'audio_understanding_test.go',
+    ], {
       cwd: SERVER_DIR,
-      env: { ...process.env, AUDIO_PARITY_PCM: PCM_PATH, AUDIO_PARITY_OUTPUT: outputPath },
+      env: { ...process.env, GOMAXPROCS: '2', AUDIO_PARITY_PCM: PCM_PATH, AUDIO_PARITY_OUTPUT: outputPath },
       stdout: 'pipe',
       stderr: 'pipe',
     });
-    const [code, stdout, stderr] = await Promise.all([
-      proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text(),
-    ]);
+    const deadline = setTimeout(() => proc.kill('SIGKILL'), 110_000);
+    let code: number;
+    let stdout: string;
+    let stderr: string;
+    try {
+      [code, stdout, stderr] = await Promise.all([
+        proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text(),
+      ]);
+    } finally {
+      clearTimeout(deadline);
+    }
     if (code !== 0) throw new Error(`Go audio analysis failed (exit ${code}):\n${stdout}\n${stderr}`);
     return JSON.parse(await readFile(outputPath, 'utf8')) as AudioAnalysis;
   } finally {

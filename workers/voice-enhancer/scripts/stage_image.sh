@@ -8,8 +8,9 @@ OUT="${1:?context dir}"
 HF="${HF_HOME:-/vfast/data/.cache/huggingface}/hub"
 SEP="${VE_SEPARATOR_DIR:-$HOME/.cache/audio-separator}"
 rm -rf "$OUT" && mkdir -p "$OUT/app" "$OUT/models/hf/hub" "$OUT/models/separator" "$OUT/models/torch/hub/checkpoints"
-cp "$HERE"/{Dockerfile,requirements.txt,constraints.txt,requirements-seedvc.txt} "$OUT/"
-cp "$HERE"/{enhance,grid,handler,lyrics,lyrics_tts,mix,quality,svc,vocal,yue_render}.py "$OUT/app/"
+cp "$HERE"/{Dockerfile,requirements.txt,constraints.txt,requirements-seedvc.txt,requirements-sheetsage2.txt} "$OUT/"
+cp "$HERE"/{enhance,grid,handler,lyrics,lyrics_tts,mix,quality,restyle,svc,vocal,yue_render}.py "$OUT/app/"
+rsync -a --exclude __pycache__ "$HERE/yue2_instrumental/" "$OUT/app/yue2_instrumental/"
 rsync -a --exclude .venv --exclude .git --exclude examples --exclude assets "$HERE/tools/seed-vc/" "$OUT/seed-vc/"
 # torchaudio 2.10 (the base image's) saves through torchcodec, which is not installed.
 python3 - "$OUT/seed-vc/inference.py" <<'PY'
@@ -25,7 +26,9 @@ PY
 # deduplicated store outside the repo dir). YuE revisions match yue_render.py.
 for spec in models--m-a-p--YuE2-3B@14fc6c6f146441b1dd6363fcb2e01e82a6914cb7 \
             models--m-a-p--YuE2-Vae@9a94e1d0ea9f8087e98f77fa88df4a4068104d2a \
-            models--Systran--faster-whisper-large-v3@main models--facebook--audiobox-aesthetics@main; do
+            models--Systran--faster-whisper-large-v3@main models--facebook--audiobox-aesthetics@main \
+            models--m-a-p--SheetSage2@eab522a8168e8b8b8c4856bf8609cd86198f01fe \
+            models--m-a-p--MERT-v2-FullSong@d8ba1c745e733b3908ce6ad16ebeb17ac7600a42; do
   repo="${spec%@*}"; rev="${spec#*@}"
   src="$HF/$repo"; [ -d "$src" ] || src="$HOME/.cache/huggingface/hub/$repo"
   [ "$rev" = main ] && rev="$(cat "$src/refs/main")"

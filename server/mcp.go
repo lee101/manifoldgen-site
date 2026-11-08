@@ -186,6 +186,35 @@ func manifoldMCPTools() []map[string]interface{} {
 			},
 			"annotations": readOnly,
 		},
+		{
+			"name":  "restyle_music",
+			"title": "Restyle a music track",
+			"description": "Re-perform an uploaded instrumental in a new style (lofi, R&B, violin, peaceful piano...) with the Manifold Music Generator. " +
+				"The melody is transcribed to a score and kept; harmony is re-written for the style (melody) or kept (full). Spends credits, " +
+				"charged on success; set quote_only for the price and style presets. Returns a job: poll get_job, then read audio_url and score_abc. " +
+				"For a video, pass audio_url to generate_media service lofi_loop (or an H3 loop clip as video_url), or trailer_agent with soundtrack_url.",
+			"inputSchema": musicRestyleMCPSchema(),
+			"annotations": writeTool,
+		},
+	}
+}
+
+func musicRestyleMCPSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"audio_url":        map[string]string{"type": "string", "description": "ManifoldGen upload URL of the source track (POST /api/uploads/presign, then PUT the file)."},
+			"prompt":           map[string]string{"type": "string", "description": "Target style, e.g. 'lofi hip hop, mellow Rhodes, dusty drums'. quote_only lists presets."},
+			"harmony":          map[string]interface{}{"type": "string", "enum": musicRestyleHarmonies, "default": "melody", "description": "melody: new chords that suit the style; full: keep the source chords."},
+			"bpm":              map[string]interface{}{"type": "integer", "minimum": 40, "maximum": 200, "description": "Target tempo; omit to keep the source tempo."},
+			"duration":         map[string]interface{}{"type": "integer", "minimum": musicRestyleMinSeconds, "maximum": musicRestyleMaxSeconds, "description": "Restyle only the first N seconds."},
+			"n":                map[string]interface{}{"type": "integer", "minimum": 1, "maximum": musicRestyleMaxCandidates, "default": 1, "description": "Renders to compare; the best is delivered."},
+			"seed":             map[string]string{"type": "integer"},
+			"rights_confirmed": map[string]interface{}{"type": "boolean", "description": "Required: the caller owns the recording, it is public domain, or they may arrange it."},
+			"quote_only":       map[string]string{"type": "boolean"},
+		},
+		"required":             []string{"audio_url", "rights_confirmed"},
+		"additionalProperties": false,
 	}
 }
 
@@ -258,6 +287,16 @@ func manifoldGenerateSchema() map[string]interface{} {
 		"model_url":            map[string]string{"type": "string", "description": "3D model URL for production tools."},
 		"model_urls":           map[string]interface{}{"type": "array", "items": map[string]string{"type": "string"}},
 		"params":               map[string]interface{}{"type": "object", "description": "Production tool parameters (see list_services)."},
+		"audio_url":            map[string]interface{}{"type": "string", "description": "Source or soundtrack audio (lofi_loop soundtrack, music-restyle source)."},
+		"first_frame":          map[string]interface{}{"type": "string", "description": "Start image for video; with loop=true the clip also ends on it."},
+		"soundtrack_url":       map[string]interface{}{"type": "string", "description": "Finished ManifoldGen song for trailer_agent."},
+		"loop_seconds":         map[string]interface{}{"type": "integer", "minimum": 0, "description": "lofi_loop repeat interval in seconds."},
+		"scene_prompt":         map[string]string{"type": "string"},
+		"visualizer":           map[string]string{"type": "string"},
+		"harmony":              map[string]interface{}{"type": "string", "enum": musicRestyleHarmonies},
+		"bpm":                  map[string]interface{}{"type": "integer", "minimum": 40, "maximum": 200},
+		"rights_confirmed":     map[string]string{"type": "boolean"},
+		"quote_only":           map[string]string{"type": "boolean"},
 	}
 	return map[string]interface{}{
 		"type":                 "object",
@@ -319,6 +358,19 @@ func executeMCPTool(parent *fasthttp.RequestCtx, name string, arguments json.Raw
 		if err != nil {
 			return map[string]interface{}{"error": "could not encode generation request"}, http.StatusInternalServerError
 		}
+		internal.Request.Header.SetMethod(http.MethodPost)
+		internal.Request.SetRequestURI("/api/service")
+		internal.Request.Header.SetContentType("application/json")
+		internal.Request.SetBody(body)
+		handleServiceRequest(internal)
+	case "restyle_music":
+		var request ServiceUsageRequest
+		if err := decodeMCPArguments(arguments, &request); err != nil {
+			return map[string]interface{}{"error": err.Error()}, http.StatusBadRequest
+		}
+		request.Service = musicRestyleService
+		request.WalletAddress = ""
+		body, _ := json.Marshal(request)
 		internal.Request.Header.SetMethod(http.MethodPost)
 		internal.Request.SetRequestURI("/api/service")
 		internal.Request.Header.SetContentType("application/json")

@@ -101,7 +101,11 @@ func normalizeLofiLoopRequest(req *ServiceUsageRequest) (string, int, error) {
 	if req.FramesPerSecond < 0 || req.FramesPerSecond > 60 {
 		return "", 0, fmt.Errorf("frames_per_second must be between 0 and 60")
 	}
-	if strings.TrimSpace(req.CharacterPrompt) == "" && strings.TrimSpace(req.ScenePrompt) == "" && strings.TrimSpace(req.Prompt) == "" {
+	req.VideoURL = strings.TrimSpace(req.VideoURL)
+	if req.VideoURL != "" && !strings.HasPrefix(req.VideoURL, "https://") {
+		return "", 0, fmt.Errorf("video_url must be an https loop clip URL")
+	}
+	if req.VideoURL == "" && strings.TrimSpace(req.CharacterPrompt) == "" && strings.TrimSpace(req.ScenePrompt) == "" && strings.TrimSpace(req.Prompt) == "" {
 		return "", 0, fmt.Errorf("character_prompt, scene_prompt, or prompt is required to draw the cover")
 	}
 	if req.FirstFrame != "" && !strings.HasPrefix(req.FirstFrame, "https://") {
@@ -364,6 +368,9 @@ func renderLofiLoop(job *VideoJob, user *User, state lofiLoopState) (map[string]
 	if err := downloadURLToFile(ctx, state.AudioURL, audioPath); err != nil {
 		return nil, err
 	}
+	if req.VideoURL != "" {
+		return renderLofiLoopClip(ctx, workDir, audioPath, user, state)
+	}
 	coverPath := ""
 	if strings.TrimSpace(req.FirstFrame) != "" {
 		coverPath = filepath.Join(workDir, "cover.png")
@@ -418,6 +425,43 @@ func renderLofiLoop(job *VideoJob, user *User, state lofiLoopState) (map[string]
 		result["loop_exact"] = rendered.Loop.Exact
 		result["loop_mean_abs_diff"] = rendered.Loop.MeanAbsDiff
 		result["loop_max_abs_diff"] = rendered.Loop.MaxAbsDiff
+	}
+	if state.AudioID != "" {
+		result["music_audio_id"] = state.AudioID
+		result["music_audio_url"] = state.AudioURL
+	}
+	return result, nil
+}
+
+// renderLofiLoopClip repeats a seamless clip (an H3 loop=true video, whose
+// first and last frames match) for the length of the soundtrack.
+func renderLofiLoopClip(ctx context.Context, workDir, audioPath string, user *User, state lofiLoopState) (map[string]interface{}, error) {
+	req := state.Request
+	clipPath := filepath.Join(workDir, "clip.mp4")
+	if err := downloadURLToFile(ctx, req.VideoURL, clipPath); err != nil {
+		return nil, err
+	}
+	width, height, err := lofiloop.ParseSize(req.Size)
+	if err != nil {
+		return nil, err
+	}
+	tiled, err := lofiloop.TileClip(ctx, lofiloop.ClipRequest{
+		Clip: clipPath, Audio: audioPath, Out: filepath.Join(workDir, "loop.mp4"),
+		Width: width, Height: height, FPS: req.FramesPerSecond, FadeOut: 2,
+	})
+	if err != nil {
+		return nil, err
+	}
+	videoURL, err := publishFinalVideo(ctx, tiled.Path, user.ID, func() (string, error) {
+		return uploadLofiLoopFile(ctx, tiled.Path, user.ID, "video/mp4")
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]interface{}{
+		"video_url": videoURL, "service": lofiLoopService, "source": "clip", "clip_url": req.VideoURL,
+		"duration_seconds": tiled.Seconds, "repeats": tiled.Repeats, "size": fmt.Sprintf("%dx%d", width, height),
+		"loop_exact": false,
 	}
 	if state.AudioID != "" {
 		result["music_audio_id"] = state.AudioID

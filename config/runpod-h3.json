@@ -75,7 +75,7 @@
       "templateId": "cwvlh3haz6",
       "name": "cog-manifold-h3-flex",
       "workersMax": 3,
-      "image": "ghcr.io/lee101/h3-cog:cu130-20261030-flex-r3",
+      "image": "ghcr.io/lee101/h3-cog:cu130-20261031-flex-r4",
       "idleTimeout": 60,
       "env": {
         "H3_ACCEL_PROFILE": "pika-6",

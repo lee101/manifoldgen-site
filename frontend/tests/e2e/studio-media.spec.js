@@ -10,7 +10,8 @@ const API_KEY = 'mg_studio_e2e_key';
 const PERF_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'manifold-studio-perf-'));
 const PERF_VIDEO = path.join(PERF_DIR, '2k-performance.mp4');
 
-test.beforeAll(() => {
+function preparePerformanceVideo() {
+  if (fs.existsSync(PERF_VIDEO)) return;
   const common = ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=2048x1080:rate=30', '-t', '1.5'];
   try {
     execFileSync('ffmpeg', [...common, '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', PERF_VIDEO], { timeout: 60_000, stdio: 'pipe' });
@@ -21,7 +22,7 @@ test.beforeAll(() => {
       // Only the 2K performance tests need this fixture; the rest of the suite must still run.
     }
   }
-});
+}
 
 test.afterAll(() => fs.rmSync(PERF_DIR, { recursive: true, force: true }));
 
@@ -782,6 +783,7 @@ test('2K preview stays frame-driven on WebGL and export requests GPU and hardwar
   // useful environment for either 2K playback or hardware encoding, and can
   // wedge on a video `play()` call before the hardware assertions run.
   test.skip(process.env.PLAYWRIGHT_GPU !== '1', 'Run 2K preview and hardware export with PLAYWRIGHT_GPU=1');
+  preparePerformanceVideo();
   await installMocks(page);
   await page.goto('/studio');
   await page.locator('input[type=file]').setInputFiles(PERF_VIDEO);
@@ -1450,14 +1452,17 @@ test('timeline composites active visuals and starts overlapping audio clips toge
   const input = page.locator('input[type=file]');
   await input.setInputFiles(VIDEO);
   await input.setInputFiles([
-    { name: 'first-track.wav', mimeType: 'audio/wav', buffer: wavFixture(1) },
-    { name: 'second-track.wav', mimeType: 'audio/wav', buffer: wavFixture(1) },
+    { name: 'first-track.wav', mimeType: 'audio/wav', buffer: wavFixture(4) },
+    { name: 'second-track.wav', mimeType: 'audio/wav', buffer: wavFixture(4) },
   ]);
 
   await expect(page.locator('[data-testid^="timeline-audio-"]')).toHaveCount(2);
   // Selecting audio must not replace the visual composition with an
   // audio-only stage.
   await expect(page.locator('[data-stage-asset]')).toHaveCount(1);
+  await expect.poll(() => page.locator('audio[hidden]').evaluateAll((elements) =>
+    elements.length === 2 && elements.every((element) => element.readyState >= 2)
+  )).toBe(true);
   await page.getByRole('button', { name: 'Play', description: 'Play/pause (Space)' }).click();
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
   await expect.poll(() => page.locator('audio').evaluateAll((elements) => elements.filter((element) => !element.paused && element.currentTime > 0).length)).toBe(2);

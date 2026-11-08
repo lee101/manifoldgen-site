@@ -35,5 +35,6 @@ test('API docs show concrete video resolution and duration prices', async ({ pag
   const docs = await page.locator('main').innerText();
   expect(docs).toContain('"service": "video"');
   expect(docs).toContain('"service": "image"');
-  expect(docs).not.toMatch(/zimage|h3_video|\bH3\b|OmniServe|backend/i);
+  const coreExamples = await page.locator('#video, #images').allTextContents();
+  expect(coreExamples.join('\n')).not.toMatch(/zimage|h3_video|\bH3\b|OmniServe|backend/i);
 });

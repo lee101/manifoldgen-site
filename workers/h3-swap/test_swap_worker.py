@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 def stub_handler_deps(monkeypatch, download_image):
     for name, attrs in {
         "runpod": {},
-        "h3_moderation": {"Moderation": object},
         "h3_serverless": {"media_artifact": None, "release_media": None},
         "rp_handler": {"_download_image": download_image, "_public_https": lambda url: None, "_upload_output": None},
     }.items():

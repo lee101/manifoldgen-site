@@ -2,16 +2,22 @@
 """RunPod serverless handler: voice enhancer and lyric music generator.
 
 Input
-  task         "enhance" (audio_url required) or "lyrics" (lyrics required)
+  task         "enhance" (audio_url required), "lyrics" (lyrics required) or
+               "restyle" (audio_url of an instrumental; see restyle.py)
   audio_url    https URL of the sung/rapped take (enhance)
   lyrics       pasted lyrics; for enhance it overrides speech-to-text
   prompt       style, e.g. "hard hip-hop diss track"
   tts          {"tier": "studio|standard|lite", "voice": "..."} (lyrics task)
   tracks       subset of ["voice", "studio", "produce"]
   seed, candidates
+  harmony      restyle: "melody" (new harmony in the style) or "full" (keep the chords)
+  bpm          restyle: 0 keeps the source tempo, else 40-200
+  max_seconds  restyle: only the first N seconds of the source are restyled
   uploads      {track: {"upload_url": presigned PUT, "public_url": ...}} MP3 targets
+               (restyle uses the single track "restyle")
 Output
   {"tracks": {track: {"audio_url", "seconds", "lufs"}}, "lyrics", "metrics", "timing", "tts"}
+  restyle adds "abc" (the conditioned score), "style", "bpm", "key", "transcriber"
 """
 from __future__ import annotations
 
@@ -31,6 +37,7 @@ MAX_INPUT_BYTES = int(os.getenv("VE_MAX_INPUT_BYTES", str(200 << 20)))
 MAX_SECONDS = float(os.getenv("VE_MAX_SECONDS", "360"))
 MAX_LYRIC_CHARS = int(os.getenv("VE_MAX_LYRIC_CHARS", "6000"))
 TRACKS = ("voice", "studio", "produce")
+RESTYLE_TRANSCRIBER = os.getenv("RESTYLE_TRANSCRIBER", "basic-pitch")
 
 
 def _dry() -> bool:
@@ -82,8 +89,10 @@ def _upload(wav: Path, target: dict) -> str:
 def normalize(raw: dict) -> dict:
     job = raw.get("input", raw) if isinstance(raw, dict) else {}
     task = job.get("task", "enhance")
-    if task not in ("enhance", "lyrics"):
-        raise ValueError("task must be enhance or lyrics")
+    if task not in ("enhance", "lyrics", "restyle"):
+        raise ValueError("task must be enhance, lyrics or restyle")
+    if task == "restyle":
+        return normalize_restyle(job)
     lyric_text = str(job.get("lyrics") or "").strip()
     if len(lyric_text) > MAX_LYRIC_CHARS:
         raise ValueError(f"lyrics are limited to {MAX_LYRIC_CHARS} characters")
@@ -113,6 +122,44 @@ def normalize(raw: dict) -> dict:
             "seed": seed % 2_000_000_000, "candidates": candidates}
 
 
+def normalize_restyle(job: dict) -> dict:
+    if not str(job.get("audio_url") or "").startswith("file://" if _dry() else "https://"):
+        raise ValueError("audio_url is required")
+    target = (job.get("uploads") or {}).get("restyle") or {}
+    if not str(target.get("upload_url", "")).startswith("https://") or not str(target.get("public_url", "")).startswith("https://"):
+        raise ValueError("uploads.restyle needs https upload_url and public_url")
+    harmony = job.get("harmony") or "melody"
+    if harmony not in ("melody", "full"):
+        raise ValueError("harmony must be melody or full")
+    bpm = int(job.get("bpm") or 0)
+    if bpm and not 40 <= bpm <= 200:
+        raise ValueError("bpm must be between 40 and 200")
+    max_seconds = min(float(job.get("max_seconds") or MAX_SECONDS), MAX_SECONDS)
+    seed = int(job.get("seed") or 831001) % 2_000_000_000
+    candidates = min(max(int(job.get("candidates") or 1), 1), 3)
+    prompt = str(job.get("prompt") or "lofi hip hop, mellow electric piano, dusty drums").strip()[:300]
+    return {"task": "restyle", "audio_url": job["audio_url"], "prompt": prompt, "harmony": harmony, "bpm": bpm,
+            "max_seconds": max_seconds, "seeds": [seed + 7919 * i for i in range(candidates)],
+            "transcriber": job.get("transcriber") or RESTYLE_TRANSCRIBER, "uploads": {"restyle": target}}
+
+
+def run_restyle(request: dict, work: Path, started: float) -> dict:
+    import restyle
+    source = work / "source"
+    _download(request["audio_url"], source)
+    seconds = _duration(source)
+    if seconds < 5:
+        raise ValueError("audio must be at least 5 seconds")
+    report = restyle.run(source, work, request["prompt"], harmony=request["harmony"], bpm=request["bpm"],
+                         seeds=request["seeds"], transcriber=request["transcriber"],
+                         max_seconds=request["max_seconds"])
+    track = {"audio_url": _upload(Path(report.pop("path")), request["uploads"]["restyle"]),
+             "seconds": report.pop("seconds"), "lufs": report.pop("lufs")}
+    timing = {**report.pop("timing"), "job_s": round(time.time() - started, 1)}
+    return {"tracks": {"restyle": track}, "input_seconds": round(min(seconds, request["max_seconds"]), 2),
+            **report, "timing": timing}
+
+
 def run(raw: dict) -> dict:
     import enhance
     import lyrics_tts
@@ -122,6 +169,8 @@ def run(raw: dict) -> dict:
     started = time.time()
     work = Path(tempfile.mkdtemp(prefix="ve-job-"))
     try:
+        if request["task"] == "restyle":
+            return run_restyle(request, work, started)
         source = work / "source"
         tts_usage = None
         if request["task"] == "lyrics":
