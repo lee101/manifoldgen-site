@@ -199,7 +199,7 @@ if [ "$build_ok" -ne 1 ]; then
   echo "ERROR: frontend static export failed after $build_attempts attempt(s)"
   exit 1
 fi
-(cd frontend && bun scripts/normalize-runtime.ts out)
+bun scripts/normalize-runtime.ts out
 cd ..
 echo "  ✓ Frontend built"
 
