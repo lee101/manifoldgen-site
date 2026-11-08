@@ -521,13 +521,16 @@ if [ -d "$GALLERY_IMAGES_DIR/originals" ]; then
     "public, max-age=31536000, immutable" gallery-originals additive
 fi
 
-"${AWS[@]}" s3 sync "$OUT_DIR" "s3://$R2_BUCKET/$(s3_key "")" \
-  --exclude '*.map' \
-  --exclude '_next/*' \
-  --exclude 'images/*' \
-  --exclude 'brand/*' \
-  --only-show-errors \
-  --cache-control "public, max-age=3600"
+# Root pages: upload only files whose content hash changed (per-file manifest in
+# the bucket). A plain `s3 sync` re-wrote all ~30k files every deploy because a
+# fresh build gives every file a new mtime; R2 bills those as writes.
+# MANIFOLDGEN_R2_SYNC=full forces everything, =seed only records the manifest.
+CHANGED_LIST="$(mktemp "${TMPDIR:-/tmp}/manifoldgen-changed.XXXXXX")"
+trap 'rm -f "$CHANGED_LIST"' EXIT
+R2_ENDPOINT="$R2_ENDPOINT" R2_SYNC_MODE="${MANIFOLDGEN_R2_SYNC:-changed}" R2_CHANGED_LIST="$CHANGED_LIST" \
+  "$ROOT/scripts/r2-sync-changed.sh" "$OUT_DIR" "$R2_BUCKET" "$(s3_key "")" \
+    "$(s3_key "$STATIC_PATH/.deploy/root-files.sha256")" "public, max-age=3600" \
+    '(_next|images|brand)/.*'
 
 "${AWS[@]}" s3api put-object \
   --bucket "$R2_BUCKET" \
@@ -553,7 +556,7 @@ purge_urls() {
   local zone_id="$1"
   shift
   local urls=("$@")
-  local batch_size=30
+  local batch_size=100
   local total=${#urls[@]}
   local failed=0
   local -a cf_auth_headers=()
@@ -601,6 +604,41 @@ PURGE_URLS=(
   "$APP_URL/studio"
 )
 
+# Add every changed page (and its app-route twin) to the purge list. A deploy
+# that touches thousands of pages (shared layout change) is cheaper to purge
+# wholesale, but only the static + app hosts, never the immutable gallery.
+PURGE_MAX_URLS="${MANIFOLDGEN_PURGE_MAX_URLS:-400}"
+PURGE_ALL=0
+if [ -s "$CHANGED_LIST" ]; then
+  while IFS= read -r rel; do
+    case "$rel" in
+      *.html|*.txt|*.xml|*.json|*.webmanifest) ;;
+      *) continue ;;
+    esac
+    PURGE_URLS+=("$STATIC_PUBLIC_URL/$rel")
+    page="${rel%.html}"
+    [ "$page" = "index" ] && page=""
+    [ "$rel" = "${rel%.html}" ] && page="$rel"
+    PURGE_URLS+=("$APP_URL/$page")
+  done < "$CHANGED_LIST"
+  if [ "${#PURGE_URLS[@]}" -gt "$PURGE_MAX_URLS" ]; then
+    PURGE_ALL=1
+  fi
+fi
+
+purge_hosts() {
+  local resp
+  local -a cf_auth_headers=()
+  while IFS= read -r line; do
+    [ -n "$line" ] && cf_auth_headers+=("$line")
+  done < <(cf_curl_headers)
+  resp=$(curl --fail-with-body -sS --retry 2 --connect-timeout 10 --max-time 30 \
+    -X POST "https://api.cloudflare.com/client/v4/zones/$1/purge_cache" \
+    "${cf_auth_headers[@]}" -H "Content-Type: application/json" \
+    --data "{\"hosts\": [\"${APP_URL#https://}\", \"${STATIC_PUBLIC_URL#https://}\"]}") || return 1
+  [ "$(echo "$resp" | jq -r '.success // false')" = "true" ]
+}
+
 if [ -n "$CF_API_KEY" ] && [ -n "$CF_ZONE_ID" ]; then
   echo "  Purging manifoldgen.com zone..."
   # Prefer netwrck-style global key when CLOUDFLARE_API is the short global key.
@@ -611,7 +649,16 @@ if [ -n "$CF_API_KEY" ] && [ -n "$CF_ZONE_ID" ]; then
       CF_API_KEY="${CLOUDFLARE_API:-$CF_API_KEY}"
     fi
   fi
-  purge_urls "$CF_ZONE_ID" "${PURGE_URLS[@]}"
+  if [ "$PURGE_ALL" -eq 1 ]; then
+    echo "  ${#PURGE_URLS[@]} URLs changed; purging by host instead"
+    if purge_hosts "$CF_ZONE_ID"; then
+      echo "  ✓ Purged hosts"
+    else
+      echo "  ✗ Host purge failed"
+    fi
+  else
+    purge_urls "$CF_ZONE_ID" "${PURGE_URLS[@]}" || true
+  fi
 else
   echo "  ⚠ Skipping CF purge (set CLOUDFLARE_API / CLOUDFLARE_EMAIL)"
 fi
