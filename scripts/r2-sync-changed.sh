@@ -49,11 +49,28 @@ if [ "$mode" = "seed" ]; then
 elif [ "$n" -eq 0 ]; then
   echo "  ✓ no changed files ($total checked)"
 else
-  # Hardlink the changed files into a staging tree (same filesystem, no copy) so one
-  # multi-threaded aws process uploads them all, instead of one process per file.
-  mkdir "$work/stage"
-  rsync -a --link-dest="$(cd "$out_dir" && pwd)" --files-from="$work/changed.txt" "$out_dir/" "$work/stage/"
-  "${aws_cmd[@]}" s3 cp "$work/stage" "$dest" --recursive --only-show-errors --cache-control "$cache_control"
+  # Text assets are gzipped before upload (stored with Content-Encoding: gzip; HTML
+  # compresses ~6x, which cuts upload time and bytes). Everything else is hardlinked
+  # into the staging tree (same filesystem, no copy) so one multi-threaded aws process
+  # uploads each group instead of one process per file.
+  out_abs="$(cd "$out_dir" && pwd)"
+  mkdir -p "$work/stage/gz" "$work/stage/raw"
+  grep -E '\.(html|txt|xml|json|webmanifest)$' "$work/changed.txt" > "$work/gz.txt" || true
+  grep -Ev '\.(html|txt|xml|json|webmanifest)$' "$work/changed.txt" > "$work/raw.txt" || true
+  if [ -s "$work/gz.txt" ]; then
+    tr '\n' '\0' < "$work/gz.txt" | xargs -0 -r -P"$(nproc)" -n64 bash -c '
+      stage="$1"; src="$2"; shift 2
+      for rel in "$@"; do
+        mkdir -p "$stage/$(dirname "$rel")"
+        gzip -9n -c "$src/$rel" > "$stage/$rel"
+      done' _ "$work/stage/gz" "$out_abs"
+    "${aws_cmd[@]}" s3 cp "$work/stage/gz" "$dest" --recursive --only-show-errors \
+      --cache-control "$cache_control" --content-encoding gzip
+  fi
+  if [ -s "$work/raw.txt" ]; then
+    rsync -a --link-dest="$out_abs" --files-from="$work/raw.txt" "$out_dir/" "$work/stage/raw/"
+    "${aws_cmd[@]}" s3 cp "$work/stage/raw" "$dest" --recursive --only-show-errors --cache-control "$cache_control"
+  fi
   echo "  ✓ uploaded $n changed of $total files"
 fi
 
