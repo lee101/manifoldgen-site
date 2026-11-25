@@ -7,7 +7,7 @@ toolchain go1.27.3
 require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
-	github.com/lee101/gobed v1.0.6
+	github.com/lee101/gobed v1.0.7
 	github.com/lib/pq v1.12.3
 	github.com/valyala/fasthttp v1.75.0
 	github.com/yuin/goldmark v1.8.7

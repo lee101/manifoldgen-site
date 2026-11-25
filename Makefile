@@ -1,7 +1,3 @@
-# gobed v1.0.6 builds gobed_int8.go with -mavx512* cgo flags (amd64 only); on
-# other arches (Apple Silicon, aarch64) test without cgo, which drops that file.
-GO_TEST_ENV := $(if $(filter amd64,$(shell cd server && go env GOARCH)),,CGO_ENABLED=0)
-
 .PHONY: install server frontend dev build visualbench hooks check-fast test test-go test-frontend-unit test-cli test-py test-studio test-studio-full verify
 
 install:
@@ -58,7 +54,7 @@ test-py:
 		python -m pytest -q tests scripts/test_*.py monitoring/tests
 
 test-go:
-	cd server && $(GO_TEST_ENV) go test ./...
+	cd server && go test ./...
 
 test-studio:
 	cd frontend && bun run test:e2e:hook
