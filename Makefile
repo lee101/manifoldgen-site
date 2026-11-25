@@ -1,4 +1,8 @@
-.PHONY: install server frontend dev build visualbench hooks check-fast test-go test-studio test-studio-full verify
+# gobed v1.0.6 builds gobed_int8.go with -mavx512* cgo flags (amd64 only); on
+# other arches (Apple Silicon, aarch64) test without cgo, which drops that file.
+GO_TEST_ENV := $(if $(filter amd64,$(shell cd server && go env GOARCH)),,CGO_ENABLED=0)
+
+.PHONY: install server frontend dev build visualbench hooks check-fast test test-go test-frontend-unit test-cli test-py test-studio test-studio-full verify
 
 install:
 	cd frontend && bun install
@@ -39,8 +43,22 @@ hooks:
 check-fast:
 	./scripts/check-fast.sh
 
+# Fast unit suites only (no server, DB, browser, GPU or API keys). check-fast
+# additionally runs gofmt and the i18n coverage gate.
+test: test-go test-frontend-unit test-cli test-py
+
+test-frontend-unit:
+	cd frontend && bun run typecheck && bun run test:unit
+
+test-cli:
+	cd cli && bun install --frozen-lockfile && bun run typecheck && bun test
+
+test-py:
+	uv run --no-project --python 3.12 --with pytest --with boto3 --with psycopg2-binary --with pillow --with requests \
+		python -m pytest -q tests scripts/test_*.py monitoring/tests
+
 test-go:
-	cd server && go test ./...
+	cd server && $(GO_TEST_ENV) go test ./...
 
 test-studio:
 	cd frontend && bun run test:e2e:hook
